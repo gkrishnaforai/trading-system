@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package trading.v1;
+
+option go_package = "github.com/trading-system/go-api/internal/grpc/trading/v1";
+
+// Trading service for AI/ML operations
+service TradingService {
+  // Calculate indicators
+  rpc CalculateIndicators(IndicatorRequest) returns (IndicatorResponse);
+  
+  // Generate LLM narrative
+  rpc GenerateNarrative(NarrativeRequest) returns (NarrativeResponse);
+  
+  // Analyze fundamentals
+  rpc AnalyzeFundamentals(FundamentalRequest) returns (FundamentalResponse);
+}
+
+message IndicatorRequest {
+  string symbol = 1;
+  repeated double prices = 2;
+  int32 period = 3;
+}
+
+message IndicatorResponse {
+  double macd = 1;
+  double rsi = 2;
+  double atr = 3;
+  double ema_20 = 4;
+  double sma_50 = 5;
+}
+
+message NarrativeRequest {
+  string symbol = 1;
+  map<string, double> indicators = 2;
+  string context = 3;
+}
+
+message NarrativeResponse {
+  string narrative = 1;
+  double confidence = 2;
+}
+
+message FundamentalRequest {
+  string symbol = 1;
+}
+
+message FundamentalResponse {
+  map<string, string> data = 1;
+}

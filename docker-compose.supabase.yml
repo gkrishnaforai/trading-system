@@ -1,0 +1,118 @@
+# Supabase Local Development Stack
+# Simplified version with PostgreSQL only
+# Auth, PostgREST, Realtime, and Storage can be added later if needed
+# For now, we focus on the core PostgreSQL database with extensions
+
+services:
+  # PostgreSQL Database with Supabase extensions
+  # Using standard PostgreSQL 15 image
+  supabase-db:
+    image: postgres:15-alpine
+    container_name: trading-system-supabase-db
+    ports:
+      - "${SUPABASE_DB_PORT:-54322}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your-super-secret-and-long-postgres-password}
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+    volumes:
+      - supabase_db_data:/var/lib/postgresql/data
+      - ./supabase/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - trading-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+
+  # Optional: Supabase Auth (GoTrue)
+  # Uncomment when needed and update image version
+  # supabase-auth:
+  #   image: supabase/gotrue:latest
+  #   container_name: trading-system-supabase-auth
+  #   ports:
+  #     - "${SUPABASE_AUTH_PORT:-9999}:9999"
+  #   environment:
+  #     GOTRUE_API_HOST: 0.0.0.0
+  #     GOTRUE_API_PORT: 9999
+  #     GOTRUE_DB_DRIVER: postgres
+  #     GOTRUE_DB_DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-your-super-secret-and-long-postgres-password}@supabase-db:5432/${POSTGRES_DB:-postgres}
+  #     GOTRUE_SITE_URL: ${SUPABASE_SITE_URL:-http://localhost:3000}
+  #     GOTRUE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-your-super-secret-jwt-token-with-at-least-32-characters-long}
+  #   depends_on:
+  #     supabase-db:
+  #       condition: service_healthy
+  #   networks:
+  #     - trading-network
+  #   restart: unless-stopped
+
+  # Optional: PostgREST - REST API for PostgreSQL
+  # Uncomment when needed and update image version
+  # supabase-rest:
+  #   image: postgrest/postgrest:latest
+  #   container_name: trading-system-supabase-rest
+  #   ports:
+  #     - "${SUPABASE_REST_PORT:-3000}:3000"
+  #   environment:
+  #     PGRST_DB_URI: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-your-super-secret-and-long-postgres-password}@supabase-db:5432/${POSTGRES_DB:-postgres}
+  #     PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS:-public}
+  #     PGRST_JWT_SECRET: ${SUPABASE_JWT_SECRET:-your-super-secret-jwt-token-with-at-least-32-characters-long}
+  #   depends_on:
+  #     supabase-db:
+  #       condition: service_healthy
+  #   networks:
+  #     - trading-network
+  #   restart: unless-stopped
+
+  # Optional: Realtime - WebSocket server
+  # Uncomment when needed and update image version
+  # supabase-realtime:
+  #   image: supabase/realtime:latest
+  #   container_name: trading-system-supabase-realtime
+  #   ports:
+  #     - "${SUPABASE_REALTIME_PORT:-4000}:4000"
+  #   environment:
+  #     DB_HOST: supabase-db
+  #     DB_PORT: 5432
+  #     DB_USER: ${POSTGRES_USER:-postgres}
+  #     DB_PASSWORD: ${POSTGRES_PASSWORD:-your-super-secret-and-long-postgres-password}
+  #     DB_NAME: ${POSTGRES_DB:-postgres}
+  #     API_JWT_SECRET: ${SUPABASE_JWT_SECRET:-your-super-secret-jwt-token-with-at-least-32-characters-long}
+  #   depends_on:
+  #     supabase-db:
+  #       condition: service_healthy
+  #   networks:
+  #     - trading-network
+  #   restart: unless-stopped
+
+  # Optional: Storage - File storage service
+  # Uncomment when needed and update image version
+  # supabase-storage:
+  #   image: supabase/storage-api:latest
+  #   container_name: trading-system-supabase-storage
+  #   ports:
+  #     - "${SUPABASE_STORAGE_PORT:-5000}:5000"
+  #   environment:
+  #     DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-your-super-secret-and-long-postgres-password}@supabase-db:5432/${POSTGRES_DB:-postgres}
+  #   depends_on:
+  #     - supabase-db
+  #   networks:
+  #     - trading-network
+  #   restart: unless-stopped
+
+volumes:
+  supabase_db_data:
+    driver: local
+
+networks:
+  trading-network:
+    driver: bridge
+    external: false

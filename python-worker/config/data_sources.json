@@ -1,0 +1,125 @@
+{
+    "data_sources": {
+        "yahoo": {
+            "enabled": true,
+            "priority": 200,
+            "cost_per_call": 0.0,
+            "rate_limit_per_minute": 2000,
+            "reliability_score": 0.85,
+            "data_quality_score": 0.80,
+            "historical_coverage_days": 7300,
+            "real_time_support": false,
+            "api_key_required": false
+        },
+        "massive": {
+            "enabled": true,
+            "priority": 100,
+            "cost_per_call": 0.01,
+            "rate_limit_per_minute": 5,
+            "reliability_score": 0.95,
+            "data_quality_score": 0.95,
+            "historical_coverage_days": 1825,
+            "real_time_support": true,
+            "api_key_required": true
+        },
+        "alphavantage": {
+            "enabled": true,
+            "priority": 150,
+            "cost_per_call": 0.0,
+            "rate_limit_per_minute": 5,
+            "reliability_score": 0.90,
+            "data_quality_score": 0.85,
+            "historical_coverage_days": 7300,
+            "real_time_support": false,
+            "api_key_required": true
+        }
+    },
+    "load_configs": {
+        "price_data": {
+            "primary_source": "yahoo",
+            "fallback_sources": [
+                "alphavantage",
+                "massive"
+            ],
+            "load_frequency": "daily",
+            "extraction_pattern": "time_ranged",
+            "behavioral_pattern": "idempotent",
+            "retention_days": 3650,
+            "quality_threshold": 0.8,
+            "cost_threshold": 1.0,
+            "retry_attempts": 3,
+            "retry_delay_seconds": 60
+        },
+        "technical_indicators": {
+            "primary_source": "massive",
+            "fallback_sources": [
+                "alphavantage",
+                "yahoo"
+            ],
+            "load_frequency": "daily",
+            "extraction_pattern": "lookback",
+            "behavioral_pattern": "idempotent",
+            "retention_days": 730,
+            "quality_threshold": 0.9,
+            "cost_threshold": 2.0,
+            "retry_attempts": 3,
+            "retry_delay_seconds": 60
+        },
+        "fundamentals": {
+            "primary_source": "massive",
+            "fallback_sources": [
+                "alphavantage",
+                "yahoo"
+            ],
+            "load_frequency": "weekly",
+            "extraction_pattern": "full_snapshot",
+            "behavioral_pattern": "idempotent",
+            "retention_days": 1825,
+            "quality_threshold": 0.85,
+            "cost_threshold": 5.0,
+            "retry_attempts": 3,
+            "retry_delay_seconds": 60
+        },
+        "market_news": {
+            "primary_source": "massive",
+            "fallback_sources": [
+                "alphavantage"
+            ],
+            "load_frequency": "intraday",
+            "extraction_pattern": "lookback",
+            "behavioral_pattern": "append_only",
+            "retention_days": 30,
+            "quality_threshold": 0.8,
+            "cost_threshold": 1.0,
+            "retry_attempts": 3,
+            "retry_delay_seconds": 60
+        },
+        "symbol_details": {
+            "primary_source": "massive",
+            "fallback_sources": [
+                "alphavantage",
+                "yahoo"
+            ],
+            "load_frequency": "weekly",
+            "extraction_pattern": "full_snapshot",
+            "behavioral_pattern": "idempotent",
+            "retention_days": 365,
+            "quality_threshold": 0.8,
+            "cost_threshold": 0.5,
+            "retry_attempts": 3,
+            "retry_delay_seconds": 60
+        },
+        "sentiment_data": {
+            "primary_source": "massive",
+            "fallback_sources": [],
+            "load_frequency": "daily",
+            "extraction_pattern": "time_ranged",
+            "behavioral_pattern": "idempotent",
+            "retention_days": 365,
+            "quality_threshold": 0.8,
+            "cost_threshold": 1.0,
+            "retry_attempts": 3,
+            "retry_delay_seconds": 60
+        }
+    }
+}

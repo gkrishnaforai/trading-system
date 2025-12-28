@@ -1,0 +1,200 @@
+{
+    "endpoints": {
+        "company_overview": {
+            "function": "OVERVIEW",
+            "description": "Company overview, fundamentals, and key metrics",
+            "required_params": [
+                "symbol"
+            ],
+            "optional_params": [],
+            "response_validator": {
+                "type": "key_exists",
+                "key": "Symbol"
+            }
+        },
+        "income_statement": {
+            "function": "INCOME_STATEMENT",
+            "description": "Annual and quarterly income statements",
+            "required_params": [
+                "symbol"
+            ],
+            "optional_params": [],
+            "response_validator": {
+                "type": "array_exists",
+                "key": "annualReports",
+                "min_length": 1
+            }
+        },
+        "balance_sheet": {
+            "function": "BALANCE_SHEET",
+            "description": "Annual and quarterly balance sheets",
+            "required_params": [
+                "symbol"
+            ],
+            "optional_params": [],
+            "response_validator": {
+                "type": "array_exists",
+                "key": "annualReports",
+                "min_length": 1
+            }
+        },
+        "cash_flow": {
+            "function": "CASH_FLOW",
+            "description": "Annual and quarterly cash flow statements",
+            "required_params": [
+                "symbol"
+            ],
+            "optional_params": [],
+            "response_validator": {
+                "type": "array_exists",
+                "key": "annualReports",
+                "min_length": 1
+            }
+        },
+        "earnings": {
+            "function": "EARNINGS",
+            "description": "Annual and quarterly earnings data",
+            "required_params": [
+                "symbol"
+            ],
+            "optional_params": [],
+            "response_validator": {
+                "type": "array_exists",
+                "key": "quarterlyEarnings",
+                "min_length": 1
+            }
+        },
+        "time_series_daily": {
+            "function": "TIME_SERIES_DAILY",
+            "description": "Daily time series (OHLCV)",
+            "required_params": [
+                "symbol"
+            ],
+            "optional_params": [
+                "outputsize",
+                "datatype"
+            ],
+            "response_validator": {
+                "type": "key_exists",
+                "key": "Time Series (Daily)"
+            }
+        },
+        "time_series_weekly": {
+            "function": "TIME_SERIES_WEEKLY",
+            "description": "Weekly time series (OHLCV)",
+            "required_params": [
+                "symbol"
+            ],
+            "optional_params": [
+                "datatype"
+            ],
+            "response_validator": {
+                "type": "key_exists",
+                "key": "Weekly Time Series"
+            }
+        },
+        "time_series_monthly": {
+            "function": "TIME_SERIES_MONTHLY",
+            "description": "Monthly time series (OHLCV)",
+            "required_params": [
+                "symbol"
+            ],
+            "optional_params": [
+                "datatype"
+            ],
+            "response_validator": {
+                "type": "key_exists",
+                "key": "Monthly Time Series"
+            }
+        },
+        "technical_rsi": {
+            "function": "RSI",
+            "description": "Relative Strength Index technical indicator",
+            "required_params": [
+                "symbol",
+                "interval",
+                "time_period"
+            ],
+            "optional_params": [
+                "series_type"
+            ],
+            "response_validator": {
+                "type": "not_error_response"
+            }
+        },
+        "technical_macd": {
+            "function": "MACD",
+            "description": "MACD technical indicator",
+            "required_params": [
+                "symbol",
+                "interval"
+            ],
+            "optional_params": [
+                "series_type",
+                "fastperiod",
+                "slowperiod",
+                "signalperiod"
+            ],
+            "response_validator": {
+                "type": "not_error_response"
+            }
+        },
+        "technical_sma": {
+            "function": "SMA",
+            "description": "Simple Moving Average technical indicator",
+            "required_params": [
+                "symbol",
+                "interval",
+                "time_period"
+            ],
+            "optional_params": [
+                "series_type"
+            ],
+            "response_validator": {
+                "type": "not_error_response"
+            }
+        },
+        "technical_ema": {
+            "function": "EMA",
+            "description": "Exponential Moving Average technical indicator",
+            "required_params": [
+                "symbol",
+                "interval",
+                "time_period"
+            ],
+            "optional_params": [
+                "series_type"
+            ],
+            "response_validator": {
+                "type": "not_error_response"
+            }
+        },
+        "news_sentiment": {
+            "function": "NEWS_SENTIMENT",
+            "description": "Market news and sentiment analysis",
+            "required_params": [],
+            "optional_params": [
+                "tickers",
+                "topics",
+                "time_from",
+                "time_to",
+                "sort",
+                "limit"
+            ],
+            "response_validator": {
+                "type": "array_exists",
+                "key": "feed",
+                "min_length": 1
+            }
+        }
+    },
+    "base_url": "https://www.alphavantage.co/query",
+    "rate_limit": {
+        "calls_per_minute": 5,
+        "calls_per_day": 500
+    },
+    "default_params": {
+        "apikey": "${ALPHAVANTAGE_API_KEY}",
+        "datatype": "json"
+    }
+}
