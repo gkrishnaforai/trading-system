@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 from api_client import (
     get_go_api_client,
-    get_python_api_client,
     APIError,
     APIConnectionError,
     APIResponseError
@@ -57,9 +56,9 @@ WORKFLOW_STAGES = [
 def run_data_ingestion(symbol: str) -> Dict[str, Any]:
     """Stage 1: Data Ingestion - Load raw price data"""
     try:
-        python_client = get_python_api_client()
-        response = python_client.post(
-            "api/v1/fetch-historical-data",
+        go_client = get_go_api_client()
+        response = go_client.post(
+            "api/v1/admin/fetch-historical-data",
             json_data={
                 "symbol": symbol.upper(),
                 "period": "1y",
@@ -76,23 +75,23 @@ def run_data_ingestion(symbol: str) -> Dict[str, Any]:
 def run_validation_audit(symbol: str) -> Dict[str, Any]:
     """Stage 2: Validation & Audit - Check data quality and audit trail"""
     try:
-        python_client = get_python_api_client()
+        go_client = get_go_api_client()
         
         # Get audit history
-        audit_response = python_client.get(
-            f"api/v1/data-fetch-audit/{symbol}",
+        audit_response = go_client.get(
+            f"api/v1/admin/data-fetch-audit/{symbol}",
             params={"limit": 10}
         )
         
         # Get validation reports
-        validation_response = python_client.get(
-            f"api/v1/data-validation-reports/{symbol}",
+        validation_response = go_client.get(
+            f"api/v1/admin/data-validation-reports/{symbol}",
             params={"data_type": "price_historical", "limit": 1}
         )
         
         # Get signal readiness
-        readiness_response = python_client.get(
-            f"api/v1/signal-readiness/{symbol}",
+        readiness_response = go_client.get(
+            f"api/v1/admin/signal-readiness/{symbol}",
             params={"signal_type": "swing_trend"}
         )
         
@@ -109,12 +108,16 @@ def run_validation_audit(symbol: str) -> Dict[str, Any]:
 def run_indicator_calculation(symbol: str) -> Dict[str, Any]:
     """Stage 3: Indicator Calculation - Compute all technical indicators"""
     try:
-        python_client = get_python_api_client()
+        go_client = get_go_api_client()
         
         # Calculate indicators
-        response = python_client.post(
-            "api/v1/calculate-indicators/{symbol}".format(symbol=symbol),
-            params={"force": True},
+        response = go_client.post(
+            "api/v1/admin/refresh-data",
+            json_data={
+                "symbol": symbol.upper(),
+                "data_types": ["indicators"],
+                "force": True
+            },
             timeout=120
         )
         
@@ -135,11 +138,11 @@ def run_indicator_calculation(symbol: str) -> Dict[str, Any]:
 def run_signal_generation(symbol: str) -> Dict[str, Any]:
     """Stage 4: Signal Generation - Generate buy/sell/hold signals"""
     try:
-        python_client = get_python_api_client()
+        go_client = get_go_api_client()
         
         # Execute strategy
-        response = python_client.post(
-            "api/v1/strategy/execute",
+        response = go_client.post(
+            "api/v1/admin/strategy/execute",
             json_data={
                 "symbol": symbol.upper(),
                 "strategy_name": "technical"
@@ -155,10 +158,10 @@ def run_signal_generation(symbol: str) -> Dict[str, Any]:
 def run_stock_screening(criteria: Dict[str, Any]) -> Dict[str, Any]:
     """Stage 5: Stock Screening - Screen stocks based on criteria"""
     try:
-        python_client = get_python_api_client()
+        go_client = get_go_api_client()
         
-        response = python_client.get(
-            "api/v1/screener/stocks",
+        response = go_client.get(
+            "api/v1/admin/screener/stocks",
             params=criteria,
             timeout=60
         )
@@ -608,12 +611,12 @@ def main():
         st.header("📋 Workflow Audit History")
         st.markdown("**View complete workflow execution audit trail**")
         
-        python_client = get_python_api_client()
+        go_client = get_go_api_client()
         
         # Get workflow executions
         try:
-            executions_response = python_client.get(
-                "api/v1/workflow/executions",
+            executions_response = go_client.get(
+                "api/v1/admin/workflow/executions",
                 params={"limit": 20},
                 timeout=30
             )

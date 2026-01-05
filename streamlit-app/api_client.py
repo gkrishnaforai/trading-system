@@ -186,23 +186,5 @@ def get_go_api_client() -> APIClient:
 
 
 def get_python_api_client() -> APIClient:
-    """
-    Get Python API client instance
-    
-    Returns:
-        APIClient instance
-    
-    Raises:
-        ValueError: If PYTHON_API_URL is not configured
-    """
-    global _python_api_client
-    
-    if _python_api_client is None:
-        import os
-        PYTHON_API_URL = os.getenv("PYTHON_API_URL", "http://python-worker:8001")
-        if not PYTHON_API_URL:
-            raise ValueError("PYTHON_API_URL not configured")
-        _python_api_client = APIClient(PYTHON_API_URL, timeout=120)
-    
-    return _python_api_client
+    raise ValueError("Python API client disabled: Streamlit must call only Go API")
 

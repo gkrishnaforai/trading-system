@@ -12,7 +12,6 @@ import logging
 
 from api_client import (
     get_go_api_client,
-    get_python_api_client,
     APIError,
     APIConnectionError,
     APIResponseError
@@ -37,6 +36,19 @@ def get_stock_data(symbol: str, subscription_level: str = "basic"):
     except APIError as e:
         logger.error(f"Failed to fetch stock data for {symbol}: {e}")
         raise
+
+
+def generate_stock_report(symbol: str, user_id: str = "streamlit"):
+    """Trigger report generation via Go API (which queues python-worker work).
+
+    Streamlit must only talk to Go API.
+    """
+    if not symbol:
+        raise ValueError("Symbol cannot be empty")
+
+    logger.info(f"Triggering stock report generation for {symbol}")
+    client = get_go_api_client()
+    return client.post(f"api/v1/report/{symbol}/generate", json_data={"user_id": user_id})
 
 
 def get_portfolio_data(user_id: str, portfolio_id: str, subscription_level: str = "basic"):
@@ -124,50 +136,30 @@ def get_stock_report(symbol: str):
         raise
 
 
-def generate_stock_report(symbol: str):
-    """Trigger report generation via Python worker"""
-    if not symbol:
-        raise ValueError("Symbol cannot be empty")
-    
-    logger.info(f"Generating stock report for {symbol}")
-    
-    try:
-        client = get_python_api_client()
-        return client.post(
-            "api/v1/generate-report",
-            json_data={
-                "symbol": symbol.upper(),
-                "include_llm": True
-            },
-            timeout=120
-        )
-    except APIError as e:
-        logger.error(f"Failed to generate report for {symbol}: {e}")
-        raise
-
-
 def fetch_historical_data(symbol: str, period: str = "1y", calculate_indicators: bool = True):
-    """Fetch historical data on-demand with detailed results"""
+    """Fetch historical data on-demand via Go API"""
     if not symbol:
         raise ValueError("Symbol cannot be empty")
     
-    logger.info(f"Fetching historical data for {symbol} (period: {period})")
-    
-    try:
-        client = get_python_api_client()
-        response = client.post(
-            "api/v1/fetch-historical-data",
-            json_data={
-                "symbol": symbol.upper(),
-                "period": period,
-                "calculate_indicators": calculate_indicators
-            },
-            timeout=120
-        )
-        return response
-    except APIError as e:
-        logger.error(f"Failed to fetch historical data for {symbol}: {e}")
-        raise
+    logger.info(f"Fetching historical data for {symbol} via Go API (period: {period}, indicators: {calculate_indicators})")
+
+    data_types = ["price_historical", "fundamentals"]
+    if calculate_indicators:
+        data_types.append("indicators")
+
+    resp = refresh_data(symbol=symbol, data_types=data_types, force=True)
+
+    # Shape expected by existing pages
+    success = bool(resp.get("success"))
+    message = resp.get("message") or ("Data fetched successfully" if success else "Data fetch failed")
+    return {
+        "success": success,
+        "symbol": symbol,
+        "message": message,
+        "period": period,
+        "results": resp.get("results"),
+        "raw": resp,
+    }
 
 
 def display_fetch_results(fetch_response):
@@ -178,8 +170,33 @@ def display_fetch_results(fetch_response):
     st.markdown("---")
     st.subheader("📊 Data Fetch Details")
     
-    results = fetch_response.get('results', {})
-    summary = fetch_response.get('summary', {})
+    results = fetch_response.get('results', {}) or {}
+    summary = fetch_response.get('summary')
+
+    # Go-admin refresh proxy returns {success, message, results} without summary.
+    if not isinstance(summary, dict):
+        total_requested = len(results)
+        total_successful = 0
+        total_failed = 0
+        total_skipped = 0
+
+        for _, r in results.items():
+            if not isinstance(r, dict):
+                continue
+            status = (r.get('status') or '').lower()
+            if status in {"success", "completed"}:
+                total_successful += 1
+            elif status in {"failed", "error"}:
+                total_failed += 1
+            elif status in {"skipped"}:
+                total_skipped += 1
+
+        summary = {
+            "total_requested": total_requested,
+            "total_successful": total_successful,
+            "total_failed": total_failed,
+            "total_skipped": total_skipped,
+        }
     
     # Summary metrics
     col1, col2, col3, col4 = st.columns(4)
@@ -192,7 +209,10 @@ def display_fetch_results(fetch_response):
     with col4:
         st.metric("⏭️ Skipped", summary.get('total_skipped', 0))
     
-    # Show overall data source if available
+    # Show overall message if available
+    if fetch_response.get("message"):
+        st.info(fetch_response.get("message"))
+
     overall_data_source = fetch_response.get('data_source')
     if overall_data_source:
         st.info(f"📊 **Data Source Used:** {overall_data_source}")
@@ -270,74 +290,6 @@ def display_fetch_results(fetch_response):
                         st.write(f"   - {rec}")
 
 
-def display_validation_report(validation: Dict[str, Any], symbol: str):
-    """
-    Display detailed validation report in Streamlit (standalone function)
-    
-    Args:
-        validation: Validation report dictionary
-        symbol: Stock symbol
-    """
-    st.markdown(f"### 🔍 Validation Report for {symbol}")
-    
-    val_status = validation.get('overall_status', 'unknown')
-    val_color = "🟢" if val_status == "pass" else "🟡" if val_status == "warning" else "🔴"
-    st.write(f"{val_color} **Overall Status:** {val_status.upper()}")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total Rows", validation.get('total_rows', 0))
-    with col2:
-        st.metric("Rows Dropped", validation.get('rows_dropped', 0))
-    with col3:
-        st.metric("After Cleaning", validation.get('rows_after_cleaning', 0))
-    with col4:
-        st.metric("Data Quality", f"{validation.get('data_quality_score', 0):.2f}" if validation.get('data_quality_score') else "N/A")
-    
-    if validation.get('critical_issues', 0) > 0:
-        st.error(f"🔴 **Critical Issues:** {validation.get('critical_issues', 0)}")
-    if validation.get('warnings', 0) > 0:
-        st.warning(f"⚠️ **Warnings:** {validation.get('warnings', 0)}")
-    
-    # Show validation results
-    val_results = validation.get('validation_results', [])
-    if val_results:
-        st.markdown("---")
-        st.subheader("📋 Detailed Validation Checks")
-        for val_result in val_results:
-            check_name = val_result.get('check_name', 'Unknown')
-            passed = val_result.get('passed', False)
-            severity = val_result.get('severity', 'info')
-            
-            check_icon = "✅" if passed else "❌" if severity == "critical" else "⚠️"
-            with st.expander(f"{check_icon} {check_name} ({severity.upper()})", expanded=(not passed)):
-                st.write(f"**Passed:** {passed}")
-                st.write(f"**Rows Checked:** {val_result.get('rows_checked', 0)}")
-                st.write(f"**Rows Failed:** {val_result.get('rows_failed', 0)}")
-                
-                if not passed:
-                    issues = val_result.get('issues', [])
-                    if issues:
-                        st.markdown("**Issues:**")
-                        for issue in issues:
-                            issue_severity = issue.get('severity', 'info')
-                            issue_icon = "🔴" if issue_severity == "critical" else "🟡" if issue_severity == "warning" else "🔵"
-                            st.write(f"{issue_icon} {issue.get('message', 'N/A')}")
-                            if issue.get('recommendation'):
-                                st.info(f"   💡 {issue.get('recommendation')}")
-                
-                if val_result.get('metrics'):
-                    st.write(f"**Metrics:** {val_result.get('metrics')}")
-    
-    # Show recommendations
-    recommendations = validation.get('recommendations', [])
-    if recommendations:
-        st.markdown("---")
-        st.markdown("**💡 Recommendations:**")
-        for rec in recommendations:
-            st.info(f"  - {rec}")
-
-
 def refresh_data(symbol: str, data_types: list = None, force: bool = False):
     """Refresh data on-demand with detailed error tracking"""
     if not symbol:
@@ -346,22 +298,18 @@ def refresh_data(symbol: str, data_types: list = None, force: bool = False):
     if not data_types:
         data_types = ["price_historical", "fundamentals"]
     
-    logger.info(f"Refreshing data for {symbol}: {data_types} (force={force})")
-    
-    try:
-        client = get_python_api_client()
-        return client.post(
-            "api/v1/refresh-data",
-            json_data={
-                "symbol": symbol.upper(),
-                "data_types": data_types,
-                "force": force
-            },
-            timeout=120
-        )
-    except APIError as e:
-        logger.error(f"Failed to refresh data for {symbol}: {e}")
-        raise
+    logger.info(f"Refreshing data for {symbol} via Go API admin proxy: {data_types} (force={force})")
+
+    client = get_go_api_client()
+    return client.post(
+        "api/v1/admin/refresh",
+        json_data={
+            "symbols": [symbol],
+            "data_types": data_types,
+            "force": force,
+        },
+        timeout=120,
+    )
 
 
 def plot_stock_chart(data: dict):
@@ -542,13 +490,13 @@ def get_industry_peers(symbol: str):
         raise
 
 
-def get_swing_signal(symbol: str, user_id: str = "user1"):
+def get_swing_signal(symbol: str, subscription_level: str = "basic"):
     """
     Get swing trading signal for a symbol
     
     Args:
         symbol: Stock symbol
-        user_id: User ID for context (optional)
+        subscription_level: Subscription level
     
     Returns:
         Swing signal data dictionary
@@ -560,18 +508,82 @@ def get_swing_signal(symbol: str, user_id: str = "user1"):
         raise ValueError("Symbol cannot be empty")
     
     logger.info(f"Fetching swing signal for {symbol}")
-    
-    try:
-        client = get_python_api_client()
-        return client.post(
-            "api/v1/swing/signal",
-            json_data={
-                "symbol": symbol.upper(),
-                "user_id": user_id
-            },
-            timeout=60
-        )
-    except APIError as e:
-        logger.error(f"Failed to fetch swing signal for {symbol}: {e}")
-        raise
 
+    client = get_go_api_client()
+    return client.post(
+        "api/v1/admin/swing/signal",
+        json_data={
+            "symbol": symbol,
+            "strategy_name": "swing_trend",
+            "user_id": "streamlit",
+        },
+        timeout=120,
+    )
+
+
+def display_validation_report(validation: Dict[str, Any], symbol: str):
+    """
+    Display detailed validation report in Streamlit (standalone function)
+    
+    Args:
+        validation: Validation report dictionary
+        symbol: Stock symbol
+    """
+    st.markdown(f"### 🔍 Validation Report for {symbol}")
+    
+    val_status = validation.get('overall_status', 'unknown')
+    val_color = "🟢" if val_status == "pass" else "🟡" if val_status == "warning" else "🔴"
+    st.write(f"{val_color} **Overall Status:** {val_status.upper()}")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Rows", validation.get('total_rows', 0))
+    with col2:
+        st.metric("Rows Dropped", validation.get('rows_dropped', 0))
+    with col3:
+        st.metric("After Cleaning", validation.get('rows_after_cleaning', 0))
+    with col4:
+        st.metric("Data Quality", f"{validation.get('data_quality_score', 0):.2f}" if validation.get('data_quality_score') else "N/A")
+    
+    if validation.get('critical_issues', 0) > 0:
+        st.error(f"🔴 **Critical Issues:** {validation.get('critical_issues', 0)}")
+    if validation.get('warnings', 0) > 0:
+        st.warning(f"⚠️ **Warnings:** {validation.get('warnings', 0)}")
+    
+    # Show validation results
+    val_results = validation.get('validation_results', [])
+    if val_results:
+        st.markdown("---")
+        st.subheader("📋 Detailed Validation Checks")
+        for val_result in val_results:
+            check_name = val_result.get('check_name', 'Unknown')
+            passed = val_result.get('passed', False)
+            severity = val_result.get('severity', 'info')
+            
+            check_icon = "✅" if passed else "❌" if severity == "critical" else "⚠️"
+            with st.expander(f"{check_icon} {check_name} ({severity.upper()})", expanded=(not passed)):
+                st.write(f"**Passed:** {passed}")
+                st.write(f"**Rows Checked:** {val_result.get('rows_checked', 0)}")
+                st.write(f"**Rows Failed:** {val_result.get('rows_failed', 0)}")
+                
+                if not passed:
+                    issues = val_result.get('issues', [])
+                    if issues:
+                        st.markdown("**Issues:**")
+                        for issue in issues:
+                            issue_severity = issue.get('severity', 'info')
+                            issue_icon = "🔴" if issue_severity == "critical" else "🟡" if issue_severity == "warning" else "🔵"
+                            st.write(f"{issue_icon} {issue.get('message', 'N/A')}")
+                            if issue.get('recommendation'):
+                                st.info(f"   💡 {issue.get('recommendation')}")
+                
+                if val_result.get('metrics'):
+                    st.write(f"**Metrics:** {val_result.get('metrics')}")
+    
+    # Show recommendations
+    recommendations = validation.get('recommendations', [])
+    if recommendations:
+        st.markdown("---")
+        st.markdown("**💡 Recommendations:**")
+        for rec in recommendations:
+            st.info(f"  - {rec}")

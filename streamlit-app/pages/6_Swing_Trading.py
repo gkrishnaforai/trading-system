@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils import setup_page_config, render_sidebar
-from api_client import get_python_api_client, get_go_api_client, APIError
+from api_client import get_go_api_client, APIError
 from shared_functions import fetch_historical_data
 
 setup_page_config("Swing Trading", "📈")
@@ -104,6 +104,138 @@ def _display_fetch_results(fetch_response):
                     for rec in recommendations:
                         st.write(f"   - {rec}")
 
+
+def _display_layers(layers: dict):
+    if not layers or not isinstance(layers, dict):
+        return
+
+    st.markdown("---")
+    st.subheader("🧠 Layered Swing Model (1 → 5)")
+
+    l1 = layers.get("layer_1_regime") or {}
+    l2 = layers.get("layer_2_direction") or {}
+    l3 = layers.get("layer_3_allocation") or {}
+    l4 = layers.get("layer_4_reality_adjustment") or {}
+    l5 = layers.get("layer_5_daily_output") or {}
+
+    # Layer 5: One clear output
+    st.markdown("### ✅ Daily Output")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        st.metric("Date", l5.get("date", ""))
+    with c2:
+        st.metric("Action", l5.get("action", "HOLD"))
+    with c3:
+        st.metric("Vehicle", l5.get("symbol", "CASH"))
+    with c4:
+        alloc = l5.get("allocation_pct")
+        st.metric("Allocation", f"{alloc:.0%}" if isinstance(alloc, (int, float)) else "N/A")
+    with c5:
+        conf = l5.get("confidence")
+        st.metric("Confidence", f"{conf:.2f}" if isinstance(conf, (int, float)) else "N/A")
+
+
+def _display_market_conditions_monitor(signal_response: dict):
+    if not signal_response or not isinstance(signal_response, dict):
+        return
+    metadata = signal_response.get("metadata") or {}
+    monitor = metadata.get("market_conditions_monitor") or {}
+    if not isinstance(monitor, dict) or not monitor:
+        return
+
+    status = (monitor.get("status") or "").upper()
+    color = (monitor.get("color") or "").lower()
+    score = monitor.get("score")
+    drivers = monitor.get("drivers") or []
+
+    if color == "green":
+        color_icon = "🟢"
+    elif color == "orange":
+        color_icon = "🟠"
+    elif color == "red":
+        color_icon = "🔴"
+    else:
+        color_icon = "⚪"
+
+    st.markdown("---")
+    st.subheader("🧭 Market Conditions Monitor")
+
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        st.metric("Status", f"{color_icon} {status or 'N/A'}")
+        if isinstance(score, (int, float)):
+            st.metric("Risk Score", f"{score:.2f}")
+    with c2:
+        if drivers and isinstance(drivers, list):
+            for d in drivers[:8]:
+                st.write(f"- {d}")
+
+    # Layer 1
+    with st.expander("Layer 1: Market Regime Detection", expanded=True):
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Regime", str(l1.get("regime", "unknown")).upper())
+        with col2:
+            rc = l1.get("regime_confidence")
+            st.metric("Regime Confidence", f"{rc:.2f}" if isinstance(rc, (int, float)) else "N/A")
+        with col3:
+            vix = l1.get("vix")
+            st.metric("VIX", f"{vix:.2f}" if isinstance(vix, (int, float)) else "N/A")
+        with col4:
+            st.metric("NASDAQ Trend", str(l1.get("nasdaq_trend", "neutral")))
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            yc = l1.get("yield_curve_spread")
+            st.metric("Yield Curve (10y-3m)", f"{yc:.2f}" if isinstance(yc, (int, float)) else "N/A")
+        with col2:
+            br = l1.get("breadth")
+            st.metric("Breadth (% > 50d)", f"{br:.0%}" if isinstance(br, (int, float)) else "N/A")
+        with col3:
+            st.write("")
+
+    # Layer 2
+    with st.expander("Layer 2: Direction & Confidence", expanded=True):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            pu = l2.get("prob_up")
+            st.metric("P(up)", f"{pu:.0%}" if isinstance(pu, (int, float)) else "N/A")
+        with col2:
+            pdn = l2.get("prob_down")
+            st.metric("P(down)", f"{pdn:.0%}" if isinstance(pdn, (int, float)) else "N/A")
+        with col3:
+            ds = l2.get("direction_score")
+            st.metric("Direction Score", f"{ds:.2f}" if isinstance(ds, (int, float)) else "N/A")
+
+    # Layer 3
+    with st.expander("Layer 3: Allocation Engine", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Suggested Vehicle", l3.get("suggested_vehicle", "CASH"))
+        with col2:
+            ap = l3.get("allocation_pct")
+            st.metric("Allocation %", f"{ap:.0%}" if isinstance(ap, (int, float)) else "N/A")
+
+    # Layer 4
+    with st.expander("Layer 4: Leveraged ETF Reality Adjustment", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            op = l4.get("original_position_size")
+            st.metric("Original Size", f"{op:.0%}" if isinstance(op, (int, float)) else "N/A")
+        with col2:
+            ap = l4.get("adjusted_position_size")
+            st.metric("Adjusted Size", f"{ap:.0%}" if isinstance(ap, (int, float)) else "N/A")
+        with col3:
+            hd = l4.get("hold_duration_days")
+            st.metric("Est. Hold Days", str(hd) if hd is not None else "N/A")
+
+    # Reasoning
+    reasoning = l5.get("reasoning")
+    if reasoning:
+        with st.expander("Why? (Reasoning)", expanded=False):
+            for r in reasoning:
+                st.write(f"- {r}")
+
 st.title("📈 Swing Trading (Elite & Admin)")
 
 # Sidebar
@@ -148,20 +280,12 @@ else:
             else:
                 with st.spinner(f"📊 Analyzing {symbol.upper()} for swing trading signals..."):
                     try:
-                        client = get_python_api_client()
-                        response = client.post(
-                            "api/v1/swing/signal",
-                            json_data={
-                                "symbol": symbol.upper(),
-                                "user_id": user_id
-                            },
-                            timeout=60
-                        )
-                        if response:
+                        response = get_swing_signal(symbol.upper(), subscription_level=subscription_level)
+                        if response and response.get("success"):
                             st.success("✅ Swing signal generated successfully!")
-                            
-                            # Display signal results
-                            signal = response.get('signal', 'HOLD')
+                            st.session_state[f"swing_signal_{symbol}"] = response
+                        else:
+                            st.warning(response.get("message", "⚠️ Failed to generate swing signal"))
                             confidence = response.get('confidence', 0)
                             reason = response.get('reason', 'No reason provided')
                             metadata = response.get('metadata', {})
@@ -212,6 +336,13 @@ else:
                                         st.metric("Position Size", f"{metadata.get('position_size', 0):.2%}")
                                     if metadata.get('max_hold_days'):
                                         st.metric("Max Hold Days", f"{metadata.get('max_hold_days', 0)}")
+
+                            # Layered breakdown (preferred)
+                            layers = response.get("layers")
+                            _display_market_conditions_monitor(response)
+
+                            if layers:
+                                _display_layers(layers)
                             
                             # Action buttons (Industry Standard: Add to Watchlist/Portfolio after analysis)
                             st.divider()
@@ -265,7 +396,7 @@ else:
                                         else:
                                             st.info("💡 No watchlists found. Create a watchlist first in the Watchlist Management page.")
                                             if st.button("📋 Go to Watchlist Management", key=f"goto_watchlist_{symbol}"):
-                                                st.switch_page("pages/4_📋_Watchlist.py")
+                                                st.switch_page("pages/4_Watchlist.py")
                                     except APIError as e:
                                         st.error(f"❌ Error loading watchlists: {e}")
                             
@@ -350,9 +481,9 @@ else:
         
         if st.button("Check Portfolio Heat", key="check_heat"):
             try:
-                client = get_python_api_client()
+                client = get_go_api_client()
                 response = client.post(
-                    "api/v1/swing/risk/check",
+                    "api/v1/admin/swing/risk/check",
                     json_data={
                         "user_id": user_id,
                         "new_trade_risk": new_trade_risk

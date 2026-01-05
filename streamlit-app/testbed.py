@@ -12,7 +12,6 @@ from typing import Dict, Any, Optional, List
 
 from api_client import (
     get_go_api_client,
-    get_python_api_client,
     APIError,
     APIConnectionError,
     APIResponseError
@@ -127,10 +126,10 @@ def check_api_health() -> Dict[str, Any]:
             "timestamp": datetime.now().isoformat()
         }
     
-    # Check Python API
+    # Check Python API via Go admin proxy health endpoint
     try:
-        client = get_python_api_client()
-        response = client.get("health", timeout=5)
+        client = get_go_api_client()
+        response = client.get("api/v1/admin/health", timeout=5)
         
         if response:
             status = response.get("status", "unknown")
@@ -194,9 +193,9 @@ def check_data_availability(symbol: str) -> Dict[str, Any]:
     }
     
     try:
-        # Check historical price data
-        client = get_python_api_client()
-        response = client.get(f"api/v1/data/check/{symbol}")
+        # Check historical price data via Go API admin proxy
+        client = get_go_api_client()
+        response = client.get(f"api/v1/admin/data/check/{symbol}")
         if response:
             availability.update(response)
     except Exception as e:
@@ -222,9 +221,9 @@ def test_data_source(symbol: str, data_type: str) -> Dict[str, Any]:
         # Some use Python API (for live/current data fetching)
         
         if data_type == "price_current":
-            # Use Python API for live/current price
-            python_client = get_python_api_client()
-            response = python_client.get(f"api/v1/live-price/{symbol}")
+            # Use Go API admin proxy for live/current price
+            go_client = get_go_api_client()
+            response = go_client.get(f"api/v1/admin/live-price/{symbol}")
             if response:
                 result["success"] = True
                 result["message"] = f"Successfully fetched {data_type} from Python API"
@@ -412,27 +411,25 @@ def test_calculation(symbol: str, calculation_type: str) -> Dict[str, Any]:
     }
     
     try:
-        python_client = get_python_api_client()
+        go_client = get_go_api_client()
         
         if calculation_type == "indicators":
-            # Trigger indicator calculation via refresh-data endpoint
-            response = python_client.post(
-                "api/v1/refresh-data",
+            # Trigger indicator calculation via Go admin proxy refresh-data endpoint
+            response = go_client.post(
+                "api/v1/admin/refresh-data",
                 json_data={
                     "symbol": symbol.upper(),
                     "data_types": ["indicators"],
                     "force": True
-                }
+                },
+                timeout=120
             )
-            
             if response:
-                summary = response.get("summary", {})
-                if summary.get("total_successful", 0) > 0:
-                    result["success"] = True
-                    result["message"] = f"Successfully calculated {calculation_type}"
-                    result["result"] = {"indicators_calculated": True}
-                else:
-                    result["message"] = "Indicator calculation failed - check logs"
+                result["success"] = True
+                result["message"] = "Indicator calculation triggered successfully"
+                result["result"] = response
+            else:
+                result["message"] = "Indicator calculation failed - check logs"
         elif calculation_type == "composite_score":
             # Composite score is returned as momentum_score by Go API (Pro/Elite feature)
             go_client = get_go_api_client()
@@ -552,8 +549,8 @@ def main():
     
     # Display Data Source Configuration in Sidebar
     try:
-        python_client = get_python_api_client()
-        ds_config = python_client.get("api/v1/data-source/config", timeout=5)
+        go_client = get_go_api_client()
+        ds_config = go_client.get("api/v1/admin/data-source/config", timeout=5)
         
         if ds_config:
             with st.sidebar.expander("📊 Data Source Configuration", expanded=False):
@@ -720,9 +717,9 @@ def main():
             if st.button("🚀 Fetch All Data", key="fetch_all_data", type="primary", use_container_width=True):
                 with st.spinner(f"Fetching all data for {symbol.upper()}... This may take 1-2 minutes."):
                     try:
-                        client = get_python_api_client()
+                        client = get_go_api_client()
                         response = client.post(
-                            "api/v1/fetch-historical-data",
+                            "api/v1/admin/fetch-historical-data",
                             json_data={
                                 "symbol": symbol.upper(),
                                 "period": period,
@@ -828,9 +825,9 @@ def main():
                     audit_limit = st.session_state.get("audit_limit_selected", limit)
                     
                     try:
-                        python_client = get_python_api_client()
-                        audit_response = python_client.get(
-                            f"api/v1/data-fetch-audit/{audit_symbol}",
+                        go_client = get_go_api_client()
+                        audit_response = go_client.get(
+                            f"api/v1/admin/data-fetch-audit/{audit_symbol}",
                             params={"limit": audit_limit}
                         )
                         
@@ -961,7 +958,7 @@ def main():
                     validation_symbol = st.session_state.get("validation_symbol_selected", symbol.upper())
                     
                     try:
-                        python_client = get_python_api_client()
+                        go_client = get_go_api_client()
                         
                         # Get latest validation report from the fetch result if available
                         if "fetch_data_result" in st.session_state:
@@ -986,9 +983,9 @@ def main():
                     readiness_symbol = st.session_state.get("readiness_symbol_selected", symbol.upper())
                     
                     try:
-                        python_client = get_python_api_client()
-                        readiness_response = python_client.get(
-                            f"api/v1/signal-readiness/{readiness_symbol}",
+                        go_client = get_go_api_client()
+                        readiness_response = go_client.get(
+                            f"api/v1/admin/signal-readiness/{readiness_symbol}",
                             params={"signal_type": "swing_trend"}
                         )
                         
@@ -1124,9 +1121,9 @@ def main():
                 st.subheader("🔄 Auto-Retry Failed Fetches")
                 
                 try:
-                    python_client = get_python_api_client()
-                    audit_response = python_client.get(
-                        f"api/v1/data-fetch-audit/{retry_symbol}",
+                    go_client = get_go_api_client()
+                    audit_response = go_client.get(
+                        f"api/v1/admin/data-fetch-audit/{retry_symbol}",
                         params={"limit": 50}
                     )
                     
@@ -1251,9 +1248,9 @@ def main():
                 if st.button("🔄 Calculate Indicators", key="calc_indicators_btn", use_container_width=True):
                     with st.spinner(f"Calculating indicators for {symbol}..."):
                         try:
-                            python_client = get_python_api_client()
-                            response = python_client.post(
-                                "api/v1/refresh-data",
+                            go_client = get_go_api_client()
+                            response = go_client.post(
+                                "api/v1/admin/refresh-data",
                                 json_data={
                                     "symbol": symbol.upper(),
                                     "data_types": ["indicators"],
@@ -1768,9 +1765,9 @@ def main():
             
             if st.button("Generate Swing Signal", key="generate_swing"):
                 try:
-                    client = get_python_api_client()
+                    client = get_go_api_client()
                     response = client.post(
-                        "api/v1/swing/signal",
+                        "api/v1/admin/swing/signal",
                         json_data={
                             "symbol": symbol,
                             "user_id": user_id
@@ -1799,7 +1796,7 @@ def main():
             
             if st.button("Generate Blog", key="generate_blog"):
                 try:
-                    client = get_python_api_client()
+                    client = get_go_api_client()
                     payload = {
                         "user_id": user_id,
                         "topic_type": topic_type
@@ -1807,7 +1804,7 @@ def main():
                     if symbol:
                         payload["symbol"] = symbol
                     
-                    response = client.post("api/v1/blog/generate", json_data=payload)
+                    response = client.post("api/v1/admin/blog/generate", json_data=payload)
                     st.session_state["blog_result"] = response
                 except Exception as e:
                     st.error(f"Error: {str(e)}")

@@ -12,7 +12,6 @@ import logging
 
 from api_client import (
     get_go_api_client,
-    get_python_api_client,
     APIError,
     APIConnectionError,
     APIResponseError
@@ -32,6 +31,11 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Multipage entrypoint: route to the Home page.
+# Streamlit navigation works most reliably when the main script is outside `pages/`.
+st.switch_page("pages/9_Trading_Dashboard.py")
+st.stop()
 
 # Add testbed navigation link
 st.sidebar.markdown("---")
@@ -259,9 +263,9 @@ def generate_stock_report(symbol: str):
     logger.info(f"Generating stock report for {symbol}")
     
     try:
-        client = get_python_api_client()
+        client = get_go_api_client()
         return client.post(
-            "api/v1/generate-report",
+            "api/v1/admin/generate-report",
             json_data={
                 "symbol": symbol.upper(),
                 "include_llm": True
@@ -297,9 +301,9 @@ def refresh_data(symbol: str, data_types: list = None, force: bool = False):
     logger.info(f"Refreshing data for {symbol}: {data_types} (force={force})")
     
     try:
-        client = get_python_api_client()
+        client = get_go_api_client()
         return client.post(
-            "api/v1/refresh-data",
+            "api/v1/admin/refresh-data",
             json_data={
                 "symbol": symbol.upper(),
                 "data_types": data_types,
@@ -314,7 +318,7 @@ def refresh_data(symbol: str, data_types: list = None, force: bool = False):
 
 def fetch_historical_data(symbol: str, period: str = "1y", calculate_indicators: bool = True):
     """
-    Fetch historical data and calculate indicators on-demand (legacy endpoint)
+    Fetch historical data and calculate indicators on-demand
     
     Args:
         symbol: Stock symbol
@@ -333,9 +337,9 @@ def fetch_historical_data(symbol: str, period: str = "1y", calculate_indicators:
     logger.info(f"Fetching historical data for {symbol} (period: {period}, indicators: {calculate_indicators})")
     
     try:
-        client = get_python_api_client()
+        client = get_go_api_client()
         return client.post(
-            "api/v1/fetch-historical-data",
+            "api/v1/admin/fetch-historical-data",
             json_data={
                 "symbol": symbol.upper(),
                 "period": period,

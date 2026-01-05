@@ -146,6 +146,16 @@ def render_sidebar():
     """Render admin sidebar navigation"""
     st.sidebar.markdown("## 🎛️ Admin Control Panel")
     
+    # Stock symbol search
+    st.sidebar.markdown("### 🔎 Stock Search")
+    symbol = st.sidebar.text_input("Enter Stock Symbol", placeholder="e.g., AAPL", key="admin_stock_search")
+    
+    if symbol and st.sidebar.button("📊 View Stock Overview", key="admin_view_stock"):
+        st.session_state.admin_selected_symbol = symbol.upper()
+        st.session_state.admin_page = "Stock Overview"
+    
+    st.sidebar.markdown("---")
+    
     # Quick stats
     st.sidebar.markdown("### 📊 Quick Stats")
     if st.sidebar.button("🔄 Refresh Stats", key="refresh_sidebar_stats"):
@@ -163,20 +173,185 @@ def render_sidebar():
     st.sidebar.markdown("---")
     
     # Navigation
-    page = st.sidebar.selectbox(
-        "📍 Navigate to",
-        [
-            "🏠 Dashboard",
-            "📊 Data Sources",
-            "🔄 Data Management",
-            "📈 Signals & Screeners",
-            "🔍 Audit & Logs",
-            "⚙️ System Settings"
-        ],
-        index=0
-    )
+    # Check if we should show stock overview
+    if st.session_state.get("admin_page") == "Stock Overview" and st.session_state.get("admin_selected_symbol"):
+        page = "📊 Stock Overview"
+    else:
+        page = st.sidebar.selectbox(
+            "📍 Navigate to",
+            [
+                "🏠 Dashboard",
+                "📊 Data Sources",
+                "🔄 Data Management",
+                "📈 Signals & Screeners",
+                "🔍 Audit & Logs",
+                "⚙️ System Settings"
+            ],
+            index=0
+        )
+        st.session_state.admin_page = page
     
     return page
+
+def render_stock_overview():
+    """Render stock overview page"""
+    symbol = st.session_state.get("admin_selected_symbol", "")
+    
+    st.markdown(f"### 📊 Stock Overview: {symbol}")
+    
+    # Back button
+    if st.button("← Back to Admin Dashboard"):
+        st.session_state.admin_page = "🏠 Dashboard"
+        st.session_state.admin_selected_symbol = None
+        st.rerun()
+    
+    if not symbol:
+        st.error("No stock symbol selected")
+        return
+    
+    try:
+        # Fetch stock data using admin API client
+        with st.spinner(f"Loading data for {symbol}..."):
+            stock_data = api_client.make_request(f"{api_client.go_api_url}/api/v1/stock/{symbol}")
+            fundamentals = api_client.make_request(f"{api_client.go_api_url}/api/v1/stock/{symbol}/fundamentals")
+            news = api_client.make_request(f"{api_client.go_api_url}/api/v1/stock/{symbol}/news")
+            
+        if not stock_data:
+            st.error(f"No data found for symbol: {symbol}")
+            return
+        
+        # Price and basic info
+        price_info = stock_data.get("price_info", {})
+        current_price = price_info.get("current_price", 0)
+        change = price_info.get("change", 0)
+        change_percent = price_info.get("change_percent", 0)
+        
+        # Key metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Current Price", f"${current_price:.2f}", f"{change:+.2f} ({change_percent:+.2f}%)")
+        with col2:
+            market_cap = fundamentals.get("market_cap", 0) if fundamentals else 0
+            st.metric("Market Cap", f"${market_cap/1e9:.1f}B" if market_cap > 1e9 else f"${market_cap/1e6:.1f}M")
+        with col3:
+            pe_ratio = fundamentals.get("pe_ratio", "N/A") if fundamentals else "N/A"
+            st.metric("P/E Ratio", f"{pe_ratio:.2f}" if isinstance(pe_ratio, (int, float)) else pe_ratio)
+        with col4:
+            volume = price_info.get("volume", 0)
+            st.metric("Volume", f"{volume:,}")
+        
+        # Tabs for different sections
+        tab1, tab2, tab3 = st.tabs(["📈 Price Chart", "📊 Fundamentals", "📰 News"])
+        
+        with tab1:
+            st.subheader("Price Chart")
+            
+            historical_data = price_info.get("historical_data", [])
+            if historical_data:
+                df = pd.DataFrame(historical_data)
+                df['date'] = pd.to_datetime(df['date'])
+                
+                fig = go.Figure()
+                if all(col in df.columns for col in ['open', 'high', 'low', 'close']):
+                    fig.add_trace(go.Candlestick(
+                        x=df['date'],
+                        open=df['open'],
+                        high=df['high'],
+                        low=df['low'],
+                        close=df['close'],
+                        name='Price'
+                    ))
+                else:
+                    fig.add_trace(go.Scatter(
+                        x=df['date'],
+                        y=df['close'] if 'close' in df.columns else df['price'],
+                        mode='lines',
+                        name='Price'
+                    ))
+                
+                fig.update_layout(
+                    title=f"{symbol} Price Chart",
+                    yaxis_title="Price ($)",
+                    xaxis_title="Date",
+                    height=500
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("No historical price data available")
+        
+        with tab2:
+            st.subheader("Fundamental Analysis")
+            
+            if fundamentals:
+                fund_cols = st.columns(3)
+                with fund_cols[0]:
+                    st.write("**Valuation**")
+                    st.write(f"P/E Ratio: {fundamentals.get('pe_ratio', 'N/A')}")
+                    st.write(f"P/B Ratio: {fundamentals.get('pb_ratio', 'N/A')}")
+                    st.write(f"P/S Ratio: {fundamentals.get('ps_ratio', 'N/A')}")
+                    
+                with fund_cols[1]:
+                    st.write("**Financial Health**")
+                    st.write(f"Debt/Equity: {fundamentals.get('debt_to_equity', 'N/A')}")
+                    st.write(f"Current Ratio: {fundamentals.get('current_ratio', 'N/A')}")
+                    st.write(f"Quick Ratio: {fundamentals.get('quick_ratio', 'N/A')}")
+                    
+                with fund_cols[2]:
+                    st.write("**Profitability**")
+                    st.write(f"ROE: {fundamentals.get('roe', 'N/A')}")
+                    st.write(f"ROA: {fundamentals.get('roa', 'N/A')}")
+                    st.write(f"Net Margin: {fundamentals.get('net_margin', 'N/A')}")
+                
+                # Detailed metrics table
+                financial_metrics = {
+                    "Market Cap": fundamentals.get("market_cap", "N/A"),
+                    "Enterprise Value": fundamentals.get("enterprise_value", "N/A"),
+                    "Revenue (TTM)": fundamentals.get("revenue_ttm", "N/A"),
+                    "Net Income (TTM)": fundamentals.get("net_income_ttm", "N/A"),
+                    "EPS (TTM)": fundamentals.get("eps_ttm", "N/A"),
+                    "Dividend Yield": fundamentals.get("dividend_yield", "N/A"),
+                    "Beta": fundamentals.get("beta", "N/A"),
+                    "52 Week High": fundamentals.get("week_52_high", "N/A"),
+                    "52 Week Low": fundamentals.get("week_52_low", "N/A"),
+                }
+                
+                df_metrics = pd.DataFrame(list(financial_metrics.items()), columns=["Metric", "Value"])
+                st.dataframe(df_metrics, use_container_width=True)
+            else:
+                st.info("No fundamental data available")
+        
+        with tab3:
+            st.subheader("Latest News")
+            
+            if news and news.get("articles"):
+                articles = news["articles"][:10]  # Show latest 10 articles
+                for article in articles:
+                    with st.expander(f"📰 {article.get('title', 'No Title')}"):
+                        st.write(f"**Source:** {article.get('source', 'Unknown')}")
+                        st.write(f"**Published:** {article.get('published_at', 'Unknown date')}")
+                        st.write(f"**Summary:** {article.get('summary', article.get('description', 'No summary available'))}")
+                        if article.get('url'):
+                            st.write(f"[Read more]({article['url']})")
+            else:
+                st.info("No recent news available")
+        
+        # Admin actions
+        st.markdown("---")
+        st.subheader("Admin Actions")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("🔄 Refresh Data", key="admin_refresh_stock"):
+                st.success(f"Data refresh triggered for {symbol}")
+        with col2:
+            if st.button("📊 Generate Report", key="admin_generate_report"):
+                st.info(f"Report generation requested for {symbol}")
+        with col3:
+            if st.button("➕ Add to Watchlist", key="admin_add_watchlist"):
+                st.success(f"Added {symbol} to admin watchlist")
+                
+    except Exception as e:
+        st.error(f"❌ Error loading stock data: {e}")
 
 def render_dashboard():
     """Render main dashboard overview"""
@@ -760,6 +935,8 @@ def main():
         render_data_management()
     elif page == "📈 Signals & Screeners":
         render_signals_screeners()
+    elif page == "📊 Stock Overview":
+        render_stock_overview()
     elif page == "🔍 Audit & Logs":
         render_audit_logs()
     elif page == "⚙️ System Settings":

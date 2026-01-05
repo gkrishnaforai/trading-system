@@ -118,7 +118,7 @@ else:
                 else:
                     st.info("💡 No watchlists found. Create a watchlist first in the Watchlist Management page.")
                     if st.button("📋 Go to Watchlist Management"):
-                        st.switch_page("pages/4_📋_Watchlist.py")
+                        st.switch_page("pages/4_Watchlist.py")
             except APIError as e:
                 st.error(f"❌ Error loading watchlists: {e}")
     

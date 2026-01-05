@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils import setup_page_config, render_sidebar
-from api_client import get_python_api_client, APIError
+from api_client import get_go_api_client, APIError
 
 setup_page_config("Blog Generation", "📝")
 
@@ -32,23 +32,15 @@ else:
         topic_type = st.selectbox("Topic Type", ["signal_change", "trend_breakout", "earnings_alert"], key="blog_topic")
         
         if st.button("Generate Blog", key="generate_blog", type="primary"):
+            st.info("Blog generation is not triggered from Streamlit in Go-only mode. Fetching existing LLM blog from Go API if available...")
             try:
-                client = get_python_api_client()
-                payload = {
-                    "user_id": user_id,
-                    "topic_type": topic_type
-                }
-                if symbol:
-                    payload["symbol"] = symbol
-                
-                with st.spinner("Generating blog... This may take 30-60 seconds."):
-                    response = client.post("api/v1/blog/generate", json=payload)
-                    if response:
-                        st.session_state["blog_result"] = response
-                        st.success("✅ Blog generated!")
-                        st.rerun()
+                go_client = get_go_api_client()
+                response = go_client.get(f"api/v1/llm_blog/{symbol.upper()}", timeout=60)
+                st.session_state["blog_result"] = response
+                st.success("✅ Blog fetched!")
+                st.rerun()
             except Exception as e:
-                st.error(f"❌ Error: {e}")
+                st.error(f"❌ Failed to fetch blog from Go API: {e}")
     
     with col2:
         if "blog_result" in st.session_state:

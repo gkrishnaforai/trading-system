@@ -1,0 +1,451 @@
+"""
+Universal Backtest Dashboard
+Supports 3x ETFs, Regular ETFs, and Individual Stocks with Fear/Greed integration
+"""
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
+import requests
+import json
+
+from utils import setup_page_config, render_sidebar
+from api_client import get_go_api_client, APIClient, APIError
+
+setup_page_config("Universal Backtest", "🔄")
+
+# Asset configurations
+ASSET_CONFIGS = {
+    "3x_ETFs": {
+        "assets": ["TQQQ", "SOXL", "FNGO", "LABU", "TECL"],
+        "description": "3x Leveraged ETFs - High volatility, enhanced Fear/Greed logic",
+        "volatility_threshold": 8.0,
+        "rsi_oversold": 48,
+        "risk_management": "Aggressive volatility detection",
+        "engine_type": "unified_tqqq_swing"  # Can be extended for other 3x ETFs
+    },
+    "Regular_ETFs": {
+        "assets": ["QQQ", "SPY", "SMH", "IWM", "VTI"],
+        "description": "Standard ETFs - Moderate volatility, mean reversion focus",
+        "volatility_threshold": 5.0,
+        "rsi_oversold": 35,
+        "risk_management": "Standard risk management",
+        "engine_type": "swing_engine"  # Will need to create this
+    },
+    "Individual_Stocks": {
+        "assets": ["NVDA", "GOOGL", "AAPL", "TSLA", "MSFT", "AMD"],
+        "description": "Individual Stocks - Earnings-aware, company-specific risk",
+        "volatility_threshold": 6.0,
+        "rsi_oversold": 30,
+        "risk_management": "Stock-specific risk management",
+        "engine_type": "stock_swing_engine"  # Will need to create this
+    }
+}
+
+def get_universal_signal(asset_symbol: str, date: str, asset_category: str):
+    """Get signal for any asset using appropriate engine"""
+    config = ASSET_CONFIGS[asset_category]
+    
+    # For now, use TQQQ engine for all (can be extended later)
+    if asset_category == "3x_ETFs":
+        api_url = f"http://127.0.0.1:8001/signal/tqqq"
+    else:
+        # Placeholder for other engines
+        api_url = f"http://127.0.0.1:8001/signal/tqqq"  # Use TQQQ as fallback
+    
+    try:
+        response = requests.post(api_url, json={"date": date})
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success"):
+                # Adapt the response for the requested asset
+                signal_data = data["data"]
+                signal_data["market_data"]["symbol"] = asset_symbol
+                return signal_data
+            else:
+                return {"error": data.get("error", "Unknown error")}
+        else:
+            return {"error": f"API Error: {response.status_code}"}
+    except Exception as e:
+        return {"error": f"Request failed: {str(e)}"}
+
+def display_enhanced_backtest_results(results: dict, asset_symbol: str, asset_category: str):
+    """Enhanced display for universal backtest with Fear/Greed integration"""
+    
+    st.subheader(f"📊 {asset_symbol} Signal Analysis ({asset_category.replace('_', ' ').title()})")
+    
+    if results["mode"] == "Single Date":
+        signal = results["signal"]
+        market = results["market_data"]
+        performance = results["performance"]
+        analysis = results.get("analysis", {})
+        
+        # 🎯 Signal Summary with Asset-Specific Colors
+        signal_value = signal.get("signal", "N/A")
+        confidence = signal.get("confidence", 0)
+        
+        # Enhanced signal color mapping
+        signal_colors = {
+            "buy": ("🟢", "green"),
+            "sell": ("🔴", "red"), 
+            "hold": ("🟡", "orange")
+        }
+        signal_emoji, signal_color = signal_colors.get(signal_value.lower(), ("⚪", "gray"))
+        
+        # Main signal display
+        st.markdown(f"### {signal_emoji} **{signal_value.upper()}**")
+        st.markdown(f"**Confidence:** {confidence:.1%}")
+        st.markdown(f"**Asset:** {asset_symbol} ({asset_category.replace('_', ' ').title()})")
+        
+        # 🎭 Fear/Greed State Panel (Same as before)
+        metadata = signal.get("metadata", {})
+        fear_greed_state = metadata.get("fear_greed_state", "unknown")
+        fear_greed_bias = metadata.get("fear_greed_bias", "unknown")
+        recovery_detected = metadata.get("recovery_detected", False)
+        
+        # Enhanced Fear/Greed color mapping with descriptions
+        fg_colors = {
+            "extreme_fear": ("🟣", "purple", "Extreme Fear - Capitulation"),
+            "fear": ("🔵", "blue", "Fear - Buying Opportunity"), 
+            "neutral": ("⚪", "gray", "Neutral - Balanced"),
+            "greed": ("🟠", "orange", "Greed - Caution"),
+            "extreme_greed": ("🔴", "red", "Extreme Greed - Euphoria")
+        }
+        
+        fg_emoji, fg_color, fg_description = fg_colors.get(fear_greed_state, ("⚪", "gray", "Unknown"))
+        
+        # Bias color mapping
+        bias_colors = {
+            "strongly_bullish": ("🟢", "Strong Buy"),
+            "bullish": ("🟡", "Buy"),
+            "neutral": ("⚪", "Neutral"),
+            "bearish": ("🟠", "Sell"),
+            "strongly_bearish": ("🔴", "Strong Sell")
+        }
+        bias_emoji, bias_description = bias_colors.get(fear_greed_bias, ("⚪", "Unknown"))
+        
+        # Fear/Greed Panel
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"### {fg_emoji} **Fear/Greed State**")
+            st.markdown(f"**{fear_greed_state.replace('_', ' ').title()}**")
+            st.caption(fg_description)
+            
+        with col2:
+            st.markdown(f"### {bias_emoji} **Signal Bias**")
+            st.markdown(f"**{fear_greed_bias.replace('_', ' ').title()}**")
+            st.caption(bias_description)
+            
+        with col3:
+            if recovery_detected:
+                st.markdown("### 🔄 **Recovery**")
+                st.success("**Detected**")
+                st.caption("BUY-in-Fear Opportunity")
+            else:
+                st.markdown("### 🔄 **Recovery**")
+                st.warning("**Not Detected**")
+                st.caption("Waiting for stabilization")
+        
+        # 🌊 Market Context Panel (Enhanced)
+        st.markdown("### 🌊 Market Context")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            volatility = metadata.get("volatility", analysis.get("real_volatility", 0))
+            volatility_float = float(volatility) if volatility else 0.0
+            vol_color = "🔴" if volatility_float > 8 else "🟡" if volatility_float > 5 else "🟢"
+            vol_status = "High" if volatility_float > 8 else "Moderate" if volatility_float > 5 else "Low"
+            st.metric(f"{vol_color} Volatility", f"{volatility_float:.2f}%")
+            st.caption(f"Status: {vol_status}")
+            
+        with col2:
+            vix_level = analysis.get("vix_level", 0)
+            vix_float = float(vix_level) if vix_level else 0.0
+            vix_color = "🔴" if vix_float > 30 else "🟡" if vix_float > 20 else "🟢"
+            vix_status = "Extreme Fear" if vix_float > 30 else "Fear" if vix_float > 20 else "Calm"
+            st.metric(f"{vix_color} VIX", f"{vix_float:.2f}")
+            st.caption(f"Status: {vix_status}")
+            
+        with col3:
+            recent_change = metadata.get("recent_change", analysis.get("recent_change", 0))
+            change_float = float(recent_change) if recent_change else 0.0
+            change_color = "🔴" if change_float < -3 else "🟡" if change_float < 0 else "🟢"
+            change_status = "Strong Decline" if change_float < -3 else "Decline" if change_float < 0 else "Rise"
+            st.metric(f"{change_color} 3-Day Change", f"{change_float:.2f}%")
+            st.caption(f"Status: {change_status}")
+            
+        with col4:
+            rsi = metadata.get("rsi", market.get("rsi", 50))
+            rsi_float = float(rsi) if rsi else 50.0
+            rsi_color = "🔴" if rsi_float < 30 else "🟡" if rsi_float > 70 else "🟢"
+            rsi_status = "Oversold" if rsi_float < 30 else "Overbought" if rsi_float > 70 else "Neutral"
+            st.metric(f"{rsi_color} RSI", f"{rsi_float:.1f}")
+            st.caption(f"Status: {rsi_status}")
+        
+        # 🎭 Market Regime Panel
+        regime = metadata.get("regime", "unknown")
+        
+        # Enhanced regime information
+        regime_insights = {
+            "volatility_expansion": {
+                "icon": "🌊",
+                "title": "Volatility Expansion",
+                "description": "High volatility environment - risk management priority",
+                "action": "Watch for recovery signals, avoid selling into panic"
+            },
+            "mean_reversion": {
+                "icon": "🔄", 
+                "title": "Mean Reversion",
+                "description": "Price reverting to mean - pullback opportunities",
+                "action": "Look for oversold entries and bounce plays"
+            },
+            "trend_continuation": {
+                "icon": "📈",
+                "title": "Trend Continuation", 
+                "description": "Strong trend in place - momentum trading",
+                "action": "Follow the trend - buy dips, sell rallies"
+            },
+            "breakout": {
+                "icon": "🚀",
+                "title": "Breakout",
+                "description": "Price breaking key levels - momentum plays",
+                "action": "Momentum trading - watch for false breakouts"
+            }
+        }
+        
+        regime_info = regime_insights.get(regime, {
+            "icon": "❓",
+            "title": "Unknown Regime",
+            "description": "Regime not identified",
+            "action": "Proceed with caution"
+        })
+        
+        st.markdown(f"### {regime_info['icon']} **{regime_info['title']} Regime**")
+        st.markdown(f"**Description:** {regime_info['description']}")
+        st.markdown(f"**Strategy:** {regime_info['action']}")
+        
+        # 📝 Enhanced Signal Reasoning with Categories
+        if signal.get("reasoning"):
+            st.markdown("### 📝 Signal Reasoning")
+            
+            # Enhanced categorization
+            signal_ladder_reasons = []
+            fear_greed_reasons = []
+            technical_reasons = []
+            action_items = []
+            
+            for reason in signal.get("reasoning", []):
+                if "Signal Ladder" in reason:
+                    signal_ladder_reasons.append(reason)
+                elif "WAIT FOR" in reason or "→" in reason:
+                    action_items.append(reason)
+                elif "Fear" in reason or "Recovery" in reason or "VIX" in reason or "volatility" in reason:
+                    fear_greed_reasons.append(reason)
+                elif "RSI" in reason or "Price" in reason or "SMA" in reason:
+                    technical_reasons.append(reason)
+                else:
+                    technical_reasons.append(reason)
+            
+            # Display Signal Ladder (Most Important)
+            if signal_ladder_reasons:
+                st.markdown("**🎯 Signal Ladder Analysis:**")
+                for reason in signal_ladder_reasons:
+                    st.success(f"🎭 {reason}")
+            
+            # Display Action Items
+            if action_items:
+                st.markdown("**⚡ Action Items:**")
+                for reason in action_items:
+                    st.info(f"📋 {reason}")
+            
+            # Display Fear/Greed Factors
+            if fear_greed_reasons:
+                st.markdown("**🧠 Fear/Greed Factors:**")
+                for reason in fear_greed_reasons:
+                    st.warning(f"🎪 {reason}")
+            
+            # Display Technical Factors
+            if technical_reasons:
+                st.markdown("**📊 Technical Factors:**")
+                for reason in technical_reasons:
+                    st.caption(f"📈 {reason}")
+        
+        # 💡 Asset-Specific Actionable Insights
+        st.markdown("### 💡 Actionable Insights")
+        
+        insights = []
+        
+        # Asset-category specific insights
+        if asset_category == "3x_ETFs":
+            if fear_greed_state in ["fear", "extreme_fear"]:
+                insights.append("🎯 **3x ETF Strategy**: Extreme volatility - HOLD or very small positions")
+                insights.append("⚡ **Leverage Risk**: 3x exposure requires tight risk management")
+                insights.append("🛡️ **Volatility Target**: Wait for flattening before considering entries")
+        elif asset_category == "Regular_ETFs":
+            insights.append("📊 **ETF Strategy**: Standard volatility - normal position sizes")
+            insights.append("🔄 **Mean Reversion**: ETFs tend to revert to mean more reliably")
+        else:  # Individual Stocks
+            insights.append("🏢 **Stock Strategy**: Company-specific factors at play")
+            insights.append("📈 **Earnings Awareness**: Watch for earnings dates and news")
+        
+        # Signal-specific insights based on Fear/Greed state
+        if fear_greed_state in ["fear", "extreme_fear"]:
+            if signal_value == "hold":
+                insights.append("🎯 **Fear Strategy**: HOLD - Don't sell into panic")
+                insights.append("⏳ **Wait For**: Volatility flattening or green close")
+            elif signal_value == "buy" and recovery_detected:
+                insights.append("🔄 **Recovery Play**: Small position for mean-reversion")
+        
+        # Display insights
+        for insight in insights:
+            st.info(insight)
+        
+        # 📊 Technical Summary
+        st.markdown("### 📊 Technical Summary")
+        tech_col1, tech_col2, tech_col3 = st.columns(3)
+        
+        with tech_col1:
+            st.metric("Price", f"${market.get('price', 0):.2f}")
+            st.metric("SMA 20", f"${metadata.get('sma_20', 0):.2f}")
+            
+        with tech_col2:
+            st.metric("SMA 50", f"${metadata.get('sma_50', 0):.2f}")
+            price_vs_sma = ((market.get('price', 0) - metadata.get('sma_20', 0)) / metadata.get('sma_20', 1)) * 100
+            sma_color = "🟢" if price_vs_sma > 0 else "🔴"
+            st.metric(f"{sma_color} Price vs SMA20", f"{price_vs_sma:.2f}%")
+            
+        with tech_col3:
+            st.metric("Volume", f"{market.get('volume', 0):,}")
+            st.metric("High", f"${market.get('high', 0):.2f}")
+            st.metric("Low", f"${market.get('low', 0):.2f}")
+
+def main():
+    """Main dashboard function"""
+    
+    # Render sidebar
+    subscription_level = render_sidebar()
+    
+    st.title("🔄 Universal Backtest Dashboard")
+    st.markdown("*Advanced Fear/Greed integration for multiple asset types*")
+    
+    # Asset Category Selection
+    st.markdown("### 🎯 Select Asset Category")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("🚀 3x ETFs", key="3x_etf", use_container_width=True, help="TQQQ, SOXL, FNGO - High volatility"):
+            st.session_state.asset_category = "3x_ETFs"
+    
+    with col2:
+        if st.button("📊 Regular ETFs", key="regular_etf", use_container_width=True, help="QQQ, SPY, SMH - Standard volatility"):
+            st.session_state.asset_category = "Regular_ETFs"
+    
+    with col3:
+        if st.button("🏢 Individual Stocks", key="stocks", use_container_width=True, help="NVDA, GOOGL, AAPL - Stock-specific"):
+            st.session_state.asset_category = "Individual_Stocks"
+    
+    # Initialize asset category
+    if "asset_category" not in st.session_state:
+        st.session_state.asset_category = "3x_ETFs"
+    
+    asset_category = st.session_state.asset_category
+    config = ASSET_CONFIGS[asset_category]
+    
+    # Display category info
+    st.markdown(f"### {asset_category.replace('_', ' ').title()}")
+    st.markdown(f"*{config['description']}*")
+    
+    # Asset Selection
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        selected_asset = st.selectbox(
+            "Select Asset:",
+            config["assets"],
+            key="selected_asset"
+        )
+    
+    with col2:
+        st.metric("Volatility Threshold", f"{config['volatility_threshold']}%")
+        st.metric("RSI Oversold", config['rsi_oversold'])
+    
+    # Date Selection
+    st.markdown("### 📅 Select Date Range")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        backtest_mode = st.selectbox(
+            "Backtest Mode:",
+            ["Single Date", "Date Range", "Quick Test Week"],
+            key="backtest_mode"
+        )
+    
+    with col2:
+        if backtest_mode == "Single Date":
+            selected_date = st.date_input(
+                "Select Date:",
+                datetime.now().date() - timedelta(days=1),
+                key="single_date"
+            )
+        elif backtest_mode == "Date Range":
+            start_date = st.date_input(
+                "Start Date:",
+                datetime.now().date() - timedelta(days=30),
+                key="start_date"
+            )
+            end_date = st.date_input(
+                "End Date:",
+                datetime.now().date() - timedelta(days=1),
+                key="end_date"
+            )
+    
+    with col3:
+        if backtest_mode == "Quick Test Week":
+            test_week = st.selectbox(
+                "Test Week:",
+                ["This Week", "Last Week", "Two Weeks Ago"],
+                key="test_week"
+            )
+    
+    # Run Backtest Button
+    if st.button(f"🚀 Run {selected_asset} Backtest", type="primary", use_container_width=True):
+        with st.spinner(f"Generating {selected_asset} signals..."):
+            
+            if backtest_mode == "Single Date":
+                date_str = selected_date.strftime("%Y-%m-%d")
+                results = get_universal_signal(selected_asset, date_str, asset_category)
+                
+                if "error" in results:
+                    st.error(f"❌ Error generating signal: {results['error']}")
+                else:
+                    # Format results for display
+                    display_results = {
+                        "mode": "Single Date",
+                        "signal": results["signal"],
+                        "market_data": results["market_data"],
+                        "analysis": results.get("analysis", {}),
+                        "performance": None
+                    }
+                    
+                    display_enhanced_backtest_results(display_results, selected_asset, asset_category)
+            
+            elif backtest_mode == "Date Range":
+                st.info("📊 Date range backtest coming soon...")
+                # TODO: Implement multi-date backtest
+                
+            elif backtest_mode == "Quick Test Week":
+                st.info("⚡ Quick test week coming soon...")
+                # TODO: Implement quick test week
+    
+    # Asset Configuration Info
+    with st.expander(f"🔧 {asset_category.replace('_', ' ').title()} Configuration"):
+        st.json(config)
+
+if __name__ == "__main__":
+    main()

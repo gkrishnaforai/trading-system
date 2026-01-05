@@ -8,11 +8,14 @@ import logging
 
 from api_client import (
     get_go_api_client,
-    get_python_api_client,
+    APIClient,
     APIError,
     APIConnectionError,
     APIResponseError
 )
+
+# Import ticker search component
+from components.ticker_search import render_ticker_search
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +75,37 @@ def get_subscription_level():
 
 
 def render_sidebar():
-    """Render common sidebar with subscription selector"""
+    """Render common sidebar with global ticker search and navigation"""
     with st.sidebar:
-        st.header("Settings")
+        st.header("Trading System")
+        
+        # Global ticker search (magnifying glass UX) - moved to top
+        ticker = render_ticker_search()
+        
+        st.divider()
+        
+        # Navigation
+        st.markdown("### Navigation")
+        pages = {
+            "🏠 Dashboard": "pages/1_Home.py",
+            "📊 Trading Dashboard": "pages/9_Trading_Dashboard.py",
+            "📊 Stock Overview": "pages/8_Stock_Overview.py",
+            "📈 Stock Analysis": "pages/2_Stock_Analysis.py",
+            "📈 Swing Trading": "pages/6_Swing_Trading.py",
+            "📋 Watchlist Management": "pages/4_Watchlist.py",
+            "💼 Portfolio Management": "pages/3_Portfolio.py",
+            "📰 Market News": "pages/8_Market_Features.py",
+        }
+
+        for page_name, page_path in pages.items():
+            # Use st.button with navigation instead of st.page_link for compatibility
+            if st.button(page_name, key=f"nav_{page_path}", use_container_width=True):
+                st.switch_page(page_path)
+        
+        st.divider()
         
         # Subscription level selector
+        st.markdown("### Subscription")
         subscription_level = st.selectbox(
             "Subscription Level",
             SUBSCRIPTION_LEVELS,
@@ -92,6 +121,45 @@ def render_sidebar():
         )
         
         st.divider()
+        
+        # Cache Management
+        st.markdown("### Cache Management")
+        
+        # Get current symbol from session state or default
+        current_symbol = st.session_state.get("selected_ticker", "AAPL")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            clear_symbol = st.button("🗑️ Clear Symbol", key="clear_symbol_cache", use_container_width=True)
+        with col2:
+            clear_all = st.button("🗑️ Clear All", key="clear_all_cache", use_container_width=True)
+        
+        if clear_symbol:
+            # Clear cache for current symbol
+            with st.spinner(f"Clearing cache for {current_symbol}..."):
+                try:
+                    # Create API client for cache clearing
+                    cache_client = APIClient(PYTHON_API_URL, timeout=30)
+                    result = cache_client.post("/admin/clear-cache", json_data={"symbol": current_symbol})
+                    st.success(f"✅ Cache cleared for {current_symbol}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Failed to clear cache for {current_symbol}: {str(e)}")
+        
+        if clear_all:
+            # Clear all cache
+            with st.spinner("Clearing all cache..."):
+                try:
+                    cache_client = APIClient(PYTHON_API_URL, timeout=30)
+                    result = cache_client.post("/admin/clear-cache", json_data={})
+                    st.success("✅ All cache cleared")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Failed to clear all cache: {str(e)}")
+        
+        # Store selected ticker in session state for other pages to use
+        if ticker:
+            st.session_state.selected_ticker = ticker
         
         return subscription_level
 

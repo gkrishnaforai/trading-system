@@ -42,15 +42,15 @@ col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     if st.button("📊 Stock Analysis", use_container_width=True):
-        st.switch_page("pages/2_📊_Stock_Analysis.py")
+        st.switch_page("pages/2_Stock_Analysis.py")
 
 with col2:
     if st.button("💼 Portfolio", use_container_width=True):
-        st.switch_page("pages/3_💼_Portfolio.py")
+        st.switch_page("pages/3_Portfolio.py")
 
 with col3:
     if st.button("📋 Watchlist", use_container_width=True):
-        st.switch_page("pages/4_📋_Watchlist.py")
+        st.switch_page("pages/4_Watchlist.py")
 
 with col4:
     # Testbed is automatically available in sidebar - no need for button navigation
