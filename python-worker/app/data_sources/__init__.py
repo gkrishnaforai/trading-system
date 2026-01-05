@@ -5,6 +5,7 @@ Supports multiple data providers with Strategy Pattern and Plugin System
 from typing import Optional
 from app.data_sources.base import BaseDataSource
 from app.data_sources.yahoo_finance_source import YahooFinanceSource
+from app.data_sources.financial_modeling_prep_source import FinancialModelingPrepSource
 from app.data_sources.fallback_source import FallbackDataSource
 from app.config import settings
 from app.plugins import get_plugin_registry as get_registry
@@ -38,6 +39,7 @@ else:
 # Legacy registry (for backward compatibility)
 DATA_SOURCES = {
     "yahoo_finance": YahooFinanceSource,
+    "fmp": FinancialModelingPrepSource,
     "fallback": FallbackDataSource,  # Fallback source with Yahoo Finance + Finnhub
 }
 
@@ -74,6 +76,9 @@ def _is_source_available(source_name: str) -> bool:
     if source_name == "massive":
         # Massive requires massive library AND API key
         return POLYGON_LIBRARY_AVAILABLE and MASSIVE_AVAILABLE and settings.massive_api_key is not None
+    elif source_name == "fmp":
+        # FMP requires API key
+        return settings.fmp_api_key and settings.fmp_api_key.strip()
     return True
 
 # Validate that required dependencies are installed if sources are configured
@@ -178,7 +183,17 @@ def get_data_source(name: str = None, use_fallback: bool = True) -> BaseDataSour
             # Prepare configuration based on adapter type
             config = {}
             
-            if name == "massive":
+            if name == "fmp":
+                config = {
+                    "api_key": settings.fmp_api_key,
+                    "base_url": settings.fmp_base_url,
+                    "timeout": settings.fmp_timeout,
+                    "max_retries": settings.fmp_max_retries,
+                    "retry_delay": settings.fmp_retry_delay,
+                    "rate_limit_calls": settings.fmp_rate_limit_calls,
+                    "rate_limit_window": settings.fmp_rate_limit_window
+                }
+            elif name == "massive":
                 config = {
                     "api_key": settings.massive_api_key,
                     "rate_limit_calls": settings.massive_rate_limit_calls,

@@ -26,6 +26,12 @@ from app.data_validation.checks import (
     IndicatorDataCheck
 )
 
+# Import specialized validators
+from app.data_validation.fundamentals_validator import FundamentalsValidator
+from app.data_validation.technical_indicators_validator import TechnicalIndicatorsValidator
+from app.data_validation.earnings_data_validator import EarningsDataValidator
+from app.data_validation.market_news_validator import MarketNewsValidator
+
 __all__ = [
     'DataValidator',
     'ValidationResult',
@@ -40,6 +46,10 @@ __all__ = [
     'RangeCheck',
     'ContinuityCheck',
     'VolumeCheck',
-    'IndicatorDataCheck'
+    'IndicatorDataCheck',
+    'FundamentalsValidator',
+    'TechnicalIndicatorsValidator',
+    'EarningsDataValidator',
+    'MarketNewsValidator'
 ]
 

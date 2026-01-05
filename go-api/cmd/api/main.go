@@ -42,6 +42,7 @@ func main() {
 	indicatorRepo := repositories.NewIndicatorRepository()
 	marketDataRepo := repositories.NewMarketDataRepository()
 	watchlistRepo := repositories.NewWatchlistRepository()
+	tickerRepo := repositories.NewTickerRepository()
 
 	// Initialize services
 	portfolioService := services.NewPortfolioService(portfolioRepo, indicatorRepo, cacheService)
@@ -54,12 +55,15 @@ func main() {
 
 	stockService := services.NewStockService(indicatorRepo, marketDataRepo, cacheService, pythonWorkerURL)
 	watchlistService := services.NewWatchlistService(watchlistRepo, portfolioRepo, cacheService)
+	tickerService := services.NewTickerService(tickerRepo, cacheService)
 	pythonWorkerClient := services.NewPythonWorkerClient(pythonWorkerURL)
+	symbolScopeHandler := handlers.NewSymbolScopeHandler(watchlistService, portfolioService, cacheService)
 
 	// Initialize handlers
 	portfolioHandler := handlers.NewPortfolioHandler(portfolioService)
 	stockHandler := handlers.NewStockHandler(stockService)
 	watchlistHandler := handlers.NewWatchlistHandler(watchlistService)
+	tickerHandler := handlers.NewTickerHandler(tickerService)
 	llmHandler := handlers.NewLLMHandler()
 	reportHandler := handlers.NewReportHandler()
 	adminProxyHandler := handlers.NewAdminProxyHandler(pythonWorkerClient)
@@ -95,7 +99,17 @@ func main() {
 		api.GET("/admin/insights/strategies", adminProxyHandler.GetAvailableStrategies)
 		api.POST("/admin/insights/strategy/:strategyName", adminProxyHandler.RunSingleStrategy)
 
+		// Earnings calendar endpoints (Go API -> python-worker admin)
+		api.GET("/admin/earnings-calendar", adminProxyHandler.GetEarningsCalendar)
+		api.POST("/admin/earnings-calendar/refresh", adminProxyHandler.RefreshEarningsCalendar)
+		api.POST("/admin/earnings-calendar/refresh-for-date", adminProxyHandler.RefreshEarningsForDate)
+
+		// Swing endpoints (Go API -> python-worker)
+		api.POST("/admin/swing/signal", adminProxyHandler.SwingSignal)
+		api.POST("/admin/swing/risk/check", adminProxyHandler.SwingRiskCheck)
+
 		// Portfolio endpoints
+		api.GET("/portfolios/user/:user_id", portfolioHandler.GetPortfolios)
 		api.GET("/portfolio/:user_id/:portfolio_id", portfolioHandler.GetPortfolio)
 		api.POST("/portfolio/:user_id", portfolioHandler.CreatePortfolio)
 		api.PUT("/portfolio/:user_id/:portfolio_id", portfolioHandler.UpdatePortfolio)
@@ -116,6 +130,13 @@ func main() {
 		api.PUT("/watchlist-items/:item_id", watchlistHandler.UpdateItem)
 		api.DELETE("/watchlist-items/:item_id", watchlistHandler.RemoveItem)
 		api.POST("/watchlists/:watchlist_id/move-to-portfolio", watchlistHandler.MoveToPortfolio)
+
+		// Symbol scope endpoints (UI helper)
+		api.GET("/symbol-scope/resolve", symbolScopeHandler.Resolve)
+
+		// Ticker directory endpoints
+		api.GET("/tickers/search", tickerHandler.SearchTickers)
+		api.GET("/tickers/:symbol", tickerHandler.GetTicker)
 
 		// Stock endpoints
 		api.GET("/stock/:symbol", stockHandler.GetStock)

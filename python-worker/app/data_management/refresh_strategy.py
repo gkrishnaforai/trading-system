@@ -29,6 +29,7 @@ class DataType(Enum):
     NEWS = "news"
     EARNINGS = "earnings"
     INDUSTRY_PEERS = "industry_peers"
+    CORPORATE_ACTIONS = "corporate_actions"
     SIGNALS = "signals"
     REPORTS = "reports"
     # New financial data types
@@ -116,6 +117,7 @@ class ScheduledRefreshStrategy(BaseRefreshStrategy):
             DataType.NEWS: 5,
             DataType.EARNINGS: 4,
             DataType.INDUSTRY_PEERS: 3,
+            DataType.CORPORATE_ACTIONS: 3,
         }
         return priorities.get(data_type, 1)
 

@@ -57,7 +57,26 @@ CREATE TABLE IF NOT EXISTS stock_news (
 ALTER TABLE stock_news
   ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
 
-CREATE INDEX IF NOT EXISTS idx_stock_news_symbol_date ON stock_news(stock_symbol, published_at DESC);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'stock_news'
+      AND column_name = 'stock_id'
+  ) THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_stock_news_stock_id_date ON stock_news(stock_id, published_at DESC)';
+  ELSIF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'stock_news'
+      AND column_name = 'stock_symbol'
+  ) THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_stock_news_symbol_date ON stock_news(stock_symbol, published_at DESC)';
+  END IF;
+END $$;
 
 
 CREATE TABLE IF NOT EXISTS earnings_data (

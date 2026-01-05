@@ -143,13 +143,13 @@ class SafeDatabaseOperations:
                     # Simple individual insert
                     session.execute(text("""
                         INSERT INTO indicators_daily (
-                            symbol, date, indicator_name, indicator_value, time_period,
+                            stock_symbol, trade_date, indicator_name, indicator_value, time_period,
                             data_source, created_at
                         ) VALUES (
                             :symbol, :date, :indicator_name, :indicator_value, :time_period,
                             :data_source, :created_at
                         )
-                        ON CONFLICT (symbol, date, indicator_name, data_source) DO NOTHING
+                        ON CONFLICT (stock_symbol, trade_date, indicator_name, data_source) DO NOTHING
                     """), record)
                     
                     session.commit()
@@ -194,13 +194,13 @@ class SafeDatabaseOperations:
             try:
                 session.execute(text("""
                     INSERT INTO indicators_daily (
-                        symbol, date, indicator_name, indicator_value, time_period,
+                        stock_symbol, trade_date, indicator_name, indicator_value, time_period,
                         data_source, created_at
                     ) VALUES (
                         :symbol, :date, :indicator_name, :indicator_value, :time_period,
                         :data_source, :created_at
                     )
-                    ON CONFLICT (symbol, date, indicator_name, time_period) DO NOTHING
+                    ON CONFLICT (stock_symbol, trade_date, indicator_name, time_period) DO NOTHING
                 """), record)
                 inserted += 1
                 

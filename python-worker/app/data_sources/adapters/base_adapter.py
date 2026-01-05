@@ -56,7 +56,7 @@ class PerformanceMetrics:
                         tags={"adapter": self.adapter_name, "method": method_name}
                     )
                     
-                    self.logger.debug(
+                    self._logger.debug(
                         f"{method_name} completed in {duration:.3f}s",
                         extra={"duration": duration, "method": method_name}
                     )
@@ -70,7 +70,7 @@ class PerformanceMetrics:
                         tags={"adapter": self.adapter_name, "method": method_name, "error": type(e).__name__}
                     )
                     
-                    self.logger.error(
+                    self._logger.error(
                         f"{method_name} failed after {duration:.3f}s: {str(e)}",
                         extra={"duration": duration, "method": method_name, "error": str(e)}
                     )

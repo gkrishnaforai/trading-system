@@ -78,20 +78,22 @@ REGULAR_ETF_CONFIGS = {
 }
 
 def get_regular_etf_signal(etf_symbol: str, date: str):
-    """Get signal for regular ETF (using TQQQ engine as proxy for now)"""
+    """Get signal for regular ETF using universal API"""
     try:
-        # Use TQQQ engine as proxy (will need regular ETF engine later)
-        api_url = f"http://127.0.0.1:8001/signal/tqqq"
-        response = requests.post(api_url, json={"date": date})
+        # Use universal API on main server (port 8001)
+        api_url = "http://127.0.0.1:8001/api/v1/universal/signal/universal"
+        payload = {
+            "symbol": etf_symbol,
+            "date": date,
+            "asset_type": "regular_etf"
+        }
+        
+        response = requests.post(api_url, json=payload)
         
         if response.status_code == 200:
             data = response.json()
             if data.get("success"):
-                # Adapt the response for the requested ETF
                 signal_data = data["data"]
-                
-                # Update market data to reflect the requested ETF
-                signal_data["market_data"]["symbol"] = etf_symbol
                 
                 # Add ETF-specific metadata
                 etf_config = REGULAR_ETF_CONFIGS[etf_symbol]
@@ -99,14 +101,14 @@ def get_regular_etf_signal(etf_symbol: str, date: str):
                     "name": etf_config["name"],
                     "sector": etf_config["sector"],
                     "volatility_profile": etf_config["volatility_profile"],
-                    "engine_used": "TQQQ (proxy - needs regular ETF engine)"
+                    "engine_used": "Universal Regular ETF Engine"
                 }
                 
                 return signal_data
             else:
                 return {"error": data.get("error", "Unknown error")}
         else:
-            return {"error": f"API Error: {response.status_code}"}
+            return {"error": f"API Error: {response.status_code} - {response.text}"}
     except Exception as e:
         return {"error": f"Request failed: {str(e)}"}
 

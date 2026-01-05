@@ -35,8 +35,8 @@ def create_price_tables():
             session.execute(text("""
                 CREATE TABLE raw_market_data_daily (
                     id SERIAL PRIMARY KEY,
-                    symbol VARCHAR(10) NOT NULL,
-                    date DATE NOT NULL,
+                    stock_symbol VARCHAR(10) NOT NULL,
+                    trade_date DATE NOT NULL,
                     open NUMERIC(12, 4),
                     high NUMERIC(12, 4),
                     low NUMERIC(12, 4),
@@ -45,14 +45,14 @@ def create_price_tables():
                     adjusted_close NUMERIC(12, 4),
                     data_source VARCHAR(50) DEFAULT 'alphavantage',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(symbol, date, data_source)
+                    UNIQUE(stock_symbol, trade_date, data_source)
                 )
             """))
             
             # Create indexes
-            session.execute(text("CREATE INDEX idx_raw_market_daily_symbol ON raw_market_data_daily(symbol)"))
-            session.execute(text("CREATE INDEX idx_raw_market_daily_date ON raw_market_data_daily(date)"))
-            session.execute(text("CREATE INDEX idx_raw_market_daily_symbol_date ON raw_market_data_daily(symbol, date)"))
+            session.execute(text("CREATE INDEX idx_raw_market_daily_symbol ON raw_market_data_daily(stock_symbol)"))
+            session.execute(text("CREATE INDEX idx_raw_market_daily_date ON raw_market_data_daily(trade_date)"))
+            session.execute(text("CREATE INDEX idx_raw_market_daily_symbol_date ON raw_market_data_daily(stock_symbol, trade_date)"))
             
             # Create raw_market_data_weekly table
             print("📊 Creating raw_market_data_weekly table...")

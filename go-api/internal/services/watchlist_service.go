@@ -31,29 +31,22 @@ func (s *WatchlistService) CreateWatchlist(
 	userID string,
 	watchlistName string,
 	description *string,
-	tags *string,
 	isDefault bool,
-	subscriptionLevel string,
 ) (*models.Watchlist, error) {
-	watchlistID := fmt.Sprintf("watchlist_%s_%d", userID, time.Now().Unix())
-	
 	watchlist := &models.Watchlist{
-		WatchlistID:            watchlistID,
-		UserID:                 userID,
-		WatchlistName:          watchlistName,
-		Description:            description,
-		Tags:                   tags,
-		IsDefault:              isDefault,
-		SubscriptionLevelRequired: subscriptionLevel,
+		UserID:      userID,
+		Name:        watchlistName,
+		Description: description,
+		IsDefault:   isDefault,
 	}
-	
+
 	if err := s.watchlistRepo.Create(watchlist); err != nil {
 		return nil, fmt.Errorf("failed to create watchlist: %w", err)
 	}
-	
+
 	// Invalidate cache
 	s.cache.Delete(fmt.Sprintf("watchlists:%s", userID))
-	
+
 	return watchlist, nil
 }
 
@@ -63,21 +56,17 @@ func (s *WatchlistService) GetWatchlists(userID string, subscriptionLevel string
 	cacheKey := fmt.Sprintf("watchlists:%s", userID)
 	var cached []models.Watchlist
 	if err := s.cache.Get(cacheKey, &cached); err == nil {
-		// Filter by subscription level
-		return s.filterWatchlistsBySubscription(cached, subscriptionLevel), nil
+		return cached, nil
 	}
-	
+
 	watchlists, err := s.watchlistRepo.GetByUserID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get watchlists: %w", err)
 	}
-	
-	// Filter by subscription level
-	watchlists = s.filterWatchlistsBySubscription(watchlists, subscriptionLevel)
-	
+
 	// Cache for 5 minutes
 	s.cache.Set(cacheKey, watchlists, 5*time.Minute)
-	
+
 	return watchlists, nil
 }
 
@@ -89,38 +78,33 @@ func (s *WatchlistService) GetWatchlist(watchlistID string, subscriptionLevel st
 	if err := s.cache.Get(cacheKey, &cached); err == nil {
 		return &cached, nil
 	}
-	
+
 	watchlist, err := s.watchlistRepo.GetByID(watchlistID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get watchlist: %w", err)
 	}
-	
-	// Check subscription level
-	if !s.hasAccessToWatchlist(watchlist, subscriptionLevel) {
-		return nil, fmt.Errorf("watchlist requires %s subscription", watchlist.SubscriptionLevelRequired)
-	}
-	
+
 	items, err := s.watchlistRepo.GetItems(watchlistID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get watchlist items: %w", err)
 	}
-	
-	// Convert to WatchlistItemWithData (stock data will be enriched by Python service)
-	itemsWithData := make([]models.WatchlistItemWithData, len(items))
+
+	// Convert to WatchlistStockWithData (stock data will be enriched by Python service)
+	itemsWithData := make([]models.WatchlistStockWithData, len(items))
 	for i, item := range items {
-		itemsWithData[i] = models.WatchlistItemWithData{
-			WatchlistItem: item,
+		itemsWithData[i] = models.WatchlistStockWithData{
+			WatchlistStock: item,
 		}
 	}
-	
+
 	result := &models.WatchlistWithItems{
 		Watchlist: *watchlist,
 		Items:     itemsWithData,
 	}
-	
+
 	// Cache for 5 minutes
 	s.cache.Set(cacheKey, result, 5*time.Minute)
-	
+
 	return result, nil
 }
 
@@ -129,14 +113,14 @@ func (s *WatchlistService) UpdateWatchlist(watchlistID string, updates map[strin
 	if err := s.watchlistRepo.Update(watchlistID, updates); err != nil {
 		return fmt.Errorf("failed to update watchlist: %w", err)
 	}
-	
+
 	// Invalidate cache
 	watchlist, err := s.watchlistRepo.GetByID(watchlistID)
 	if err == nil {
 		s.cache.Delete(fmt.Sprintf("watchlists:%s", watchlist.UserID))
 		s.cache.Delete(fmt.Sprintf("watchlist:%s", watchlistID))
 	}
-	
+
 	return nil
 }
 
@@ -146,15 +130,15 @@ func (s *WatchlistService) DeleteWatchlist(watchlistID string) error {
 	if err != nil {
 		return fmt.Errorf("watchlist not found: %w", err)
 	}
-	
+
 	if err := s.watchlistRepo.Delete(watchlistID); err != nil {
 		return fmt.Errorf("failed to delete watchlist: %w", err)
 	}
-	
+
 	// Invalidate cache
 	s.cache.Delete(fmt.Sprintf("watchlists:%s", watchlist.UserID))
 	s.cache.Delete(fmt.Sprintf("watchlist:%s", watchlistID))
-	
+
 	return nil
 }
 
@@ -165,48 +149,72 @@ func (s *WatchlistService) AddItem(
 	notes *string,
 	priority int,
 	tags *string,
-) (*models.WatchlistItem, error) {
-	itemID := fmt.Sprintf("item_%s_%s_%d", watchlistID, stockSymbol, time.Now().Unix())
-	
-	item := &models.WatchlistItem{
-		ItemID:      itemID,
-		WatchlistID: watchlistID,
-		StockSymbol: stockSymbol,
-		Notes:       notes,
-		Priority:    priority,
-		Tags:        tags,
+) (*models.WatchlistStock, error) {
+	_ = notes
+	_ = priority
+	_ = tags
+	item, err := s.watchlistRepo.AddStock(watchlistID, stockSymbol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add watchlist stock: %w", err)
 	}
-	
-	if err := s.watchlistRepo.AddItem(item); err != nil {
-		return nil, fmt.Errorf("failed to add watchlist item: %w", err)
-	}
-	
-	// Invalidate cache
+
+	// Invalidate caches
 	s.cache.Delete(fmt.Sprintf("watchlist:%s", watchlistID))
-	
+
+	// Also get watchlist to invalidate user's watchlist list cache
+	watchlist, err := s.watchlistRepo.GetByID(watchlistID)
+	if err == nil {
+		s.cache.Delete(fmt.Sprintf("watchlists:%s", watchlist.UserID))
+	}
+
 	return item, nil
 }
 
 // UpdateItem updates a watchlist item
 func (s *WatchlistService) UpdateItem(itemID string, updates map[string]interface{}) error {
+	// Get item first to find watchlistID
+	item, err := s.watchlistRepo.GetItemByID(itemID)
+	if err != nil {
+		return fmt.Errorf("failed to get watchlist item: %w", err)
+	}
+
 	if err := s.watchlistRepo.UpdateItem(itemID, updates); err != nil {
 		return fmt.Errorf("failed to update watchlist item: %w", err)
 	}
-	
-	// Invalidate cache (need to get watchlist ID from item)
-	// For now, we'll invalidate all watchlist caches (can be optimized)
+
+	// Invalidate watchlist cache
+	s.cache.Delete(fmt.Sprintf("watchlist:%s", item.WatchlistID))
+
+	// Also get watchlist to invalidate user's watchlist list cache
+	watchlist, err := s.watchlistRepo.GetByID(item.WatchlistID)
+	if err == nil {
+		s.cache.Delete(fmt.Sprintf("watchlists:%s", watchlist.UserID))
+	}
+
 	return nil
 }
 
 // RemoveItem removes a stock from a watchlist
 func (s *WatchlistService) RemoveItem(itemID string) error {
+	// Get item first to find watchlistID
+	item, err := s.watchlistRepo.GetItemByID(itemID)
+	if err != nil {
+		return fmt.Errorf("failed to get watchlist item: %w", err)
+	}
+
 	if err := s.watchlistRepo.RemoveItem(itemID); err != nil {
 		return fmt.Errorf("failed to remove watchlist item: %w", err)
 	}
-	
-	// Invalidate cache
-	// Note: We'd need watchlistID to invalidate properly, but for simplicity
-	// we'll let cache expire naturally
+
+	// Invalidate watchlist cache
+	s.cache.Delete(fmt.Sprintf("watchlist:%s", item.WatchlistID))
+
+	// Also get watchlist to invalidate user's watchlist list cache
+	watchlist, err := s.watchlistRepo.GetByID(item.WatchlistID)
+	if err == nil {
+		s.cache.Delete(fmt.Sprintf("watchlists:%s", watchlist.UserID))
+	}
+
 	return nil
 }
 
@@ -215,106 +223,58 @@ func (s *WatchlistService) MoveToPortfolio(
 	watchlistID string,
 	itemID string,
 	request *models.MoveToPortfolioRequest,
-) (*models.Holding, error) {
+) (*models.PortfolioPosition, error) {
 	// Get watchlist item
 	items, err := s.watchlistRepo.GetItems(watchlistID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get watchlist items: %w", err)
 	}
-	
-	var item *models.WatchlistItem
+
+	var item *models.WatchlistStock
 	for i := range items {
-		if items[i].ItemID == itemID {
+		if items[i].ID == itemID {
 			item = &items[i]
 			break
 		}
 	}
-	
+
 	if item == nil {
 		return nil, fmt.Errorf("watchlist item not found")
 	}
-	
+
 	// Parse purchase date
 	purchaseDate, err := time.Parse("2006-01-02", request.PurchaseDate)
 	if err != nil {
 		return nil, fmt.Errorf("invalid purchase_date format: %w", err)
 	}
-	
-	// Create holding
-	holdingID := fmt.Sprintf("holding_%s_%s_%d", request.PortfolioID, item.StockSymbol, time.Now().Unix())
-	holding := &models.Holding{
-		HoldingID:     holdingID,
-		PortfolioID:   request.PortfolioID,
-		StockSymbol:   item.StockSymbol,
-		Quantity:      request.Quantity,
-		AvgEntryPrice: request.AvgEntryPrice,
-		PositionType:  request.PositionType,
-		StrategyTag:   request.StrategyTag,
-		Notes:         request.Notes,
-		PurchaseDate:  purchaseDate,
+
+	_ = purchaseDate
+	position, err := s.portfolioRepo.AddPositionBySymbol(request.PortfolioID, item.Symbol, request.Quantity, request.AvgEntryPrice)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create portfolio position: %w", err)
 	}
-	
-	if err := s.portfolioRepo.CreateHolding(holding); err != nil {
-		return nil, fmt.Errorf("failed to create holding: %w", err)
-	}
-	
+
 	// Remove from watchlist (optional - could keep it)
 	if err := s.watchlistRepo.RemoveItem(itemID); err != nil {
 		// Log error but don't fail - holding is already created
 		// In production, consider transaction rollback
 	}
-	
+
 	// Invalidate caches
 	s.cache.Delete(fmt.Sprintf("watchlist:%s", watchlistID))
-	s.cache.Delete(fmt.Sprintf("portfolio:%s", request.PortfolioID))
-	
-	return holding, nil
+
+	// Get portfolio to find userID for portfolio cache invalidation
+	portfolio, err := s.portfolioRepo.GetByID(request.PortfolioID)
+	if err == nil {
+		s.cache.Delete(fmt.Sprintf("portfolio:%s:%s", portfolio.UserID, request.PortfolioID))
+		s.cache.Delete(fmt.Sprintf("portfolios:%s", portfolio.UserID))
+	}
+
+	// Get watchlist to invalidate user's watchlist list cache
+	watchlist, err := s.watchlistRepo.GetByID(watchlistID)
+	if err == nil {
+		s.cache.Delete(fmt.Sprintf("watchlists:%s", watchlist.UserID))
+	}
+
+	return position, nil
 }
-
-// Helper methods
-
-func (s *WatchlistService) filterWatchlistsBySubscription(
-	watchlists []models.Watchlist,
-	subscriptionLevel string,
-) []models.Watchlist {
-	levels := map[string]int{
-		"basic": 1,
-		"pro":   2,
-		"elite": 3,
-	}
-	
-	userLevel := levels[subscriptionLevel]
-	if userLevel == 0 {
-		userLevel = 1 // Default to basic
-	}
-	
-	var filtered []models.Watchlist
-	for _, w := range watchlists {
-		requiredLevel := levels[w.SubscriptionLevelRequired]
-		if userLevel >= requiredLevel {
-			filtered = append(filtered, w)
-		}
-	}
-	
-	return filtered
-}
-
-func (s *WatchlistService) hasAccessToWatchlist(
-	watchlist *models.Watchlist,
-	subscriptionLevel string,
-) bool {
-	levels := map[string]int{
-		"basic": 1,
-		"pro":   2,
-		"elite": 3,
-	}
-	
-	userLevel := levels[subscriptionLevel]
-	if userLevel == 0 {
-		userLevel = 1
-	}
-	
-	requiredLevel := levels[watchlist.SubscriptionLevelRequired]
-	return userLevel >= requiredLevel
-}
-

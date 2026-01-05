@@ -15,6 +15,7 @@ from app.data_sources.adapters.base_adapter import BaseDataSourceAdapter
 from .yahoo_finance_adapter import YahooFinanceAdapter
 from .massive_adapter import MassiveAdapter
 from .alphavantage_adapter import AlphaVantageAdapter
+from .financial_modeling_prep_adapter import FinancialModelingPrepAdapter
 from .fallback_adapter import FallbackAdapter
 
 
@@ -57,11 +58,33 @@ class AdapterFactory:
     def _register_default_adapters(self) -> None:
         """Register default adapters with configuration"""
         default_adapters = [
+            AdapterConfig("fmp", FinancialModelingPrepAdapter, priority=50),  # Higher priority than Yahoo
             AdapterConfig("yahoo_finance", YahooFinanceAdapter, priority=200),
             AdapterConfig("yahoo", YahooFinanceAdapter, priority=200),
-            AdapterConfig("alphavantage", AlphaVantageAdapter, priority=150),
-            AdapterConfig("massive", MassiveAdapter, priority=100),
         ]
+        
+        # Only register Massive if enabled and API key is available
+        from app.config import settings
+        if settings.massive_enabled and settings.massive_api_key and settings.massive_api_key.strip():
+            default_adapters.append(AdapterConfig("massive", MassiveAdapter, priority=100))
+            self._logger.info("✅ Massive adapter registered (enabled and API key available)")
+        else:
+            self._logger.info("⚠️ Massive adapter skipped (not enabled or no API key)")
+        
+        # Only register Alpha Vantage if API key is available
+        if settings.alphavantage_api_key and settings.alphavantage_api_key.strip():
+            default_adapters.append(AdapterConfig("alphavantage", AlphaVantageAdapter, priority=150))
+            self._logger.info("✅ Alpha Vantage adapter registered (API key available)")
+        else:
+            self._logger.info("⚠️ Alpha Vantage adapter skipped (no API key configured)")
+        
+        # Only register FMP if API key is available
+        if settings.fmp_api_key and settings.fmp_api_key.strip():
+            self._logger.info("✅ FMP adapter registered (API key available)")
+        else:
+            # Remove FMP from default adapters if no API key
+            default_adapters = [a for a in default_adapters if a.name != "fmp"]
+            self._logger.info("⚠️ FMP adapter skipped (no API key configured)")
         
         for config in default_adapters:
             self.register_adapter(config)
@@ -75,15 +98,8 @@ class AdapterFactory:
     
     @trace_function("adapter_factory_create")
     def create_adapter(self, name: str) -> Optional[BaseDataSourceAdapter]:
-        """
-        Create adapter instance with lazy loading and caching
-        Performance: Singleton instances, cached creation
-        """
+        """Create an adapter instance with proper configuration"""
         with self._lock:
-            # Return cached instance if available
-            if name in self._instances:
-                return self._instances[name]
-            
             # Check if adapter is registered
             if name not in self._adapters:
                 self._logger.error(f"Adapter '{name}' not registered")
@@ -99,10 +115,47 @@ class AdapterFactory:
             try:
                 # Create new instance
                 adapter = config.adapter_class()
-                self._instances[name] = adapter
                 
-                self._logger.info(f"✅ Created adapter instance: {name}")
-                return adapter
+                # Initialize with proper configuration from settings
+                from app.config import settings
+                adapter_config = {}
+                
+                if name == "fmp":
+                    adapter_config = {
+                        "api_key": settings.fmp_api_key,
+                        "base_url": settings.fmp_base_url,
+                        "timeout": settings.fmp_timeout,
+                        "max_retries": settings.fmp_max_retries,
+                        "retry_delay": settings.fmp_retry_delay,
+                        "rate_limit_calls": settings.fmp_rate_limit_calls,
+                        "rate_limit_window": settings.fmp_rate_limit_window
+                    }
+                elif name == "massive":
+                    adapter_config = {
+                        "api_key": settings.massive_api_key,
+                        "rate_limit_calls": settings.massive_rate_limit_calls,
+                        "rate_limit_window": settings.massive_rate_limit_window
+                    }
+                elif name == "yahoo_finance":
+                    adapter_config = {
+                        "timeout": getattr(settings, 'yahoo_finance_timeout', 30),
+                        "retry_count": getattr(settings, 'yahoo_finance_retry_count', 3)
+                    }
+                elif name == "fallback":
+                    adapter_config = {
+                        "cache_enabled": getattr(settings, 'fallback_cache_enabled', True),
+                        "cache_ttl": getattr(settings, 'fallback_cache_ttl', 3600),
+                        "primary_source": getattr(settings, 'fallback_primary_source', 'yahoo_finance')
+                    }
+                
+                # Initialize the adapter with configuration
+                if adapter.initialize(adapter_config):
+                    self._instances[name] = adapter
+                    self._logger.info(f"✅ Created and initialized adapter: {name}")
+                    return adapter
+                else:
+                    self._logger.error(f"❌ Failed to initialize adapter: {name}")
+                    return None
                 
             except Exception as e:
                 self._logger.error(f"❌ Failed to create adapter '{name}': {str(e)}")

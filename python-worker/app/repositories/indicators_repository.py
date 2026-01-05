@@ -106,6 +106,8 @@ class IndicatorsRepository(BaseRepository):
                 "macd as macd_line",
                 "macd_signal",
                 "macd_hist",
+                "atr",
+                "bb_width",
                 "signal",
                 "confidence_score"
             ],

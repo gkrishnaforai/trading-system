@@ -32,13 +32,13 @@ def analyze_signal_capabilities():
         # Check price data
         price_count = session.execute(text("""
             SELECT COUNT(*) FROM raw_market_data_daily 
-            WHERE symbol = :symbol
+            WHERE stock_symbol = :symbol
         """), {"symbol": symbol}).scalar()
         
         # Check indicators
         indicators_count = session.execute(text("""
             SELECT COUNT(*) FROM indicators_daily 
-            WHERE symbol = :symbol
+            WHERE stock_symbol = :symbol
         """), {"symbol": symbol}).scalar()
         
         # Check fundamentals
@@ -60,7 +60,7 @@ def analyze_signal_capabilities():
         available_indicators = session.execute(text("""
             SELECT DISTINCT indicator_name, time_period, COUNT(*) as count
             FROM indicators_daily 
-            WHERE symbol = :symbol
+            WHERE stock_symbol = :symbol
             GROUP BY indicator_name, time_period
             ORDER BY indicator_name
         """), {"symbol": symbol}).fetchall()

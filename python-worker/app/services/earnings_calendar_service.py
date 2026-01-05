@@ -49,6 +49,19 @@ class EarningsCalendarService:
         except Exception as e:
             logger.error(f"Failed to refresh earnings calendar: {e}")
             return {"status": "error", "error": str(e)}
+
+    def refresh_earnings_for_date(self, earnings_date: str, symbols: List[str] = None) -> Dict[str, Any]:
+        try:
+            logger.info(f"Refreshing earnings for date {earnings_date}")
+            earnings_data = self.data_source.fetch_earnings_for_date(earnings_date, symbols)
+            if not earnings_data:
+                logger.warning("No earnings data returned from data source")
+                return {"status": "no_data", "count": 0}
+            inserted_count = self.repository.upsert_earnings(earnings_data)
+            return {"status": "success", "count": inserted_count, "date": earnings_date}
+        except Exception as e:
+            logger.error(f"Failed to refresh earnings for date {earnings_date}: {e}")
+            return {"status": "error", "error": str(e)}
     
     def get_earnings_calendar(self, start_date: date = None, end_date: date = None) -> List[Dict[str, Any]]:
         """Get earnings calendar for a date range."""
@@ -58,6 +71,9 @@ class EarningsCalendarService:
             end_date = start_date + timedelta(days=30)
         
         return self.repository.fetch_earnings_by_date_range(start_date, end_date)
+
+    def get_earnings_for_date(self, earnings_date: date) -> List[Dict[str, Any]]:
+        return self.repository.fetch_earnings_by_date_range(earnings_date, earnings_date)
     
     def get_upcoming_earnings(self, days_ahead: int = 30) -> List[Dict[str, Any]]:
         """Get upcoming earnings within the next N days."""

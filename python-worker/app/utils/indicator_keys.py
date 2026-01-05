@@ -54,6 +54,8 @@ class FundamentalKeys:
     TOTAL_EQUITY = "total_equity"
     ROE = "roe"
     REVENUE_GROWTH = "revenue_growth"
+    PROFIT_MARGIN = "profit_margin"
+    OPERATING_MARGIN = "operating_margin"
     MARKET_CAP = "market_cap"
     DIVIDEND_YIELD = "dividend_yield"
     EPS = "eps"
@@ -116,6 +118,8 @@ def get_all_fundamental_keys() -> List[str]:
         FundamentalKeys.DEBT_TO_EQUITY,
         FundamentalKeys.ROE,
         FundamentalKeys.REVENUE_GROWTH,
+        FundamentalKeys.PROFIT_MARGIN,
+        FundamentalKeys.OPERATING_MARGIN,
         FundamentalKeys.MARKET_CAP,
         FundamentalKeys.DIVIDEND_YIELD,
         FundamentalKeys.EPS,
@@ -242,6 +246,18 @@ def normalize_fundamental_keys(fundamentals: Dict[str, Any]) -> Dict[str, Any]:
         
         "revenue_growth": FundamentalKeys.REVENUE_GROWTH,
         "revenue_growth_rate": FundamentalKeys.REVENUE_GROWTH,
+
+        # Profitability margins
+        "profit_margin": FundamentalKeys.PROFIT_MARGIN,
+        "profitmargins": FundamentalKeys.PROFIT_MARGIN,
+        "net_profit_margin": FundamentalKeys.PROFIT_MARGIN,
+        "net_profit_margin": FundamentalKeys.PROFIT_MARGIN,
+        "netprofitmargin": FundamentalKeys.PROFIT_MARGIN,
+
+        "operating_margin": FundamentalKeys.OPERATING_MARGIN,
+        "operatingmargins": FundamentalKeys.OPERATING_MARGIN,
+        "operating_profit_margin": FundamentalKeys.OPERATING_MARGIN,
+        "operatingprofitmargin": FundamentalKeys.OPERATING_MARGIN,
         
         "market_cap": FundamentalKeys.MARKET_CAP,
         "market_capitalization": FundamentalKeys.MARKET_CAP,

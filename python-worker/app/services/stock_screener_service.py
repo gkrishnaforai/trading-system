@@ -33,6 +33,7 @@ class StockScreenerService(BaseService):
     @handle_database_errors
     def screen_stocks(
         self,
+        symbols: Optional[List[str]] = None,
         price_below_sma50: Optional[bool] = None,
         price_below_sma200: Optional[bool] = None,
         has_good_fundamentals: Optional[bool] = None,
@@ -44,12 +45,15 @@ class StockScreenerService(BaseService):
         trend_filter: Optional[str] = None,
         min_market_cap: Optional[float] = None,
         max_pe_ratio: Optional[float] = None,
+        signal: Optional[str] = None,
+        min_confidence_score: Optional[float] = None,
         limit: int = 100
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
         Screen stocks based on criteria
         
         Args:
+            symbols: Optional list of symbols to restrict the universe
             price_below_sma50: Filter for stocks below 50-day average
             price_below_sma200: Filter for stocks below 200-day average
             has_good_fundamentals: Filter for good fundamentals
@@ -61,10 +65,12 @@ class StockScreenerService(BaseService):
             trend_filter: Trend filter ('bullish', 'bearish', 'neutral')
             min_market_cap: Minimum market cap
             max_pe_ratio: Maximum P/E ratio
+            signal: Filter by model/indicator signal (e.g. BUY/HOLD/SELL)
+            min_confidence_score: Minimum confidence score for signal
             limit: Maximum number of results
         
         Returns:
-            List of stocks matching criteria with their data
+            Dict with screened stocks, count, and criteria
         """
         # Validate inputs
         if min_fundamental_score is not None:
@@ -80,59 +86,71 @@ class StockScreenerService(BaseService):
         
         limit = int(validate_numeric_range(limit, min_value=1, max_value=1000, param_name="limit"))
         
-        # Build query against the Postgres-first schema.
+        # Build query against the normalized schema with indicators.
         query = """
-            WITH latest_fundamentals AS (
-                SELECT DISTINCT ON (stock_symbol)
-                    stock_symbol,
-                    payload
-                FROM fundamentals_snapshots
-                ORDER BY stock_symbol, as_of_date DESC
+            WITH latest_metrics AS (
+                SELECT DISTINCT ON (s.id)
+                    s.symbol AS stock_symbol,
+                    sm.date AS trade_date,
+                    sm.open_price,
+                    sm.high_price,
+                    sm.low_price,
+                    sm.close_price AS current_price,
+                    sm.volume,
+                    s.market_cap,
+                    s.sector,
+                    s.industry
+                FROM stocks s
+                LEFT JOIN stock_market_metrics sm
+                    ON sm.stock_id = s.id
+                WHERE s.symbol = ANY(:symbols)
+                ORDER BY s.id, sm.date DESC
             ),
             latest_indicators AS (
-                SELECT DISTINCT ON (i.stock_symbol)
-                    i.stock_symbol,
-                    i.trade_date,
+                SELECT DISTINCT ON (i.stock_id)
+                    i.stock_id,
                     i.sma_50,
                     i.sma_200,
-                    i.rsi_14,
-                    i.signal,
-                    i.confidence_score,
-                    rmd.close as current_price,
-                    NULLIF(COALESCE(lf.payload->>'market_cap', lf.payload->>'marketCap'), '')::double precision as market_cap,
-                    NULLIF(COALESCE(lf.payload->>'pe_ratio', lf.payload->>'peRatio'), '')::double precision as pe_ratio
-                FROM indicators_daily i
-                INNER JOIN raw_market_data_daily rmd
-                    ON rmd.stock_symbol = i.stock_symbol
-                    AND rmd.trade_date = i.trade_date
-                LEFT JOIN latest_fundamentals lf
-                    ON lf.stock_symbol = i.stock_symbol
-                ORDER BY i.stock_symbol, i.trade_date DESC
+                    i.rsi_14
+                FROM stock_technical_indicators i
+                ORDER BY i.stock_id, i.date DESC
             )
             SELECT
-                stock_symbol,
-                trade_date as date,
-                current_price,
-                sma_50 as sma50,
-                sma_200 as sma200,
-                rsi_14 as rsi,
-                signal,
-                confidence_score,
+                m.stock_symbol,
+                m.trade_date as date,
+                m.current_price,
+                COALESCE(i.sma_50, NULL) as sma50,
+                COALESCE(i.sma_200, NULL) as sma200,
+                COALESCE(i.rsi_14, NULL) as rsi,
+                NULL as signal,
+                NULL as confidence_score,
                 'bullish' as long_term_trend,
                 'bullish' as medium_term_trend,
                 0 as fundamental_score,
                 false as has_good_fundamentals,
                 false as is_growth_stock,
-                false as price_below_sma50,
-                false as price_below_sma200,
-                market_cap,
-                pe_ratio
-            FROM latest_indicators
+                COALESCE(m.current_price < i.sma_50, false) as price_below_sma50,
+                COALESCE(m.current_price < i.sma_200, false) as price_below_sma200,
+                m.market_cap,
+                NULL as pe_ratio
+            FROM latest_metrics m
+            LEFT JOIN latest_indicators i ON i.stock_id = (
+                SELECT id FROM stocks s2 WHERE s2.symbol = m.stock_symbol
+            )
             WHERE 1=1
         """
         
         conditions = []
         params = {}
+
+        if symbols:
+            symbols_norm = [s.strip().upper() for s in symbols if s and s.strip()]
+            symbols_norm = list(dict.fromkeys(symbols_norm))
+            if symbols_norm:
+                params['symbols'] = symbols_norm
+        else:
+            # If no symbols provided, use empty list to return no results
+            params['symbols'] = []
         
         # Add filters
         if price_below_sma50 is not None:
@@ -178,9 +196,9 @@ class StockScreenerService(BaseService):
             conditions.append("market_cap >= :min_market_cap")
             params['min_market_cap'] = min_market_cap
         
-        if max_pe_ratio is not None:
-            conditions.append("pe_ratio <= :max_pe_ratio")
-            params['max_pe_ratio'] = max_pe_ratio
+        # Skip PE ratio filter for now - not available in normalized schema
+
+        # Skip signal/confidence filters for now - not in technical indicators table
         
         # Add conditions to query
         if conditions:
@@ -204,6 +222,8 @@ class StockScreenerService(BaseService):
                     'sma50': row['sma50'],
                     'sma200': row['sma200'],
                     'rsi': row['rsi'],
+                    'signal': row.get('signal'),
+                    'confidence_score': row.get('confidence_score'),
                     'long_term_trend': row['long_term_trend'],
                     'medium_term_trend': row['medium_term_trend'],
                     'fundamental_score': row['fundamental_score'],
@@ -220,18 +240,6 @@ class StockScreenerService(BaseService):
                     fundamentals['market_cap'] = row['market_cap']
                 if row.get('pe_ratio') is not None:
                     fundamentals['pe_ratio'] = row['pe_ratio']
-                if row.get('pb_ratio') is not None:
-                    fundamentals['pb_ratio'] = row['pb_ratio']
-                if row.get('eps') is not None:
-                    fundamentals['eps'] = row['eps']
-                if row.get('beta') is not None:
-                    fundamentals['beta'] = row['beta']
-                if row.get('dividend_yield') is not None:
-                    fundamentals['dividend_yield'] = row['dividend_yield']
-                if row.get('roe') is not None:
-                    fundamentals['roe'] = row['roe']
-                if row.get('debt_to_equity') is not None:
-                    fundamentals['debt_to_equity'] = row['debt_to_equity']
                 
                 if fundamentals:
                     stock_data['fundamentals'] = fundamentals
@@ -249,6 +257,7 @@ class StockScreenerService(BaseService):
                 'stocks': screened_stocks,
                 'count': len(screened_stocks),
                 'criteria': {
+                    'symbols': params.get('symbols'),
                     'price_below_sma50': price_below_sma50,
                     'price_below_sma200': price_below_sma200,
                     'has_good_fundamentals': has_good_fundamentals,
@@ -258,6 +267,8 @@ class StockScreenerService(BaseService):
                     'min_rsi': min_rsi,
                     'max_rsi': max_rsi,
                     'trend_filter': trend_filter,
+                    'signal': params.get('signal'),
+                    'min_confidence_score': min_confidence_score,
                     'limit': limit
                 }
             }

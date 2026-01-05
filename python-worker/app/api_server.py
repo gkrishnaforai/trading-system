@@ -537,7 +537,6 @@ async def generate_swing_signal(request: SwingSignalRequest):
             logger.warning(f"⚠️ Generating signal for {symbol} with partial readiness: {'. '.join(readiness.readiness_reason)}")
         
         container = get_container()
-        strategy_service = container.get('strategy_service')
         data_source = container.get('data_source')
         
         # Fetch historical data
@@ -556,27 +555,114 @@ async def generate_swing_signal(request: SwingSignalRequest):
                 detail=f"Insufficient data for {symbol}. Need at least 50 periods, have {len(market_data)}"
             )
         
-        # Execute swing strategy
-        strategy_result = strategy_service.execute_strategy(
-            strategy_name=request.strategy_name or "swing_trend",
-            indicators={},
-            market_data=market_data,
-            context={
-                'symbol': symbol,
-                'user_id': request.user_id,
-                'data_quality_score': readiness.data_quality_score
-            }
-        )
+        # Market context + persisted indicators/fundamentals
+        from app.services.market_context_service import MarketContextService
+        from app.services.stock_insights_service import StockInsightsService
+        from app.signal_engines.swing_regime_engine import SwingRegimeEngine
         
-        # Return signal result
+        market_context = MarketContextService().get_market_context()
+        insights = StockInsightsService()
+        indicators = insights._fetch_indicators(symbol, market_data)
+        fundamentals = insights._fetch_fundamentals(symbol)
+
+        # Run SwingRegimeEngine (Layered model) for rich UI breakdown
+        engine = SwingRegimeEngine()
+        engine_result = engine.generate_signal(
+            symbol=symbol,
+            market_data=market_data,
+            indicators=indicators,
+            fundamentals=fundamentals,
+            market_context=market_context,
+        )
+        result_dict = engine_result.to_dict()
+
+        # Build Layer 1-5 payload for Streamlit
+        regime = getattr(market_context.regime, "value", str(market_context.regime))
+        direction_score = result_dict.get("metadata", {}).get("direction_score")
+        try:
+            prob_up = (float(direction_score) + 1.0) / 2.0 if direction_score is not None else None
+        except Exception:
+            prob_up = None
+        prob_down = (1.0 - prob_up) if prob_up is not None else None
+
+        confidence = float(result_dict.get("confidence", 0.0) or 0.0)
+
+        # Allocation/vehicle suggestion for leveraged NASDAQ trading
+        action = "HOLD"
+        suggested_vehicle = "CASH"
+        if prob_up is not None and prob_up > 0.65:
+            action = "BUY"
+            suggested_vehicle = "TQQQ"
+        elif prob_down is not None and prob_down > 0.65:
+            action = "BUY"
+            suggested_vehicle = "SQQQ"
+
+        allocation_pct = float(result_dict.get("position_size_pct", 0.0) or 0.0)
+
+        layers = {
+            "layer_1_regime": {
+                "regime": regime,
+                "regime_confidence": getattr(market_context, "regime_confidence", None),
+                "nasdaq_trend": getattr(market_context, "nasdaq_trend", None),
+                "vix": getattr(market_context, "vix", None),
+                "yield_curve_spread": getattr(market_context, "yield_curve_spread", None),
+                "breadth": getattr(market_context, "breadth", None),
+            },
+            "layer_2_direction": {
+                "direction_score": direction_score,
+                "prob_up": prob_up,
+                "prob_down": prob_down,
+                "confidence": confidence,
+            },
+            "layer_3_allocation": {
+                "suggested_vehicle": suggested_vehicle,
+                "allocation_pct": allocation_pct,
+            },
+            "layer_4_reality_adjustment": {
+                "original_position_size": result_dict.get("metadata", {}).get("original_position_size"),
+                "adjusted_position_size": result_dict.get("metadata", {}).get("adjusted_position_size"),
+                "hold_duration_days": result_dict.get("metadata", {}).get("hold_duration_days"),
+            },
+            "layer_5_daily_output": {
+                "date": datetime.now().date().isoformat(),
+                "action": action,
+                "symbol": suggested_vehicle,
+                "allocation_pct": allocation_pct,
+                "confidence": confidence,
+                "reasoning": result_dict.get("reasoning", []),
+            },
+        }
+
+        # Backward-compatible response (keep existing fields)
         return {
             "symbol": symbol,
-            "signal": strategy_result.signal.upper(),
-            "confidence": strategy_result.confidence,
-            "reason": strategy_result.reason,
-            "metadata": strategy_result.metadata,
-            "strategy": strategy_result.strategy_name,
-            "readiness": readiness.to_dict()
+            "signal": result_dict.get("signal", "HOLD"),
+            "confidence": confidence,
+            "reason": " | ".join(result_dict.get("reasoning", [])[:8]) if result_dict.get("reasoning") else "",
+            "metadata": {
+                **(result_dict.get("metadata", {}) or {}),
+                "entry_price_range": result_dict.get("entry_price_range"),
+                "stop_loss": result_dict.get("stop_loss"),
+                "take_profit": result_dict.get("take_profit"),
+                "position_size_pct": result_dict.get("position_size_pct"),
+            },
+            "strategy": request.strategy_name or "swing_regime",
+            "readiness": readiness.to_dict(),
+            "engine": {
+                "engine_name": result_dict.get("engine_name"),
+                "engine_version": result_dict.get("engine_version"),
+                "engine_tier": result_dict.get("engine_tier"),
+            },
+            "layers": layers,
+            "market_context": {
+                "regime": regime,
+                "regime_confidence": getattr(market_context, "regime_confidence", None),
+                "vix": getattr(market_context, "vix", None),
+                "nasdaq_trend": getattr(market_context, "nasdaq_trend", None),
+                "breadth": getattr(market_context, "breadth", None),
+                "yield_curve_spread": getattr(market_context, "yield_curve_spread", None),
+                "timestamp": getattr(market_context, "timestamp", None).isoformat() if getattr(market_context, "timestamp", None) else None,
+            },
         }
         
     except HTTPException:

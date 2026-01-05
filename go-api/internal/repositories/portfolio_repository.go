@@ -20,12 +20,55 @@ func NewPortfolioRepository() *PortfolioRepository {
 	}
 }
 
+func (r *PortfolioRepository) ensureStockID(symbol string) (string, error) {
+	query := `
+		INSERT INTO stocks (symbol)
+		VALUES ($1)
+		ON CONFLICT (symbol) DO UPDATE SET symbol = EXCLUDED.symbol
+		RETURNING id
+	`
+
+	var stockID string
+	if err := r.db.QueryRow(query, symbol).Scan(&stockID); err != nil {
+		return "", fmt.Errorf("failed to ensure stock id: %w", err)
+	}
+	return stockID, nil
+}
+
+func (r *PortfolioRepository) GetByID(portfolioID string) (*models.Portfolio, error) {
+	query := `
+		SELECT id, user_id, name, base_currency, is_default, is_archived, created_at, updated_at
+		FROM portfolios
+		WHERE id = $1
+	`
+
+	var p models.Portfolio
+	err := r.db.QueryRow(query, portfolioID).Scan(
+		&p.ID,
+		&p.UserID,
+		&p.Name,
+		&p.BaseCurrency,
+		&p.IsDefault,
+		&p.IsArchived,
+		&p.CreatedAt,
+		&p.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("portfolio not found")
+		}
+		return nil, fmt.Errorf("failed to query portfolio: %w", err)
+	}
+
+	return &p, nil
+}
+
 func (r *PortfolioRepository) GetByUserID(userID string) ([]models.Portfolio, error) {
 	query := `
-		SELECT portfolio_id, user_id, portfolio_name, notes, created_at, updated_at
+		SELECT id, user_id, name, base_currency, is_default, is_archived, created_at, updated_at
 		FROM portfolios
-		WHERE user_id = ?
-		ORDER BY created_at DESC
+		WHERE user_id = $1
+		ORDER BY is_default DESC, created_at DESC
 	`
 
 	rows, err := r.db.Query(query, userID)
@@ -38,10 +81,12 @@ func (r *PortfolioRepository) GetByUserID(userID string) ([]models.Portfolio, er
 	for rows.Next() {
 		var p models.Portfolio
 		if err := rows.Scan(
-			&p.PortfolioID,
+			&p.ID,
 			&p.UserID,
-			&p.PortfolioName,
-			&p.Notes,
+			&p.Name,
+			&p.BaseCurrency,
+			&p.IsDefault,
+			&p.IsArchived,
 			&p.CreatedAt,
 			&p.UpdatedAt,
 		); err != nil {
@@ -53,13 +98,14 @@ func (r *PortfolioRepository) GetByUserID(userID string) ([]models.Portfolio, er
 	return portfolios, nil
 }
 
-func (r *PortfolioRepository) GetHoldings(portfolioID string) ([]models.Holding, error) {
+func (r *PortfolioRepository) GetHoldings(portfolioID string) ([]models.PortfolioPosition, error) {
 	query := `
-		SELECT holding_id, portfolio_id, stock_symbol, quantity, avg_entry_price,
-		       position_type, strategy_tag, notes, purchase_date, created_at, updated_at
-		FROM holdings
-		WHERE portfolio_id = ?
-		ORDER BY purchase_date DESC
+		SELECT pp.id, pp.portfolio_id, pp.stock_id, s.symbol, pp.quantity, pp.avg_price,
+		       pp.opened_at, pp.created_at, pp.updated_at
+		FROM portfolio_positions pp
+		JOIN stocks s ON s.id = pp.stock_id
+		WHERE pp.portfolio_id = $1
+		ORDER BY pp.created_at DESC
 	`
 
 	rows, err := r.db.Query(query, portfolioID)
@@ -68,19 +114,17 @@ func (r *PortfolioRepository) GetHoldings(portfolioID string) ([]models.Holding,
 	}
 	defer rows.Close()
 
-	var holdings []models.Holding
+	var holdings []models.PortfolioPosition
 	for rows.Next() {
-		var h models.Holding
+		var h models.PortfolioPosition
 		if err := rows.Scan(
-			&h.HoldingID,
+			&h.ID,
 			&h.PortfolioID,
-			&h.StockSymbol,
+			&h.StockID,
+			&h.Symbol,
 			&h.Quantity,
-			&h.AvgEntryPrice,
-			&h.PositionType,
-			&h.StrategyTag,
-			&h.Notes,
-			&h.PurchaseDate,
+			&h.AvgPrice,
+			&h.OpenedAt,
 			&h.CreatedAt,
 			&h.UpdatedAt,
 		); err != nil {
@@ -93,59 +137,27 @@ func (r *PortfolioRepository) GetHoldings(portfolioID string) ([]models.Holding,
 }
 
 func (r *PortfolioRepository) GetSignals(portfolioID string) ([]models.PortfolioSignal, error) {
-	query := `
-		SELECT signal_id, portfolio_id, stock_symbol, date, signal_type,
-		       suggested_allocation, stop_loss, confidence_score, subscription_level_required, created_at
-		FROM portfolio_signals
-		WHERE portfolio_id = ?
-		ORDER BY date DESC, created_at DESC
-	`
-
-	rows, err := r.db.Query(query, portfolioID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query signals: %w", err)
-	}
-	defer rows.Close()
-
-	var signals []models.PortfolioSignal
-	for rows.Next() {
-		var s models.PortfolioSignal
-		if err := rows.Scan(
-			&s.SignalID,
-			&s.PortfolioID,
-			&s.StockSymbol,
-			&s.Date,
-			&s.SignalType,
-			&s.SuggestedAllocation,
-			&s.StopLoss,
-			&s.ConfidenceScore,
-			&s.SubscriptionLevelRequired,
-			&s.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan signal: %w", err)
-		}
-		signals = append(signals, s)
-	}
-
-	return signals, nil
+	_ = portfolioID
+	return []models.PortfolioSignal{}, nil
 }
 
 // CreatePortfolio creates a new portfolio
 func (r *PortfolioRepository) CreatePortfolio(portfolio *models.Portfolio) error {
-	log.Printf("INFO: Creating portfolio %s for user %s", portfolio.PortfolioID, portfolio.UserID)
-	
 	query := `
-		INSERT INTO portfolios (portfolio_id, user_id, portfolio_name, notes)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO portfolios (user_id, name, base_currency, is_default, is_archived)
+		VALUES ($1, $2, COALESCE($3, 'USD'), $4, $5)
+		RETURNING id, created_at, updated_at
 	`
-	
-	_, err := r.db.Exec(query, portfolio.PortfolioID, portfolio.UserID, portfolio.PortfolioName, portfolio.Notes)
+
+	log.Printf("INFO: Creating portfolio for user %s", portfolio.UserID)
+	err := r.db.QueryRow(query, portfolio.UserID, portfolio.Name, portfolio.BaseCurrency, portfolio.IsDefault, portfolio.IsArchived).
+		Scan(&portfolio.ID, &portfolio.CreatedAt, &portfolio.UpdatedAt)
 	if err != nil {
 		log.Printf("ERROR: Failed to create portfolio: %v", err)
 		return fmt.Errorf("failed to create portfolio: %w", err)
 	}
-	
-	log.Printf("INFO: Successfully created portfolio %s", portfolio.PortfolioID)
+
+	log.Printf("INFO: Successfully created portfolio %s", portfolio.ID)
 	return nil
 }
 
@@ -153,27 +165,21 @@ func (r *PortfolioRepository) CreatePortfolio(portfolio *models.Portfolio) error
 func (r *PortfolioRepository) UpdatePortfolio(portfolioID string, portfolioName *string, notes *string) error {
 	updates := []string{}
 	args := []interface{}{}
-	
+
 	if portfolioName != nil {
-		updates = append(updates, "portfolio_name = ?")
+		updates = append(updates, fmt.Sprintf("name = $%d", len(args)+1))
 		args = append(args, *portfolioName)
 	}
-	
-	if notes != nil {
-		updates = append(updates, "notes = ?")
-		args = append(args, *notes)
-	}
-	
+	_ = notes
+
 	if len(updates) == 0 {
-		return nil // No updates
+		return nil
 	}
-	
+
 	updates = append(updates, "updated_at = CURRENT_TIMESTAMP")
 	args = append(args, portfolioID)
-	
-	query := fmt.Sprintf("UPDATE portfolios SET %s WHERE portfolio_id = ?", 
-		strings.Join(updates, ", "))
-	
+	query := fmt.Sprintf("UPDATE portfolios SET %s WHERE id = $%d", strings.Join(updates, ", "), len(args))
+
 	_, err := r.db.Exec(query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update portfolio: %w", err)
@@ -183,8 +189,8 @@ func (r *PortfolioRepository) UpdatePortfolio(portfolioID string, portfolioName 
 
 // DeletePortfolio deletes a portfolio
 func (r *PortfolioRepository) DeletePortfolio(portfolioID string) error {
-	query := `DELETE FROM portfolios WHERE portfolio_id = ?`
-	
+	query := `DELETE FROM portfolios WHERE id = $1`
+
 	_, err := r.db.Exec(query, portfolioID)
 	if err != nil {
 		return fmt.Errorf("failed to delete portfolio: %w", err)
@@ -192,69 +198,86 @@ func (r *PortfolioRepository) DeletePortfolio(portfolioID string) error {
 	return nil
 }
 
-// CreateHolding creates a new holding
-func (r *PortfolioRepository) CreateHolding(holding *models.Holding) error {
-	query := `
-		INSERT INTO holdings (holding_id, portfolio_id, stock_symbol, quantity, avg_entry_price,
-		                     position_type, strategy_tag, notes, purchase_date)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-	
-	_, err := r.db.Exec(query, holding.HoldingID, holding.PortfolioID, holding.StockSymbol,
-		holding.Quantity, holding.AvgEntryPrice, holding.PositionType, holding.StrategyTag,
-		holding.Notes, holding.PurchaseDate)
+// AddPositionBySymbol inserts/updates a portfolio position using a stock symbol.
+func (r *PortfolioRepository) AddPositionBySymbol(portfolioID string, symbol string, quantity float64, avgPrice float64) (*models.PortfolioPosition, error) {
+	stockID, err := r.ensureStockID(symbol)
 	if err != nil {
-		return fmt.Errorf("failed to create holding: %w", err)
+		return nil, err
 	}
-	return nil
+
+	query := `
+		INSERT INTO portfolio_positions (portfolio_id, stock_id, quantity, avg_price)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (portfolio_id, stock_id) DO UPDATE SET
+			quantity = EXCLUDED.quantity,
+			avg_price = EXCLUDED.avg_price,
+			updated_at = NOW()
+		RETURNING id, portfolio_id, stock_id, quantity, avg_price, opened_at, created_at, updated_at
+	`
+
+	var p models.PortfolioPosition
+	p.Symbol = symbol
+	err = r.db.QueryRow(query, portfolioID, stockID, quantity, avgPrice).Scan(
+		&p.ID,
+		&p.PortfolioID,
+		&p.StockID,
+		&p.Quantity,
+		&p.AvgPrice,
+		&p.OpenedAt,
+		&p.CreatedAt,
+		&p.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upsert portfolio position: %w", err)
+	}
+	return &p, nil
 }
 
 // UpdateHolding updates an existing holding
 func (r *PortfolioRepository) UpdateHolding(holdingID string, updates map[string]interface{}) error {
-	if len(updates) == 0 {
-		return nil
-	}
-	
-	setParts := []string{}
-	args := []interface{}{}
-	
-	allowedFields := map[string]bool{
-		"quantity": true, "avg_entry_price": true, "position_type": true,
-		"strategy_tag": true, "notes": true, "purchase_date": true,
-	}
-	
-	for field, value := range updates {
-		if allowedFields[field] {
-			setParts = append(setParts, fmt.Sprintf("%s = ?", field))
-			args = append(args, value)
-		}
-	}
-	
-	if len(setParts) == 0 {
-		return nil
-	}
-	
-	setParts = append(setParts, "updated_at = CURRENT_TIMESTAMP")
-	args = append(args, holdingID)
-	
-	query := fmt.Sprintf("UPDATE holdings SET %s WHERE holding_id = ?",
-		strings.Join(setParts, ", "))
-	
-	_, err := r.db.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to update holding: %w", err)
-	}
-	return nil
+	_ = holdingID
+	_ = updates
+	return fmt.Errorf("UpdateHolding not implemented for normalized schema")
 }
 
 // DeleteHolding deletes a holding
 func (r *PortfolioRepository) DeleteHolding(holdingID string) error {
-	query := `DELETE FROM holdings WHERE holding_id = ?`
-	
+	query := `DELETE FROM portfolio_positions WHERE id = $1`
 	_, err := r.db.Exec(query, holdingID)
 	if err != nil {
-		return fmt.Errorf("failed to delete holding: %w", err)
+		return fmt.Errorf("failed to delete portfolio position: %w", err)
 	}
 	return nil
 }
 
+// GetHoldingByID gets a holding by its ID
+func (r *PortfolioRepository) GetHoldingByID(holdingID string) (*models.PortfolioPosition, error) {
+	query := `
+		SELECT pp.id, pp.portfolio_id, pp.stock_id, s.symbol, pp.quantity, pp.avg_price,
+		       pp.opened_at, pp.created_at, pp.updated_at
+		FROM portfolio_positions pp
+		JOIN stocks s ON s.id = pp.stock_id
+		WHERE pp.id = $1
+	`
+
+	var holding models.PortfolioPosition
+	err := r.db.QueryRow(query, holdingID).Scan(
+		&holding.ID,
+		&holding.PortfolioID,
+		&holding.StockID,
+		&holding.Symbol,
+		&holding.Quantity,
+		&holding.AvgPrice,
+		&holding.OpenedAt,
+		&holding.CreatedAt,
+		&holding.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("holding not found")
+		}
+		return nil, fmt.Errorf("failed to get holding: %w", err)
+	}
+
+	return &holding, nil
+}

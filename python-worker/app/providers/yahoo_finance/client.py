@@ -41,9 +41,9 @@ class YahooFinanceClient:
         self.session = requests.Session()
         # requests.Session doesn't have a reliable global timeout; pass timeout per request.
 
-        logging.getLogger("yfinance").setLevel(logging.WARNING)
-        logging.getLogger("yfinance.scrapers").setLevel(logging.WARNING)
-        logging.getLogger("yfinance.scrapers.fundamentals").setLevel(logging.WARNING)
+        # Suppress the noisy 404 error from fundamentals-timeseries endpoint
+        # This endpoint fails for many symbols but doesn't affect core functionality
+        logging.getLogger("yfinance").setLevel(logging.ERROR)
         
         # Rate limiting (conservative for Yahoo Finance)
         self.rate_limiter = RateLimiter(
@@ -271,99 +271,113 @@ class YahooFinanceClient:
     def fetch_symbol_details(self, symbol: str) -> Dict[str, Any]:
         """
         Fetch symbol details and company information
+        Uses optimized yfinance methods to reduce expensive API calls
         """
         try:
             ticker = self._get_ticker(symbol)
-            info = ticker.info
             
-            if not info:
-                raise ValueError(f"No symbol details available for {symbol}")
+            # Use more efficient methods instead of relying solely on ticker.info
+            # This follows yfinance best practices to reduce expensive quoteSummary calls
             
-            # Normalize response
-            details = {
-                "symbol": symbol,
-                "name": info.get("longName") or info.get("shortName", ""),
-                "sector": info.get("sector", ""),
-                "industry": info.get("industry", ""),
-                "market_cap": info.get("marketCap"),
-                "pe_ratio": info.get("trailingPE") or info.get("forwardPE"),
-                "pb_ratio": info.get("priceToBook"),
-                "eps": info.get("trailingEps"),
-                "dividend_yield": info.get("dividendYield"),
-                "beta": info.get("beta"),
-                "description": info.get("longBusinessSummary", ""),
-                "country": info.get("country", ""),
-                "currency": info.get("currency", "USD"),
-                "exchange": info.get("exchange", ""),
-                "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
-                "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
-                "average_volume": info.get("averageVolume"),
-                "market_cap": info.get("marketCap"),
-                "enterprise_value": info.get("enterpriseValue"),
-                "price_to_sales": info.get("priceToSalesTrailing12Months"),
-                "forward_pe": info.get("forwardPE"),
-                "peg_ratio": info.get("pegRatio"),
-                "book_value": info.get("bookValue"),
-                "price_to_book": info.get("priceToBook"),
-                "debt_to_equity": info.get("debtToEquity"),
-                "roe": info.get("returnOnEquity"),
-                "revenue_growth": info.get("revenueGrowth"),
-                "return_on_assets": info.get("returnOnAssets"),
-                "profit_margin": info.get("profitMargins"),
-                "operating_margin": info.get("operatingMargins"),
-                "gross_margin": info.get("grossMargins"),
-                "raw_info": self._to_jsonable(info),
-            }
-
+            # Get basic metadata (cheaper than full info)
             try:
-                recommendations = getattr(ticker, "recommendations", None)
-                if isinstance(recommendations, pd.DataFrame) and not recommendations.empty:
-                    details["analyst_recommendations"] = self._df_to_records(recommendations)
-            except Exception:
-                pass
-
+                logger.debug(f"Getting history metadata for {symbol}")
+                metadata = ticker.get_history_metadata()
+                logger.debug(f"History metadata successful for {symbol}")
+            except Exception as metadata_error:
+                logger.warning(f"History metadata failed for {symbol}: {metadata_error}")
+                metadata = {}
+            
+            # Get fast info as primary source (more reliable than full info)
             try:
-                sustainability = getattr(ticker, "sustainability", None)
-                if isinstance(sustainability, pd.DataFrame) and not sustainability.empty:
-                    details["sustainability"] = self._df_to_records(sustainability)
-            except Exception:
-                pass
-
+                logger.debug(f"Getting fast info for {symbol}")
+                fast_info = ticker.fast_info
+                logger.debug(f"Fast info successful for {symbol}: {len(dict(fast_info))} fields")
+            except Exception as fast_info_error:
+                logger.warning(f"Fast info failed for {symbol}: {fast_info_error}")
+                fast_info = {}
+            
+            # Get full info as fallback for missing critical fields
+            info = {}
             try:
-                major_holders = getattr(ticker, "major_holders", None)
-                if isinstance(major_holders, pd.DataFrame) and not major_holders.empty:
-                    details["major_holders"] = self._df_to_records(major_holders)
-            except Exception:
-                pass
-
-            try:
-                institutional_holders = getattr(ticker, "institutional_holders", None)
-                if isinstance(institutional_holders, pd.DataFrame) and not institutional_holders.empty:
-                    details["institutional_holders"] = self._df_to_records(institutional_holders)
-            except Exception:
-                pass
-
-            try:
-                options = getattr(ticker, "options", None)
-                if options is not None and len(options) > 0:
-                    details["options_expirations"] = self._to_jsonable(list(options))
-            except Exception:
-                pass
-
-            try:
-                income_stmt = getattr(ticker, "income_stmt", None)
-                if isinstance(income_stmt, pd.DataFrame) and not income_stmt.empty:
-                    details["income_stmt_annual"] = self._df_to_records(income_stmt)
-            except Exception:
-                pass
-
-            try:
-                quarterly_income_stmt = getattr(ticker, "quarterly_income_stmt", None)
-                if isinstance(quarterly_income_stmt, pd.DataFrame) and not quarterly_income_stmt.empty:
-                    details["income_stmt_quarterly"] = self._df_to_records(quarterly_income_stmt)
-            except Exception:
-                pass
-
+                logger.debug(f"Getting full info for {symbol} (fallback)")
+                info = ticker.info
+                logger.debug(f"Full info successful for {symbol}: {len(info) if info else 0} fields")
+            except Exception as info_error:
+                logger.warning(f"Full info failed for {symbol} (quoteSummary endpoint): {info_error}")
+                # Create minimal info dict with basic symbol data
+                info = {"symbol": symbol}
+            
+            # Combine data from multiple sources in order of preference
+            details = {"symbol": symbol}
+            
+            # 1. Fast info (most reliable and efficient)
+            if fast_info:
+                details.update({
+                    "name": fast_info.get("long_name") or fast_info.get("short_name", ""),
+                    "sector": fast_info.get("sector", ""),
+                    "industry": fast_info.get("industry", ""),
+                    "market_cap": fast_info.get("market_cap"),
+                    "pe_ratio": fast_info.get("trailing_pe") or fast_info.get("forward_pe"),
+                    "pb_ratio": fast_info.get("price_to_book"),
+                    "eps": fast_info.get("trailing_eps"),
+                    "dividend_yield": fast_info.get("dividend_yield"),
+                    "beta": fast_info.get("beta"),
+                    "currency": fast_info.get("currency", "USD"),
+                    "exchange": fast_info.get("exchange", ""),
+                })
+            
+            # 2. Metadata for exchange/timezone info
+            if metadata:
+                details.update({
+                    "exchange": details.get("exchange") or metadata.get("exchange", ""),
+                    "currency": details.get("currency") or metadata.get("currency", "USD"),
+                    "timezone": metadata.get("timezone", ""),
+                })
+            
+            # 3. Full info for missing fields (fallback)
+            missing_fields = [k for k, v in details.items() if v is None or v == ""]
+            if missing_fields and info:
+                field_mapping = {
+                    "name": info.get("longName") or info.get("shortName"),
+                    "sector": info.get("sector"),
+                    "industry": info.get("industry"),
+                    "market_cap": info.get("marketCap"),
+                    "pe_ratio": info.get("trailingPE") or info.get("forwardPE"),
+                    "pb_ratio": info.get("priceToBook"),
+                    "eps": info.get("trailingEps"),
+                    "dividend_yield": info.get("dividendYield"),
+                    "profit_margin": info.get("profitMargins"),
+                    "current_ratio": info.get("currentRatio"),
+                    "beta": info.get("beta"),
+                    "description": info.get("longBusinessSummary"),
+                    "country": info.get("country"),
+                    "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
+                    "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
+                    "average_volume": info.get("averageVolume"),
+                    "enterprise_value": info.get("enterpriseValue"),
+                    "price_to_sales": info.get("priceToSalesTrailing12Months"),
+                    "forward_pe": info.get("forwardPE"),
+                    "peg_ratio": info.get("pegRatio"),
+                }
+                
+                for field in missing_fields:
+                    if field in field_mapping and field_mapping[field] is not None:
+                        details[field] = field_mapping[field]
+            
+            # Get current price from history if not available
+            if not details.get("market_cap") or not details.get("pe_ratio"):
+                try:
+                    hist = ticker.history(period="1d")
+                    if not hist.empty:
+                        current_price = float(hist["Close"].iloc[-1])
+                        if not details.get("market_cap") and fast_info.get("shares"):
+                            details["market_cap"] = current_price * fast_info.get("shares")
+                        logger.debug(f"Used price history for missing data: {current_price}")
+                except Exception as hist_error:
+                    logger.warning(f"Price history fallback failed for {symbol}: {hist_error}")
+            
+            logger.info(f"✅ Fetched symbol details for {symbol}: {len([k for k, v in details.items() if v is not None])} non-null fields")
             return details
             
         except Exception as e:
@@ -374,19 +388,57 @@ class YahooFinanceClient:
         """
         Fetch fundamental financial data
         """
+        logger.info(f"📊 Starting fundamentals fetch for {symbol}")
+        
         try:
-            # Get symbol details (includes many fundamentals)
-            details = self.fetch_symbol_details(symbol)
+            # Step 1: Get symbol details (this is where the 404 happens)
+            logger.debug(f"Step 1: Fetching symbol details for {symbol}")
+            try:
+                details = self.fetch_symbol_details(symbol)
+                logger.debug(f"Step 1 SUCCESS: Got {len(details)} basic fields for {symbol}")
+            except Exception as details_error:
+                logger.error(f"Step 1 FAILED: Symbol details for {symbol}: {details_error}")
+                raise
             
-            ticker = self._get_ticker(symbol)
+            # Step 2: Get ticker for financial statements
+            logger.debug(f"Step 2: Getting ticker for financial statements for {symbol}")
+            try:
+                ticker = self._get_ticker(symbol)
+                logger.debug(f"Step 2 SUCCESS: Ticker created for {symbol}")
+            except Exception as ticker_error:
+                logger.error(f"Step 2 FAILED: Ticker creation for {symbol}: {ticker_error}")
+                raise
             
-            # Get financial statements
-            financials = ticker.financials
-            balance_sheet = ticker.balance_sheet
-            cashflow = ticker.cashflow
+            # Step 3: Get financial statements
+            logger.debug(f"Step 3: Fetching financial statements for {symbol}")
+            
+            financials = None
+            balance_sheet = None
+            cashflow = None
+            
+            try:
+                financials = ticker.financials
+                logger.debug(f"Step 3a - Financials: {financials.shape if not financials.empty else 'Empty'}")
+            except Exception as fin_error:
+                logger.warning(f"Step 3a FAILED: Financials for {symbol}: {fin_error}")
+            
+            try:
+                balance_sheet = ticker.balance_sheet
+                logger.debug(f"Step 3b - Balance Sheet: {balance_sheet.shape if not balance_sheet.empty else 'Empty'}")
+            except Exception as bs_error:
+                logger.warning(f"Step 3b FAILED: Balance sheet for {symbol}: {bs_error}")
+            
+            try:
+                cashflow = ticker.cashflow
+                logger.debug(f"Step 3c - Cashflow: {cashflow.shape if not cashflow.empty else 'Empty'}")
+            except Exception as cf_error:
+                logger.warning(f"Step 3c FAILED: Cashflow for {symbol}: {cf_error}")
+            
+            # Step 4: Add financial data to details
+            logger.debug(f"Step 4: Processing financial data for {symbol}")
             
             # Add recent financial data
-            if not financials.empty:
+            if financials is not None and not financials.empty:
                 latest_financials = financials.iloc[:, 0]  # Most recent period
                 details.update({
                     "revenue": latest_financials.get("Total Revenue"),
@@ -396,20 +448,24 @@ class YahooFinanceClient:
                     "total_assets": latest_financials.get("Total Assets"),
                     "total_liabilities": latest_financials.get("Total Liab"),
                 })
+                logger.debug(f"Step 4a: Added income statement data for {symbol}")
             
-            if not balance_sheet.empty:
+            if balance_sheet is not None and not balance_sheet.empty:
                 latest_balance = balance_sheet.iloc[:, 0]
                 details.update({
                     "cash_and_equivalents": latest_balance.get("Cash And Cash Equivalents"),
                     "short_term_investments": latest_balance.get("Short Term Investments"),
+                    "current_assets": latest_balance.get("Total Current Assets") or latest_balance.get("Current Assets"),
+                    "current_liabilities": latest_balance.get("Total Current Liabilities") or latest_balance.get("Current Liabilities"),
                     "long_term_debt": latest_balance.get("Long Term Debt"),
                     "short_term_debt": latest_balance.get("Current Debt"),  # Updated: Current Debt is the correct field
                     "total_debt": latest_balance.get("Total Debt"),  # Added: Total Debt from Yahoo
                     "total_equity": latest_balance.get("Stockholders Equity"),  # Moved from financials to balance sheet
                     "property_plant_equipment": latest_balance.get("Net PPE"),
                 })
+                logger.debug(f"Step 4b: Added balance sheet data for {symbol}")
             
-            if not cashflow.empty:
+            if cashflow is not None and not cashflow.empty:
                 latest_cashflow = cashflow.iloc[:, 0]
                 details.update({
                     "operating_cash_flow": latest_cashflow.get("Operating Cash Flow"),
@@ -417,6 +473,71 @@ class YahooFinanceClient:
                     "financing_cash_flow": latest_cashflow.get("Financing Cash Flow"),
                     "free_cash_flow": latest_cashflow.get("Operating Cash Flow") - latest_cashflow.get("Capital Expenditure"),
                 })
+                logger.debug(f"Step 4c: Added cash flow data for {symbol}")
+            
+            # Step 5: Calculate derived metrics and extract additional fields from info
+            logger.debug(f"Step 5: Calculating derived metrics for {symbol}")
+
+            try:
+                info = ticker.info
+            except Exception:
+                info = {}
+
+            try:
+                fast_info = ticker.fast_info
+            except Exception:
+                fast_info = {}
+            
+            # Extract all key fundamentals from ticker.info (primary source for ratios/metrics)
+            if info:
+                yahoo_field_mapping = {
+                    # Valuation ratios
+                    "price_to_sales": info.get("priceToSalesTrailing12Months"),
+                    "price_to_book": info.get("priceToBook"),
+                    "enterprise_to_revenue": info.get("enterpriseToRevenue"),
+                    "enterprise_to_ebitda": info.get("enterpriseToEbitda"),
+                    "peg_ratio": info.get("pegRatio"),
+                    "forward_pe": info.get("forwardPE"),
+                    # Profitability
+                    "profit_margin": info.get("profitMargins"),
+                    "gross_margin": info.get("grossMargins"),
+                    "operating_margin": info.get("operatingMargins"),
+                    "ebitda_margin": info.get("ebitdaMargins"),
+                    # Returns
+                    "roe": info.get("returnOnEquity"),
+                    "roa": info.get("returnOnAssets"),
+                    # Growth
+                    "revenue_growth": info.get("revenueGrowth"),
+                    "earnings_growth": info.get("earningsGrowth"),
+                    # Financial health
+                    "current_ratio": info.get("currentRatio"),
+                    "quick_ratio": info.get("quickRatio"),
+                    "debt_to_equity": info.get("debtToEquity"),
+                    # Dividends
+                    "dividend_yield": info.get("dividendYield"),
+                    "dividend_rate": info.get("dividendRate"),
+                    "payout_ratio": info.get("payoutRatio"),
+                    # Cash flow
+                    "free_cash_flow_yahoo": info.get("freeCashflow"),
+                    "operating_cash_flow_yahoo": info.get("operatingCashflow"),
+                    # Additional metrics
+                    "total_cash": info.get("totalCash"),
+                    "total_debt_yahoo": info.get("totalDebt"),
+                    "ebitda": info.get("ebitda"),
+                    "total_revenue": info.get("totalRevenue"),
+                    "gross_profits": info.get("grossProfits"),
+                    "book_value": info.get("bookValue"),
+                    "revenue_per_share": info.get("revenuePerShare"),
+                    "eps_forward": info.get("epsForward"),
+                    "eps_trailing": info.get("trailingEps"),
+                }
+                
+                # Only add fields that have values and aren't already set
+                for field, value in yahoo_field_mapping.items():
+                    if value is not None and details.get(field) is None:
+                        details[field] = value
+                
+                logger.debug(f"Step 5a: Extracted {sum(1 for v in yahoo_field_mapping.values() if v is not None)} fields from ticker.info")
             
             # Always calculate debt/equity ratio from balance sheet components for accuracy
             total_equity = details.get("total_equity")
@@ -437,6 +558,58 @@ class YahooFinanceClient:
                 logger.info(f"Calculated debt/equity ratio for {symbol}: {details['debt_to_equity']:.3f}")
             else:
                 logger.warning(f"Could not calculate debt/equity ratio for {symbol}: missing debt or equity data")
+
+            if details.get("profit_margin") is None:
+                try:
+                    revenue = details.get("revenue")
+                    net_income = details.get("net_income")
+                    if revenue is not None and net_income is not None and float(revenue) != 0:
+                        details["profit_margin"] = float(net_income) / float(revenue)
+                except Exception:
+                    pass
+
+            if details.get("current_ratio") is None:
+                try:
+                    ca = details.get("current_assets")
+                    cl = details.get("current_liabilities")
+                    if ca is not None and cl is not None and float(cl) != 0:
+                        details["current_ratio"] = float(ca) / float(cl)
+                except Exception:
+                    pass
+
+            if details.get("dividend_yield") is None:
+                try:
+                    dy = info.get("dividendYield")
+                    if dy is not None:
+                        details["dividend_yield"] = dy
+                    else:
+                        annual_div = info.get("trailingAnnualDividendRate") or info.get("dividendRate")
+                        price = (
+                            info.get("regularMarketPrice")
+                            or info.get("currentPrice")
+                            or (fast_info.get("last_price") if isinstance(fast_info, dict) else None)
+                        )
+                        if annual_div is not None and price is not None and float(price) != 0:
+                            details["dividend_yield"] = float(annual_div) / float(price)
+                except Exception:
+                    pass
+
+            if details.get("forward_pe") is None:
+                try:
+                    fpe = info.get("forwardPE")
+                    if fpe is not None:
+                        details["forward_pe"] = fpe
+                    else:
+                        eps_fwd = info.get("epsForward")
+                        price = (
+                            info.get("regularMarketPrice")
+                            or info.get("currentPrice")
+                            or (fast_info.get("last_price") if isinstance(fast_info, dict) else None)
+                        )
+                        if eps_fwd is not None and price is not None and float(eps_fwd) != 0:
+                            details["forward_pe"] = float(price) / float(eps_fwd)
+                except Exception:
+                    pass
             
             logger.info(f"✅ Fetched fundamentals for {symbol}")
             return details
@@ -514,9 +687,20 @@ class YahooFinanceClient:
                 
                 # Process each earnings date
                 for i, earnings_date in enumerate(earnings_dates):
+                    earnings_at = None
+                    try:
+                        if isinstance(earnings_date, pd.Timestamp):
+                            earnings_at = earnings_date.to_pydatetime().isoformat()
+                        elif isinstance(earnings_date, datetime):
+                            earnings_at = earnings_date.isoformat()
+                    except Exception:
+                        earnings_at = None
+
                     earnings_data.append({
                         "symbol": symbol,
                         "earnings_date": earnings_date.strftime("%Y-%m-%d") if hasattr(earnings_date, 'strftime') else str(earnings_date),
+                        "earnings_at": earnings_at,
+                        "earnings_timezone": "America/New_York",
                         "eps_estimate": eps_avg,
                         "eps_high": eps_high,
                         "eps_low": eps_low,
@@ -734,6 +918,339 @@ class YahooFinanceClient:
         except Exception as e:
             logger.error(f"Failed to fetch industry peers for {symbol}: {e}")
             return {"symbol": symbol, "peers": [], "error": str(e)}
+
+    def fetch_actions(self, symbol: str) -> List[Dict[str, Any]]:
+        """Fetch corporate actions (dividends/splits) from Yahoo via yfinance."""
+        try:
+            ticker = self._get_ticker(symbol)
+            self.rate_limiter.acquire()
+            actions = ticker.actions
+            if actions is None or actions.empty:
+                return []
+
+            out: List[Dict[str, Any]] = []
+            tmp = actions.copy().reset_index()
+            # yfinance uses DatetimeIndex; normalize to date
+            date_col = "Date" if "Date" in tmp.columns else tmp.columns[0]
+            for _, row in tmp.iterrows():
+                dt = row.get(date_col)
+                d = pd.to_datetime(dt, errors="coerce")
+                d_str = d.date().isoformat() if not pd.isna(d) else None
+                # Prefer returning explicit entries for each action field
+                if "Dividends" in tmp.columns and row.get("Dividends") not in (None, 0, 0.0):
+                    out.append({"symbol": symbol, "date": d_str, "action_type": "dividend", "value": float(row.get("Dividends"))})
+                if "Stock Splits" in tmp.columns and row.get("Stock Splits") not in (None, 0, 0.0):
+                    out.append({"symbol": symbol, "date": d_str, "action_type": "split", "value": float(row.get("Stock Splits"))})
+            return out
+        except Exception as e:
+            logger.warning(f"Failed to fetch actions for {symbol}: {e}")
+            return []
+
+    def fetch_dividends(self, symbol: str) -> List[Dict[str, Any]]:
+        """Fetch dividend time series from Yahoo via yfinance."""
+        try:
+            ticker = self._get_ticker(symbol)
+            self.rate_limiter.acquire()
+            div = ticker.dividends
+            if div is None or div.empty:
+                return []
+            out: List[Dict[str, Any]] = []
+            for idx, val in div.items():
+                d = pd.to_datetime(idx, errors="coerce")
+                if pd.isna(d):
+                    continue
+                if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
+                    continue
+                out.append({"symbol": symbol, "date": d.date().isoformat(), "dividend": float(val)})
+            return out
+        except Exception as e:
+            logger.warning(f"Failed to fetch dividends for {symbol}: {e}")
+            return []
+
+    def fetch_splits(self, symbol: str) -> List[Dict[str, Any]]:
+        """Fetch stock split time series from Yahoo via yfinance."""
+        try:
+            ticker = self._get_ticker(symbol)
+            self.rate_limiter.acquire()
+            splits = ticker.splits
+            if splits is None or splits.empty:
+                return []
+            out: List[Dict[str, Any]] = []
+            for idx, val in splits.items():
+                d = pd.to_datetime(idx, errors="coerce")
+                if pd.isna(d):
+                    continue
+                if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
+                    continue
+                out.append({"symbol": symbol, "date": d.date().isoformat(), "split_ratio": float(val)})
+            return out
+        except Exception as e:
+            logger.warning(f"Failed to fetch splits for {symbol}: {e}")
+            return []
+
+    @staticmethod
+    def _normalize_statement_df(df: Optional[pd.DataFrame]) -> List[Dict[str, Any]]:
+        """Normalize yfinance statement DataFrame into a list of period records."""
+        if df is None or getattr(df, "empty", True):
+            return []
+
+        tmp = df.copy()
+        # yfinance statements typically have line-items as index, periods as columns
+        tmp = tmp.fillna(value=pd.NA)
+
+        records: List[Dict[str, Any]] = []
+        for col in tmp.columns:
+            period = col.strftime("%Y-%m-%d") if hasattr(col, "strftime") else str(col)
+            series = tmp[col]
+            payload: Dict[str, Any] = {"period": period}
+            for k, v in series.items():
+                key = str(k).strip()
+                if v is pd.NA or v is None:
+                    payload[key] = None
+                    continue
+                try:
+                    payload[key] = float(v) if pd.notna(v) else None
+                except Exception:
+                    payload[key] = str(v)
+            records.append(payload)
+
+        return records
+
+    def fetch_financial_statements(self, symbol: str, *, quarterly: bool = True) -> Dict[str, Any]:
+        """Fetch income statement, balance sheet, and cash flow statements."""
+        try:
+            ticker = self._get_ticker(symbol)
+            self.rate_limiter.acquire()
+
+            if quarterly:
+                income = getattr(ticker, "quarterly_financials", None)
+                balance = getattr(ticker, "quarterly_balance_sheet", None)
+                cash = getattr(ticker, "quarterly_cashflow", None)
+            else:
+                income = getattr(ticker, "financials", None)
+                balance = getattr(ticker, "balance_sheet", None)
+                cash = getattr(ticker, "cashflow", None)
+
+            return {
+                "symbol": symbol,
+                "periodicity": "quarterly" if quarterly else "annual",
+                "income_statement": self._normalize_statement_df(income),
+                "balance_sheet": self._normalize_statement_df(balance),
+                "cash_flow": self._normalize_statement_df(cash),
+            }
+        except Exception as e:
+            logger.warning(f"Failed to fetch financial statements for {symbol}: {e}")
+            return {
+                "symbol": symbol,
+                "periodicity": "quarterly" if quarterly else "annual",
+                "income_statement": [],
+                "balance_sheet": [],
+                "cash_flow": [],
+                "error": str(e),
+            }
+
+    def fetch_daily_indicator_bundle(self, symbol: str, *, period: str = "1y") -> Dict[str, Any]:
+        """Compute a standard daily indicator bundle from historical prices.
+
+        This is a convenience method for refresh pipelines that want a single call to
+        compute commonly used indicators; it does not replace richer indicator services.
+        """
+        ticker = self._get_ticker(symbol)
+        self.rate_limiter.acquire()
+        hist = ticker.history(period=period, interval="1d")
+        if hist is None or hist.empty:
+            raise ValueError(f"No historical data available for {symbol}")
+
+        close = hist["Close"].astype(float)
+        high = hist["High"].astype(float)
+        low = hist["Low"].astype(float)
+
+        sma_20 = close.rolling(window=20).mean().iloc[-1]
+        sma_50 = close.rolling(window=50).mean().iloc[-1]
+        sma_200 = close.rolling(window=200).mean().iloc[-1]
+        ema_20 = close.ewm(span=20).mean().iloc[-1]
+
+        # RSI(14)
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi_14 = (100 - (100 / (1 + rs))).iloc[-1]
+
+        # MACD(12,26,9)
+        ema_12 = close.ewm(span=12).mean()
+        ema_26 = close.ewm(span=26).mean()
+        macd_line = ema_12 - ema_26
+        macd_signal = macd_line.ewm(span=9).mean()
+        macd_hist = (macd_line - macd_signal).iloc[-1]
+
+        # ATR(14)
+        prev_close = close.shift(1)
+        tr = pd.concat(
+            [
+                (high - low).abs(),
+                (high - prev_close).abs(),
+                (low - prev_close).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        atr_14 = tr.rolling(window=14).mean().iloc[-1]
+
+        last_ts = hist.index[-1]
+        as_of_date = pd.to_datetime(last_ts, errors="coerce").date().isoformat() if last_ts is not None else None
+
+        return {
+            "stock_symbol": symbol,
+            "trade_date": as_of_date,
+            "sma_20": self._to_jsonable(sma_20),
+            "sma_50": self._to_jsonable(sma_50),
+            "sma_200": self._to_jsonable(sma_200),
+            "ema_20": self._to_jsonable(ema_20),
+            "rsi_14": self._to_jsonable(rsi_14),
+            "macd": self._to_jsonable(macd_line.iloc[-1]),
+            "macd_signal": self._to_jsonable(macd_signal.iloc[-1]),
+            "macd_hist": self._to_jsonable(macd_hist),
+            "atr_14": self._to_jsonable(atr_14),
+            "source": "yahoo_finance",
+        }
+
+    @staticmethod
+    def _normalize_earnings_calendar_df(df: Optional[pd.DataFrame], *, default_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        if df is None or getattr(df, "empty", True):
+            return []
+
+        tmp = df.copy()
+        tmp.columns = [
+            str(c)
+            .strip()
+            .lower()
+            .replace(" ", "_")
+            .replace("/", "_")
+            .replace("-", "_")
+            for c in tmp.columns
+        ]
+
+        def _pick_col(candidates: List[str]) -> Optional[str]:
+            for c in candidates:
+                if c in tmp.columns:
+                    return c
+            return None
+
+        symbol_col = _pick_col(["symbol", "ticker"])
+        company_col = _pick_col(["company", "company_name", "name"])
+        date_col = _pick_col(["earnings_date", "date", "report_date", "earningsdate"])
+        time_col = _pick_col(["call_time", "time", "timing"])
+        eps_est_col = _pick_col(["eps_estimate", "eps_est", "eps_estimated"])
+        eps_act_col = _pick_col(["reported_eps", "eps_actual", "eps"])
+
+        if symbol_col is None:
+            return []
+
+        tmp["symbol"] = tmp[symbol_col].astype(str)
+        if company_col is not None:
+            tmp["company_name"] = tmp[company_col].astype(str)
+
+        if date_col is not None:
+            parsed = pd.to_datetime(tmp[date_col], errors="coerce")
+            tmp["earnings_date"] = parsed.dt.date
+        elif default_date:
+            tmp["earnings_date"] = pd.to_datetime(default_date, errors="coerce").date()
+        else:
+            return []
+
+        if time_col is not None:
+            tmp["time"] = tmp[time_col]
+
+        if eps_est_col is not None:
+            tmp["eps_estimate"] = pd.to_numeric(tmp[eps_est_col], errors="coerce")
+        if eps_act_col is not None:
+            tmp["eps_actual"] = pd.to_numeric(tmp[eps_act_col], errors="coerce")
+
+        out_cols = [
+            "symbol",
+            "company_name",
+            "earnings_date",
+            "eps_estimate",
+            "eps_actual",
+            "time",
+        ]
+        for c in out_cols:
+            if c not in tmp.columns:
+                tmp[c] = None
+
+        tmp = tmp[out_cols]
+        tmp = tmp[tmp["earnings_date"].notna()]
+        return tmp.to_dict(orient="records")
+
+    def fetch_earnings_for_date(self, earnings_date: str, symbols: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        try:
+            from yahoo_fin import stock_info as si
+        except Exception as e:
+            logger.warning(f"yahoo_fin not available for earnings-for-date ({earnings_date}): {e}")
+            return []
+
+        try:
+            self.rate_limiter.acquire()
+            df = si.get_earnings_for_date(earnings_date)
+            rows = self._normalize_earnings_calendar_df(df, default_date=earnings_date)
+            if symbols:
+                sset = {s.upper() for s in symbols}
+                rows = [r for r in rows if str(r.get("symbol", "")).upper() in sset]
+            return rows
+        except Exception as e:
+            logger.error(f"Failed to fetch earnings for date {earnings_date}: {e}")
+            return []
+
+    def _fetch_earnings_calendar_fallback(self, symbols: List[str], start_date: str, end_date: str) -> List[Dict[str, Any]]:
+        try:
+            earnings_data: List[Dict[str, Any]] = []
+            for symbol in symbols:
+                try:
+                    earnings_history = self.fetch_earnings(symbol)
+                    symbol_info = self.fetch_symbol_details(symbol)
+
+                    for earnings in earnings_history:
+                        earnings_date = earnings.get("earnings_date")
+                        if not earnings_date:
+                            continue
+
+                        try:
+                            if isinstance(earnings_date, str):
+                                earnings_dt = datetime.strptime(earnings_date, "%Y-%m-%d")
+                            else:
+                                earnings_dt = datetime.fromtimestamp(earnings_date)
+
+                            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+
+                            if start_dt <= earnings_dt <= end_dt:
+                                earnings_data.append({
+                                    "symbol": symbol,
+                                    "company_name": symbol_info.get("shortName", symbol),
+                                    "earnings_date": earnings_dt.date().isoformat(),
+                                    "eps_estimate": earnings.get("eps_estimate"),
+                                    "eps_actual": earnings.get("eps_actual"),
+                                    "revenue_estimate": earnings.get("revenue_estimate"),
+                                    "revenue_actual": earnings.get("revenue_actual"),
+                                    "quarter": earnings.get("quarter"),
+                                    "year": earnings.get("year"),
+                                    "time": "After Market Close" if getattr(earnings_dt, "hour", 0) >= 16 else "Before Market Open",
+                                    "market_cap": symbol_info.get("marketCap"),
+                                    "sector": symbol_info.get("sector"),
+                                    "industry": symbol_info.get("industry"),
+                                })
+                        except (ValueError, TypeError):
+                            continue
+                except Exception as e:
+                    logger.warning(f"Failed to fetch earnings for {symbol}: {e}")
+                    continue
+
+            earnings_data.sort(key=lambda x: (x.get("earnings_date"), x.get("symbol")))
+            logger.info(f"✅ Fetched {len(earnings_data)} earnings calendar entries (fallback)")
+            return earnings_data
+        except Exception as e:
+            logger.error(f"Failed to fetch earnings calendar (fallback): {e}")
+            return []
     
     def fetch_earnings_calendar(self, symbols: List[str] = None, start_date: str = None, end_date: str = None) -> List[Dict[str, Any]]:
         """
@@ -743,71 +1260,54 @@ class YahooFinanceClient:
             start_date: Start date in YYYY-MM-DD format (if None, uses today)
             end_date: End date in YYYY-MM-DD format (if None, uses start_date + 90 days)
         """
+        # If symbols are not provided, default to major symbols (kept for fallback behavior).
+        if not symbols:
+            symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "JPM", "JNJ", "V"]
+
+        if not start_date:
+            start_date = datetime.now().strftime("%Y-%m-%d")
+        if not end_date:
+            end_date = (datetime.now() + timedelta(days=90)).strftime("%Y-%m-%d")
+
+        # Preferred path: yahoo_fin earnings calendar scrape.
         try:
-            # Yahoo doesn't have direct earnings calendar API, so we'll use earnings history + future estimates
-            if not symbols:
-                # Default to major symbols if none provided
-                symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "JPM", "JNJ", "V"]
-            
-            from datetime import datetime, timedelta
-            if not start_date:
-                start_date = datetime.now().strftime("%Y-%m-%d")
-            if not end_date:
-                end_date = (datetime.now() + timedelta(days=90)).strftime("%Y-%m-%d")
-            
-            earnings_data = []
-            
-            for symbol in symbols:
-                try:
-                    # Get earnings history (includes future estimates)
-                    earnings_history = self.fetch_earnings(symbol)
-                    symbol_info = self.fetch_symbol_details(symbol)
-                    
-                    for earnings in earnings_history:
-                        earnings_date = earnings.get("earnings_date")
-                        if earnings_date:
-                            # Parse date and check if within range
-                            try:
-                                if isinstance(earnings_date, str):
-                                    earnings_dt = datetime.strptime(earnings_date, "%Y-%m-%d")
-                                else:
-                                    earnings_dt = datetime.fromtimestamp(earnings_date)
-                                
-                                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-                                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-                                
-                                if start_dt <= earnings_dt <= end_dt:
-                                    earnings_data.append({
-                                        "symbol": symbol,
-                                        "company_name": symbol_info.get("shortName", symbol),
-                                        "earnings_date": earnings_date,
-                                        "eps_estimate": earnings.get("eps_estimate"),
-                                        "eps_actual": earnings.get("eps_actual"),
-                                        "revenue_estimate": earnings.get("revenue_estimate"),
-                                        "revenue_actual": earnings.get("revenue_actual"),
-                                        "quarter": earnings.get("quarter"),
-                                        "year": earnings.get("year"),
-                                        "time": "After Market Close" if earnings_dt.hour >= 16 else "Before Market Open",
-                                        "market_cap": symbol_info.get("marketCap"),
-                                        "sector": symbol_info.get("sector"),
-                                        "industry": symbol_info.get("industry")
-                                    })
-                            except (ValueError, TypeError):
-                                continue
-                                
-                except Exception as e:
-                    logger.warning(f"Failed to fetch earnings for {symbol}: {e}")
+            from yahoo_fin import stock_info as si
+            self.rate_limiter.acquire()
+            df = si.get_earnings_calendar()
+            rows = self._normalize_earnings_calendar_df(df)
+            if not rows:
+                raise ValueError("Empty earnings calendar from yahoo_fin")
+
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+            sset = {s.upper() for s in symbols} if symbols else None
+
+            filtered: List[Dict[str, Any]] = []
+            for r in rows:
+                d = r.get("earnings_date")
+                if not d:
                     continue
-            
-            # Sort by date and symbol
-            earnings_data.sort(key=lambda x: (x.get("earnings_date"), x.get("symbol")))
-            
-            logger.info(f"✅ Fetched {len(earnings_data)} earnings calendar entries")
-            return earnings_data
-            
+                if isinstance(d, str):
+                    d_val = pd.to_datetime(d, errors="coerce").date() if d else None
+                else:
+                    d_val = d
+                if d_val is None:
+                    continue
+                if not (start_dt <= d_val <= end_dt):
+                    continue
+                sym = str(r.get("symbol", "")).upper()
+                if sset is not None and sym not in sset:
+                    continue
+                r["earnings_date"] = d_val.isoformat()
+                filtered.append(r)
+
+            filtered.sort(key=lambda x: (x.get("earnings_date"), x.get("symbol")))
+            logger.info(f"✅ Fetched {len(filtered)} earnings calendar entries (yahoo_fin)")
+            return filtered
         except Exception as e:
-            logger.error(f"Failed to fetch earnings calendar: {e}")
-            return []
+            logger.warning(f"yahoo_fin earnings calendar failed, falling back to yfinance-based approach: {e}")
+
+        return self._fetch_earnings_calendar_fallback(symbols, start_date, end_date)
     
     def is_available(self) -> bool:
         """

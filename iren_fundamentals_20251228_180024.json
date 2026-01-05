@@ -1,0 +1,1380 @@
+{
+  "symbol": "IREN",
+  "fetch_timestamp": "2025-12-28T18:00:24.737520",
+  "data_source": "yahoo_finance",
+  "fundamentals": {
+    "symbol": "IREN",
+    "name": "IREN Limited",
+    "sector": "Financial Services",
+    "industry": "Capital Markets",
+    "market_cap": 13232169984,
+    "pe_ratio": 23.16092,
+    "pb_ratio": 3.9634144,
+    "eps": 1.74,
+    "beta": 4.241,
+    "description": "IREN Limited operates in the vertically integrated data center business in Australia and Canada. The company owns and operates computing hardware, as well as electrical infrastructure and data centers. It also mines Bitcoin, a scarce digital asset that is created and transmitted through the operation of a peer-to-peer network of computers running the Bitcoin software. The company was formerly known as Iris Energy Limited and changed its name to IREN Limited in November 2024. The company was incorporated in 2018 and is based in Sydney, Australia.",
+    "country": "Australia",
+    "currency": "USD",
+    "exchange": "NMS",
+    "fifty_two_week_high": 76.87,
+    "fifty_two_week_low": 5.125,
+    "average_volume": 40130885,
+    "enterprise_value": 11357028352,
+    "price_to_sales": 19.21733,
+    "forward_pe": 48.16138,
+    "book_value": 10.168,
+    "price_to_book": 3.9634144,
+    "debt_to_equity": 0.5305300502671819,
+    "roe": 0.26125,
+    "revenue_growth": 3.554,
+    "return_on_assets": -6.0000002e-05,
+    "profit_margin": 0.75992996,
+    "operating_margin": -0.25024998,
+    "gross_margin": 0.6982,
+    "raw_info": {
+      "address1": "55 Market Street",
+      "address2": "Level 6",
+      "city": "Sydney",
+      "state": "NSW",
+      "zip": "2000",
+      "country": "Australia",
+      "phone": "61 2 7906 8301",
+      "website": "https://iren.com",
+      "industry": "Capital Markets",
+      "industryKey": "capital-markets",
+      "industryDisp": "Capital Markets",
+      "sector": "Financial Services",
+      "sectorKey": "financial-services",
+      "sectorDisp": "Financial Services",
+      "longBusinessSummary": "IREN Limited operates in the vertically integrated data center business in Australia and Canada. The company owns and operates computing hardware, as well as electrical infrastructure and data centers. It also mines Bitcoin, a scarce digital asset that is created and transmitted through the operation of a peer-to-peer network of computers running the Bitcoin software. The company was formerly known as Iris Energy Limited and changed its name to IREN Limited in November 2024. The company was incorporated in 2018 and is based in Sydney, Australia.",
+      "fullTimeEmployees": 257,
+      "companyOfficers": [
+        {
+          "maxAge": 1,
+          "name": "Mr. William  Roberts",
+          "age": 34,
+          "title": "Co-Founder, Co-CEO & Executive Director",
+          "yearBorn": 1990,
+          "fiscalYear": 2025,
+          "totalPay": 2952000,
+          "exercisedValue": 0,
+          "unexercisedValue": 11300000
+        },
+        {
+          "maxAge": 1,
+          "name": "Mr. Daniel  Roberts",
+          "age": 40,
+          "title": "Co-Founder, Co-CEO & Executive Director",
+          "yearBorn": 1984,
+          "fiscalYear": 2025,
+          "totalPay": 2952000,
+          "exercisedValue": 0,
+          "unexercisedValue": 11300000
+        },
+        {
+          "maxAge": 1,
+          "name": "Mr. Anthony John Lewis",
+          "age": 48,
+          "title": "Chief Financial Officer",
+          "yearBorn": 1976,
+          "fiscalYear": 2025,
+          "exercisedValue": 0,
+          "unexercisedValue": 0
+        },
+        {
+          "maxAge": 1,
+          "name": "Mr. David  Shaw",
+          "age": 57,
+          "title": "Chief Operating Officer",
+          "yearBorn": 1967,
+          "fiscalYear": 2025,
+          "totalPay": 711435,
+          "exercisedValue": 0,
+          "unexercisedValue": 0
+        },
+        {
+          "maxAge": 1,
+          "name": "Mr. Denis  Skrinnikoff",
+          "age": 39,
+          "title": "Chief Technology Officer",
+          "yearBorn": 1985,
+          "fiscalYear": 2025,
+          "exercisedValue": 0,
+          "unexercisedValue": 0
+        },
+        {
+          "maxAge": 1,
+          "name": "Mike  Power",
+          "title": "Vice President of Investor Relations",
+          "fiscalYear": 2025,
+          "exercisedValue": 0,
+          "unexercisedValue": 0
+        },
+        {
+          "maxAge": 1,
+          "name": "Ms. Cesilia  Kim",
+          "age": 49,
+          "title": "Chief Legal Officer & Secretary",
+          "yearBorn": 1975,
+          "fiscalYear": 2025,
+          "totalPay": 774970,
+          "exercisedValue": 0,
+          "unexercisedValue": 0
+        },
+        {
+          "maxAge": 1,
+          "name": "Ms. Heather  Miller",
+          "title": "Vice President of People, Culture & Community",
+          "fiscalYear": 2025,
+          "exercisedValue": 0,
+          "unexercisedValue": 0
+        },
+        {
+          "maxAge": 1,
+          "name": "Kent  Draper",
+          "title": "Chief Commercial Officer",
+          "fiscalYear": 2025,
+          "exercisedValue": 0,
+          "unexercisedValue": 0
+        }
+      ],
+      "compensationAsOfEpochDate": 1767139200,
+      "executiveTeam": [],
+      "maxAge": 86400,
+      "priceHint": 2,
+      "previousClose": 41.98,
+      "open": 42.53,
+      "dayLow": 39.53,
+      "dayHigh": 42.64,
+      "regularMarketPreviousClose": 41.98,
+      "regularMarketOpen": 42.53,
+      "regularMarketDayLow": 39.53,
+      "regularMarketDayHigh": 42.64,
+      "payoutRatio": 0.0,
+      "beta": 4.241,
+      "trailingPE": 23.16092,
+      "forwardPE": 48.16138,
+      "volume": 20249566,
+      "regularMarketVolume": 20249566,
+      "averageVolume": 40130885,
+      "averageVolume10days": 31643450,
+      "averageDailyVolume10Day": 31643450,
+      "bid": 26.77,
+      "ask": 36.8,
+      "bidSize": 1,
+      "askSize": 1,
+      "marketCap": 13232169984,
+      "fiftyTwoWeekLow": 5.125,
+      "fiftyTwoWeekHigh": 76.87,
+      "allTimeHigh": 76.87,
+      "allTimeLow": 1.02,
+      "priceToSalesTrailing12Months": 19.21733,
+      "fiftyDayAverage": 50.7331,
+      "twoHundredDayAverage": 26.668924,
+      "trailingAnnualDividendRate": 0.0,
+      "trailingAnnualDividendYield": 0.0,
+      "currency": "USD",
+      "tradeable": false,
+      "enterpriseValue": 11357028352,
+      "profitMargins": 0.75992996,
+      "floatShares": 257979108,
+      "sharesOutstanding": 328341694,
+      "sharesShort": 50792069,
+      "sharesShortPriorMonth": 59944578,
+      "sharesShortPreviousMonthDate": 1763078400,
+      "dateShortInterest": 1765756800,
+      "sharesPercentSharesOut": 0.1547,
+      "heldPercentInsiders": 0.041300002,
+      "heldPercentInstitutions": 0.52938,
+      "shortRatio": 1.29,
+      "shortPercentOfFloat": 0.1603,
+      "impliedSharesOutstanding": 328341695,
+      "bookValue": 10.168,
+      "priceToBook": 3.9634144,
+      "lastFiscalYearEnd": 1751241600,
+      "nextFiscalYearEnd": 1782777600,
+      "mostRecentQuarter": 1759190400,
+      "netIncomeToCommon": 523255008,
+      "trailingEps": 1.74,
+      "forwardEps": 0.83677,
+      "enterpriseToRevenue": 16.494,
+      "enterpriseToEbitda": 48.926,
+      "52WeekChange": 3.054326,
+      "SandP52WeekChange": 0.17318606,
+      "quoteType": "EQUITY",
+      "currentPrice": 40.3,
+      "targetHighPrice": 136.0,
+      "targetLowPrice": 39.0,
+      "targetMeanPrice": 83.0,
+      "targetMedianPrice": 80.0,
+      "recommendationMean": 1.85714,
+      "recommendationKey": "buy",
+      "numberOfAnalystOpinions": 13,
+      "totalCash": 1032262976,
+      "totalCashPerShare": 3.642,
+      "ebitda": 232124992,
+      "totalDebt": 965632000,
+      "quickRatio": 5.241,
+      "currentRatio": 5.516,
+      "totalRevenue": 688553984,
+      "debtToEquity": 33.574,
+      "revenuePerShare": 2.931,
+      "returnOnAssets": -6.0000002e-05,
+      "returnOnEquity": 0.26125,
+      "grossProfits": 480748000,
+      "freeCashflow": -957127488,
+      "operatingCashflow": 392153984,
+      "revenueGrowth": 3.554,
+      "grossMargins": 0.6982,
+      "ebitdaMargins": 0.33712003,
+      "operatingMargins": -0.25024998,
+      "financialCurrency": "USD",
+      "symbol": "IREN",
+      "language": "en-US",
+      "region": "US",
+      "typeDisp": "Equity",
+      "quoteSourceName": "Nasdaq Real Time Price",
+      "triggerable": true,
+      "customPriceAlertConfidence": "HIGH",
+      "regularMarketChangePercent": -4.0019064,
+      "shortName": "IREN LIMITED",
+      "longName": "IREN Limited",
+      "regularMarketTime": 1766782801,
+      "exchange": "NMS",
+      "messageBoardId": "finmb_706254871",
+      "exchangeTimezoneName": "America/New_York",
+      "exchangeTimezoneShortName": "EST",
+      "gmtOffSetMilliseconds": -18000000,
+      "market": "us_market",
+      "esgPopulated": false,
+      "regularMarketPrice": 40.3,
+      "hasPrePostMarketData": true,
+      "firstTradeDateMilliseconds": 1637159400000,
+      "postMarketChangePercent": -0.3997481,
+      "postMarketPrice": 40.1389,
+      "postMarketChange": -0.16109848,
+      "regularMarketChange": -1.6800003,
+      "regularMarketDayRange": "39.53 - 42.64",
+      "fullExchangeName": "NasdaqGS",
+      "averageDailyVolume3Month": 40130885,
+      "fiftyTwoWeekLowChange": 35.175,
+      "fiftyTwoWeekLowChangePercent": 6.8634143,
+      "fiftyTwoWeekRange": "5.125 - 76.87",
+      "fiftyTwoWeekHighChange": -36.570004,
+      "fiftyTwoWeekHighChangePercent": -0.4757383,
+      "fiftyTwoWeekChangePercent": 305.43262,
+      "marketState": "CLOSED",
+      "corporateActions": [],
+      "postMarketTime": 1766797195,
+      "earningsTimestamp": 1762462800,
+      "earningsTimestampStart": 1770843600,
+      "earningsTimestampEnd": 1770843600,
+      "earningsCallTimestampStart": 1762466400,
+      "earningsCallTimestampEnd": 1762466400,
+      "isEarningsDateEstimate": true,
+      "epsTrailingTwelveMonths": 1.74,
+      "epsForward": 0.83677,
+      "epsCurrentYear": 1.04316,
+      "priceEpsCurrentYear": 38.632618,
+      "fiftyDayAverageChange": -10.433102,
+      "fiftyDayAverageChangePercent": -0.20564684,
+      "twoHundredDayAverageChange": 13.631075,
+      "twoHundredDayAverageChangePercent": 0.51112205,
+      "sourceInterval": 15,
+      "exchangeDataDelayedBy": 0,
+      "ipoExpectedDate": "2021-11-17",
+      "prevName": "Iris Energy Limited",
+      "nameChangeDate": "2025-12-28",
+      "averageAnalystRating": "1.9 - Buy",
+      "cryptoTradeable": false,
+      "displayName": "IREN",
+      "trailingPegRatio": null
+    },
+    "analyst_recommendations": [
+      {
+        "index": 0,
+        "period": "0m",
+        "strongBuy": 1,
+        "buy": 9,
+        "hold": 2,
+        "sell": 1,
+        "strongSell": 1
+      },
+      {
+        "index": 1,
+        "period": "-1m",
+        "strongBuy": 1,
+        "buy": 9,
+        "hold": 2,
+        "sell": 1,
+        "strongSell": 1
+      },
+      {
+        "index": 2,
+        "period": "-2m",
+        "strongBuy": 0,
+        "buy": 9,
+        "hold": 2,
+        "sell": 1,
+        "strongSell": 1
+      },
+      {
+        "index": 3,
+        "period": "-3m",
+        "strongBuy": 1,
+        "buy": 9,
+        "hold": 2,
+        "sell": 0,
+        "strongSell": 1
+      }
+    ],
+    "major_holders": [
+      {
+        "index": "insidersPercentHeld",
+        "Value": 0.041300002
+      },
+      {
+        "index": "institutionsPercentHeld",
+        "Value": 0.52938
+      },
+      {
+        "index": "institutionsFloatPercentHeld",
+        "Value": 0.55219
+      },
+      {
+        "index": "institutionsCount",
+        "Value": 439.0
+      }
+    ],
+    "institutional_holders": [
+      {
+        "index": 0,
+        "Date Reported": "2025-09-30T00:00:00",
+        "Holder": "Jane Street Group, LLC",
+        "pctHeld": 0.040599998,
+        "Shares": 11710138,
+        "Value": 471918552,
+        "pctChange": 0.4022
+      },
+      {
+        "index": 1,
+        "Date Reported": "2025-09-30T00:00:00",
+        "Holder": "Shaw D.E. & Co., Inc.",
+        "pctHeld": 0.037100002,
+        "Shares": 10717054,
+        "Value": 431897268,
+        "pctChange": 1.0
+      },
+      {
+        "index": 2,
+        "Date Reported": "2025-09-30T00:00:00",
+        "Holder": "Wells Fargo & Company",
+        "pctHeld": 0.0273,
+        "Shares": 7882103,
+        "Value": 317648744,
+        "pctChange": 11.5397
+      },
+      {
+        "index": 3,
+        "Date Reported": "2025-09-30T00:00:00",
+        "Holder": "Situational Awareness LP                          ",
+        "pctHeld": 0.025,
+        "Shares": 7220421,
+        "Value": 290982960,
+        "pctChange": 0.12810001
+      },
+      {
+        "index": 4,
+        "Date Reported": "2025-09-30T00:00:00",
+        "Holder": "Citigroup Inc.",
+        "pctHeld": 0.0223,
+        "Shares": 6427716,
+        "Value": 259036949,
+        "pctChange": 1.1201999
+      },
+      {
+        "index": 5,
+        "Date Reported": "2025-09-30T00:00:00",
+        "Holder": "BIT Capital GmbH",
+        "pctHeld": 0.0201,
+        "Shares": 5794227,
+        "Value": 233507343,
+        "pctChange": -0.64309996
+      },
+      {
+        "index": 6,
+        "Date Reported": "2025-09-30T00:00:00",
+        "Holder": "Two Sigma Investments, LP",
+        "pctHeld": 0.0178,
+        "Shares": 5143276,
+        "Value": 207274018,
+        "pctChange": 4.4972
+      },
+      {
+        "index": 7,
+        "Date Reported": "2025-09-30T00:00:00",
+        "Holder": "Morgan Stanley",
+        "pctHeld": 0.0156,
+        "Shares": 4509672,
+        "Value": 181739778,
+        "pctChange": -0.175
+      },
+      {
+        "index": 8,
+        "Date Reported": "2025-09-30T00:00:00",
+        "Holder": "Value Aligned Research Advisors, LLC                          ",
+        "pctHeld": 0.0134000005,
+        "Shares": 3873337,
+        "Value": 156095478,
+        "pctChange": 0.1859
+      },
+      {
+        "index": 9,
+        "Date Reported": "2025-09-30T00:00:00",
+        "Holder": "Citadel Advisors Llc",
+        "pctHeld": 0.012,
+        "Shares": 3465876,
+        "Value": 139674800,
+        "pctChange": -0.3323
+      }
+    ],
+    "options_expirations": [
+      "2026-01-02",
+      "2026-01-09",
+      "2026-01-16",
+      "2026-01-23",
+      "2026-01-30",
+      "2026-02-06",
+      "2026-02-20",
+      "2026-03-20",
+      "2026-05-15",
+      "2026-06-18",
+      "2026-07-17",
+      "2026-08-21",
+      "2026-09-18",
+      "2026-10-16",
+      "2026-11-20",
+      "2026-12-18",
+      "2027-01-15",
+      "2028-01-21"
+    ],
+    "income_stmt_annual": [
+      {
+        "index": "Tax Effect Of Unusual Items",
+        "2025-06-30 00:00:00": 5187210.0,
+        "2024-06-30 00:00:00": -1209300.0,
+        "2023-06-30 00:00:00": -32619900.0,
+        "2022-06-30 00:00:00": 2352600.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Tax Rate For Calcs",
+        "2025-06-30 00:00:00": 0.07,
+        "2024-06-30 00:00:00": 0.3,
+        "2023-06-30 00:00:00": 0.3,
+        "2022-06-30 00:00:00": 0.3,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Normalized EBITDA",
+        "2025-06-30 00:00:00": 211579000.0,
+        "2024-06-30 00:00:00": 29132000.0,
+        "2023-06-30 00:00:00": -13824000.0,
+        "2022-06-30 00:00:00": 8294000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Total Unusual Items",
+        "2025-06-30 00:00:00": 74103000.0,
+        "2024-06-30 00:00:00": -4031000.0,
+        "2023-06-30 00:00:00": -108733000.0,
+        "2022-06-30 00:00:00": 7842000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Total Unusual Items Excluding Goodwill",
+        "2025-06-30 00:00:00": 74103000.0,
+        "2024-06-30 00:00:00": -4031000.0,
+        "2023-06-30 00:00:00": -108733000.0,
+        "2022-06-30 00:00:00": 7842000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Net Income From Continuing Operation Net Minority Interest",
+        "2025-06-30 00:00:00": 86941000.0,
+        "2024-06-30 00:00:00": -28920000.0,
+        "2023-06-30 00:00:00": -171827000.0,
+        "2022-06-30 00:00:00": -419770000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Reconciled Depreciation",
+        "2025-06-30 00:00:00": 181136000.0,
+        "2024-06-30 00:00:00": 50470000.0,
+        "2023-06-30 00:00:00": 30673000.0,
+        "2022-06-30 00:00:00": 7741000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Reconciled Cost Of Revenue",
+        "2025-06-30 00:00:00": 158992000.0,
+        "2024-06-30 00:00:00": 105074000.0,
+        "2023-06-30 00:00:00": 54388000.0,
+        "2022-06-30 00:00:00": 7448000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "EBITDA",
+        "2025-06-30 00:00:00": 285682000.0,
+        "2024-06-30 00:00:00": 25101000.0,
+        "2023-06-30 00:00:00": -122557000.0,
+        "2022-06-30 00:00:00": 16136000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "EBIT",
+        "2025-06-30 00:00:00": 104546000.0,
+        "2024-06-30 00:00:00": -25369000.0,
+        "2023-06-30 00:00:00": -153230000.0,
+        "2022-06-30 00:00:00": 8395000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Net Interest Income",
+        "2025-06-30 00:00:00": -3541000.0,
+        "2024-06-30 00:00:00": 5733000.0,
+        "2023-06-30 00:00:00": -15283000.0,
+        "2022-06-30 00:00:00": -425362000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Interest Expense",
+        "2025-06-30 00:00:00": 11045000.0,
+        "2024-06-30 00:00:00": 98000.0,
+        "2023-06-30 00:00:00": 16207000.0,
+        "2022-06-30 00:00:00": 425441000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Interest Income",
+        "2025-06-30 00:00:00": 7504000.0,
+        "2024-06-30 00:00:00": 5831000.0,
+        "2023-06-30 00:00:00": 924000.0,
+        "2022-06-30 00:00:00": 79000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Normalized Income",
+        "2025-06-30 00:00:00": 18025210.0,
+        "2024-06-30 00:00:00": -26098300.0,
+        "2023-06-30 00:00:00": -95713900.0,
+        "2022-06-30 00:00:00": -425259400.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Net Income From Continuing And Discontinued Operation",
+        "2025-06-30 00:00:00": 86941000.0,
+        "2024-06-30 00:00:00": -28920000.0,
+        "2023-06-30 00:00:00": -171827000.0,
+        "2022-06-30 00:00:00": -419770000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Total Expenses",
+        "2025-06-30 00:00:00": 478901000.0,
+        "2024-06-30 00:00:00": 214469000.0,
+        "2023-06-30 00:00:00": 124067000.0,
+        "2022-06-30 00:00:00": 58575000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Rent Expense Supplemental",
+        "2025-06-30 00:00:00": null,
+        "2024-06-30 00:00:00": null,
+        "2023-06-30 00:00:00": 773000.0,
+        "2022-06-30 00:00:00": 177000.0,
+        "2021-06-30 00:00:00": 92000.0
+      },
+      {
+        "index": "Total Operating Income As Reported",
+        "2025-06-30 00:00:00": 17327000.0,
+        "2024-06-30 00:00:00": -27234000.0,
+        "2023-06-30 00:00:00": -157241000.0,
+        "2022-06-30 00:00:00": 307000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Diluted Average Shares",
+        "2025-06-30 00:00:00": 258103209.0,
+        "2024-06-30 00:00:00": 99640920.0,
+        "2023-06-30 00:00:00": 54775571.0,
+        "2022-06-30 00:00:00": 40941074.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Basic Average Shares",
+        "2025-06-30 00:00:00": 258103209.0,
+        "2024-06-30 00:00:00": 99640920.0,
+        "2023-06-30 00:00:00": 54775571.0,
+        "2022-06-30 00:00:00": 40941074.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Diluted EPS",
+        "2025-06-30 00:00:00": 0.336687,
+        "2024-06-30 00:00:00": -0.29,
+        "2023-06-30 00:00:00": -3.14,
+        "2022-06-30 00:00:00": -10.253,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Basic EPS",
+        "2025-06-30 00:00:00": 0.336687,
+        "2024-06-30 00:00:00": -0.29,
+        "2023-06-30 00:00:00": -3.14,
+        "2022-06-30 00:00:00": -10.253,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Diluted NI Availto Com Stockholders",
+        "2025-06-30 00:00:00": 86941000.0,
+        "2024-06-30 00:00:00": -28920000.0,
+        "2023-06-30 00:00:00": -171827000.0,
+        "2022-06-30 00:00:00": -419770000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Net Income Common Stockholders",
+        "2025-06-30 00:00:00": 86941000.0,
+        "2024-06-30 00:00:00": -28920000.0,
+        "2023-06-30 00:00:00": -171827000.0,
+        "2022-06-30 00:00:00": -419770000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Otherunder Preferred Stock Dividend",
+        "2025-06-30 00:00:00": null,
+        "2024-06-30 00:00:00": null,
+        "2023-06-30 00:00:00": null,
+        "2022-06-30 00:00:00": null,
+        "2021-06-30 00:00:00": -59347388.351265
+      },
+      {
+        "index": "Net Income",
+        "2025-06-30 00:00:00": 86941000.0,
+        "2024-06-30 00:00:00": -28920000.0,
+        "2023-06-30 00:00:00": -171827000.0,
+        "2022-06-30 00:00:00": -419770000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Net Income Including Noncontrolling Interests",
+        "2025-06-30 00:00:00": 86941000.0,
+        "2024-06-30 00:00:00": -28920000.0,
+        "2023-06-30 00:00:00": -171827000.0,
+        "2022-06-30 00:00:00": -419770000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Net Income Continuous Operations",
+        "2025-06-30 00:00:00": 86941000.0,
+        "2024-06-30 00:00:00": -28920000.0,
+        "2023-06-30 00:00:00": -171827000.0,
+        "2022-06-30 00:00:00": -419770000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Tax Provision",
+        "2025-06-30 00:00:00": 6560000.0,
+        "2024-06-30 00:00:00": 3453000.0,
+        "2023-06-30 00:00:00": 2390000.0,
+        "2022-06-30 00:00:00": 2724000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Pretax Income",
+        "2025-06-30 00:00:00": 93501000.0,
+        "2024-06-30 00:00:00": -25467000.0,
+        "2023-06-30 00:00:00": -169437000.0,
+        "2022-06-30 00:00:00": -417046000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Other Income Expense",
+        "2025-06-30 00:00:00": 74920000.0,
+        "2024-06-30 00:00:00": -3923000.0,
+        "2023-06-30 00:00:00": -105596000.0,
+        "2022-06-30 00:00:00": 7854000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Other Non Operating Income Expenses",
+        "2025-06-30 00:00:00": 817000.0,
+        "2024-06-30 00:00:00": 108000.0,
+        "2023-06-30 00:00:00": 3137000.0,
+        "2022-06-30 00:00:00": 12000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Special Income Charges",
+        "2025-06-30 00:00:00": 4299000.0,
+        "2024-06-30 00:00:00": 43000.0,
+        "2023-06-30 00:00:00": -108542000.0,
+        "2022-06-30 00:00:00": -167000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Gain On Sale Of Ppe",
+        "2025-06-30 00:00:00": 4002000.0,
+        "2024-06-30 00:00:00": 43000.0,
+        "2023-06-30 00:00:00": -6628000.0,
+        "2022-06-30 00:00:00": 0.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Gain On Sale Of Business",
+        "2025-06-30 00:00:00": 0.0,
+        "2024-06-30 00:00:00": 0.0,
+        "2023-06-30 00:00:00": 3258000.0,
+        "2022-06-30 00:00:00": 0.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Other Special Charges",
+        "2025-06-30 00:00:00": -9068000.0,
+        "2024-06-30 00:00:00": null,
+        "2023-06-30 00:00:00": null,
+        "2022-06-30 00:00:00": 464000.0,
+        "2021-06-30 00:00:00": -418000.0
+      },
+      {
+        "index": "Write Off",
+        "2025-06-30 00:00:00": 1548000.0,
+        "2024-06-30 00:00:00": 0.0,
+        "2023-06-30 00:00:00": 1084000.0,
+        "2022-06-30 00:00:00": 167000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Impairment Of Capital Assets",
+        "2025-06-30 00:00:00": 7223000.0,
+        "2024-06-30 00:00:00": 0.0,
+        "2023-06-30 00:00:00": 104088000.0,
+        "2022-06-30 00:00:00": 0.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Gain On Sale Of Security",
+        "2025-06-30 00:00:00": 69804000.0,
+        "2024-06-30 00:00:00": -4074000.0,
+        "2023-06-30 00:00:00": -191000.0,
+        "2022-06-30 00:00:00": 8009000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Net Non Operating Interest Income Expense",
+        "2025-06-30 00:00:00": -3541000.0,
+        "2024-06-30 00:00:00": 5733000.0,
+        "2023-06-30 00:00:00": -15283000.0,
+        "2022-06-30 00:00:00": -425362000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Total Other Finance Cost",
+        "2025-06-30 00:00:00": null,
+        "2024-06-30 00:00:00": null,
+        "2023-06-30 00:00:00": 1038000.0,
+        "2022-06-30 00:00:00": 2508000.0,
+        "2021-06-30 00:00:00": 1968000.0
+      },
+      {
+        "index": "Interest Expense Non Operating",
+        "2025-06-30 00:00:00": 11045000.0,
+        "2024-06-30 00:00:00": 98000.0,
+        "2023-06-30 00:00:00": 16207000.0,
+        "2022-06-30 00:00:00": 425441000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Interest Income Non Operating",
+        "2025-06-30 00:00:00": 7504000.0,
+        "2024-06-30 00:00:00": 5831000.0,
+        "2023-06-30 00:00:00": 924000.0,
+        "2022-06-30 00:00:00": 79000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Operating Income",
+        "2025-06-30 00:00:00": 22122000.0,
+        "2024-06-30 00:00:00": -27277000.0,
+        "2023-06-30 00:00:00": -48558000.0,
+        "2022-06-30 00:00:00": 462000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Operating Expense",
+        "2025-06-30 00:00:00": 319909000.0,
+        "2024-06-30 00:00:00": 109395000.0,
+        "2023-06-30 00:00:00": 69679000.0,
+        "2022-06-30 00:00:00": 51127000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Other Operating Expenses",
+        "2025-06-30 00:00:00": 2315000.0,
+        "2024-06-30 00:00:00": 6508000.0,
+        "2023-06-30 00:00:00": 4971000.0,
+        "2022-06-30 00:00:00": 14844000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Other Taxes",
+        "2025-06-30 00:00:00": 9243000.0,
+        "2024-06-30 00:00:00": 2390000.0,
+        "2023-06-30 00:00:00": 852000.0,
+        "2022-06-30 00:00:00": 2469000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Depreciation Amortization Depletion Income Statement",
+        "2025-06-30 00:00:00": 181136000.0,
+        "2024-06-30 00:00:00": 50470000.0,
+        "2023-06-30 00:00:00": 30673000.0,
+        "2022-06-30 00:00:00": 7741000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Depreciation And Amortization In Income Statement",
+        "2025-06-30 00:00:00": 181136000.0,
+        "2024-06-30 00:00:00": 50470000.0,
+        "2023-06-30 00:00:00": 30673000.0,
+        "2022-06-30 00:00:00": 7741000.0,
+        "2021-06-30 00:00:00": null
+      },
+      {
+        "index": "Depreciation Income Statement",
+        "2025-06-30 00:00:00": null,
+        "2024-06-30 00:00:00": 50650000.0,
+        "2023-06-30 00:00:00": 30856000.0,
+        "2022-06-30 00:00:00": 7741000.0,
+        "2021-06-30 00:00:00": 1252000.0
+      }
+    ],
+    "income_stmt_quarterly": [
+      {
+        "index": "Tax Effect Of Unusual Items",
+        "2025-09-30 00:00:00": 211040635.0,
+        "2025-06-30 00:00:00": 21096900.0,
+        "2025-03-31 00:00:00": 1259182.013872,
+        "2024-12-31 00:00:00": 1353774.526836,
+        "2024-09-30 00:00:00": -3514800.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Tax Rate For Calcs",
+        "2025-09-30 00:00:00": 0.331,
+        "2025-06-30 00:00:00": 0.3,
+        "2025-03-31 00:00:00": 0.172208,
+        "2024-12-31 00:00:00": 0.136966,
+        "2024-09-30 00:00:00": 0.3,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Normalized EBITDA",
+        "2025-09-30 00:00:00": 32219000.0,
+        "2025-06-30 00:00:00": 82806000.0,
+        "2025-03-31 00:00:00": 77271000.0,
+        "2024-12-31 00:00:00": 54441000.0,
+        "2024-09-30 00:00:00": -4752000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Total Unusual Items",
+        "2025-09-30 00:00:00": 637585000.0,
+        "2025-06-30 00:00:00": 70323000.0,
+        "2025-03-31 00:00:00": 7312000.0,
+        "2024-12-31 00:00:00": 9884000.0,
+        "2024-09-30 00:00:00": -11716000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Total Unusual Items Excluding Goodwill",
+        "2025-09-30 00:00:00": 637585000.0,
+        "2025-06-30 00:00:00": 70323000.0,
+        "2025-03-31 00:00:00": 7312000.0,
+        "2024-12-31 00:00:00": 9884000.0,
+        "2024-09-30 00:00:00": -11716000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Net Income From Continuing Operation Net Minority Interest",
+        "2025-09-30 00:00:00": 384611000.0,
+        "2025-06-30 00:00:00": 95546000.0,
+        "2025-03-31 00:00:00": 24227000.0,
+        "2024-12-31 00:00:00": 18878000.0,
+        "2024-09-30 00:00:00": -51703000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Reconciled Depreciation",
+        "2025-09-30 00:00:00": 85226000.0,
+        "2025-06-30 00:00:00": 63481000.0,
+        "2025-03-31 00:00:00": 47448000.0,
+        "2024-12-31 00:00:00": 36198000.0,
+        "2024-09-30 00:00:00": 33931000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Reconciled Cost Of Revenue",
+        "2025-09-30 00:00:00": 89037000.0,
+        "2025-06-30 00:00:00": 136822000.0,
+        "2025-03-31 00:00:00": 7464000.0,
+        "2024-12-31 00:00:00": 6985000.0,
+        "2024-09-30 00:00:00": 36921000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "EBITDA",
+        "2025-09-30 00:00:00": 669804000.0,
+        "2025-06-30 00:00:00": 153129000.0,
+        "2025-03-31 00:00:00": 84583000.0,
+        "2024-12-31 00:00:00": 64325000.0,
+        "2024-09-30 00:00:00": -16468000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "EBIT",
+        "2025-09-30 00:00:00": 584578000.0,
+        "2025-06-30 00:00:00": 89648000.0,
+        "2025-03-31 00:00:00": 37135000.0,
+        "2024-12-31 00:00:00": 28127000.0,
+        "2024-09-30 00:00:00": -50399000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Net Interest Income",
+        "2025-09-30 00:00:00": -2152000.0,
+        "2025-06-30 00:00:00": 4843000.0,
+        "2025-03-31 00:00:00": -5942000.0,
+        "2024-12-31 00:00:00": -4666000.0,
+        "2024-09-30 00:00:00": 2267000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Interest Expense",
+        "2025-09-30 00:00:00": 9280000.0,
+        "2025-06-30 00:00:00": -3140000.0,
+        "2025-03-31 00:00:00": 7868000.0,
+        "2024-12-31 00:00:00": 6253000.0,
+        "2024-09-30 00:00:00": 22000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Interest Income",
+        "2025-09-30 00:00:00": 7128000.0,
+        "2025-06-30 00:00:00": 1703000.0,
+        "2025-03-31 00:00:00": 1926000.0,
+        "2024-12-31 00:00:00": 1587000.0,
+        "2024-09-30 00:00:00": 2289000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Normalized Income",
+        "2025-09-30 00:00:00": -41933365.0,
+        "2025-06-30 00:00:00": 46319900.0,
+        "2025-03-31 00:00:00": 18174182.013872,
+        "2024-12-31 00:00:00": 10347774.526836,
+        "2024-09-30 00:00:00": -43501800.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Net Income From Continuing And Discontinued Operation",
+        "2025-09-30 00:00:00": 384611000.0,
+        "2025-06-30 00:00:00": 95546000.0,
+        "2025-03-31 00:00:00": 24227000.0,
+        "2024-12-31 00:00:00": 18878000.0,
+        "2024-09-30 00:00:00": -51703000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Total Expenses",
+        "2025-09-30 00:00:00": 300430000.0,
+        "2025-06-30 00:00:00": 170487000.0,
+        "2025-03-31 00:00:00": 116926000.0,
+        "2024-12-31 00:00:00": 99827000.0,
+        "2024-09-30 00:00:00": 93741000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Total Operating Income As Reported",
+        "2025-09-30 00:00:00": -76405000.0,
+        "2025-06-30 00:00:00": 4549000.0,
+        "2025-03-31 00:00:00": 35527000.0,
+        "2024-12-31 00:00:00": 31099000.0,
+        "2024-09-30 00:00:00": -47086000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Diluted Average Shares",
+        "2025-09-30 00:00:00": 361680593.0,
+        "2025-06-30 00:00:00": 258103209.0,
+        "2025-03-31 00:00:00": 229105785.0,
+        "2024-12-31 00:00:00": 221031697.0,
+        "2024-09-30 00:00:00": 189262447.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Basic Average Shares",
+        "2025-09-30 00:00:00": 270696733.0,
+        "2025-06-30 00:00:00": 258103209.0,
+        "2025-03-31 00:00:00": 218659835.0,
+        "2024-12-31 00:00:00": 210470186.0,
+        "2024-09-30 00:00:00": 189262447.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Diluted EPS",
+        "2025-09-30 00:00:00": 1.08,
+        "2025-06-30 00:00:00": 0.685385,
+        "2025-03-31 00:00:00": 0.11,
+        "2024-12-31 00:00:00": 0.09,
+        "2024-09-30 00:00:00": -0.27,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Basic EPS",
+        "2025-09-30 00:00:00": 1.42,
+        "2025-06-30 00:00:00": 0.685385,
+        "2025-03-31 00:00:00": 0.11,
+        "2024-12-31 00:00:00": 0.09,
+        "2024-09-30 00:00:00": -0.27,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Diluted NI Availto Com Stockholders",
+        "2025-09-30 00:00:00": 384611000.0,
+        "2025-06-30 00:00:00": 95546000.0,
+        "2025-03-31 00:00:00": 24227000.0,
+        "2024-12-31 00:00:00": 18878000.0,
+        "2024-09-30 00:00:00": -51703000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Net Income Common Stockholders",
+        "2025-09-30 00:00:00": 384611000.0,
+        "2025-06-30 00:00:00": 95546000.0,
+        "2025-03-31 00:00:00": 24227000.0,
+        "2024-12-31 00:00:00": 18878000.0,
+        "2024-09-30 00:00:00": -51703000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Net Income",
+        "2025-09-30 00:00:00": 384611000.0,
+        "2025-06-30 00:00:00": 95546000.0,
+        "2025-03-31 00:00:00": 24227000.0,
+        "2024-12-31 00:00:00": 18878000.0,
+        "2024-09-30 00:00:00": -51703000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Net Income Including Noncontrolling Interests",
+        "2025-09-30 00:00:00": 384611000.0,
+        "2025-06-30 00:00:00": 95546000.0,
+        "2025-03-31 00:00:00": 24227000.0,
+        "2024-12-31 00:00:00": 18878000.0,
+        "2024-09-30 00:00:00": -51703000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Net Income Continuous Operations",
+        "2025-09-30 00:00:00": 384611000.0,
+        "2025-06-30 00:00:00": 95546000.0,
+        "2025-03-31 00:00:00": 24227000.0,
+        "2024-12-31 00:00:00": 18878000.0,
+        "2024-09-30 00:00:00": -51703000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Tax Provision",
+        "2025-09-30 00:00:00": 190687000.0,
+        "2025-06-30 00:00:00": -2758000.0,
+        "2025-03-31 00:00:00": 5040000.0,
+        "2024-12-31 00:00:00": 2996000.0,
+        "2024-09-30 00:00:00": 1282000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Pretax Income",
+        "2025-09-30 00:00:00": 575298000.0,
+        "2025-06-30 00:00:00": 92788000.0,
+        "2025-03-31 00:00:00": 29267000.0,
+        "2024-12-31 00:00:00": 21874000.0,
+        "2024-09-30 00:00:00": -50421000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Other Income Expense",
+        "2025-09-30 00:00:00": 637585000.0,
+        "2025-06-30 00:00:00": 71140000.0,
+        "2025-03-31 00:00:00": 7312000.0,
+        "2024-12-31 00:00:00": 10225000.0,
+        "2024-09-30 00:00:00": -11711000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Other Non Operating Income Expenses",
+        "2025-09-30 00:00:00": null,
+        "2025-06-30 00:00:00": null,
+        "2025-03-31 00:00:00": 3275000.0,
+        "2024-12-31 00:00:00": 341000.0,
+        "2024-09-30 00:00:00": 5000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": 399000.0
+      },
+      {
+        "index": "Special Income Charges",
+        "2025-09-30 00:00:00": -16270000.0,
+        "2025-06-30 00:00:00": 11723000.0,
+        "2025-03-31 00:00:00": 1430000.0,
+        "2024-12-31 00:00:00": 1543000.0,
+        "2024-09-30 00:00:00": -6109000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Gain On Sale Of Ppe",
+        "2025-09-30 00:00:00": -13000.0,
+        "2025-06-30 00:00:00": 2324000.0,
+        "2025-03-31 00:00:00": 1525000.0,
+        "2024-12-31 00:00:00": -672000.0,
+        "2024-09-30 00:00:00": 833000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Gain On Sale Of Business",
+        "2025-09-30 00:00:00": null,
+        "2025-06-30 00:00:00": null,
+        "2025-03-31 00:00:00": null,
+        "2024-12-31 00:00:00": null,
+        "2024-09-30 00:00:00": null,
+        "2024-06-30 00:00:00": 0.0,
+        "2024-03-31 00:00:00": 0.0
+      },
+      {
+        "index": "Other Special Charges",
+        "2025-09-30 00:00:00": null,
+        "2025-06-30 00:00:00": null,
+        "2025-03-31 00:00:00": null,
+        "2024-12-31 00:00:00": -1699000.0,
+        "2024-09-30 00:00:00": 1724000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Write Off",
+        "2025-09-30 00:00:00": null,
+        "2025-06-30 00:00:00": -8070000.0,
+        "2025-03-31 00:00:00": 95000.0,
+        "2024-12-31 00:00:00": 0.0,
+        "2024-09-30 00:00:00": 9524000.0,
+        "2024-06-30 00:00:00": 0.0,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Impairment Of Capital Assets",
+        "2025-09-30 00:00:00": 16257000.0,
+        "2025-06-30 00:00:00": 7739000.0,
+        "2025-03-31 00:00:00": 0.0,
+        "2024-12-31 00:00:00": -516000.0,
+        "2024-09-30 00:00:00": null,
+        "2024-06-30 00:00:00": 0.0,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Gain On Sale Of Security",
+        "2025-09-30 00:00:00": 653855000.0,
+        "2025-06-30 00:00:00": 58600000.0,
+        "2025-03-31 00:00:00": 5882000.0,
+        "2024-12-31 00:00:00": 8341000.0,
+        "2024-09-30 00:00:00": -5607000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Net Non Operating Interest Income Expense",
+        "2025-09-30 00:00:00": -2152000.0,
+        "2025-06-30 00:00:00": 4843000.0,
+        "2025-03-31 00:00:00": -5942000.0,
+        "2024-12-31 00:00:00": -4666000.0,
+        "2024-09-30 00:00:00": 2267000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Interest Expense Non Operating",
+        "2025-09-30 00:00:00": 9280000.0,
+        "2025-06-30 00:00:00": -3140000.0,
+        "2025-03-31 00:00:00": 7868000.0,
+        "2024-12-31 00:00:00": 6253000.0,
+        "2024-09-30 00:00:00": 22000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Interest Income Non Operating",
+        "2025-09-30 00:00:00": 7128000.0,
+        "2025-06-30 00:00:00": 1703000.0,
+        "2025-03-31 00:00:00": 1926000.0,
+        "2024-12-31 00:00:00": 1587000.0,
+        "2024-09-30 00:00:00": 2289000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Operating Income",
+        "2025-09-30 00:00:00": -60135000.0,
+        "2025-06-30 00:00:00": 16805000.0,
+        "2025-03-31 00:00:00": 27897000.0,
+        "2024-12-31 00:00:00": 16316000.0,
+        "2024-09-30 00:00:00": -40977000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Operating Expense",
+        "2025-09-30 00:00:00": 211393000.0,
+        "2025-06-30 00:00:00": 33665000.0,
+        "2025-03-31 00:00:00": 109462000.0,
+        "2024-12-31 00:00:00": 92842000.0,
+        "2024-09-30 00:00:00": 56820000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Other Operating Expenses",
+        "2025-09-30 00:00:00": -3828000.0,
+        "2025-06-30 00:00:00": -132313000.0,
+        "2025-03-31 00:00:00": 50557000.0,
+        "2024-12-31 00:00:00": 35758000.0,
+        "2024-09-30 00:00:00": 2779000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Other Taxes",
+        "2025-09-30 00:00:00": 3124000.0,
+        "2025-06-30 00:00:00": null,
+        "2025-03-31 00:00:00": null,
+        "2024-12-31 00:00:00": 3871000.0,
+        "2024-09-30 00:00:00": 1298000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Depreciation Amortization Depletion Income Statement",
+        "2025-09-30 00:00:00": 85226000.0,
+        "2025-06-30 00:00:00": 63481000.0,
+        "2025-03-31 00:00:00": 47448000.0,
+        "2024-12-31 00:00:00": 36198000.0,
+        "2024-09-30 00:00:00": 33931000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Depreciation And Amortization In Income Statement",
+        "2025-09-30 00:00:00": 85226000.0,
+        "2025-06-30 00:00:00": 63481000.0,
+        "2025-03-31 00:00:00": 47448000.0,
+        "2024-12-31 00:00:00": 36198000.0,
+        "2024-09-30 00:00:00": 33931000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Depreciation Income Statement",
+        "2025-09-30 00:00:00": null,
+        "2025-06-30 00:00:00": null,
+        "2025-03-31 00:00:00": 47448000.0,
+        "2024-12-31 00:00:00": 36198000.0,
+        "2024-09-30 00:00:00": 34009000.0,
+        "2024-06-30 00:00:00": 26780000.0,
+        "2024-03-31 00:00:00": 8692000.0
+      },
+      {
+        "index": "Selling General And Administration",
+        "2025-09-30 00:00:00": 126871000.0,
+        "2025-06-30 00:00:00": 93254000.0,
+        "2025-03-31 00:00:00": 11457000.0,
+        "2024-12-31 00:00:00": 17015000.0,
+        "2024-09-30 00:00:00": 18812000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "Selling And Marketing Expense",
+        "2025-09-30 00:00:00": 3080000.0,
+        "2025-06-30 00:00:00": null,
+        "2025-03-31 00:00:00": null,
+        "2024-12-31 00:00:00": 857000.0,
+        "2024-09-30 00:00:00": 578000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      },
+      {
+        "index": "General And Administrative Expense",
+        "2025-09-30 00:00:00": 123791000.0,
+        "2025-06-30 00:00:00": 90370000.0,
+        "2025-03-31 00:00:00": 11457000.0,
+        "2024-12-31 00:00:00": 16158000.0,
+        "2024-09-30 00:00:00": 18234000.0,
+        "2024-06-30 00:00:00": null,
+        "2024-03-31 00:00:00": null
+      }
+    ],
+    "revenue": 501023000.0,
+    "gross_profit": 342031000.0,
+    "operating_income": 22122000.0,
+    "net_income": 86941000.0,
+    "cash_and_equivalents": 564526000.0,
+    "long_term_debt": 962765000.0,
+    "short_term_debt": NaN,
+    "total_debt": 964232000.0,
+    "total_equity": 1817488000.0,
+    "property_plant_equipment": 1935100000.0,
+    "operating_cash_flow": 245886000.0,
+    "investing_cash_flow": -1380487000.0,
+    "financing_cash_flow": 1294735000.0,
+    "free_cash_flow": 1618513000.0
+  }
+}

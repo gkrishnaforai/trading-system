@@ -114,6 +114,43 @@ CREATE INDEX IF NOT EXISTS idx_raw_market_daily_symbol ON raw_market_data_daily(
 CREATE INDEX IF NOT EXISTS idx_raw_market_daily_date ON raw_market_data_daily(date);
 CREATE INDEX IF NOT EXISTS idx_raw_market_daily_symbol_date ON raw_market_data_daily(symbol, date);
 
+-- Raw Market Data Intraday Table
+-- Intraday OHLCV bars (15m, 1h, etc.)
+CREATE TABLE IF NOT EXISTS raw_market_data_intraday (
+    id BIGSERIAL PRIMARY KEY,
+    stock_symbol VARCHAR(10) NOT NULL,
+    ts TIMESTAMPTZ NOT NULL,
+    interval VARCHAR(10) NOT NULL, -- '15m', '1h', etc.
+    open NUMERIC(12, 4),
+    high NUMERIC(12, 4),
+    low NUMERIC(12, 4),
+    close NUMERIC(12, 4),
+    volume BIGINT,
+    source VARCHAR(50) DEFAULT 'alphavantage',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+
+    UNIQUE(stock_symbol, ts, interval, source)
+);
+
+-- Create indexes for raw_market_data_intraday
+CREATE INDEX IF NOT EXISTS idx_raw_intraday_symbol_ts ON raw_market_data_intraday(stock_symbol, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_raw_intraday_interval ON raw_market_data_intraday(interval);
+
+-- Fundamentals Snapshots Table
+-- Latest fundamentals payload JSON per symbol
+CREATE TABLE IF NOT EXISTS fundamentals_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(10) NOT NULL UNIQUE,
+    as_of_date DATE NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create indexes for fundamentals_snapshots
+CREATE INDEX IF NOT EXISTS idx_fundamentals_snapshots_symbol ON fundamentals_snapshots(symbol);
+CREATE INDEX IF NOT EXISTS idx_fundamentals_snapshots_as_of_date ON fundamentals_snapshots(as_of_date DESC);
+
 -- Indicators Daily Table
 -- Technical indicators (RSI, MACD, SMA, EMA, etc.)
 CREATE TABLE IF NOT EXISTS indicators_daily (
@@ -177,6 +214,123 @@ CREATE INDEX IF NOT EXISTS idx_industry_peers_symbol ON industry_peers(symbol);
 CREATE INDEX IF NOT EXISTS idx_industry_peers_peer ON industry_peers(peer_symbol);
 CREATE INDEX IF NOT EXISTS idx_industry_peers_industry ON industry_peers(industry);
 
+-- Data Ingestion Runs Table
+-- Track each ingestion run (for audit grouping)
+CREATE TABLE IF NOT EXISTS data_ingestion_runs (
+    run_id UUID PRIMARY KEY,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    status VARCHAR(20) NOT NULL DEFAULT 'running',
+    environment VARCHAR(50),
+    git_sha VARCHAR(40),
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
+-- Data Ingestion Events Table
+-- Individual per-symbol/per-operation events with error details
+CREATE TABLE IF NOT EXISTS data_ingestion_events (
+    id BIGSERIAL PRIMARY KEY,
+    run_id UUID NOT NULL REFERENCES data_ingestion_runs(run_id) ON DELETE CASCADE,
+    event_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    level VARCHAR(10) NOT NULL,
+    provider VARCHAR(50),
+    operation VARCHAR(255) NOT NULL,
+    symbol VARCHAR(10),
+    duration_ms INTEGER,
+    records_in INTEGER,
+    records_saved INTEGER,
+    message TEXT,
+    error_type VARCHAR(255),
+    error_message TEXT,
+    root_cause_type VARCHAR(255),
+    root_cause_message TEXT,
+    context JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+-- Market News Table
+CREATE TABLE IF NOT EXISTS market_news (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(10),
+    title TEXT NOT NULL,
+    url TEXT,
+    source VARCHAR(100),
+    summary TEXT,
+    published_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Income Statements Table
+CREATE TABLE IF NOT EXISTS income_statements (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(10) NOT NULL,
+    fiscal_date_ending DATE NOT NULL,
+    currency VARCHAR(10),
+    total_revenue BIGINT,
+    gross_profit BIGINT,
+    operating_income BIGINT,
+    net_income BIGINT,
+    research_and_development BIGINT,
+    interest_expense BIGINT,
+    income_tax_expense BIGINT,
+    data_source VARCHAR(50) DEFAULT 'alphavantage',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(symbol, fiscal_date_ending, data_source)
+);
+
+-- Balance Sheets Table
+CREATE TABLE IF NOT EXISTS balance_sheets (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(10) NOT NULL,
+    fiscal_date_ending DATE NOT NULL,
+    currency VARCHAR(10),
+    total_assets BIGINT,
+    total_liabilities BIGINT,
+    total_shareholder_equity BIGINT,
+    cash_and_cash_equivalents BIGINT,
+    short_term_investments BIGINT,
+    long_term_debt BIGINT,
+    data_source VARCHAR(50) DEFAULT 'alphavantage',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(symbol, fiscal_date_ending, data_source)
+);
+
+-- Cash Flow Statements Table
+CREATE TABLE IF NOT EXISTS cash_flow_statements (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(10) NOT NULL,
+    fiscal_date_ending DATE NOT NULL,
+    currency VARCHAR(10),
+    operating_cash_flow BIGINT,
+    investing_cash_flow BIGINT,
+    financing_cash_flow BIGINT,
+    free_cash_flow BIGINT,
+    capital_expenditures BIGINT,
+    data_source VARCHAR(50) DEFAULT 'alphavantage',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(symbol, fiscal_date_ending, data_source)
+);
+
+-- Financial Ratios Table
+CREATE TABLE IF NOT EXISTS financial_ratios (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(10) NOT NULL,
+    fiscal_date_ending DATE NOT NULL,
+    currency VARCHAR(10),
+    pe_ratio NUMERIC(10, 4),
+    pb_ratio NUMERIC(10, 4),
+    debt_to_equity NUMERIC(10, 4),
+    roe NUMERIC(8, 6),
+    current_ratio NUMERIC(8, 6),
+    quick_ratio NUMERIC(8, 6),
+    data_source VARCHAR(50) DEFAULT 'alphavantage',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(symbol, fiscal_date_ending, data_source)
+);
+
 -- Add comments for documentation
 COMMENT ON TABLE fundamentals_summary IS 'Company overview and key financial metrics from Alpha Vantage';
 COMMENT ON TABLE fundamentals IS 'Detailed financial statements (income, balance sheet, cash flow, earnings)';
@@ -205,6 +359,26 @@ CREATE TRIGGER update_fundamentals_updated_at
 
 CREATE TRIGGER update_data_ingestion_state_updated_at 
     BEFORE UPDATE ON data_ingestion_state 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_fundamentals_snapshots_updated_at 
+    BEFORE UPDATE ON fundamentals_snapshots 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_income_statements_updated_at 
+    BEFORE UPDATE ON income_statements 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_balance_sheets_updated_at 
+    BEFORE UPDATE ON balance_sheets 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_cash_flow_statements_updated_at 
+    BEFORE UPDATE ON cash_flow_statements 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_financial_ratios_updated_at 
+    BEFORE UPDATE ON financial_ratios 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Grant permissions (adjust username as needed)

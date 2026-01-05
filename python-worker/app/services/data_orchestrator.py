@@ -29,6 +29,7 @@ class DataType(Enum):
     MARKET_NEWS = "market_news"
     SYMBOL_DETAILS = "symbol_details"
     SENTIMENT_DATA = "sentiment_data"
+    EARNINGS_DATA = "earnings_data"
 
 class LoadFrequency(Enum):
     """Load frequency patterns"""
@@ -151,62 +152,83 @@ class DataOrchestrator:
             api_key_required=True
         )
         
-        # Alpha Vantage Configuration
-        self.source_configs["alphavantage"] = DataSourceConfig(
-            name="alphavantage",
-            priority=150,
-            enabled=True,
-            cost_per_call=0.0,
-            rate_limit_per_minute=5,
-            reliability_score=0.90,
-            data_quality_score=0.85,
-            supported_data_types=[
-                DataType.PRICE_DATA,
-                DataType.TECHNICAL_INDICATORS,
-                DataType.FUNDAMENTALS,
-                DataType.MARKET_NEWS,
-                DataType.SYMBOL_DETAILS
-            ],
-            historical_coverage_days=365 * 20,  # 20 years
-            real_time_support=False,
-            api_key_required=True
-        )
+        # Alpha Vantage Configuration (only if API key is available)
+        if settings.alphavantage_api_key and settings.alphavantage_api_key.strip():
+            self.source_configs["alphavantage"] = DataSourceConfig(
+                name="alphavantage",
+                priority=150,
+                enabled=True,
+                cost_per_call=0.0,
+                rate_limit_per_minute=5,
+                reliability_score=0.90,
+                data_quality_score=0.85,
+                supported_data_types=[
+                    DataType.PRICE_DATA,
+                    DataType.TECHNICAL_INDICATORS,
+                    DataType.FUNDAMENTALS,
+                    DataType.MARKET_NEWS
+                ],
+                real_time_support=True,
+                api_key_required=True
+            )
+            logger.info("✅ Alpha Vantage data source configured (API key available)")
+        else:
+            logger.info("⚠️ Alpha Vantage data source skipped (no API key configured)")
         
         # Default load configurations
+        price_fallback_sources = ["massive"]
+        if settings.alphavantage_api_key and settings.alphavantage_api_key.strip():
+            price_fallback_sources.insert(0, "alphavantage")  # Add Alpha Vantage as first fallback if available
+        
         self.load_configs[DataType.PRICE_DATA] = DataLoadConfig(
             data_type=DataType.PRICE_DATA,
             primary_source="yahoo",  # Use Yahoo for historical depth
-            fallback_sources=["alphavantage", "massive"],
+            fallback_sources=price_fallback_sources,
             load_frequency=LoadFrequency.DAILY,
             extraction_pattern=ExtractionPattern.TIME_RANGED,
             behavioral_pattern=BehavioralPattern.IDEMPOTENT,
             retention_days=365 * 10  # 10 years
         )
         
+        # Technical indicators fallback sources
+        technical_fallback_sources = ["yahoo"]
+        if settings.alphavantage_api_key and settings.alphavantage_api_key.strip():
+            technical_fallback_sources.insert(0, "alphavantage")  # Add Alpha Vantage as first fallback if available
+        
         self.load_configs[DataType.TECHNICAL_INDICATORS] = DataLoadConfig(
             data_type=DataType.TECHNICAL_INDICATORS,
             primary_source="massive",  # Use Massive for premium indicators
-            fallback_sources=["alphavantage", "yahoo"],
+            fallback_sources=technical_fallback_sources,
             load_frequency=LoadFrequency.DAILY,
             extraction_pattern=ExtractionPattern.LOOKBACK,
             behavioral_pattern=BehavioralPattern.IDEMPOTENT,
             retention_days=365 * 2  # 2 years
         )
         
+        # Fundamentals fallback sources
+        fundamentals_fallback_sources = ["yahoo"]
+        if settings.alphavantage_api_key and settings.alphavantage_api_key.strip():
+            fundamentals_fallback_sources.insert(0, "alphavantage")  # Add Alpha Vantage as first fallback if available
+        
         self.load_configs[DataType.FUNDAMENTALS] = DataLoadConfig(
             data_type=DataType.FUNDAMENTALS,
             primary_source="massive",  # Use Massive for comprehensive fundamentals
-            fallback_sources=["alphavantage", "yahoo"],
+            fallback_sources=fundamentals_fallback_sources,
             load_frequency=LoadFrequency.WEEKLY,
             extraction_pattern=ExtractionPattern.FULL_SNAPSHOT,
             behavioral_pattern=BehavioralPattern.IDEMPOTENT,
             retention_days=365 * 5  # 5 years
         )
         
+        # Market news fallback sources
+        news_fallback_sources = []
+        if settings.alphavantage_api_key and settings.alphavantage_api_key.strip():
+            news_fallback_sources.append("alphavantage")  # Only add Alpha Vantage if available
+        
         self.load_configs[DataType.MARKET_NEWS] = DataLoadConfig(
             data_type=DataType.MARKET_NEWS,
             primary_source="massive",
-            fallback_sources=["alphavantage"],
+            fallback_sources=news_fallback_sources,
             load_frequency=LoadFrequency.INTRADAY,
             extraction_pattern=ExtractionPattern.LOOKBACK,
             behavioral_pattern=BehavioralPattern.APPEND_ONLY,
@@ -470,8 +492,8 @@ class DataOrchestrator:
         Uses direct API calls like Alpha Vantage examples
         """
         try:
-            if not settings.alphavantage_api_key:
-                logger.error("Alpha Vantage API key not configured")
+            if not settings.alphavantage_api_key or not settings.alphavantage_api_key.strip():
+                logger.warning("Alpha Vantage API key not configured - skipping fetch")
                 return None
 
             client = AlphaVantageClient.from_settings(api_key=settings.alphavantage_api_key)

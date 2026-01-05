@@ -438,6 +438,21 @@ class ComprehensiveDataLoader(BaseService):
                 audit.log_event(level="warning", provider="massive", operation="load_vendor_indicators.no_data", symbol=symbol, duration_ms=int(duration * 1000))
                 return LoadResult(False, 0, "technical_indicators", "massive", "No indicators data", duration)
             
+            # Validate technical indicators data
+            from app.data_validation import TechnicalIndicatorsValidator
+            validator = TechnicalIndicatorsValidator()
+            validation_report = validator.validate(indicators_data, symbol, "technical_indicators")
+            
+            # Log validation results
+            if validation_report.overall_status == "fail":
+                logger.error(f"❌ Technical indicators validation FAILED for {symbol}")
+                audit.log_event(level="error", provider="massive", operation="load_vendor_indicators.validation_failed", 
+                             symbol=symbol, validation_score=validation_report.validation_result.score)
+            else:
+                logger.info(f"✅ Technical indicators validation PASSED for {symbol} (score: {validation_report.validation_result.score})")
+                audit.log_event(level="info", provider="massive", operation="load_vendor_indicators.validation_passed", 
+                             symbol=symbol, validation_score=validation_report.validation_result.score)
+            
             records_loaded = self._save_technical_indicators(indicators_data, symbol)
             duration = (datetime.now() - start_time).total_seconds()
             audit.log_event(level="info", provider="massive", operation="load_vendor_indicators.success", symbol=symbol, duration_ms=int(duration * 1000), records_saved=records_loaded)
@@ -467,6 +482,21 @@ class ComprehensiveDataLoader(BaseService):
             if not earnings_data:
                 duration = (datetime.now() - start_time).total_seconds()
                 return LoadResult(False, 0, "earnings", "alphavantage", "No earnings data", duration)
+            
+            # Validate earnings data
+            from app.data_validation import EarningsDataValidator
+            validator = EarningsDataValidator()
+            validation_report = validator.validate(earnings_data, symbol, "earnings_data")
+            
+            # Log validation results
+            if validation_report.overall_status == "fail":
+                logger.error(f"❌ Earnings data validation FAILED for {symbol}")
+                audit.log_event(level="error", provider="alphavantage", operation="load_earnings.validation_failed", 
+                             symbol=symbol, validation_score=validation_report.validation_result.score)
+            else:
+                logger.info(f"✅ Earnings data validation PASSED for {symbol} (score: {validation_report.validation_result.score})")
+                audit.log_event(level="info", provider="alphavantage", operation="load_earnings.validation_passed", 
+                             symbol=symbol, validation_score=validation_report.validation_result.score)
             
             records_loaded = self._save_earnings_data(earnings_data, symbol)
             duration = (datetime.now() - start_time).total_seconds()

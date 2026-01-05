@@ -58,20 +58,20 @@ func (s *StockService) GetStock(symbol string, subscriptionLevel string) (*Stock
 		return &cached, nil
 	}
 
-	// Get latest indicators
-	indicators, err := s.indicatorRepo.GetLatest(symbol)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get indicators: %w", err)
-	}
-
 	response := &StockResponse{
 		Symbol:     symbol,
-		Indicators: indicators,
+		Indicators: nil,
+	}
+
+	// Get latest indicators (best-effort; indicators may not be persisted yet)
+	indicators, err := s.indicatorRepo.GetLatest(symbol)
+	if err == nil {
+		response.Indicators = indicators
 	}
 
 	// Generate signal response
-	if indicators.Signal != nil {
-		response.Signal = s.generateSignalResponse(indicators, subscriptionLevel)
+	if response.Indicators != nil && response.Indicators.Signal != nil {
+		response.Signal = s.generateSignalResponse(response.Indicators, subscriptionLevel)
 	}
 
 	// Filter based on subscription
@@ -97,11 +97,16 @@ func (s *StockService) filterBySubscription(response StockResponse, subscription
 
 	// Basic users: only core indicators
 	if userLevel < 2 {
+		if response.Indicators == nil {
+			return &response
+		}
 		// Remove advanced indicators
 		response.Indicators.MomentumScore = nil
 		response.Indicators.PullbackZoneLower = nil
 		response.Indicators.PullbackZoneUpper = nil
-		response.Signal.PullbackZone = nil
+		if response.Signal != nil {
+			response.Signal.PullbackZone = nil
+		}
 	}
 
 	// Pro users: get momentum but not all advanced features
@@ -189,6 +194,10 @@ func (s *StockService) generateReason(indicators *models.AggregatedIndicators) s
 
 func (s *StockService) GetFundamentals(symbol string) (*repositories.FundamentalData, error) {
 	return s.marketDataRepo.GetLatestFundamentals(symbol)
+}
+
+func (s *StockService) GetFundamentalsSnapshot(symbol string) (map[string]interface{}, error) {
+	return s.marketDataRepo.GetLatestFundamentalsSnapshot(symbol)
 }
 
 func (s *StockService) GetNews(symbol string, limit int) ([]repositories.NewsArticle, error) {

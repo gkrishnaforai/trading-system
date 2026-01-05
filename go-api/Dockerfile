@@ -15,11 +15,8 @@ RUN go mod download
 # Copy source code
 COPY go-api/ ./
 
-# Copy migrations directory (needed for database migrations)
-COPY db/migrations/ /app/db/migrations/
-
-# Copy Postgres-first migrations directory (needed when running against Postgres)
-COPY db/migrations_postgres/ /app/db/migrations_postgres/
+# Copy Supabase migrations (normalized baseline schema)
+COPY supabase/migrations/ /app/supabase/migrations/
 
 # Generate go.sum and verify dependencies
 RUN go mod tidy
@@ -36,11 +33,8 @@ WORKDIR /app
 
 COPY --from=builder /build/api .
 
-# Copy migrations directory (needed for database migrations at runtime)
-COPY db/migrations/ /app/db/migrations/
-
-# Copy Postgres-first migrations directory (needed when running against Postgres)
-COPY db/migrations_postgres/ /app/db/migrations_postgres/
+# Copy Supabase migrations (normalized baseline schema)
+COPY supabase/migrations/ /app/supabase/migrations/
 
 EXPOSE 8000 50051
 

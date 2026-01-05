@@ -11,6 +11,7 @@ import json
 
 from app.services.base import BaseService
 from app.data_sources import get_data_source, BaseDataSource
+from app.data_validation.fundamentals_validator import FundamentalsValidator
 from app.data_management.refresh_strategy import (
     RefreshMode, DataType, BaseRefreshStrategy,
     ScheduledRefreshStrategy, OnDemandRefreshStrategy,
@@ -22,6 +23,8 @@ from app.data_management.refresh_result import (
 from app.database import db
 from app.repositories.market_data_intraday_repository import IntradayBarUpsertRow, MarketDataIntradayRepository
 from app.utils.trading_calendar import expected_trading_days, expected_intraday_15m_timestamps
+from app.utils.json_sanitize import json_dumps_sanitized
+from app.observability import audit
 
 
 class DataRefreshManager(BaseService):
@@ -29,7 +32,7 @@ class DataRefreshManager(BaseService):
     Central manager for all data refresh operations
     Supports scheduled, on-demand, periodic, and live refresh modes
     """
-    
+
     def __init__(
         self,
         data_source: Optional[BaseDataSource] = None,
@@ -39,7 +42,7 @@ class DataRefreshManager(BaseService):
         self.data_source = data_source or get_data_source()
         self.strategies = strategies or self._default_strategies()
         self._refresh_tracking: Dict[str, Dict[DataType, datetime]] = {}
-    
+
     def _default_strategies(self) -> Dict[RefreshMode, BaseRefreshStrategy]:
         """Create default refresh strategies"""
         return {
@@ -48,7 +51,7 @@ class DataRefreshManager(BaseService):
             RefreshMode.PERIODIC: PeriodicRefreshStrategy(),
             RefreshMode.LIVE: LiveRefreshStrategy(max_age=timedelta(minutes=1)),
         }
-    
+
     def refresh_data(
         self,
         symbol: str,
@@ -58,13 +61,13 @@ class DataRefreshManager(BaseService):
     ) -> SymbolRefreshResult:
         """
         Refresh multiple data types for a symbol with detailed error tracking
-        
+
         Args:
             symbol: Stock symbol
             data_types: List of data types to refresh
             mode: Refresh mode (scheduled, on-demand, periodic, live)
             force: Force refresh even if not needed
-        
+
         Returns:
             SymbolRefreshResult with detailed status for each data type
         """
@@ -135,6 +138,19 @@ class DataRefreshManager(BaseService):
             except Exception as e:
                 error_msg = str(e)
                 self.logger.error(f"Error refreshing {data_type} for {symbol}: {e}", exc_info=True)
+                # Log the failure to audit with full exception/root cause
+                try:
+                    audit.log_event(
+                        level="error",
+                        provider="system",
+                        operation=f"refresh.{data_type.value}",
+                        symbol=symbol,
+                        message=f"Failed to refresh {data_type.value}",
+                        exception=e,
+                        context={"data_type": data_type.value, "mode": str(mode)}
+                    )
+                except Exception:
+                    pass
                 refresh_results[dt_key] = DataTypeRefreshResult(
                     data_type=dt_key,
                     status=RefreshStatus.FAILED,
@@ -162,15 +178,16 @@ class DataRefreshManager(BaseService):
 
         present_rows = db.execute_query(
             """
-            SELECT trade_date
-            FROM raw_market_data_daily
-            WHERE stock_symbol = :symbol
-              AND trade_date >= :start_date
-              AND trade_date <= :end_date
+            SELECT m.date
+            FROM stock_market_metrics m
+            JOIN stocks s ON s.id = m.stock_id
+            WHERE s.symbol = :symbol
+              AND m.date >= :start_date
+              AND m.date <= :end_date
             """,
             {"symbol": symbol, "start_date": start_date, "end_date": end_date},
         )
-        present = {r["trade_date"] for r in present_rows if r.get("trade_date")}
+        present = {r["date"] for r in present_rows if r.get("date")}
         missing = sorted(expected - present)
         if not missing:
             return
@@ -288,9 +305,9 @@ class DataRefreshManager(BaseService):
         try:
             query = """
                 INSERT INTO data_ingestion_state
-                (stock_symbol, dataset, interval, source, historical_start_date, historical_end_date, cursor_date, cursor_ts, last_attempt_at, last_success_at, status)
+                (symbol, dataset, interval, source, historical_start_date, historical_end_date, cursor_date, cursor_ts, last_attempt_at, last_success_at, status)
                 VALUES (:symbol, :dataset, :interval, :source, :hs, :he, :cd, :cts, NOW(), NOW(), 'success')
-                ON CONFLICT (stock_symbol, dataset, interval)
+                ON CONFLICT (symbol, dataset, interval)
                 DO UPDATE SET
                   source = EXCLUDED.source,
                   historical_start_date = COALESCE(data_ingestion_state.historical_start_date, EXCLUDED.historical_start_date),
@@ -348,7 +365,7 @@ class DataRefreshManager(BaseService):
             except Exception:
                 to_refresh.append(sym)
         return to_refresh
-    
+
     def _refresh_data_type(self, symbol: str, data_type: DataType) -> bool:
         """Refresh a specific data type (legacy method for backward compatibility)"""
         result = self._refresh_data_type_with_result(symbol, data_type)
@@ -360,11 +377,11 @@ class DataRefreshManager(BaseService):
         if data_type == DataType.PRICE_INTRADAY_15M:
             return "15m"
         return "daily"
-    
+
     def _refresh_data_type_with_result(self, symbol: str, data_type: DataType) -> DataTypeRefreshResult:
         """Refresh a specific data type with detailed result"""
         start_time = datetime.now()
-        
+
         try:
             if data_type == DataType.PRICE_HISTORICAL:
                 rows, cleaned_data = self._refresh_price_historical(symbol)
@@ -381,15 +398,16 @@ class DataRefreshManager(BaseService):
                             raise RuntimeError(error_msg)
                         self.logger.info(f"✅ Auto-calculated indicators for {symbol} after price data fetch (Industry Standard: Always calculate after data load)")
                     except Exception as e:
-                        # Fail fast - indicators are critical for signal generation
-                        error_msg = f"Critical: Failed to calculate indicators for {symbol} after price data fetch: {str(e)}"
-                        self.logger.error(error_msg, exc_info=True)
-                        raise RuntimeError(error_msg) from e
-                    
+                        # Best-effort for now: normalized schema doesn't include legacy indicators tables.
+                        self.logger.warning(
+                            f"Indicators post-processing failed for {symbol} (non-fatal for price ingestion): {e}",
+                            exc_info=True,
+                        )
+
                     return DataTypeRefreshResult(
                         data_type=data_type.value,
                         status=RefreshStatus.SUCCESS,
-                        message=f"Successfully fetched {rows} rows of historical price data and calculated indicators",
+                        message=f"Successfully fetched {rows} rows of historical price data",
                         rows_affected=rows,
                         timestamp=start_time
                     )
@@ -458,8 +476,31 @@ class DataRefreshManager(BaseService):
                     error=None if success else "No industry/peer data available",
                     timestamp=start_time
                 )
+            elif data_type == DataType.CORPORATE_ACTIONS:
+                rows = self._refresh_corporate_actions(symbol)
+                return DataTypeRefreshResult(
+                    data_type=data_type.value,
+                    status=RefreshStatus.SUCCESS if rows > 0 else RefreshStatus.FAILED,
+                    message=f"Fetched {rows} corporate actions" if rows > 0 else "No corporate actions found",
+                    rows_affected=rows,
+                    error=None if rows > 0 else "No corporate actions data available",
+                    timestamp=start_time,
+                )
             elif data_type == DataType.INDICATORS:
                 from app.services.indicator_service import IndicatorService
+                from app.utils.database_helper import DatabaseQueryHelper
+                
+                # Check if market data exists before calculating indicators
+                market_data = DatabaseQueryHelper.get_historical_data(symbol)
+                if not market_data:
+                    self.logger.info(f"Skipping indicators for {symbol}: no market data available")
+                    return DataTypeRefreshResult(
+                        data_type=data_type.value,
+                        status=RefreshStatus.SKIPPED,
+                        message="No market data available for indicator calculation",
+                        rows_affected=0
+                    )
+                
                 service = IndicatorService()
                 success = service.calculate_indicators(symbol)
                 return DataTypeRefreshResult(
@@ -561,6 +602,19 @@ class DataRefreshManager(BaseService):
         except Exception as e:
             error_msg = str(e)
             self.logger.error(f"Exception in _refresh_data_type_with_result for {data_type}: {e}", exc_info=True)
+            # Log the failure to audit with full exception/root cause
+            try:
+                audit.log_event(
+                    level="error",
+                    provider="system",
+                    operation=f"refresh.{data_type.value}",
+                    symbol=symbol,
+                    message=f"Exception in _refresh_data_type_with_result",
+                    exception=e,
+                    context={"data_type": data_type.value}
+                )
+            except Exception:
+                pass
             return DataTypeRefreshResult(
                 data_type=data_type.value,
                 status=RefreshStatus.FAILED,
@@ -568,10 +622,10 @@ class DataRefreshManager(BaseService):
                 error=error_msg,
                 timestamp=start_time
             )
-    
+
     def _refresh_price_historical(self, symbol: str) -> tuple[int, pd.DataFrame]:
         """Refresh historical price data with validation and audit
-        
+
         Returns:
             Tuple of (number of rows saved, cleaned DataFrame)
         """
@@ -582,51 +636,49 @@ class DataRefreshManager(BaseService):
         rows_saved = 0
         error_message = None
         validation_report_id = None
-        
+
         try:
             from app.services.data_fetcher import DataFetcher
             from app.data_validation import DataValidator
-            
+
             fetcher = DataFetcher()
             validator = DataValidator()
-            
+
             # Use the data source directly
             data = self.data_source.fetch_price_data(symbol, period="1y")
             rows_fetched = len(data) if data is not None and not data.empty else 0
-            
-            if data is not None and not data.empty:
-                # Validate data before saving
-                validation_report = validator.validate(data, symbol, "price_historical")
-                
-                # Log validation results
-                if validation_report.overall_status == "fail":
-                    self.logger.error(f"❌ Data validation FAILED for {symbol}: {validation_report.critical_issues} critical issues")
-                    for result in validation_report.validation_results:
-                        if not result.passed:
-                            for issue in result.issues:
-                                self.logger.error(f"   - {issue.message}")
-                elif validation_report.overall_status == "warning":
-                    self.logger.warning(f"⚠️ Data validation WARNING for {symbol}: {validation_report.warnings} warnings")
-                else:
-                    self.logger.info(f"✅ Data validation PASSED for {symbol}")
-                
-                # Clean data if needed (remove bad rows)
-                cleaned_data, cleaned_report = validator.validate_and_clean(data, symbol, "price_historical")
-                
-                # Save validation report to database
-                validation_report_id = self._save_validation_report(cleaned_report)
-                
-                # Save cleaned data
-                rows_saved = fetcher.save_raw_market_data(symbol, cleaned_data)
-                fetch_success = True
-                
-                if rows_saved != len(cleaned_data):
-                    self.logger.warning(f"⚠️ Saved {rows_saved} rows but cleaned data has {len(cleaned_data)} rows")
-            else:
+
+            if data is None or data.empty:
                 error_message = "No data returned from data source"
-                self.logger.warning(f"⚠️ {error_message} for {symbol}")
-                cleaned_data = pd.DataFrame()  # Empty DataFrame if no data
-            
+                return 0, pd.DataFrame()
+
+            # Validate data before saving
+            validation_report = validator.validate(data, symbol, "price_historical")
+
+            # Log validation results
+            if validation_report.overall_status == "fail":
+                self.logger.error(f"❌ Data validation FAILED for {symbol}: {validation_report.critical_issues} critical issues")
+                for result in validation_report.validation_results:
+                    if not result.passed:
+                        for issue in result.issues:
+                            self.logger.error(f"   - {issue.message}")
+            elif validation_report.overall_status == "warning":
+                self.logger.warning(f"⚠️ Data validation WARNING for {symbol}: {validation_report.warnings} warnings")
+            else:
+                self.logger.info(f"✅ Data validation PASSED for {symbol}")
+
+            # Clean data if needed (remove bad rows)
+            cleaned_data, cleaned_report = validator.validate_and_clean(data, symbol, "price_historical")
+
+            # Save validation report to database
+            validation_report_id = self._save_validation_report(cleaned_report)
+
+            # Save cleaned data
+            rows_saved = fetcher.save_raw_market_data(symbol, cleaned_data)
+            fetch_success = True
+
+            if rows_saved != len(cleaned_data):
+                self.logger.warning(f"⚠️ Saved {rows_saved} rows but cleaned data has {len(cleaned_data)} rows")
         except Exception as e:
             error_message = str(e)
             self.logger.error(f"Error refreshing historical price for {symbol}: {e}", exc_info=True)
@@ -647,7 +699,7 @@ class DataRefreshManager(BaseService):
                 error_message=error_message,
                 validation_report_id=validation_report_id
             )
-        
+
         return rows_saved, cleaned_data
 
     def _refresh_price_intraday_15m(self, symbol: str, days: int = 5) -> int:
@@ -667,9 +719,37 @@ class DataRefreshManager(BaseService):
                 error_message = "No intraday data returned"
                 return 0
 
+            # Normalize column names (providers may return Open/High/Low/Close/Volume)
+            col_map: Dict[str, str] = {}
+            try:
+                for c in list(getattr(data, "columns", [])):
+                    cl = str(c).strip().lower()
+                    if cl not in col_map:
+                        col_map[cl] = c
+            except Exception:
+                col_map = {}
+
+            def _get(r, name: str):
+                try:
+                    if name in getattr(r, "index", []):
+                        return r.get(name)
+                    key = col_map.get(name.lower())
+                    return r.get(key) if key is not None else r.get(name)
+                except Exception:
+                    return None
+
             rows: List[IntradayBarUpsertRow] = []
-            for _, r in data.iterrows():
-                ts = r.get("ts")
+            for idx, r in data.iterrows():
+                ts = None
+                # Providers vary:
+                # - some return an explicit 'ts' column
+                # - many return a DatetimeIndex and no 'ts' column
+                try:
+                    ts = r.get("ts")
+                except Exception:
+                    ts = None
+                if ts is None:
+                    ts = idx
                 if ts is None:
                     continue
                 ts = pd.to_datetime(ts)
@@ -680,24 +760,39 @@ class DataRefreshManager(BaseService):
                         stock_symbol=symbol,
                         ts=ts.to_pydatetime(),
                         interval="15m",
-                        open=float(r.get("open")) if r.get("open") is not None else None,
-                        high=float(r.get("high")) if r.get("high") is not None else None,
-                        low=float(r.get("low")) if r.get("low") is not None else None,
-                        close=float(r.get("close")) if r.get("close") is not None else None,
-                        volume=int(r.get("volume")) if r.get("volume") is not None else None,
+                        open=float(_get(r, "open")) if _get(r, "open") is not None else None,
+                        high=float(_get(r, "high")) if _get(r, "high") is not None else None,
+                        low=float(_get(r, "low")) if _get(r, "low") is not None else None,
+                        close=float(_get(r, "close")) if _get(r, "close") is not None else None,
+                        volume=int(_get(r, "volume")) if _get(r, "volume") is not None else None,
                         source=self.data_source.name,
                     )
                 )
 
+            if not rows:
+                error_message = "No intraday rows parsed (missing timestamps/columns)"
+                return 0
+
             rows_saved = MarketDataIntradayRepository.upsert_many(rows)
             fetch_success = rows_saved > 0
             if rows_saved > 0:
+                # Compute cursor timestamp robustly for different provider shapes.
+                cursor_ts = None
+                try:
+                    if "ts" in getattr(data, "columns", []):
+                        cursor_ts = max(pd.to_datetime(t).tz_convert("UTC") for t in data["ts"].dropna())
+                    else:
+                        cursor_ts = pd.to_datetime(data.index.max())
+                        if getattr(cursor_ts, "tzinfo", None) is None:
+                            cursor_ts = cursor_ts.tz_localize("UTC")
+                except Exception:
+                    cursor_ts = None
                 self._update_ingestion_window(
                     symbol=symbol,
                     dataset=self._dataset_for_data_type(DataType.PRICE_INTRADAY_15M),
                     interval="15m",
                     source=self.data_source.name,
-                    cursor_ts=max(pd.to_datetime(r.get("ts")).tz_convert("UTC") for r in data.to_dict("records") if r.get("ts")),
+                    cursor_ts=cursor_ts,
                 )
             return rows_saved
         except Exception as e:
@@ -715,7 +810,7 @@ class DataRefreshManager(BaseService):
                 rows_saved=rows_saved,
                 fetch_duration_ms=fetch_duration_ms,
                 success=fetch_success,
-                error_message=error_message,
+                error_message=error_message
             )
 
     def _refresh_price_current(self, symbol: str) -> bool:
@@ -734,16 +829,25 @@ class DataRefreshManager(BaseService):
                 error_message = "No current price returned"
                 return False
 
+            # Some providers may return dict-like payloads or strings.
+            if isinstance(price, dict):
+                price = price.get("price") or price.get("last") or price.get("close")
+            try:
+                price_f = float(price)
+            except Exception:
+                error_message = f"Invalid current price: {price}"
+                return False
+
             rows_fetched = 1
             ts = datetime.utcnow()
             row = IntradayBarUpsertRow(
                 stock_symbol=symbol,
                 ts=ts,
                 interval="last",
-                open=float(price),
-                high=float(price),
-                low=float(price),
-                close=float(price),
+                open=price_f,
+                high=price_f,
+                low=price_f,
+                close=price_f,
                 volume=None,
                 source=self.data_source.name,
             )
@@ -765,22 +869,22 @@ class DataRefreshManager(BaseService):
                 rows_saved=rows_saved,
                 fetch_duration_ms=fetch_duration_ms,
                 success=fetch_success,
-                error_message=error_message,
+                error_message=error_message
             )
-    
+
     def _save_validation_report(self, report):
         """Save validation report to database
-        
+
         Fail-fast: This is critical for gate checks, so we raise on error
         """
         import uuid
-        
+
         try:
             # Convert report to dict (handles numpy/pandas types)
             report_dict = report.to_dict()
-            
+
             report_json = report_dict
-            
+
             report_id = f"{report.symbol}_{report.data_type}_{report.timestamp.strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
             query = """
                 INSERT INTO data_validation_reports
@@ -816,11 +920,22 @@ class DataRefreshManager(BaseService):
             self.logger.error(error_msg, exc_info=True)
             raise ValueError(error_msg) from e
         except Exception as e:
-            # Database error - fail fast
+            # Best-effort: normalized DB baseline may not include this optional audit table.
+            err_lower = str(e).lower()
+            if "data_validation_reports" in err_lower and (
+                "does not exist" in err_lower or "undefinedtable" in err_lower
+            ):
+                self.logger.warning(
+                    f"Validation report table missing; skipping save for {report.symbol} (non-fatal): {e}",
+                    exc_info=True,
+                )
+                return None
+
+            # Database error - fail fast for unexpected issues
             error_msg = f"Failed to save validation report for {report.symbol}: {e}"
             self.logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from e
-    
+
     def _audit_data_fetch(
         self,
         symbol: str,
@@ -867,98 +982,250 @@ class DataRefreshManager(BaseService):
             # Non-critical - log but don't fail
             self.logger.warning(f"Failed to audit data fetch (non-critical): {e}")
 
-    
     def _refresh_fundamentals(self, symbol: str) -> bool:
         """Refresh fundamental data and save to fundamentals_snapshots"""
+        import time
+
+        start_time = time.time()
+        fetch_success = False
+        rows_fetched = 0
+        rows_saved = 0
+        error_message: Optional[str] = None
+        validation_report_id: Optional[str] = None
+
         try:
             # Fetch enhanced fundamentals (includes all metrics)
             if hasattr(self.data_source, 'fetch_enhanced_fundamentals'):
                 fundamentals = self.data_source.fetch_enhanced_fundamentals(symbol)
             else:
                 fundamentals = self.data_source.fetch_fundamentals(symbol)
-            if fundamentals:
-                query = """
-                    INSERT INTO fundamentals_snapshots
-                    (stock_symbol, as_of_date, source, payload)
-                    VALUES (:symbol, :as_of_date, :source, CAST(:payload AS JSONB))
-                    ON CONFLICT (stock_symbol, as_of_date)
-                    DO UPDATE SET payload = EXCLUDED.payload, source = EXCLUDED.source, updated_at = NOW()
-                """
 
-                db.execute_update(
-                    query,
-                    {
-                        "symbol": symbol,
-                        "as_of_date": datetime.utcnow().date(),
-                        "source": self.data_source.name,
-                        "payload": json.dumps(fundamentals),
-                    },
-                )
+            rows_fetched = 1 if fundamentals else 0
+            if not fundamentals:
+                error_message = "No fundamental data available"
+                return False
 
-                self.logger.info(f"✅ Saved fundamentals snapshot for {symbol}")
-                return True
-            return False
+            validator = FundamentalsValidator()
+            validation_report = validator.validate(fundamentals, symbol, "fundamentals")
+            validation_report_id = self._save_validation_report(validation_report)
+
+            summary = validator.summarize_issues(validation_report)
+            metadata = {
+                **summary,
+                "source": self.data_source.name,
+            }
+
+            # Persist even if validation warns/fails; audit + ingestion state will flag retry.
+            query = """
+                INSERT INTO fundamentals_snapshots
+                (stock_symbol, as_of_date, source, payload)
+                VALUES (:symbol, :as_of_date, :source, CAST(:payload AS JSONB))
+                ON CONFLICT (stock_symbol, as_of_date)
+                DO UPDATE SET payload = EXCLUDED.payload, source = EXCLUDED.source, updated_at = NOW()
+            """
+
+            db.execute_update(
+                query,
+                {
+                    "symbol": symbol,
+                    "as_of_date": datetime.utcnow().date(),
+                    "source": self.data_source.name,
+                    "payload": json_dumps_sanitized(fundamentals),
+                },
+            )
+            rows_saved = 1
+
+            if validation_report.overall_status == "fail":
+                fetch_success = False
+                error_message = "Fundamentals validation failed: missing/invalid required fields"
+                self.logger.warning(f"⚠️ Fundamentals validation FAILED for {symbol}")
+                return False
+
+            fetch_success = True
+            self.logger.info(f"✅ Saved fundamentals snapshot for {symbol}")
+            return True
         except Exception as e:
+            error_message = str(e)
             self.logger.error(f"Error refreshing fundamentals for {symbol}: {e}", exc_info=True)
             raise  # Fail fast - fundamentals refresh should not silently fail
-    
+        finally:
+            fetch_duration_ms = int((time.time() - start_time) * 1000)
+            self._audit_data_fetch(
+                symbol=symbol,
+                fetch_type='fundamentals',
+                fetch_mode='on_demand',
+                data_source=self.data_source.name,
+                rows_fetched=rows_fetched,
+                rows_saved=rows_saved,
+                fetch_duration_ms=fetch_duration_ms,
+                success=fetch_success,
+                error_message=error_message,
+                validation_report_id=validation_report_id,
+                metadata=metadata,
+            )
+
     def _refresh_news(self, symbol: str) -> int:
-        """Refresh news data
-        
+        """Refresh news data with validation
+
         Returns:
             Number of news articles saved (0 if failed)
         """
-        """Refresh news data"""
+        import time
+        start_time = time.time()
+        fetch_success = False
+        rows_fetched = 0
+        rows_saved = 0
+        error_message = None
+        validation_report_id = None
+
         try:
             news = self.data_source.fetch_news(symbol, limit=20)
+            
+            rows_fetched = len(news) if news else 0
+            
+            if not news:
+                error_message = "No news data available"
+                return 0
+            
+            # Validate news data (best-effort: validators may not match current ValidationIssue signature)
+            metadata = {"source": self.data_source.name}
+            validation_report = None
+            try:
+                from app.data_validation import MarketNewsValidator
+
+                validator = MarketNewsValidator()
+                validation_report = validator.validate(news, symbol, "market_news")
+                validation_report_id = self._save_validation_report(validation_report)
+
+                # Create metadata for audit
+                summary = validator.summarize_issues(validation_report)
+                metadata = {
+                    **summary,
+                    "source": self.data_source.name,
+                }
+            except Exception as e:
+                self.logger.warning(
+                    f"News validation skipped for {symbol} (non-fatal): {e}",
+                    exc_info=True,
+                )
+                validation_report_id = None
+            
+            if validation_report is not None and getattr(validation_report, "overall_status", None) == "fail":
+                fetch_success = False
+                error_message = "News validation failed: missing required fields"
+                self.logger.warning(f"⚠️ News validation FAILED for {symbol}")
+                # Still attempt to save news data but mark as failed for retry logic
+            
             if news:
                 import uuid
                 import json
                 from datetime import datetime
-                
-                # Save to stock_news table
+
+                # Save to stock_news table (normalized baseline uses stock_id/url)
+                stock_id_row = db.execute_query(
+                    """
+                    INSERT INTO stocks (symbol)
+                    VALUES (:symbol)
+                    ON CONFLICT (symbol) DO UPDATE SET symbol = EXCLUDED.symbol
+                    RETURNING id
+                    """,
+                    {"symbol": symbol},
+                )
+                stock_id = stock_id_row[0]["id"] if stock_id_row and stock_id_row[0].get("id") else None
+                if not stock_id:
+                    raise RuntimeError(f"Failed to resolve stock_id for {symbol}")
+
                 for article in news:
-                    news_id = str(uuid.uuid4())
                     published_date = None
-                    if article.get('published_date'):
-                        if isinstance(article['published_date'], datetime):
-                            published_date = article['published_date']
+                    pub_raw = article.get("published") or article.get("published_date")
+                    if pub_raw:
+                        if isinstance(pub_raw, datetime):
+                            published_date = pub_raw
                         else:
                             try:
-                                published_date = datetime.fromisoformat(str(article['published_date']).replace('Z', '+00:00'))
-                            except (ValueError, TypeError) as e:
-                                self.logger.warning(f"Invalid published_date format for {symbol} news article '{article.get('title', 'unknown')}': {e}")
+                                published_date = datetime.fromisoformat(str(pub_raw).replace('Z', '+00:00'))
+                            except (ValueError, TypeError):
                                 published_date = None
-                    
-                    query = """
-                        INSERT INTO stock_news
-                        (news_id, stock_symbol, title, publisher, link, published_at, related_symbols, source)
-                        VALUES (:news_id, :symbol, :title, :publisher, :link, :published_at, CAST(:related_symbols AS JSONB), :source)
-                        ON CONFLICT (news_id) DO NOTHING
-                    """
 
-                    related_symbols_json = article.get('related_symbols', [])
-                    db.execute_update(query, {
-                        "news_id": news_id,
-                        "symbol": symbol,
-                        "title": article.get('title', ''),
-                        "publisher": article.get('publisher', ''),
-                        "link": article.get('link', ''),
-                        "published_at": published_date,
-                        "related_symbols": json.dumps(related_symbols_json),
-                        "source": self.data_source.name,
-                    })
-                
+                    title = article.get("title", "")
+                    publisher = article.get("publisher", "")
+                    url = article.get("url") or article.get("link") or ""
+                    related_symbols_json = article.get("related_symbols", [])
+
+                    try:
+                        db.execute_update(
+                            """
+                            INSERT INTO stock_news
+                            (stock_id, published_at, title, publisher, url, related_symbols, source, raw_json)
+                            VALUES (:stock_id, :published_at, :title, :publisher, :url, CAST(:related_symbols AS jsonb), :source, CAST(:raw_json AS jsonb))
+                            """,
+                            {
+                                "stock_id": stock_id,
+                                "published_at": published_date,
+                                "title": title,
+                                "publisher": publisher,
+                                "url": url,
+                                "related_symbols": json.dumps(related_symbols_json),
+                                "source": self.data_source.name,
+                                "raw_json": json.dumps(article),
+                            },
+                        )
+                    except Exception as e:
+                        # Backward-compatible fallback for legacy schema variants.
+                        err_lower = str(e).lower()
+                        if "column" in err_lower and ("stock_id" in err_lower or "url" in err_lower):
+                            news_id = str(uuid.uuid4())
+                            db.execute_update(
+                                """
+                                INSERT INTO stock_news
+                                (news_id, stock_symbol, title, publisher, link, published_at, related_symbols, source)
+                                VALUES (:news_id, :symbol, :title, :publisher, :link, :published_at, CAST(:related_symbols AS JSONB), :source)
+                                ON CONFLICT (news_id) DO NOTHING
+                                """,
+                                {
+                                    "news_id": news_id,
+                                    "symbol": symbol,
+                                    "title": title,
+                                    "publisher": publisher,
+                                    "link": url,
+                                    "published_at": published_date,
+                                    "related_symbols": json.dumps(related_symbols_json),
+                                    "source": self.data_source.name,
+                                },
+                            )
+                        else:
+                            raise
+
+                rows_saved = len(news)
+                fetch_success = True
                 self.logger.info(f"✅ Saved {len(news)} news articles for {symbol}")
                 return len(news)
             return 0
+            
         except Exception as e:
+            error_message = str(e)
             self.logger.error(f"Error refreshing news for {symbol}: {e}", exc_info=True)
-            raise  # Re-raise to be caught by caller
-    
+            raise
+        finally:
+            # Audit the fetch operation
+            fetch_duration_ms = int((time.time() - start_time) * 1000)
+            self._audit_data_fetch(
+                symbol=symbol,
+                fetch_type='market_news',
+                fetch_mode='on_demand',
+                data_source=self.data_source.name,
+                rows_fetched=rows_fetched,
+                rows_saved=rows_saved,
+                fetch_duration_ms=fetch_duration_ms,
+                success=fetch_success if 'fetch_success' in locals() else True,
+                error_message=error_message,
+                validation_report_id=validation_report_id,
+                metadata=metadata if 'metadata' in locals() else {},
+            )
+
     def _refresh_earnings(self, symbol: str) -> int:
         """Refresh earnings data
-        
+
         Returns:
             Number of earnings records saved (0 if failed)
         """
@@ -969,15 +1236,47 @@ class DataRefreshManager(BaseService):
         rows_saved = 0
         error_message = None
         audit_done = False  # Track if audit has been performed
-        
+
         try:
             earnings = self.data_source.fetch_earnings(symbol)
             rows_fetched = len(earnings) if earnings else 0
+
+            if not earnings:
+                error_message = "No earnings data available"
+                return 0
             
+            # Validate earnings data (best-effort: validators may not match current ValidationIssue signature)
+            metadata = {"source": self.data_source.name}
+            validation_report_id = None
+            validation_report = None
+            try:
+                from app.data_validation import EarningsDataValidator
+
+                validator = EarningsDataValidator()
+                validation_report = validator.validate(earnings, symbol, "earnings_data")
+                validation_report_id = self._save_validation_report(validation_report)
+
+                summary = validator.summarize_issues(validation_report)
+                metadata = {
+                    **summary,
+                    "source": self.data_source.name,
+                }
+            except Exception as e:
+                self.logger.warning(
+                    f"Earnings validation skipped for {symbol} (non-fatal): {e}",
+                    exc_info=True,
+                )
+            
+            if validation_report is not None and getattr(validation_report, "overall_status", None) == "fail":
+                fetch_success = False
+                error_message = "Earnings validation failed: missing required fields"
+                self.logger.warning(f"⚠️ Earnings validation FAILED for {symbol}")
+                # Still attempt to save earnings data but mark as failed for retry logic
+
             if earnings:
                 import json
                 from datetime import datetime
-                
+
                 # Save to earnings_data table
                 # Only save records with valid earnings_date (NOT NULL constraint)
                 saved_count = 0
@@ -998,23 +1297,57 @@ class DataRefreshManager(BaseService):
                         except (ValueError, TypeError, AttributeError) as e:
                             self.logger.warning(f"Invalid earnings_date format for {symbol}: {e}")
                             continue  # Skip this record
-                    
+
                     # Skip records without valid earnings_date (NOT NULL constraint)
                     if not earnings_date:
                         self.logger.debug(f"Skipping earnings record for {symbol} - no valid earnings_date")
                         continue
-                    
+
                     # Generate earnings_id from symbol and date
                     earnings_id = f"{symbol}_{earnings_date.strftime('%Y-%m-%d')}"
-                    
+
+                    # Best practice: store a TIMESTAMPTZ earnings_at when possible.
+                    earnings_at = None
+                    earnings_timezone = earning.get('earnings_timezone')
+                    earnings_session = earning.get('earnings_session')
+                    try:
+                        from zoneinfo import ZoneInfo
+
+                        if earning.get('earnings_at'):
+                            ea = earning.get('earnings_at')
+                            if isinstance(ea, datetime):
+                                earnings_at = ea
+                            elif isinstance(ea, pd.Timestamp):
+                                earnings_at = ea.to_pydatetime()
+                            elif isinstance(ea, str):
+                                ea_str = ea.replace('Z', '+00:00')
+                                earnings_at = datetime.fromisoformat(ea_str)
+
+                            if earnings_at is not None and earnings_at.tzinfo is None:
+                                tz = earnings_timezone or 'America/New_York'
+                                earnings_at = earnings_at.replace(tzinfo=ZoneInfo(tz))
+
+                            if earnings_at is not None:
+                                earnings_at = earnings_at.astimezone(ZoneInfo('UTC'))
+                        else:
+                            tz = earnings_timezone or 'America/New_York'
+                            earnings_timezone = tz
+                            local_dt = datetime.combine(earnings_date, datetime.min.time(), tzinfo=ZoneInfo(tz))
+                            earnings_at = local_dt.astimezone(ZoneInfo('UTC'))
+                    except Exception:
+                        earnings_at = None
+
                     query = """
                         INSERT INTO earnings_data
-                        (earnings_id, stock_symbol, earnings_date, eps_estimate, eps_actual,
-                         revenue_estimate, revenue_actual, surprise_percentage, source)
-                        VALUES (:earnings_id, :symbol, :earnings_date, :eps_estimate, :eps_actual,
-                                :revenue_estimate, :revenue_actual, :surprise_percentage, :source)
+                        (earnings_id, stock_symbol, earnings_date, earnings_at, earnings_timezone, earnings_session,
+                         eps_estimate, eps_actual, revenue_estimate, revenue_actual, surprise_percentage, source)
+                        VALUES (:earnings_id, :symbol, :earnings_date, :earnings_at, :earnings_timezone, :earnings_session,
+                                :eps_estimate, :eps_actual, :revenue_estimate, :revenue_actual, :surprise_percentage, :source)
                         ON CONFLICT (stock_symbol, earnings_date)
                         DO UPDATE SET
+                          earnings_at = EXCLUDED.earnings_at,
+                          earnings_timezone = EXCLUDED.earnings_timezone,
+                          earnings_session = EXCLUDED.earnings_session,
                           eps_estimate = EXCLUDED.eps_estimate,
                           eps_actual = EXCLUDED.eps_actual,
                           revenue_estimate = EXCLUDED.revenue_estimate,
@@ -1023,7 +1356,7 @@ class DataRefreshManager(BaseService):
                           source = EXCLUDED.source,
                           updated_at = NOW()
                     """
-                    
+
                     # Calculate surprise percentage if both estimate and actual exist
                     surprise_pct = None
                     if earning.get('eps_estimate') is not None and earning.get('eps_actual') is not None:
@@ -1043,12 +1376,15 @@ class DataRefreshManager(BaseService):
                             surprise_pct = float(earning['surprise_percentage'])
                         except (ValueError, TypeError):
                             surprise_pct = None
-                    
+
                     try:
                         db.execute_update(query, {
                             "earnings_id": earnings_id,
                             "symbol": symbol,
                             "earnings_date": earnings_date,
+                            "earnings_at": earnings_at,
+                            "earnings_timezone": earnings_timezone,
+                            "earnings_session": earnings_session,
                             "eps_estimate": earning.get('eps_estimate'),
                             "eps_actual": earning.get('eps_actual'),
                             "revenue_estimate": earning.get('revenue_estimate'),
@@ -1061,10 +1397,10 @@ class DataRefreshManager(BaseService):
                         self.logger.error(f"Failed to save earnings record for {symbol} on {earnings_date}: {e}")
                         # Continue with next record instead of failing completely
                         continue
-                
+
                 rows_saved = saved_count
                 fetch_duration_ms = int((time.time() - start_time) * 1000)
-                
+
                 # Determine success and error message
                 if rows_saved == 0 and rows_fetched > 0:
                     # Fetched data but couldn't save any - this is a failure
@@ -1082,7 +1418,14 @@ class DataRefreshManager(BaseService):
                     fetch_success = True
                     error_message = None
                     self.logger.info(f"✅ Saved {saved_count} out of {len(earnings)} earnings records for {symbol} from {self.data_source.name}")
-                
+
+                try:
+                    from app.services.earnings_index_service import EarningsIndexService
+
+                    EarningsIndexService().update_stock_next_earnings(symbol)
+                except Exception as e:
+                    self.logger.warning(f"Failed to update next earnings index for {symbol}: {e}")
+
                 # Audit the fetch with proper success/error status
                 self._audit_data_fetch(
                     symbol=symbol,
@@ -1093,7 +1436,9 @@ class DataRefreshManager(BaseService):
                     rows_saved=rows_saved,
                     fetch_duration_ms=fetch_duration_ms,
                     success=fetch_success,
-                    error_message=error_message
+                    error_message=error_message,
+                    validation_report_id=validation_report_id,
+                    metadata=metadata,
                 )
                 audit_done = True
                 return saved_count
@@ -1133,27 +1478,157 @@ class DataRefreshManager(BaseService):
                     error_message=error_message
                 )
             raise  # Re-raise to be caught by caller
-    
+
     def _refresh_income_statements(self, symbol: str) -> int:
-        """Deprecated in the new DRY schema (not stored as structured statements currently)."""
-        self.logger.info("Skipping income statements refresh (not enabled in baseline schema)")
-        return 0
-    
+        """Refresh income statements and persist into financial_statements."""
+        return self._refresh_financial_statements(symbol, statement_type="income_statement")
+
     def _refresh_balance_sheets(self, symbol: str) -> int:
-        """Deprecated in the new DRY schema (not stored as structured statements currently)."""
-        self.logger.info("Skipping balance sheets refresh (not enabled in baseline schema)")
-        return 0
-    
+        """Refresh balance sheets and persist into financial_statements."""
+        return self._refresh_financial_statements(symbol, statement_type="balance_sheet")
+
     def _refresh_cash_flow_statements(self, symbol: str) -> int:
-        """Stub for cash flow statements refresh in new baseline schema."""
-        self.logger.info("Cash flow statements refresh not implemented in baseline schema")
-        return 0
-    
+        """Refresh cash flow statements and persist into financial_statements."""
+        return self._refresh_financial_statements(symbol, statement_type="cash_flow")
+
+    def _refresh_financial_statements(self, symbol: str, *, statement_type: str) -> int:
+        """Fetch and upsert financial statement snapshots.
+
+        Stores provider-normalized statement rows in `financial_statements` keyed by
+        (stock_symbol, period_type, statement_type, fiscal_period).
+        """
+        try:
+            # Prefer quarterly statements for downstream growth/quality metrics.
+            statements = self.data_source.fetch_financial_statements(symbol, quarterly=True)
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch financial statements for {symbol}: {e}")
+            return 0
+
+        if not statements or not isinstance(statements, dict):
+            return 0
+
+        period_type = statements.get("periodicity") or "quarterly"
+        list_key = statement_type
+        items = statements.get(list_key) or []
+        if not items:
+            return 0
+
+        saved = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            period = item.get("period")
+            if not period:
+                continue
+            fiscal_period = pd.to_datetime(period, errors="coerce").date() if period else None
+            if fiscal_period is None:
+                continue
+
+            payload = dict(item)
+            payload.pop("period", None)
+
+            db.execute_update(
+                """
+                INSERT INTO financial_statements
+                (stock_symbol, period_type, statement_type, fiscal_period, source, payload)
+                VALUES (:symbol, :period_type, :statement_type, :fiscal_period, :source, CAST(:payload AS jsonb))
+                ON CONFLICT (stock_symbol, period_type, statement_type, fiscal_period)
+                DO UPDATE SET
+                  source = EXCLUDED.source,
+                  payload = EXCLUDED.payload,
+                  updated_at = NOW()
+                """,
+                {
+                    "symbol": symbol,
+                    "period_type": period_type,
+                    "statement_type": statement_type,
+                    "fiscal_period": fiscal_period,
+                    "source": self.data_source.name,
+                    "payload": json_dumps_sanitized(payload),
+                },
+            )
+            saved += 1
+
+        if saved > 0:
+            self._update_ingestion_window(
+                symbol=symbol,
+                dataset=statement_type,
+                interval=period_type,
+                source=self.data_source.name,
+                cursor_date=max(pd.to_datetime(i.get("period"), errors="coerce").date() for i in items if isinstance(i, dict) and i.get("period")),
+            )
+
+        return saved
+
+    def _refresh_corporate_actions(self, symbol: str) -> int:
+        """Fetch dividends/splits and persist into corporate_actions."""
+        try:
+            actions = self.data_source.fetch_actions(symbol)
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch corporate actions for {symbol}: {e}")
+            return 0
+
+        if not actions:
+            return 0
+
+        saved = 0
+        for a in actions:
+            if not isinstance(a, dict):
+                continue
+            d = a.get("date")
+            action_date = pd.to_datetime(d, errors="coerce").date() if d else None
+            if action_date is None:
+                continue
+
+            action_type = a.get("action_type")
+            if action_type not in ("dividend", "split"):
+                continue
+
+            value = a.get("value")
+            try:
+                value_f = float(value) if value is not None else None
+            except Exception:
+                value_f = None
+
+            db.execute_update(
+                """
+                INSERT INTO corporate_actions
+                (stock_symbol, action_date, action_type, value, source, payload)
+                VALUES (:symbol, :action_date, :action_type, :value, :source, CAST(:payload AS jsonb))
+                ON CONFLICT (stock_symbol, action_date, action_type)
+                DO UPDATE SET
+                  value = EXCLUDED.value,
+                  source = EXCLUDED.source,
+                  payload = EXCLUDED.payload,
+                  updated_at = NOW()
+                """,
+                {
+                    "symbol": symbol,
+                    "action_date": action_date,
+                    "action_type": action_type,
+                    "value": value_f,
+                    "source": self.data_source.name,
+                    "payload": json_dumps_sanitized(a),
+                },
+            )
+            saved += 1
+
+        if saved > 0:
+            self._update_ingestion_window(
+                symbol=symbol,
+                dataset=self._dataset_for_data_type(DataType.CORPORATE_ACTIONS),
+                interval="daily",
+                source=self.data_source.name,
+                cursor_date=max(pd.to_datetime(a.get("date"), errors="coerce").date() for a in actions if isinstance(a, dict) and a.get("date")),
+            )
+
+        return saved
+
     def _refresh_financial_ratios(self, symbol: str) -> int:
         """Stub for financial ratios refresh in new baseline schema."""
         self.logger.info("Financial ratios refresh not implemented in baseline schema")
         return 0
-    
+
     def _refresh_industry_peers(self, symbol: str) -> bool:
         """Refresh industry peers and save to industry_peers."""
         try:
@@ -1161,12 +1636,40 @@ class DataRefreshManager(BaseService):
             if not peers_data:
                 return False
 
-            if not isinstance(peers_data, dict):
-                return False
+            sector = None
+            industry = None
+            peers_list = []
 
-            sector = peers_data.get('sector')
-            industry = peers_data.get('industry')
-            peers_list = peers_data.get('peers') or []
+            # Provider return shapes vary. Normalize to peers_list of dicts.
+            if isinstance(peers_data, dict):
+                sector = peers_data.get('sector')
+                industry = peers_data.get('industry')
+                peers_list = peers_data.get('peers') or []
+            elif isinstance(peers_data, list):
+                peers_list = peers_data
+            elif isinstance(peers_data, str):
+                # Try JSON first, else treat as comma-separated tickers.
+                import json
+
+                try:
+                    decoded = json.loads(peers_data)
+                    if isinstance(decoded, dict):
+                        sector = decoded.get('sector')
+                        industry = decoded.get('industry')
+                        peers_list = decoded.get('peers') or []
+                    elif isinstance(decoded, list):
+                        peers_list = decoded
+                except Exception:
+                    peers_list = [p.strip() for p in peers_data.split(',') if p.strip()]
+
+            # Normalize list of symbols/strings into dict objects
+            normalized_peers: List[Dict[str, Any]] = []
+            for p in peers_list or []:
+                if isinstance(p, dict):
+                    normalized_peers.append(p)
+                elif isinstance(p, str):
+                    normalized_peers.append({"symbol": p})
+            peers_list = normalized_peers
 
             if not peers_list:
                 return bool(sector or industry)
@@ -1179,16 +1682,13 @@ class DataRefreshManager(BaseService):
 
                 query = """
                     INSERT INTO industry_peers
-                    (stock_symbol, peer_symbol, sector, industry, peer_name, peer_market_cap, source)
-                    VALUES (:symbol, :peer_symbol, :sector, :industry, :peer_name, :peer_market_cap, :source)
-                    ON CONFLICT (stock_symbol, peer_symbol)
+                    (symbol, peer_symbol, sector, industry, data_source)
+                    VALUES (:symbol, :peer_symbol, :sector, :industry, :data_source)
+                    ON CONFLICT (symbol, peer_symbol, data_source)
                     DO UPDATE SET
                       sector = EXCLUDED.sector,
                       industry = EXCLUDED.industry,
-                      peer_name = EXCLUDED.peer_name,
-                      peer_market_cap = EXCLUDED.peer_market_cap,
-                      source = EXCLUDED.source,
-                      updated_at = NOW()
+                      data_source = EXCLUDED.data_source
                 """
 
                 db.execute_update(
@@ -1198,9 +1698,7 @@ class DataRefreshManager(BaseService):
                         "peer_symbol": peer_symbol,
                         "sector": sector,
                         "industry": industry,
-                        "peer_name": peer.get('name'),
-                        "peer_market_cap": peer.get('market_cap') or peer.get('peer_market_cap'),
-                        "source": self.data_source.name,
+                        "data_source": self.data_source.name,
                     },
                 )
                 saved += 1
@@ -1210,7 +1708,7 @@ class DataRefreshManager(BaseService):
         except Exception as e:
             self.logger.error(f"Error refreshing industry peers for {symbol}: {e}", exc_info=True)
             raise
-    
+
     def _dataset_for_data_type(self, data_type) -> str:
         """Convert DataType to dataset string for database storage"""
         if isinstance(data_type, str):
@@ -1219,7 +1717,7 @@ class DataRefreshManager(BaseService):
             return data_type.value
         else:
             return str(data_type)
-    
+
     def _data_type_to_string(self, data_type) -> str:
         """Convert DataType to string for consistent handling"""
         if isinstance(data_type, str):
@@ -1228,52 +1726,81 @@ class DataRefreshManager(BaseService):
             return data_type.value
         else:
             return str(data_type)
-    
+
     def _get_last_refresh(self, symbol: str, data_type: DataType) -> Optional[datetime]:
         """Get last refresh time for a symbol and data type"""
         # Check in-memory cache first
         if symbol in self._refresh_tracking:
             if data_type in self._refresh_tracking[symbol]:
                 return self._refresh_tracking[symbol][data_type]
-        
+
         dataset = self._dataset_for_data_type(data_type)
         interval = self._interval_for_data_type(data_type)
         query = """
             SELECT last_success_at
             FROM data_ingestion_state
-            WHERE stock_symbol = :symbol
+            WHERE symbol = :symbol
               AND dataset = :dataset
               AND interval = :interval
         """
         result = db.execute_query(query, {"symbol": symbol, "dataset": dataset, "interval": interval})
         if result and result[0].get("last_success_at"):
             return result[0]["last_success_at"]
-        
+
         return None
-    
+
     def _update_refresh_tracking(self, symbol: str, data_type: DataType, status: str = 'success', error: str = None):
         """Update refresh tracking in database and memory"""
         # Update in-memory cache
         if symbol not in self._refresh_tracking:
             self._refresh_tracking[symbol] = {}
         self._refresh_tracking[symbol][data_type] = datetime.now()
-        
+
         dataset = self._dataset_for_data_type(data_type)
         interval = self._interval_for_data_type(data_type)
 
         # Update database tracking (single source of truth)
         try:
+            next_retry_at = None
+            if status != 'success':
+                # Industry standard: staged retry plan for non-transient quality/provider issues
+                # Attempt 1: later same day (6h)
+                # Attempt 2: next day (24h)
+                # Attempt 3+: 48h
+                try:
+                    rc_row = db.execute_query(
+                        """
+                        SELECT retry_count
+                        FROM data_ingestion_state
+                        WHERE symbol = :symbol AND dataset = :dataset AND interval = :interval
+                        """,
+                        {"symbol": symbol, "dataset": dataset, "interval": interval},
+                    )
+                    current_retry_count = int(rc_row[0].get("retry_count") or 0) if rc_row else 0
+                except Exception:
+                    current_retry_count = 0
+
+                if current_retry_count <= 0:
+                    next_retry_at = datetime.utcnow() + timedelta(hours=6)
+                elif current_retry_count == 1:
+                    next_retry_at = datetime.utcnow() + timedelta(hours=24)
+                else:
+                    next_retry_at = datetime.utcnow() + timedelta(hours=48)
+
             query = """
                 INSERT INTO data_ingestion_state
-                (stock_symbol, dataset, interval, source, last_attempt_at, last_success_at, status, error_message)
-                VALUES (:symbol, :dataset, :interval, :source, :last_attempt_at, :last_success_at, :status, :error)
-                ON CONFLICT (stock_symbol, dataset, interval)
+                (symbol, dataset, interval, source, cursor_ts, last_attempt_at, last_success_at, status, error_message, retry_count)
+                VALUES (:symbol, :dataset, :interval, :source, :cursor_ts, :last_attempt_at, :last_success_at, :status, :error,
+                        CASE WHEN :status = 'success' THEN 0 ELSE 1 END)
+                ON CONFLICT (symbol, dataset, interval)
                 DO UPDATE SET
                   source = EXCLUDED.source,
+                  cursor_ts = EXCLUDED.cursor_ts,
                   last_attempt_at = EXCLUDED.last_attempt_at,
                   last_success_at = EXCLUDED.last_success_at,
                   status = EXCLUDED.status,
                   error_message = EXCLUDED.error_message,
+                  retry_count = CASE WHEN EXCLUDED.status = 'success' THEN 0 ELSE data_ingestion_state.retry_count + 1 END,
                   updated_at = NOW()
             """
 
@@ -1284,6 +1811,7 @@ class DataRefreshManager(BaseService):
                     "dataset": dataset,
                     "interval": interval,
                     "source": self.data_source.name,
+                    "cursor_ts": next_retry_at,
                     "last_attempt_at": datetime.utcnow(),
                     "last_success_at": datetime.utcnow() if status == 'success' else None,
                     "status": status,

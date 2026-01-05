@@ -355,13 +355,13 @@ class AlphaVantageAdapter(BaseDataSourceAdapter):
                         result[indicator] = indicator_data
                         
                 except Exception as e:
-                    logger.error(f"Error fetching {indicator} for {symbol}: {e}")
+                    self._logger.error(f"Error fetching {indicator} for {symbol}: {e}")
                     continue
             
             return result
             
         except Exception as e:
-            logger.error(f"Error fetching technical indicators for {symbol}: {e}")
+            self._logger.error(f"Error fetching technical indicators for {symbol}: {e}")
             return {}
     
     @trace_function("fetch_fundamentals")
@@ -405,7 +405,7 @@ class AlphaVantageAdapter(BaseDataSourceAdapter):
             return result
             
         except Exception as e:
-            logger.error(f"Error fetching fundamentals for {symbol}: {e}")
+            self._logger.error(f"Error fetching fundamentals for {symbol}: {e}")
             return {}
     
     @trace_function("fetch_news")
@@ -437,7 +437,7 @@ class AlphaVantageAdapter(BaseDataSourceAdapter):
             return news_items[:limit]
             
         except Exception as e:
-            logger.error(f"Error fetching news: {e}")
+            self._logger.error(f"Error fetching news: {e}")
             return []
     
     @trace_function("fetch_symbol_details")
@@ -471,7 +471,7 @@ class AlphaVantageAdapter(BaseDataSourceAdapter):
             return details
             
         except Exception as e:
-            logger.error(f"Error fetching symbol details for {symbol}: {e}")
+            self._logger.error(f"Error fetching symbol details for {symbol}: {e}")
             return None
     
     @trace_function("fetch_earnings_calendar")
@@ -480,5 +480,5 @@ class AlphaVantageAdapter(BaseDataSourceAdapter):
         try:
             return self.source.fetch_earnings_calendar(horizon)
         except Exception as e:
-            logger.error(f"Error fetching earnings calendar: {e}")
+            self._logger.error(f"Error fetching earnings calendar: {e}")
             return None

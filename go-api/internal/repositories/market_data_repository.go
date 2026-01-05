@@ -12,6 +12,36 @@ type MarketDataRepository struct {
 	db *sql.DB
 }
 
+func (r *MarketDataRepository) GetLatestFundamentalsSnapshot(symbol string) (map[string]interface{}, error) {
+	query := `
+        SELECT payload
+        FROM fundamentals_snapshots
+        WHERE stock_symbol = $1
+        ORDER BY as_of_date DESC
+        LIMIT 1
+    `
+
+	var payloadBytes []byte
+	err := r.db.QueryRow(query, symbol).Scan(&payloadBytes)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("fundamentals not found for symbol: %s", symbol)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get fundamentals: %w", err)
+	}
+
+	if len(payloadBytes) == 0 {
+		return nil, fmt.Errorf("fundamentals not found for symbol: %s", symbol)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return nil, fmt.Errorf("failed to parse fundamentals payload: %w", err)
+	}
+
+	return payload, nil
+}
+
 func NewMarketDataRepository() *MarketDataRepository {
 	return &MarketDataRepository{
 		db: database.DB,
@@ -39,19 +69,19 @@ type FundamentalData struct {
 }
 
 type NewsArticle struct {
-	Title         string   `json:"title"`
-	Publisher     string   `json:"publisher"`
-	Link          string   `json:"link"`
-	PublishedDate string   `json:"published_date"`
+	Title          string   `json:"title"`
+	Publisher      string   `json:"publisher"`
+	Link           string   `json:"link"`
+	PublishedDate  string   `json:"published_date"`
 	RelatedSymbols []string `json:"related_symbols"`
 }
 
 type EarningsData struct {
-	EarningsDate   string   `json:"earnings_date"`
-	EPSEstimate    *float64 `json:"eps_estimate"`
-	EPSActual      *float64 `json:"eps_actual"`
-	RevenueEstimate *float64 `json:"revenue_estimate"`
-	RevenueActual  *float64 `json:"revenue_actual"`
+	EarningsDate       string   `json:"earnings_date"`
+	EPSEstimate        *float64 `json:"eps_estimate"`
+	EPSActual          *float64 `json:"eps_actual"`
+	RevenueEstimate    *float64 `json:"revenue_estimate"`
+	RevenueActual      *float64 `json:"revenue_actual"`
 	SurprisePercentage *float64 `json:"surprise_percentage"`
 }
 
@@ -64,23 +94,25 @@ type IndustryPeer struct {
 }
 
 type IndustryPeersData struct {
-	Sector *string        `json:"sector"`
-	Industry *string      `json:"industry"`
-	Peers  []IndustryPeer `json:"peers"`
+	Sector   *string        `json:"sector"`
+	Industry *string        `json:"industry"`
+	Peers    []IndustryPeer `json:"peers"`
 }
 
 func (r *MarketDataRepository) GetLatestFundamentals(symbol string) (*FundamentalData, error) {
+	// Normalized schema stores core company metadata on stocks; richer fundamentals are in stock_financials.
+	// For now we populate what we can from stocks and return the rest as nil.
 	query := `
-		SELECT fundamental_data
-		FROM raw_market_data
-		WHERE stock_symbol = ?
-		AND fundamental_data IS NOT NULL
-		ORDER BY date DESC
+		SELECT market_cap, sector, industry
+		FROM stocks
+		WHERE symbol = $1
 		LIMIT 1
 	`
 
-	var fundamentalJSON sql.NullString
-	err := r.db.QueryRow(query, symbol).Scan(&fundamentalJSON)
+	var marketCap sql.NullInt64
+	var sector sql.NullString
+	var industry sql.NullString
+	err := r.db.QueryRow(query, symbol).Scan(&marketCap, &sector, &industry)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("fundamentals not found for symbol: %s", symbol)
 	}
@@ -88,198 +120,69 @@ func (r *MarketDataRepository) GetLatestFundamentals(symbol string) (*Fundamenta
 		return nil, fmt.Errorf("failed to get fundamentals: %w", err)
 	}
 
-	if !fundamentalJSON.Valid {
-		return nil, fmt.Errorf("no fundamental data available")
+	fd := &FundamentalData{}
+	if marketCap.Valid {
+		v := float64(marketCap.Int64)
+		fd.MarketCap = &v
 	}
-
-	var fundamental FundamentalData
-	if err := json.Unmarshal([]byte(fundamentalJSON.String), &fundamental); err != nil {
-		return nil, fmt.Errorf("failed to parse fundamental data: %w", err)
+	if sector.Valid {
+		fd.Sector = &sector.String
 	}
-
-	return &fundamental, nil
+	if industry.Valid {
+		fd.Industry = &industry.String
+	}
+	return fd, nil
 }
 
 func (r *MarketDataRepository) GetLatestNews(symbol string, limit int) ([]NewsArticle, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
 	query := `
-		SELECT news_metadata
-		FROM raw_market_data
-		WHERE stock_symbol = ?
-		AND news_metadata IS NOT NULL
-		ORDER BY date DESC
-		LIMIT 1
-	`
-
-	var newsJSON sql.NullString
-	err := r.db.QueryRow(query, symbol).Scan(&newsJSON)
-	if err == sql.ErrNoRows {
-		return []NewsArticle{}, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get news: %w", err)
-	}
-
-	if !newsJSON.Valid {
-		return []NewsArticle{}, nil
-	}
-
-	var news []NewsArticle
-	if err := json.Unmarshal([]byte(newsJSON.String), &news); err != nil {
-		return nil, fmt.Errorf("failed to parse news data: %w", err)
-	}
-
-	// Limit results
-	if len(news) > limit {
-		news = news[:limit]
-	}
-
-	return news, nil
-}
-
-func (r *MarketDataRepository) GetEarnings(symbol string, limit int) ([]EarningsData, error) {
-	query := `
-		SELECT earnings_date, eps_estimate, eps_actual, revenue_estimate, revenue_actual, surprise_percentage
-		FROM earnings_data
-		WHERE stock_symbol = ?
-		ORDER BY earnings_date DESC
-		LIMIT ?
+		SELECT n.title, COALESCE(n.publisher, ''), COALESCE(n.url, ''), COALESCE(n.published_at::text, ''), n.related_symbols
+		FROM stock_news n
+		JOIN stocks s ON s.id = n.stock_id
+		WHERE s.symbol = $1
+		ORDER BY n.published_at DESC NULLS LAST, n.created_at DESC
+		LIMIT $2
 	`
 
 	rows, err := r.db.Query(query, symbol, limit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query earnings: %w", err)
+		return nil, fmt.Errorf("failed to get news: %w", err)
 	}
 	defer rows.Close()
 
-	var earnings []EarningsData
+	articles := make([]NewsArticle, 0)
 	for rows.Next() {
-		var e EarningsData
-		var epsEst, epsAct, revEst, revAct, surprise sql.NullFloat64
-		err := rows.Scan(&e.EarningsDate, &epsEst, &epsAct, &revEst, &revAct, &surprise)
-		if err != nil {
+		var a NewsArticle
+		var related sql.NullString
+		if err := rows.Scan(&a.Title, &a.Publisher, &a.Link, &a.PublishedDate, &related); err != nil {
 			continue
 		}
-		if epsEst.Valid {
-			e.EPSEstimate = &epsEst.Float64
-		}
-		if epsAct.Valid {
-			e.EPSActual = &epsAct.Float64
-		}
-		if revEst.Valid {
-			e.RevenueEstimate = &revEst.Float64
-		}
-		if revAct.Valid {
-			e.RevenueActual = &revAct.Float64
-		}
-		if surprise.Valid {
-			e.SurprisePercentage = &surprise.Float64
-		}
-		earnings = append(earnings, e)
+		// related_symbols is stored as JSONB; treat as opaque when scanning via database/sql.
+		// We keep RelatedSymbols empty for now.
+		a.RelatedSymbols = []string{}
+		articles = append(articles, a)
 	}
 
-	return earnings, nil
+	return articles, nil
+}
+
+func (r *MarketDataRepository) GetEarnings(symbol string, limit int) ([]EarningsData, error) {
+	// Earnings is not yet modeled in the normalized baseline.
+	return []EarningsData{}, nil
 }
 
 func (r *MarketDataRepository) GetIndustryPeers(symbol string) (*IndustryPeersData, error) {
-	// First get sector/industry from fundamentals
+	// Industry peers is not yet modeled in the normalized baseline.
+	// We return sector/industry if available from stocks table, but no peers.
 	fundamentals, err := r.GetLatestFundamentals(symbol)
-	if err == nil && fundamentals.Sector != nil && fundamentals.Industry != nil {
-		// Get peers from industry_peers table
-		query := `
-			SELECT peer_symbol, peer_name, peer_market_cap, sector, industry
-			FROM industry_peers
-			WHERE stock_symbol = ?
-			ORDER BY peer_market_cap DESC
-			LIMIT 10
-		`
-
-		rows, err := r.db.Query(query, symbol)
-		if err != nil {
-			return &IndustryPeersData{
-				Sector:   fundamentals.Sector,
-				Industry: fundamentals.Industry,
-				Peers:   []IndustryPeer{},
-			}, nil
-		}
-		defer rows.Close()
-
-		var peers []IndustryPeer
-		for rows.Next() {
-			var p IndustryPeer
-			var marketCap sql.NullFloat64
-			var sector, industry sql.NullString
-			err := rows.Scan(&p.Symbol, &p.Name, &marketCap, &sector, &industry)
-			if err != nil {
-				continue
-			}
-			if marketCap.Valid {
-				p.MarketCap = &marketCap.Float64
-			}
-			if sector.Valid {
-				p.Sector = &sector.String
-			}
-			if industry.Valid {
-				p.Industry = &industry.String
-			}
-			peers = append(peers, p)
-		}
-
-		return &IndustryPeersData{
-			Sector:   fundamentals.Sector,
-			Industry: fundamentals.Industry,
-			Peers:   peers,
-		}, nil
+	if err != nil {
+		return &IndustryPeersData{Peers: []IndustryPeer{}}, nil
 	}
-
-	// Fallback: try to get from fundamental_data JSON
-	query := `
-		SELECT fundamental_data
-		FROM raw_market_data
-		WHERE stock_symbol = ?
-		AND fundamental_data IS NOT NULL
-		ORDER BY date DESC
-		LIMIT 1
-	`
-
-	var fundamentalJSON sql.NullString
-	err = r.db.QueryRow(query, symbol).Scan(&fundamentalJSON)
-	if err == sql.ErrNoRows || !fundamentalJSON.Valid {
-		return &IndustryPeersData{}, nil
-	}
-
-	var fundamentalMap map[string]interface{}
-	if err := json.Unmarshal([]byte(fundamentalJSON.String), &fundamentalMap); err != nil {
-		return &IndustryPeersData{}, nil
-	}
-
-	result := &IndustryPeersData{}
-	if sector, ok := fundamentalMap["sector"].(string); ok {
-		result.Sector = &sector
-	}
-	if industry, ok := fundamentalMap["industry"].(string); ok {
-		result.Industry = &industry
-	}
-	if peersData, ok := fundamentalMap["industry_peers"].(map[string]interface{}); ok {
-		if peersList, ok := peersData["peers"].([]interface{}); ok {
-			for _, p := range peersList {
-				if peerMap, ok := p.(map[string]interface{}); ok {
-					peer := IndustryPeer{}
-					if symbol, ok := peerMap["symbol"].(string); ok {
-						peer.Symbol = symbol
-					}
-					if name, ok := peerMap["name"].(string); ok {
-						peer.Name = name
-					}
-					if marketCap, ok := peerMap["market_cap"].(float64); ok {
-						peer.MarketCap = &marketCap
-					}
-					result.Peers = append(result.Peers, peer)
-				}
-			}
-		}
-	}
-
-	return result, nil
+	return &IndustryPeersData{Sector: fundamentals.Sector, Industry: fundamentals.Industry, Peers: []IndustryPeer{}}, nil
 }
 
 type VolumeDataPoint struct {
@@ -289,12 +192,16 @@ type VolumeDataPoint struct {
 }
 
 func (r *MarketDataRepository) GetVolumeData(symbol string, days int) ([]VolumeDataPoint, error) {
+	if days <= 0 {
+		days = 30
+	}
 	query := `
-		SELECT date, volume, close
-		FROM raw_market_data
-		WHERE stock_symbol = ?
-		ORDER BY date DESC
-		LIMIT ?
+		SELECT m.date::text, COALESCE(m.volume, 0) as volume, COALESCE(m.close_price, 0) as close
+		FROM stock_market_metrics m
+		JOIN stocks s ON s.id = m.stock_id
+		WHERE s.symbol = $1
+		ORDER BY m.date DESC
+		LIMIT $2
 	`
 
 	rows, err := r.db.Query(query, symbol, days)
@@ -306,12 +213,12 @@ func (r *MarketDataRepository) GetVolumeData(symbol string, days int) ([]VolumeD
 	var volumeData []VolumeDataPoint
 	for rows.Next() {
 		var v VolumeDataPoint
-		var date string
-		err := rows.Scan(&date, &v.Volume, &v.Price)
+		var d string
+		err := rows.Scan(&d, &v.Volume, &v.Price)
 		if err != nil {
 			continue
 		}
-		v.Date = date
+		v.Date = d
 		volumeData = append(volumeData, v)
 	}
 
@@ -322,4 +229,3 @@ func (r *MarketDataRepository) GetVolumeData(symbol string, days int) ([]VolumeD
 
 	return volumeData, nil
 }
-

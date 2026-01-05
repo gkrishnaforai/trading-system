@@ -33,10 +33,10 @@ func (h *StockHandler) GetStock(c *gin.Context) {
 		// Check if it's a "not found" error - return 200 with no data message
 		if strings.Contains(err.Error(), "not found") {
 			c.JSON(http.StatusOK, gin.H{
-				"symbol": symbol,
+				"symbol":         symbol,
 				"data_available": false,
-				"message": "No data available for this symbol. Please run the batch worker to fetch market data first.",
-				"hint": "Run: docker-compose exec python-worker python -c \"from app.database import init_database; from app.services.data_fetcher import DataFetcher; from app.services.indicator_service import IndicatorService; init_database(); df = DataFetcher(); is_service = IndicatorService(); df.fetch_and_save_stock('" + symbol + "'); is_service.calculate_indicators('" + symbol + "')\"",
+				"message":        "No data available for this symbol. Please run the batch worker to fetch market data first.",
+				"hint":           "Run: docker-compose exec python-worker python -c \"from app.database import init_database; from app.services.data_fetcher import DataFetcher; from app.services.indicator_service import IndicatorService; init_database(); df = DataFetcher(); is_service = IndicatorService(); df.fetch_and_save_stock('" + symbol + "'); is_service.calculate_indicators('" + symbol + "')\"",
 			})
 			return
 		}
@@ -62,9 +62,9 @@ func (h *StockHandler) GetSignal(c *gin.Context) {
 		// Check if it's a "not found" error - return 200 with no data message
 		if strings.Contains(err.Error(), "not found") {
 			c.JSON(http.StatusOK, gin.H{
-				"symbol": symbol,
+				"symbol":         symbol,
 				"data_available": false,
-				"message": "No data available for this symbol. Please run the batch worker to fetch market data first.",
+				"message":        "No data available for this symbol. Please run the batch worker to fetch market data first.",
 			})
 			return
 		}
@@ -88,20 +88,24 @@ func (h *StockHandler) GetSignal(c *gin.Context) {
 // GetFundamentals handles GET /api/v1/stock/:symbol/fundamentals
 func (h *StockHandler) GetFundamentals(c *gin.Context) {
 	symbol := c.Param("symbol")
-	fundamentals, err := h.stockService.GetFundamentals(symbol)
+	fundamentals, err := h.stockService.GetFundamentalsSnapshot(symbol)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			c.JSON(http.StatusOK, gin.H{
-				"symbol": symbol,
+				"symbol":         symbol,
 				"data_available": false,
-				"message": "No fundamental data available for this symbol.",
+				"message":        "No fundamental data available for this symbol.",
 			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, fundamentals)
+	c.JSON(http.StatusOK, gin.H{
+		"symbol":         symbol,
+		"data_available": true,
+		"fundamentals":   fundamentals,
+	})
 }
 
 // GetNews handles GET /api/v1/stock/:symbol/news
@@ -111,8 +115,8 @@ func (h *StockHandler) GetNews(c *gin.Context) {
 	news, err := h.stockService.GetNews(symbol, limit)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"symbol": symbol,
-			"news": []interface{}{},
+			"symbol":  symbol,
+			"news":    []interface{}{},
 			"message": "No news available",
 		})
 		return
@@ -126,9 +130,9 @@ func (h *StockHandler) GetEarnings(c *gin.Context) {
 	earnings, err := h.stockService.GetEarnings(symbol, 10)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"symbol": symbol,
+			"symbol":   symbol,
 			"earnings": []interface{}{},
-			"message": "No earnings data available",
+			"message":  "No earnings data available",
 		})
 		return
 	}
@@ -141,11 +145,11 @@ func (h *StockHandler) GetIndustryPeers(c *gin.Context) {
 	peers, err := h.stockService.GetIndustryPeers(symbol)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"symbol": symbol,
-			"sector": nil,
+			"symbol":   symbol,
+			"sector":   nil,
 			"industry": nil,
-			"peers": []interface{}{},
-			"message": "No industry/peer data available",
+			"peers":    []interface{}{},
+			"message":  "No industry/peer data available",
 		})
 		return
 	}
@@ -156,7 +160,7 @@ func (h *StockHandler) GetIndustryPeers(c *gin.Context) {
 // Returns all advanced analysis data: moving averages, MACD, RSI, volume, ATR, etc.
 func (h *StockHandler) GetAdvancedAnalysis(c *gin.Context) {
 	symbol := c.Param("symbol")
-	
+
 	// Get subscription level
 	subscriptionLevel := c.Query("subscription_level")
 	if subscriptionLevel == "" {
@@ -167,9 +171,18 @@ func (h *StockHandler) GetAdvancedAnalysis(c *gin.Context) {
 	stock, err := h.stockService.GetStock(symbol, subscriptionLevel)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"symbol": symbol,
+			"symbol":         symbol,
 			"data_available": false,
-			"message": "No data available for this symbol",
+			"message":        "No data available for this symbol",
+		})
+		return
+	}
+
+	if stock == nil || stock.Indicators == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"symbol":         symbol,
+			"data_available": false,
+			"message":        "Indicators not available for this symbol. Please refresh/load indicators first.",
 		})
 		return
 	}
@@ -179,22 +192,22 @@ func (h *StockHandler) GetAdvancedAnalysis(c *gin.Context) {
 
 	// Build comprehensive response
 	response := gin.H{
-		"symbol": symbol,
+		"symbol":         symbol,
 		"data_available": true,
 		"moving_averages": gin.H{
-			"ma7":   stock.Indicators.MA7,
-			"ma21":  stock.Indicators.MA21,
-			"sma50": stock.Indicators.SMA50,
-			"ema20": stock.Indicators.EMA20,
-			"ema50": stock.Indicators.EMA50,
+			"ma7":    stock.Indicators.MA7,
+			"ma21":   stock.Indicators.MA21,
+			"sma50":  stock.Indicators.SMA50,
+			"ema20":  stock.Indicators.EMA20,
+			"ema50":  stock.Indicators.EMA50,
 			"sma200": stock.Indicators.SMA200,
 		},
 		"macd": gin.H{
-			"macd_line":     stock.Indicators.MACD,
-			"macd_signal":   stock.Indicators.MACDSignal,
+			"macd_line":      stock.Indicators.MACD,
+			"macd_signal":    stock.Indicators.MACDSignal,
 			"macd_histogram": stock.Indicators.MACDHistogram,
 		},
-		"rsi": stock.Indicators.RSI,
+		"rsi":    stock.Indicators.RSI,
 		"volume": volumeData,
 		"atr_volatility": gin.H{
 			"atr": stock.Indicators.ATR,
@@ -226,4 +239,3 @@ func (h *StockHandler) GetAdvancedAnalysis(c *gin.Context) {
 
 	c.JSON(http.StatusOK, response)
 }
-

@@ -231,9 +231,16 @@ class IndicatorService(BaseService):
             latest_idx = df.index[-1]
             trade_date = latest_idx.date() if hasattr(latest_idx, 'date') else pd.Timestamp(latest_idx).date()
 
+            # Insert indicators using the existing schema
+            query = """
+                INSERT INTO indicators_daily
+                (symbol, date, sma_50, sma_200, ema_20, rsi_14, macd, macd_signal, macd_hist, atr, bb_width, signal, confidence_score, data_source, created_at)
+                VALUES (:symbol, :date, :sma_50, :sma_200, :ema_20, :rsi_14, :macd, :macd_signal, :macd_hist, :atr, :bb_width, :signal, :confidence_score, :data_source, NOW())
+            """
+
             params = {
                 "symbol": symbol,
-                "trade_date": trade_date,
+                "date": trade_date,
                 "sma_50": float(safe_get(sma50, latest_idx)) if safe_get(sma50, latest_idx) is not None else None,
                 "sma_200": float(safe_get(sma200, latest_idx)) if safe_get(sma200, latest_idx) is not None else None,
                 "ema_20": float(safe_get(ema20, latest_idx)) if safe_get(ema20, latest_idx) is not None else None,
@@ -241,27 +248,16 @@ class IndicatorService(BaseService):
                 "macd": float(safe_get(macd_line, latest_idx)) if safe_get(macd_line, latest_idx) is not None else None,
                 "macd_signal": float(safe_get(macd_signal, latest_idx)) if safe_get(macd_signal, latest_idx) is not None else None,
                 "macd_hist": float(safe_get(macd_histogram, latest_idx)) if safe_get(macd_histogram, latest_idx) is not None else None,
+                "atr": float(safe_get(atr, latest_idx)) if safe_get(atr, latest_idx) is not None else None,
+                "bb_width": (
+                    (float(safe_get(bb_upper, latest_idx)) - float(safe_get(bb_lower, latest_idx))) / float(safe_get(bb_middle, latest_idx))
+                    if safe_get(bb_lower, latest_idx) is not None and safe_get(bb_upper, latest_idx) is not None and safe_get(bb_middle, latest_idx) not in (None, 0)
+                    else None
+                ),
                 "signal": strategy_result.signal,
                 "confidence_score": float(strategy_result.confidence) if strategy_result and strategy_result.confidence is not None else None,
+                "data_source": "calculated"
             }
-
-            query = """
-                INSERT INTO indicators_daily
-                (stock_symbol, trade_date, sma_50, sma_200, ema_20, rsi_14, macd, macd_signal, macd_hist, signal, confidence_score)
-                VALUES (:symbol, :trade_date, :sma_50, :sma_200, :ema_20, :rsi_14, :macd, :macd_signal, :macd_hist, :signal, :confidence_score)
-                ON CONFLICT (stock_symbol, trade_date)
-                DO UPDATE SET
-                  sma_50 = EXCLUDED.sma_50,
-                  sma_200 = EXCLUDED.sma_200,
-                  ema_20 = EXCLUDED.ema_20,
-                  rsi_14 = EXCLUDED.rsi_14,
-                  macd = EXCLUDED.macd,
-                  macd_signal = EXCLUDED.macd_signal,
-                  macd_hist = EXCLUDED.macd_hist,
-                  signal = EXCLUDED.signal,
-                  confidence_score = EXCLUDED.confidence_score,
-                  updated_at = NOW()
-            """
 
             db.execute_update(query, params)
 
@@ -286,8 +282,8 @@ class IndicatorService(BaseService):
         """Get latest indicators for a symbol"""
         query = """
             SELECT * FROM indicators_daily
-            WHERE stock_symbol = :symbol
-            ORDER BY trade_date DESC
+            WHERE symbol = :symbol
+            ORDER BY date DESC
             LIMIT 1
         """
         

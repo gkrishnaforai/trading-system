@@ -61,10 +61,11 @@ class CompositeDataSource(BaseDataSource):
         symbol: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        period: str = "1y"
+        period: str = "1y",
+        interval: str = "1d"
     ) -> Optional[pd.DataFrame]:
         """Fetch historical OHLCV price data with automatic fallback"""
-        kwargs: Dict[str, Any] = {"period": period}
+        kwargs: Dict[str, Any] = {"period": period, "interval": interval}
         if start_date is not None:
             kwargs["start_date"] = start_date
         if end_date is not None:

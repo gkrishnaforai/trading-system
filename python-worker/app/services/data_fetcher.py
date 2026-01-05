@@ -252,6 +252,7 @@ class DataFetcher(BaseService):
         if fundamental_data:
             try:
                 import json
+                from app.utils.json_sanitize import json_dumps_sanitized
 
                 db.execute_update(
                     """
@@ -264,7 +265,7 @@ class DataFetcher(BaseService):
                         "symbol": symbol,
                         "as_of_date": datetime.now().date(),
                         "source": getattr(settings, 'default_fundamentals_source', None) or 'yahoo_finance',
-                        "payload": json.dumps(fundamental_data),
+                        "payload": json_dumps_sanitized(fundamental_data),
                     },
                 )
             except Exception as e:

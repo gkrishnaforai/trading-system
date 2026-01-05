@@ -105,7 +105,7 @@ class StockInsightsService(BaseService):
     def _fetch_market_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """Fetch market data for symbol"""
         try:
-            data = self.market_data_repo.fetch_by_symbol(symbol, order_by="trade_date DESC", limit=252)
+            data = self.market_data_repo.fetch_by_symbol(symbol, order_by="date DESC", limit=252)
             if data is None or len(data) == 0:
                 self.log_warning(f"No market data found for {symbol}", context={'symbol': symbol})
                 return None
@@ -115,7 +115,11 @@ class StockInsightsService(BaseService):
             if len(df) == 0:
                 self.log_warning(f"Empty market data DataFrame for {symbol}", context={'symbol': symbol})
                 return None
-                
+            if "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                df = df.sort_values(by="date", ascending=True)
+            df = df.reset_index(drop=True)
+
             return df
         except Exception as e:
             self.log_error(f"Error fetching market data for {symbol}", e, context={'symbol': symbol})

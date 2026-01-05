@@ -33,11 +33,17 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY python-worker/app ./app
 COPY python-worker/tests ./tests
 
+# Copy Supabase migrations so python-worker can run them on startup
+COPY supabase/migrations/ ./supabase/migrations/
+
+# Copy python-worker migrations for admin API
+COPY python-worker/migrations/ ./migrations/
+
 # Copy Streamlit apps (UI entrypoints)
 COPY python-worker/streamlit_*.py ./
 
-# Copy environment files from project root
-COPY .env* ./
+# Copy configuration files for enhanced features
+COPY python-worker/default_symbols.py ./
 
 # Check Python syntax before finalizing image
 RUN python3 -c "import ast, os; [ast.parse(open(os.path.join(root, f)).read()) for root, dirs, files in os.walk('/app') for f in files if f.endswith('.py')]" || (echo "❌ Python syntax errors found! Fix before building." && exit 1)

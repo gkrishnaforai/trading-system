@@ -32,22 +32,22 @@ def fix_indicators_table():
             session.execute(text("""
                 CREATE TABLE indicators_daily (
                     id SERIAL PRIMARY KEY,
-                    symbol VARCHAR(10) NOT NULL,
-                    date DATE NOT NULL,
+                    stock_symbol VARCHAR(10) NOT NULL,
+                    trade_date DATE NOT NULL,
                     indicator_name VARCHAR(50) NOT NULL,
                     indicator_value NUMERIC(12, 6),
                     time_period INTEGER,
                     data_source VARCHAR(50) DEFAULT 'alphavantage',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(symbol, date, indicator_name, data_source)
+                    UNIQUE(stock_symbol, trade_date, indicator_name, data_source)
                 )
             """))
             
             # Create indexes
-            session.execute(text("CREATE INDEX idx_indicators_daily_symbol ON indicators_daily(symbol)"))
-            session.execute(text("CREATE INDEX idx_indicators_daily_date ON indicators_daily(date)"))
+            session.execute(text("CREATE INDEX idx_indicators_daily_symbol ON indicators_daily(stock_symbol)"))
+            session.execute(text("CREATE INDEX idx_indicators_daily_date ON indicators_daily(trade_date)"))
             session.execute(text("CREATE INDEX idx_indicators_daily_name ON indicators_daily(indicator_name)"))
-            session.execute(text("CREATE INDEX idx_indicators_daily_symbol_date_name ON indicators_daily(symbol, date, indicator_name)"))
+            session.execute(text("CREATE INDEX idx_indicators_daily_symbol_date_name ON indicators_daily(stock_symbol, trade_date, indicator_name)"))
             
             # Add comment
             session.execute(text("COMMENT ON TABLE indicators_daily IS 'Technical indicators (RSI, MACD, SMA, EMA, etc.)'"))

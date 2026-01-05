@@ -5,7 +5,8 @@ import "time"
 // AggregatedIndicators represents technical indicators for a stock
 type AggregatedIndicators struct {
 	ID                int       `json:"id" db:"id"`
-	StockSymbol       string    `json:"stock_symbol" db:"stock_symbol"`
+	StockID           string    `json:"stock_id,omitempty" db:"stock_id"`
+	StockSymbol       string    `json:"stock_symbol" db:"-"`
 	Date              time.Time `json:"date" db:"date"`
 	MA7               *float64  `json:"ma7,omitempty" db:"ma7"`
 	MA21              *float64  `json:"ma21,omitempty" db:"ma21"`
@@ -34,15 +35,15 @@ type AggregatedIndicators struct {
 
 // PortfolioSignal represents a trading signal for a portfolio
 type PortfolioSignal struct {
-	SignalID                string    `json:"signal_id" db:"signal_id"`
-	PortfolioID             string    `json:"portfolio_id" db:"portfolio_id"`
-	StockSymbol             string    `json:"stock_symbol" db:"stock_symbol"`
-	Date                    time.Time `json:"date" db:"date"`
-	SignalType              string    `json:"signal_type" db:"signal_type"`
-	SuggestedAllocation     *float64  `json:"suggested_allocation,omitempty" db:"suggested_allocation"`
-	StopLoss                *float64  `json:"stop_loss,omitempty" db:"stop_loss"`
-	ConfidenceScore         *float64  `json:"confidence_score,omitempty" db:"confidence_score"`
-	SubscriptionLevelRequired string  `json:"subscription_level_required" db:"subscription_level_required"`
-	CreatedAt               time.Time `json:"created_at" db:"created_at"`
+	SignalID                  string    `json:"signal_id" db:"signal_id"`
+	PortfolioID               string    `json:"portfolio_id" db:"portfolio_id"`
+	StockID                   string    `json:"stock_id,omitempty" db:"stock_id"`
+	StockSymbol               string    `json:"stock_symbol" db:"-"`
+	Date                      time.Time `json:"date" db:"date"`
+	SignalType                string    `json:"signal_type" db:"signal_type"`
+	SuggestedAllocation       *float64  `json:"suggested_allocation,omitempty" db:"suggested_allocation"`
+	StopLoss                  *float64  `json:"stop_loss,omitempty" db:"stop_loss"`
+	ConfidenceScore           *float64  `json:"confidence_score,omitempty" db:"confidence_score"`
+	SubscriptionLevelRequired string    `json:"subscription_level_required" db:"subscription_level_required"`
+	CreatedAt                 time.Time `json:"created_at" db:"created_at"`
 }
-

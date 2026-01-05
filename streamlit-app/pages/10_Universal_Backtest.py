@@ -8,10 +8,15 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta
 import requests
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from datetime import datetime, timedelta
 import json
+
+# Import centralized API configuration
+from api_config import api_config
 
 from utils import setup_page_config, render_sidebar
 from api_client import get_go_api_client, APIClient, APIError
@@ -46,30 +51,414 @@ ASSET_CONFIGS = {
     }
 }
 
-def get_universal_signal(asset_symbol: str, date: str, asset_category: str):
-    """Get signal for any asset using appropriate engine"""
-    config = ASSET_CONFIGS[asset_category]
-    
-    # For now, use TQQQ engine for all (can be extended later)
-    if asset_category == "3x_ETFs":
-        api_url = f"http://127.0.0.1:8001/signal/tqqq"
-    else:
-        # Placeholder for other engines
-        api_url = f"http://127.0.0.1:8001/signal/tqqq"  # Use TQQQ as fallback
-    
+def get_3x_etf_signal(etf_symbol: str, date: str):
+    """Get signal for 3x ETF using universal API"""
     try:
-        response = requests.post(api_url, json={"date": date})
+        # Use centralized API configuration
+        api_url = api_config.get_universal_signal_url()
+        payload = {
+            "symbol": etf_symbol,
+            "date": date,
+            "asset_type": "3x_etf"
+        }
+        
+        response = requests.post(api_url, json=payload)
+        
         if response.status_code == 200:
             data = response.json()
             if data.get("success"):
-                # Adapt the response for the requested asset
                 signal_data = data["data"]
-                signal_data["market_data"]["symbol"] = asset_symbol
+                
+                # Add ETF-specific metadata
+                etf_config = ETF_3X_CONFIGS[etf_symbol]
+                signal_data["etf_info"] = {
+                    "name": etf_config["name"],
+                    "sector": etf_config["sector"],
+                    "volatility_profile": etf_config["volatility_profile"],
+                    "engine_used": "Universal 3x ETF Engine"
+                }
+                
                 return signal_data
             else:
                 return {"error": data.get("error", "Unknown error")}
         else:
-            return {"error": f"API Error: {response.status_code}"}
+            return {"error": f"API Error: {response.status_code} - {response.text}"}
+    except Exception as e:
+        return {"error": f"Request failed: {str(e)}"}
+
+def display_3x_etf_analysis(results: dict, etf_symbol: str):
+    """Specialized display for 3x ETFs with enhanced Fear/Greed analysis"""
+    
+    etf_config = ETF_3X_CONFIGS[etf_symbol]
+    
+    st.subheader(f"🚀 {etf_symbol} 3x ETF Analysis")
+    st.markdown(f"**{etf_config['name']}**")
+    st.markdown(f"*{etf_config['description']}*")
+    
+    # ETF Info Bar
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Sector", etf_config["sector"])
+    with col2:
+        st.metric("Volatility", etf_config["volatility_profile"])
+    with col3:
+        st.metric("Optimal VIX", etf_config["optimal_vix_range"])
+    with col4:
+        st.metric("Engine", etf_config["engine"])
+    
+    st.divider()
+    
+    if results["mode"] == "Single Date":
+        signal = results["signal"]
+        market = results["market_data"]
+        performance = results["performance"]
+        analysis = results.get("analysis", {})
+        
+        # 🎯 Enhanced Signal Display for 3x ETFs
+        signal_value = signal.get("signal", "N/A")
+        confidence = signal.get("confidence", 0)
+        
+        # 3x ETF specific signal colors
+        signal_colors = {
+            "buy": ("🟢", "green", "AGGRESSIVE BUY"),
+            "sell": ("🔴", "red", "EMERGENCY SELL"), 
+            "hold": ("🟡", "orange", "DEFENSIVE HOLD")
+        }
+        signal_emoji, signal_color, signal_action = signal_colors.get(signal_value.lower(), ("⚪", "gray", "UNKNOWN"))
+        
+        # Main signal display with 3x ETF emphasis
+        st.markdown(f"### {signal_emoji} **{signal_value.upper()}**")
+        st.markdown(f"**Action:** {signal_action}")
+        st.markdown(f"**Confidence:** {confidence:.1%}")
+        st.markdown(f"**Leverage:** 3x (High Risk/High Reward)")
+        
+        # ⚠️ 3x ETF Risk Warning
+        if signal_value == "buy":
+            st.warning("⚠️ **3x ETF Warning**: BUY signals require tight stops due to high volatility")
+        elif signal_value == "sell":
+            st.error("🚨 **3x ETF Alert**: SELL signals indicate extreme market stress - immediate action recommended")
+        else:
+            st.info("🛡️ **3x ETF Strategy**: HOLD positions during uncertainty - avoid overtrading")
+        
+        # 🎭 Fear/Greed Panel (Enhanced for 3x ETFs)
+        metadata = signal.get("metadata", {})
+        fear_greed_state = metadata.get("fear_greed_state", "unknown")
+        fear_greed_bias = metadata.get("fear_greed_bias", "unknown")
+        recovery_detected = metadata.get("recovery_detected", False)
+        
+        # 3x ETF specific Fear/Greed interpretations
+        fg_colors_3x = {
+            "extreme_fear": ("🟣", "purple", "EXTREME FEAR - Capitulation Zone", "🔄 RECOVERY OPPORTUNITY - Small positions only"),
+            "fear": ("🔵", "blue", "FEAR - Buying Opportunity", "📈 BULLISH BIAS - Mean reversion setup"), 
+            "neutral": ("⚪", "gray", "NEUTRAL - Wait & See", "⏳ HOLD - No clear edge"),
+            "greed": ("🟠", "orange", "GREED - Caution Zone", "📉 BEARISH BIAS - Reduce exposure"),
+            "extreme_greed": ("🔴", "red", "EXTREME GREED - Euphoria", "🚨 STRONG SELL - Overextended")
+        }
+        
+        fg_emoji, fg_color, fg_description, fg_action = fg_colors_3x.get(fear_greed_state, ("⚪", "gray", "Unknown", "Unknown"))
+        
+        # Fear/Greed Panel
+        st.markdown("### 🎭 Fear/Greed Analysis (3x ETF)")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"### {fg_emoji} **State**")
+            st.markdown(f"**{fear_greed_state.replace('_', ' ').title()}**")
+            st.caption(fg_description)
+            
+        with col2:
+            bias_colors = {
+                "strongly_bullish": ("🟢", "AGGRESSIVE BUY"),
+                "bullish": ("🟡", "BUY"),
+                "neutral": ("⚪", "NEUTRAL"),
+                "bearish": ("🟠", "SELL"),
+                "strongly_bearish": ("🔴", "STRONG SELL")
+            }
+            bias_emoji, bias_description = bias_colors.get(fear_greed_bias, ("⚪", "Unknown"))
+            st.markdown(f"### {bias_emoji} **Bias**")
+            st.markdown(f"**{fear_greed_bias.replace('_', ' ').title()}**")
+            st.caption(bias_description)
+            
+        with col3:
+            if recovery_detected:
+                st.markdown("### 🔄 **Recovery**")
+                st.success("**DETECTED**")
+                st.caption("BUY-in-Fear Active")
+                st.info("⚡ Small position (25-40%)")
+            else:
+                st.markdown("### 🔄 **Recovery**")
+                st.warning("**NOT DETECTED**")
+                st.caption("Waiting for setup")
+        
+        # 3x ETF specific action
+        st.markdown(f"**{fg_action}**")
+        
+        # 🌊 Enhanced Market Context for 3x ETFs
+        st.markdown("### 🌊 Market Context (3x ETF Focus)")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            volatility = metadata.get("volatility", analysis.get("real_volatility", 0))
+            volatility_float = float(volatility) if volatility else 0.0
+            
+            # 3x ETF specific volatility thresholds
+            if volatility_float > 10:
+                vol_color = "🔴"
+                vol_status = "EXTREME"
+                vol_message = "Danger Zone - Tight stops"
+            elif volatility_float > 7:
+                vol_color = "🟡"
+                vol_status = "HIGH"
+                vol_message = "Caution - Reduce size"
+            elif volatility_float > 4:
+                vol_color = "🟢"
+                vol_status = "MODERATE"
+                vol_message = "Normal - Proceed"
+            else:
+                vol_color = "🟢"
+                vol_status = "LOW"
+                vol_message = "Calm - Opportunity"
+                
+            st.metric(f"{vol_color} Volatility", f"{volatility_float:.2f}%")
+            st.caption(f"{vol_status}: {vol_message}")
+            
+        with col2:
+            vix_level = analysis.get("vix_level", 0)
+            vix_float = float(vix_level) if vix_level else 0.0
+            
+            # 3x ETF specific VIX interpretation
+            if vix_float > 35:
+                vix_color = "🔴"
+                vix_status = "EXTREME FEAR"
+                vix_message = "Capitulation - Recovery setup"
+            elif vix_float > 25:
+                vix_color = "🟡"
+                vix_status = "HIGH FEAR"
+                vix_message = "Fear environment - Be selective"
+            elif vix_float > 18:
+                vix_color = "🟢"
+                vix_status = "MODERATE"
+                vix_message = "Normal volatility"
+            else:
+                vix_color = "🟢"
+                vix_status = "LOW"
+                vix_message = "Complacency - Risk"
+                
+            st.metric(f"{vix_color} VIX", f"{vix_float:.2f}")
+            st.caption(f"{vix_status}: {vix_message}")
+            
+        with col3:
+            recent_change = metadata.get("recent_change", analysis.get("recent_change", 0))
+            change_float = float(recent_change) if recent_change else 0.0
+            
+            # 3x ETF specific change interpretation
+            if change_float < -5:
+                change_color = "🔴"
+                change_status = "CRASH"
+                change_message = "Panic selling - Recovery possible"
+            elif change_float < -2:
+                change_color = "🟡"
+                change_status = "DECLINE"
+                change_message = "Correction - Watch support"
+            elif change_float < 0:
+                change_color = "🟡"
+                change_status = "WEAK"
+                change_message = "Distribution - Be cautious"
+            else:
+                change_color = "🟢"
+                change_status = "RISING"
+                change_message = "Accumulation - Follow trend"
+                
+            st.metric(f"{change_color} Change", f"{change_float:.2f}%")
+            st.caption(f"{change_status}: {change_message}")
+            
+        with col4:
+            rsi = metadata.get("rsi", market.get("rsi", 50))
+            rsi_float = float(rsi) if rsi else 50.0
+            
+            # 3x ETF specific RSI interpretation
+            if rsi_float < 25:
+                rsi_color = "🔴"
+                rsi_status = "EXTREME OVERSOLD"
+                rsi_message = "Capitulation - Recovery setup"
+            elif rsi_float < 35:
+                rsi_color = "🟡"
+                rsi_status = "OVERSOLD"
+                rsi_message = "Fear zone - Buying opportunity"
+            elif rsi_float > 75:
+                rsi_color = "🔴"
+                rsi_status = "EXTREME OVERBOUGHT"
+                rsi_message = "Euphoria - Exit time"
+            elif rsi_float > 65:
+                rsi_color = "🟡"
+                rsi_status = "OVERBOUGHT"
+                rsi_message = "Greed - Reduce exposure"
+            else:
+                rsi_color = "🟢"
+                rsi_status = "NEUTRAL"
+                rsi_message = "Balanced - No edge"
+                
+            st.metric(f"{rsi_color} RSI", f"{rsi_float:.1f}")
+            st.caption(f"{rsi_status}: {rsi_message}")
+        
+        # 📝 3x ETF Specific Signal Reasoning
+        if signal.get("reasoning"):
+            st.markdown("### 📝 3x ETF Signal Reasoning")
+            
+            # Enhanced categorization for 3x ETFs
+            ladder_reasons = []
+            fear_greed_reasons = []
+            volatility_reasons = []
+            action_items = []
+            
+            for reason in signal.get("reasoning", []):
+                if "Signal Ladder" in reason:
+                    ladder_reasons.append(reason)
+                elif "WAIT FOR" in reason or "→" in reason:
+                    action_items.append(reason)
+                elif "Fear" in reason or "Recovery" in reason or "VIX" in reason:
+                    fear_greed_reasons.append(reason)
+                elif "volatility" in reason or "Volatility" in reason:
+                    volatility_reasons.append(reason)
+                else:
+                    fear_greed_reasons.append(reason)
+            
+            # Display Signal Ladder (Most Important for 3x ETFs)
+            if ladder_reasons:
+                st.markdown("**🎯 Signal Ladder (3x ETF Priority):**")
+                for reason in ladder_reasons:
+                    st.success(f"🚀 {reason}")
+            
+            # Display Volatility Analysis
+            if volatility_reasons:
+                st.markdown("**🌊 Volatility Analysis (Critical for 3x ETFs):**")
+                for reason in volatility_reasons:
+                    st.error(f"⚡ {reason}")
+            
+            # Display Fear/Greed Factors
+            if fear_greed_reasons:
+                st.markdown("**🧠 Fear/Greed Factors:**")
+                for reason in fear_greed_reasons:
+                    st.warning(f"🎪 {reason}")
+            
+            # Display Action Items
+            if action_items:
+                st.markdown("**⚡ Immediate Actions:**")
+                for reason in action_items:
+                    st.info(f"📋 {reason}")
+        
+        # 💡 3x ETF Specific Actionable Insights
+        st.markdown("### 💡 3x ETF Trading Strategy")
+        
+        insights = []
+        
+        # Fear/Greed state specific 3x ETF strategies
+        if fear_greed_state == "extreme_fear":
+            insights.extend([
+                "🎯 **Extreme Fear Strategy**: SMALL BUY (25-40%) - Recovery setup",
+                "⚡ **Entry**: On volatility flattening or green close confirmation",
+                "🛡️ **Risk**: Tight stops (2-3%) - 3x leverage amplifies losses",
+                "🎯 **Target**: Quick exit (5-8%) - Don't get greedy in fear"
+            ])
+        elif fear_greed_state == "fear":
+            insights.extend([
+                "📈 **Fear Strategy**: BUY or HOLD - Mean reversion opportunity",
+                "⏳ **Patience**: Wait for volatility to stabilize before adding",
+                "🔄 **Recovery**: Watch for stabilization patterns",
+                "📊 **Size**: Normal position (50-75%) - Fear environment"
+            ])
+        elif fear_greed_state == "neutral":
+            insights.extend([
+                "⏸️ **Neutral Strategy**: HOLD - No clear edge",
+                "📊 **Analysis**: Wait for Fear/Greed signals",
+                "🛡️ **Risk**: Maintain defensive posture",
+                "⏳ **Timing**: Better entries in fear or greed extremes"
+            ])
+        elif fear_greed_state == "greed":
+            insights.extend([
+                "📉 **Greed Strategy**: SELL or REDUCE - Take profits",
+                "⚠️ **Warning**: Greed leads to corrections in 3x ETFs",
+                "🛡️ **Risk**: Reduce exposure to 25-50%",
+                "🎯 **Target**: Lock in profits - Don't give back gains"
+            ])
+        elif fear_greed_state == "extreme_greed":
+            insights.extend([
+                "🚨 **Extreme Greed**: EMERGENCY SELL - Capitulation coming",
+                "⚡ **Exit**: Immediate or very tight stops",
+                "🔄 **Preparation**: Get ready for fear buying opportunity",
+                "🛡️ **Cash**: Move to cash - Preserve capital"
+            ])
+        
+        # Signal-specific 3x ETF insights
+        if signal_value == "buy":
+            insights.extend([
+                "🟢 **BUY Signal**: Confirm recovery is underway",
+                "📊 **Volume**: Check for buying volume confirmation",
+                "⚡ **Speed**: 3x ETFs move fast - be ready to exit",
+                "🛡️ **Stops**: Set immediately - No exceptions"
+            ])
+        elif signal_value == "sell":
+            insights.extend([
+                "🔴 **SELL Signal**: Market stress detected",
+                "🚨 **Urgency**: 3x ETFs decline 3x faster",
+                "💰 **Protect**: Capital preservation over profit",
+                "🔄 **Preparation**: Next buying opportunity in fear"
+            ])
+        else:  # HOLD
+            insights.extend([
+                "🟡 **HOLD Signal**: Market uncertainty",
+                "⏳ **Patience**: Wait for clear setup",
+                "📊 **Monitor**: Fear/Greed state changes",
+                "🛡️ **Defense**: Avoid overtrading"
+            ])
+        
+        # Display insights with priority
+        for i, insight in enumerate(insights[:8]):  # Show top 8 insights
+            if i < 3:  # Top 3 are most important
+                st.error(insight) if "🚨" in insight or "🔴" in insight else st.warning(insight) if "⚡" in insight else st.success(insight)
+            else:
+                st.info(insight)
+        
+        # 📊 Technical Summary
+        st.markdown("### 📊 Technical Summary")
+        tech_col1, tech_col2, tech_col3 = st.columns(3)
+        
+        with tech_col1:
+            st.metric("Price", f"${market.get('price', 0):.2f}")
+            st.metric("SMA 20", f"${metadata.get('sma_20', 0):.2f}")
+            
+        with tech_col2:
+            st.metric("SMA 50", f"${metadata.get('sma_50', 0):.2f}")
+            price_vs_sma = ((market.get('price', 0) - metadata.get('sma_20', 0)) / metadata.get('sma_20', 1)) * 100
+            sma_color = "🟢" if price_vs_sma > 0 else "🔴"
+            st.metric(f"{sma_color} Price vs SMA20", f"{price_vs_sma:.2f}%")
+            
+        with tech_col3:
+            st.metric("Volume", f"{market.get('volume', 0):,}")
+            st.metric("Daily Range", f"${market.get('low', 0):.2f} - ${market.get('high', 0):.2f}")
+
+
+def get_universal_signal(asset_symbol: str, date: str, asset_category: str):
+    """Get signal for any asset using universal API"""
+    try:
+        # Use centralized API configuration
+        api_url = api_config.get_universal_signal_url()
+        payload = {
+            "symbol": asset_symbol,
+            "date": date,
+            "asset_type": asset_category
+        }
+        
+        response = requests.post(api_url, json=payload)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success"):
+                return data["data"]
+            else:
+                return {"error": data.get("error", "Unknown error")}
+        else:
+            return {"error": f"API Error: {response.status_code} - {response.text}"}
     except Exception as e:
         return {"error": f"Request failed: {str(e)}"}
 

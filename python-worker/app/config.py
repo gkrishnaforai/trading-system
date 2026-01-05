@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     # Set PRIMARY_DATA_PROVIDER, FALLBACK_DATA_PROVIDER, DEFAULT_DATA_PROVIDER in .env
     primary_data_provider: Optional[str] = None
     fallback_data_provider: Optional[str] = None
-    default_data_provider: str = "fallback"
+    default_data_provider: str = "fmp"
     
     # Alpha Vantage API
     alphavantage_api_key: str = Field(default="", description="Alpha Vantage API key")
@@ -82,6 +82,16 @@ class Settings(BaseSettings):
     # Periodic/Live updates
     enable_live_updates: bool = False
     periodic_update_interval_minutes: int = 15  # How often to check for periodic updates
+
+    # Financial Modeling Prep (FMP) API
+    fmp_api_key: str = Field(default="", description="Financial Modeling Prep API key")
+    fmp_enabled: bool = Field(default=False, description="Enable FMP data provider")
+    fmp_base_url: str = Field(default="https://financialmodelingprep.com/stable", description="FMP base URL")
+    fmp_timeout: int = Field(default=30, description="FMP request timeout in seconds")
+    fmp_max_retries: int = Field(default=3, description="FMP max retries on failure")
+    fmp_retry_delay: float = Field(default=1.0, description="FMP retry delay in seconds")
+    fmp_rate_limit_calls: int = Field(default=60, description="FMP rate limit calls per window")
+    fmp_rate_limit_window: float = Field(default=60.0, description="FMP rate limit window in seconds")
 
 
 settings = Settings()

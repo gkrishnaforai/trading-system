@@ -17,7 +17,8 @@ class BaseDataSource(ABC):
         symbol: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        period: str = "1y"
+        period: str = "1y",
+        interval: str = "1d"
     ) -> Optional[pd.DataFrame]:
         """Fetch historical OHLCV price data"""
         pass

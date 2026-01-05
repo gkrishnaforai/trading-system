@@ -98,7 +98,7 @@ def test_technical_indicators_loading():
             # Total indicators count
             total_count = session.execute(text("""
                 SELECT COUNT(*) FROM indicators_daily 
-                WHERE symbol = :symbol AND data_source = 'massive'
+                WHERE stock_symbol = :symbol AND data_source = 'massive'
             """), {"symbol": symbol}).scalar()
             
             print(f"Total NVDA indicators (Massive): {total_count} records")
@@ -106,7 +106,7 @@ def test_technical_indicators_loading():
             # Available indicator types
             indicator_types = session.execute(text("""
                 SELECT DISTINCT indicator_name FROM indicators_daily 
-                WHERE symbol = :symbol AND data_source = 'massive'
+                WHERE stock_symbol = :symbol AND data_source = 'massive'
                 ORDER BY indicator_name
             """), {"symbol": symbol}).fetchall()
             
@@ -114,18 +114,18 @@ def test_technical_indicators_loading():
             for indicator in indicator_types:
                 count = session.execute(text("""
                     SELECT COUNT(*) FROM indicators_daily 
-                    WHERE symbol = :symbol AND indicator_name = :indicator_name AND data_source = 'massive'
+                    WHERE stock_symbol = :symbol AND indicator_name = :indicator_name AND data_source = 'massive'
                 """), {"symbol": symbol, "indicator_name": indicator[0]}).scalar()
                 print(f"   • {indicator[0]}: {count} records")
             
             # Latest values
             latest = session.execute(text("""
-                SELECT indicator_name, indicator_value, time_period, date
+                SELECT indicator_name, indicator_value, time_period, trade_date
                 FROM indicators_daily 
-                WHERE symbol = :symbol AND data_source = 'massive'
-                AND date = (
-                    SELECT MAX(date) FROM indicators_daily 
-                    WHERE symbol = :symbol AND data_source = 'massive'
+                WHERE stock_symbol = :symbol AND data_source = 'massive'
+                AND trade_date = (
+                    SELECT MAX(trade_date) FROM indicators_daily 
+                    WHERE stock_symbol = :symbol AND data_source = 'massive'
                 )
                 ORDER BY indicator_name
             """), {"symbol": symbol}).fetchall()

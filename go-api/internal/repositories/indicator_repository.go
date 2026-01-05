@@ -2,7 +2,6 @@ package repositories
 
 import (
 	"database/sql"
-	"fmt"
 	"time"
 
 	"github.com/trading-system/go-api/internal/database"
@@ -21,113 +20,168 @@ func NewIndicatorRepository() *IndicatorRepository {
 
 func (r *IndicatorRepository) GetLatest(symbol string) (*models.AggregatedIndicators, error) {
 	query := `
-		SELECT id, stock_symbol, date, ma7, ma21, sma50, ema20, ema50, sma200,
-		       atr, macd, macd_signal, macd_histogram, rsi,
-		       bb_upper, bb_middle, bb_lower,
-		       long_term_trend, medium_term_trend, signal,
-		       pullback_zone_lower, pullback_zone_upper, momentum_score,
-		       volume, volume_ma, timestamp
-		FROM aggregated_indicators
-		WHERE stock_symbol = ?
-		ORDER BY date DESC
+		SELECT trade_date, sma_50, sma_200, ema_20, rsi_14, macd, macd_signal, macd_hist, signal
+		FROM indicators_daily
+		WHERE stock_symbol = $1
+		ORDER BY trade_date DESC
 		LIMIT 1
 	`
 
-	indicator := &models.AggregatedIndicators{}
-	err := r.db.QueryRow(query, symbol).Scan(
-		&indicator.ID,
-		&indicator.StockSymbol,
-		&indicator.Date,
-		&indicator.MA7,
-		&indicator.MA21,
-		&indicator.SMA50,
-		&indicator.EMA20,
-		&indicator.EMA50,
-		&indicator.SMA200,
-		&indicator.ATR,
-		&indicator.MACD,
-		&indicator.MACDSignal,
-		&indicator.MACDHistogram,
-		&indicator.RSI,
-		&indicator.BBUpper,
-		&indicator.BBMiddle,
-		&indicator.BBLower,
-		&indicator.LongTermTrend,
-		&indicator.MediumTermTrend,
-		&indicator.Signal,
-		&indicator.PullbackZoneLower,
-		&indicator.PullbackZoneUpper,
-		&indicator.MomentumScore,
-		&indicator.Volume,
-		&indicator.VolumeMA,
-		&indicator.Timestamp,
-	)
+	var tradeDate time.Time
+	var sma50 sql.NullFloat64
+	var sma200 sql.NullFloat64
+	var ema20 sql.NullFloat64
+	var rsi14 sql.NullFloat64
+	var macd sql.NullFloat64
+	var macdSignal sql.NullFloat64
+	var macdHist sql.NullFloat64
+	var signal sql.NullString
 
+	err := r.db.QueryRow(query, symbol).Scan(
+		&tradeDate,
+		&sma50,
+		&sma200,
+		&ema20,
+		&rsi14,
+		&macd,
+		&macdSignal,
+		&macdHist,
+		&signal,
+	)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("indicators not found for symbol: %s", symbol)
+		return nil, err
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get indicators: %w", err)
+		return nil, err
 	}
 
-	return indicator, nil
+	ind := &models.AggregatedIndicators{
+		StockSymbol: symbol,
+		Date:        tradeDate,
+		Timestamp:   tradeDate,
+	}
+	if sma50.Valid {
+		v := sma50.Float64
+		ind.SMA50 = &v
+	}
+	if sma200.Valid {
+		v := sma200.Float64
+		ind.SMA200 = &v
+	}
+	if ema20.Valid {
+		v := ema20.Float64
+		ind.EMA20 = &v
+	}
+	if rsi14.Valid {
+		v := rsi14.Float64
+		ind.RSI = &v
+	}
+	if macd.Valid {
+		v := macd.Float64
+		ind.MACD = &v
+	}
+	if macdSignal.Valid {
+		v := macdSignal.Float64
+		ind.MACDSignal = &v
+	}
+	if macdHist.Valid {
+		v := macdHist.Float64
+		ind.MACDHistogram = &v
+	}
+	if signal.Valid {
+		v := signal.String
+		ind.Signal = &v
+	}
+
+	return ind, nil
 }
 
 func (r *IndicatorRepository) GetByDateRange(symbol string, startDate, endDate time.Time) ([]models.AggregatedIndicators, error) {
 	query := `
-		SELECT id, stock_symbol, date, ma7, ma21, sma50, ema20, ema50, sma200,
-		       atr, macd, macd_signal, macd_histogram, rsi,
-		       bb_upper, bb_middle, bb_lower,
-		       long_term_trend, medium_term_trend, signal,
-		       pullback_zone_lower, pullback_zone_upper, momentum_score,
-		       volume, volume_ma, timestamp
-		FROM aggregated_indicators
-		WHERE stock_symbol = ? AND date >= ? AND date <= ?
-		ORDER BY date ASC
+		SELECT trade_date, sma_50, sma_200, ema_20, rsi_14, macd, macd_signal, macd_hist, signal
+		FROM indicators_daily
+		WHERE stock_symbol = $1
+		  AND trade_date >= $2
+		  AND trade_date <= $3
+		ORDER BY trade_date ASC
 	`
 
 	rows, err := r.db.Query(query, symbol, startDate, endDate)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query indicators: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 
-	var indicators []models.AggregatedIndicators
+	out := make([]models.AggregatedIndicators, 0)
 	for rows.Next() {
-		var ind models.AggregatedIndicators
+		var tradeDate time.Time
+		var sma50 sql.NullFloat64
+		var sma200 sql.NullFloat64
+		var ema20 sql.NullFloat64
+		var rsi14 sql.NullFloat64
+		var macd sql.NullFloat64
+		var macdSignal sql.NullFloat64
+		var macdHist sql.NullFloat64
+		var signal sql.NullString
+
 		if err := rows.Scan(
-			&ind.ID,
-			&ind.StockSymbol,
-			&ind.Date,
-			&ind.MA7,
-			&ind.MA21,
-			&ind.SMA50,
-			&ind.EMA20,
-			&ind.EMA50,
-			&ind.SMA200,
-			&ind.ATR,
-			&ind.MACD,
-			&ind.MACDSignal,
-			&ind.MACDHistogram,
-			&ind.RSI,
-			&ind.BBUpper,
-			&ind.BBMiddle,
-			&ind.BBLower,
-			&ind.LongTermTrend,
-			&ind.MediumTermTrend,
-			&ind.Signal,
-			&ind.PullbackZoneLower,
-			&ind.PullbackZoneUpper,
-			&ind.MomentumScore,
-			&ind.Volume,
-			&ind.VolumeMA,
-			&ind.Timestamp,
+			&tradeDate,
+			&sma50,
+			&sma200,
+			&ema20,
+			&rsi14,
+			&macd,
+			&macdSignal,
+			&macdHist,
+			&signal,
 		); err != nil {
-			return nil, fmt.Errorf("failed to scan indicator: %w", err)
+			return nil, err
 		}
-		indicators = append(indicators, ind)
+
+		ind := models.AggregatedIndicators{
+			StockSymbol: symbol,
+			Date:        tradeDate,
+			Timestamp:   tradeDate,
+		}
+		if sma50.Valid {
+			v := sma50.Float64
+			ind.SMA50 = &v
+		}
+		if sma200.Valid {
+			v := sma200.Float64
+			ind.SMA200 = &v
+		}
+		if ema20.Valid {
+			v := ema20.Float64
+			ind.EMA20 = &v
+		}
+		if rsi14.Valid {
+			v := rsi14.Float64
+			ind.RSI = &v
+		}
+		if macd.Valid {
+			v := macd.Float64
+			ind.MACD = &v
+		}
+		if macdSignal.Valid {
+			v := macdSignal.Float64
+			ind.MACDSignal = &v
+		}
+		if macdHist.Valid {
+			v := macdHist.Float64
+			ind.MACDHistogram = &v
+		}
+		if signal.Valid {
+			v := signal.String
+			ind.Signal = &v
+		}
+
+		out = append(out, ind)
 	}
 
-	return indicators, nil
-}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
+	return out, nil
+}

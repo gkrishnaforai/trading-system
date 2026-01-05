@@ -68,9 +68,24 @@ class YahooFinanceSource(BaseDataSource):
     
     def fetch_industry_peers(self, symbol: str) -> Dict[str, Any]:
         return self._client.fetch_industry_peers(symbol)
+
+    def fetch_actions(self, symbol: str) -> List[Dict[str, Any]]:
+        return self._client.fetch_actions(symbol)
+
+    def fetch_dividends(self, symbol: str) -> List[Dict[str, Any]]:
+        return self._client.fetch_dividends(symbol)
+
+    def fetch_splits(self, symbol: str) -> List[Dict[str, Any]]:
+        return self._client.fetch_splits(symbol)
+
+    def fetch_financial_statements(self, symbol: str, *, quarterly: bool = True) -> Dict[str, Any]:
+        return self._client.fetch_financial_statements(symbol, quarterly=quarterly)
     
     def fetch_earnings_calendar(self, symbols: List[str] = None, start_date: str = None, end_date: str = None) -> List[Dict[str, Any]]:
         return self._client.fetch_earnings_calendar(symbols, start_date, end_date)
+
+    def fetch_earnings_for_date(self, earnings_date: str, symbols: List[str] = None) -> List[Dict[str, Any]]:
+        return self._client.fetch_earnings_for_date(earnings_date, symbols)
     
     def is_available(self) -> bool:
         """Check availability - delegates to client"""

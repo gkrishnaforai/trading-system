@@ -74,6 +74,14 @@ class BatchWorker:
             # Get symbols needing daily update
             symbols = self.update_strategy.get_symbols_needing_daily_update()
             logger.info(f"📊 Found {len(symbols)} symbols needing daily EOD update")
+
+            # Stage 0: Refresh macro snapshot (VIX, NASDAQ trend, yield curve, breadth)
+            try:
+                from app.services.macro_refresh_service import MacroRefreshService
+
+                MacroRefreshService().refresh_daily_macro_snapshot()
+            except Exception as e:
+                logger.warning(f"⚠️ Macro snapshot refresh failed (non-fatal): {e}")
             
             # Execute EOD workflow (stages 1-6)
             eod_result = self.eod_workflow.execute_daily_eod_workflow(symbols)
@@ -82,6 +90,36 @@ class BatchWorker:
                 logger.error(f"❌ EOD workflow failed: {eod_result.get('error')}")
                 metrics.increment('batch_job_failures_total')
                 return
+
+            # Stage 6.5: Persist periodic Yahoo datasets (fundamentals/earnings/news/peers/actions/statements)
+            try:
+                from app.data_management.refresh_manager import DataRefreshManager
+                from app.data_management.refresh_strategy import RefreshMode, DataType
+
+                refresh_manager = DataRefreshManager()
+                extra_types = [
+                    DataType.FUNDAMENTALS,
+                    DataType.EARNINGS,
+                    DataType.NEWS,
+                    DataType.INDUSTRY_PEERS,
+                    DataType.CORPORATE_ACTIONS,
+                    DataType.INCOME_STATEMENTS,
+                    DataType.BALANCE_SHEETS,
+                    DataType.CASH_FLOW_STATEMENTS,
+                ]
+
+                for symbol in symbols:
+                    try:
+                        refresh_manager.refresh_data(
+                            symbol=symbol,
+                            data_types=extra_types,
+                            mode=RefreshMode.SCHEDULED,
+                            force=False,
+                        )
+                    except Exception as e:
+                        logger.warning(f"⚠️ Nightly extended refresh failed for {symbol}: {e}")
+            except Exception as e:
+                logger.warning(f"⚠️ Nightly extended refresh stage failed to run: {e}")
             
             # Stage 7: Market aggregations (movers, sectors, trends, overview)
             logger.info("📈 Calculating market aggregations...")

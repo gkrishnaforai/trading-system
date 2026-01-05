@@ -11,7 +11,13 @@ import logging
 from app.database import init_database
 from app.observability.logging import get_logger
 from app.api import admin, main
+from app.api_screener import register_screener_endpoints
+from app.api.symbol_enrichment import router as symbol_enrichment_router
 from app.plugins import initialize_data_sources
+from app.api.unified_tqqq_api import router as unified_tqqq_router
+from app.api.swing_engine_api import router as swing_engine_router
+from app.api.tqqq_engine_api import router as tqqq_engine_router
+from app.api.generic_engine_api import router as generic_engine_router
 
 logger = get_logger("fastapi_app")
 
@@ -90,6 +96,16 @@ app.add_middleware(
 # Include routers
 app.include_router(admin.router)
 app.include_router(main.router)
+app.include_router(symbol_enrichment_router)
+app.include_router(unified_tqqq_router, tags=["signal"])
+app.include_router(tqqq_engine_router, tags=["signal"])
+app.include_router(generic_engine_router, tags=["signal"])
+# Add universal backtest router
+from app.api.universal_backtest_api import router as universal_router
+app.include_router(universal_router, prefix="/api/v1/universal", tags=["Universal Backtest"])
+
+# Register screener endpoints
+register_screener_endpoints(app)
 
 # Root endpoint
 @app.get("/")

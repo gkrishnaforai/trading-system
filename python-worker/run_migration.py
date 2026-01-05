@@ -120,14 +120,14 @@ def run_alpha_vantage_migration():
                 """
                 CREATE TABLE IF NOT EXISTS indicators_daily (
                     id SERIAL PRIMARY KEY,
-                    symbol VARCHAR(10) NOT NULL,
-                    date DATE NOT NULL,
+                    stock_symbol VARCHAR(10) NOT NULL,
+                    trade_date DATE NOT NULL,
                     indicator_name VARCHAR(50) NOT NULL,
                     indicator_value NUMERIC(12, 6),
                     time_period INTEGER,
                     data_source VARCHAR(50) DEFAULT 'alphavantage',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(symbol, date, indicator_name, data_source)
+                    UNIQUE(stock_symbol, trade_date, indicator_name, data_source)
                 )
                 """
             ]
@@ -149,8 +149,8 @@ def run_alpha_vantage_migration():
             index_statements = [
                 "CREATE INDEX IF NOT EXISTS idx_fundamentals_summary_symbol ON fundamentals_summary(symbol)",
                 "CREATE INDEX IF NOT EXISTS idx_fundamentals_symbol ON fundamentals(symbol)",
-                "CREATE INDEX IF NOT EXISTS idx_raw_market_daily_symbol ON raw_market_data_daily(symbol)",
-                "CREATE INDEX IF NOT EXISTS idx_indicators_daily_symbol ON indicators_daily(symbol)"
+                "CREATE INDEX IF NOT EXISTS idx_raw_market_daily_symbol ON raw_market_data_daily(stock_symbol)",
+                "CREATE INDEX IF NOT EXISTS idx_indicators_daily_symbol ON indicators_daily(stock_symbol)"
             ]
             
             for i, statement in enumerate(index_statements, 1):

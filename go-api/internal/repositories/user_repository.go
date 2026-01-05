@@ -22,7 +22,7 @@ func (r *UserRepository) GetByID(userID string) (*models.User, error) {
 	query := `
 		SELECT user_id, username, email, password_hash, subscription_level, created_at, updated_at
 		FROM users
-		WHERE user_id = ?
+		WHERE user_id = $1
 	`
 
 	user := &models.User{}
@@ -50,7 +50,7 @@ func (r *UserRepository) GetByEmail(email string) (*models.User, error) {
 	query := `
 		SELECT user_id, username, email, password_hash, subscription_level, created_at, updated_at
 		FROM users
-		WHERE email = ?
+		WHERE email = $1
 	`
 
 	user := &models.User{}
@@ -73,4 +73,3 @@ func (r *UserRepository) GetByEmail(email string) (*models.User, error) {
 
 	return user, nil
 }
-

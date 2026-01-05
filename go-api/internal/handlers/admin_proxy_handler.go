@@ -142,3 +142,28 @@ func (h *AdminProxyHandler) RunSingleStrategy(c *gin.Context) {
 	strategyName := c.Param("strategyName")
 	h.proxy(c, http.MethodPost, "/admin/insights/strategy/"+strategyName)
 }
+
+// GET /api/v1/admin/earnings-calendar -> python-worker GET /admin/earnings-calendar
+func (h *AdminProxyHandler) GetEarningsCalendar(c *gin.Context) {
+	h.proxy(c, http.MethodGet, "/admin/earnings-calendar")
+}
+
+// POST /api/v1/admin/earnings-calendar/refresh -> python-worker POST /admin/earnings-calendar/refresh
+func (h *AdminProxyHandler) RefreshEarningsCalendar(c *gin.Context) {
+	h.proxy(c, http.MethodPost, "/admin/earnings-calendar/refresh")
+}
+
+// POST /api/v1/admin/earnings-calendar/refresh-for-date -> python-worker POST /admin/earnings-calendar/refresh-for-date
+func (h *AdminProxyHandler) RefreshEarningsForDate(c *gin.Context) {
+	h.proxy(c, http.MethodPost, "/admin/earnings-calendar/refresh-for-date")
+}
+
+// POST /api/v1/admin/swing/signal -> python-worker POST /api/v1/swing/signal
+func (h *AdminProxyHandler) SwingSignal(c *gin.Context) {
+	h.proxy(c, http.MethodPost, "/api/v1/swing/signal")
+}
+
+// POST /api/v1/admin/swing/risk/check -> python-worker POST /api/v1/swing/risk/check
+func (h *AdminProxyHandler) SwingRiskCheck(c *gin.Context) {
+	h.proxy(c, http.MethodPost, "/api/v1/swing/risk/check")
+}

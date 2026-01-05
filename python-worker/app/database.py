@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 import os
+import re
 
 import asyncpg
 from sqlalchemy import create_engine, text
@@ -63,6 +64,11 @@ class Database:
                 columns = result.keys()
                 return [dict(zip(columns, row)) for row in rows]
             return []
+
+    def execute_query_positional(self, query: str, params: List[Any]) -> List[Dict[str, Any]]:
+        """Execute a SELECT query using $1/$2 positional placeholders."""
+        sql, named = self._convert_positional_sql(query, params)
+        return self.execute_query(sql, named)
     
     def execute_update(self, query: str, params: Optional[Dict[str, Any]] = None) -> int:
         """Execute an INSERT/UPDATE/DELETE query"""
@@ -70,9 +76,22 @@ class Database:
             result = session.execute(text(query), params or {})
             session.commit()
             return result.rowcount
+
+    def execute_update_positional(self, query: str, params: List[Any]) -> int:
+        """Execute an INSERT/UPDATE/DELETE using $1/$2 positional placeholders."""
+        sql, named = self._convert_positional_sql(query, params)
+        return self.execute_update(sql, named)
     
     def execute_many(self, query: str, params_list: List[Dict[str, Any]]) -> int:
         """Execute multiple queries with different parameters"""
+        # Validate that all items are dictionaries
+        if not isinstance(params_list, list):
+            raise ValueError(f"params_list must be a list, got {type(params_list)}")
+        
+        for i, item in enumerate(params_list):
+            if not isinstance(item, dict):
+                raise ValueError(f"List argument must consist only of dictionaries. Item {i} is {type(item)}: {item}")
+        
         with self.get_session() as session:
             result = session.execute(text(query), params_list)
             session.commit()
@@ -87,6 +106,14 @@ class Database:
             pass
         logger.info("Database connections closed")
 
+    def _convert_positional_sql(self, query: str, params: List[Any]) -> (str, Dict[str, Any]):
+        """Convert a SQL query using $1/$2 positional placeholders to SQLAlchemy bind params."""
+        named_params = {}
+        for i, param in enumerate(params, start=1):
+            named_params[f"param_{i}"] = param
+            query = re.sub(rf"\${i}", f":param_{i}", query)
+        return query, named_params
+
 
 # Global database instance
 db = Database()
@@ -95,7 +122,9 @@ db = Database()
 def run_migrations():
     """Run database migrations from SQL files"""
     project_root = Path(__file__).parent.parent.parent
-    migrations_dir = project_root / "db" / "migrations_postgres"
+    migrations_dir = project_root / "supabase" / "migrations"
+    if not migrations_dir.exists():
+        migrations_dir = project_root / "db" / "migrations_postgres"
 
     if not migrations_dir.exists():
         logger.warning(f"Postgres migrations directory not found: {migrations_dir}")

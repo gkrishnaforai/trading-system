@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta
 from typing import Dict, Any, List
 
 import pytest
+import requests
 
 from app.database import init_database, db
 from app.data_management.refresh_manager import DataRefreshManager
@@ -31,6 +32,33 @@ logger = logging.getLogger(__name__)
 # Test symbols - mix of tech stocks
 TEST_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN"]
 
+
+def _go_api_base_url() -> str:
+    url = os.getenv("GO_API_URL")
+    if url:
+        return url.rstrip("/")
+    # Prefer in-docker DNS name if running under docker-compose; otherwise localhost.
+    return os.getenv("GO_API_URL_FALLBACK", "http://go-api:8000").rstrip("/")
+
+
+def _go_api_get(path: str, *, params: Dict[str, Any] | None = None, timeout: int = 15) -> requests.Response:
+    base = _go_api_base_url()
+    return requests.get(f"{base}{path}", params=params, timeout=timeout)
+
+
+def _go_api_post(path: str, *, json: Dict[str, Any] | None = None, timeout: int = 30) -> requests.Response:
+    base = _go_api_base_url()
+    return requests.post(f"{base}{path}", json=json, timeout=timeout)
+
+
+def _skip_if_go_api_unreachable() -> None:
+    try:
+        resp = _go_api_get("/health", timeout=5)
+    except Exception as e:
+        pytest.skip(f"Go API not reachable at {_go_api_base_url()}: {e}")
+    if resp.status_code >= 500:
+        pytest.skip(f"Go API unhealthy (status={resp.status_code})")
+
 @pytest.fixture(scope="module", autouse=True)
 def setup_test_db():
     """Initialize test database and cleanup after tests."""
@@ -41,6 +69,61 @@ def setup_test_db():
 
 class TestGoApiContractE2E:
     """End-to-end test mirroring Go API usage patterns."""
+
+    def test_00_go_api_smoke_contract(self):
+        """Smoke/contract test that directly calls the Go API endpoints used by Streamlit."""
+        _skip_if_go_api_unreachable()
+
+        # 1) Go API health
+        resp = _go_api_get("/health")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload.get("status") == "healthy"
+
+        # 2) Admin proxy health
+        resp = _go_api_get("/api/v1/admin/health")
+        assert resp.status_code in (200, 502), resp.text
+        # If python-worker is down, admin proxy might return 502; that's still informative.
+
+        # 3) Core stock endpoints
+        symbol = os.getenv("GO_API_TEST_SYMBOL", "AAPL")
+        resp = _go_api_get(f"/api/v1/stock/{symbol}", params={"subscription_level": "basic"})
+        assert resp.status_code == 200
+        stock = resp.json()
+        assert stock.get("symbol") == symbol
+
+        resp = _go_api_get(f"/api/v1/stock/{symbol}/fundamentals")
+        assert resp.status_code in (200, 404)
+        if resp.status_code == 200:
+            assert isinstance(resp.json(), dict)
+
+        resp = _go_api_get(f"/api/v1/stock/{symbol}/news")
+        assert resp.status_code == 200
+        news = resp.json()
+        assert news.get("symbol") == symbol
+
+        # 4) Advanced analysis must not 5xx (it can legitimately return data_available:false)
+        resp = _go_api_get(
+            f"/api/v1/stock/{symbol}/advanced-analysis",
+            params={"subscription_level": "basic"},
+        )
+        assert resp.status_code == 200
+        adv = resp.json()
+        assert adv.get("symbol") == symbol
+        assert "data_available" in adv
+
+        # 5) Refresh status endpoint should exist
+        resp = _go_api_get("/api/v1/admin/refresh/status")
+        assert resp.status_code in (200, 502), resp.text
+
+        # 6) Optional: trigger refresh (disabled by default to keep smoke test non-invasive)
+        if os.getenv("GO_API_SMOKE_TRIGGER_REFRESH") == "1":
+            resp = _go_api_post(
+                "/api/v1/admin/refresh",
+                json={"symbols": [symbol], "data_types": ["price_historical"], "force": True},
+                timeout=120,
+            )
+            assert resp.status_code in (200, 502), resp.text
     
     def test_01_data_ingestion_via_refresh_manager(self):
         """Step 1: Load raw market data using DataRefreshManager (same as Go API /refresh endpoint)."""

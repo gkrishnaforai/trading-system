@@ -88,8 +88,8 @@ class TestDataRefreshIntegration(unittest.TestCase):
                     # Verify data in database
                     query = """
                         SELECT COUNT(*) as count
-                        FROM raw_market_data
-                        WHERE stock_symbol = :symbol
+                        FROM raw_market_data_daily
+                        WHERE symbol = :symbol
                     """
                     result_db = db.execute_query(query, {"symbol": symbol})
                     count = result_db[0]['count'] if result_db else 0
@@ -113,7 +113,10 @@ class TestDataRefreshIntegration(unittest.TestCase):
                 # Refresh all data types
                 data_types = [
                     DataType.PRICE_HISTORICAL,
+                    DataType.PRICE_CURRENT,
+                    DataType.PRICE_INTRADAY_15M,
                     DataType.FUNDAMENTALS,
+                    DataType.INDICATORS,
                     DataType.NEWS,
                     DataType.EARNINGS,
                     DataType.INDUSTRY_PEERS,
@@ -164,6 +167,36 @@ class TestDataRefreshIntegration(unittest.TestCase):
                     price_result.status.value, 'success',
                     f"{symbol}: Price data refresh should succeed"
                 )
+
+                # Validate key tables for this symbol
+                daily_count = db.execute_query(
+                    "SELECT COUNT(*) AS c FROM raw_market_data_daily WHERE symbol = :symbol",
+                    {"symbol": symbol},
+                )
+                self.assertGreater(
+                    (daily_count[0].get("c") if daily_count else 0),
+                    0,
+                    f"{symbol}: raw_market_data_daily should have rows",
+                )
+
+                intraday_15m_count = db.execute_query(
+                    """
+                    SELECT COUNT(*) AS c
+                    FROM raw_market_data_intraday
+                    WHERE stock_symbol = :symbol AND interval = '15m'
+                    """,
+                    {"symbol": symbol},
+                )
+                # Intraday availability depends on provider; don't fail the entire suite if empty.
+                c15 = (intraday_15m_count[0].get("c") if intraday_15m_count else 0)
+                print(f"   raw_market_data_intraday(15m) rows: {c15}")
+
+                peers_count = db.execute_query(
+                    "SELECT COUNT(*) AS c FROM industry_peers WHERE stock_symbol = :symbol",
+                    {"symbol": symbol},
+                )
+                cpeers = (peers_count[0].get("c") if peers_count else 0)
+                print(f"   industry_peers rows: {cpeers}")
     
     def test_indicators_auto_calculation(self):
         """Test that indicators are automatically calculated after price data refresh"""
@@ -194,8 +227,9 @@ class TestDataRefreshIntegration(unittest.TestCase):
                     
                     # Verify indicators in database
                     query = """
-                        SELECT * FROM aggregated_indicators
-                        WHERE stock_symbol = :symbol
+                        SELECT *
+                        FROM indicators_daily
+                        WHERE symbol = :symbol
                         ORDER BY date DESC
                         LIMIT 1
                     """
@@ -204,11 +238,8 @@ class TestDataRefreshIntegration(unittest.TestCase):
                     if indicators:
                         latest = indicators[0]
                         print(f"   Latest indicators:")
-                        print(f"   - EMA20: {latest.get('ema20', 'N/A')}")
-                        print(f"   - SMA200: {latest.get('sma200', 'N/A')}")
-                        print(f"   - RSI: {latest.get('rsi', 'N/A')}")
-                        print(f"   - MACD: {latest.get('macd', 'N/A')}")
-                        print(f"   - Signal: {latest.get('signal', 'N/A')}")
+                        print(f"   - indicator_name: {latest.get('indicator_name', 'N/A')}")
+                        print(f"   - indicator_value: {latest.get('indicator_value', 'N/A')}")
                     else:
                         print(f"   ⚠️  No indicators in database")
                 else:

@@ -19,13 +19,27 @@ func NewWatchlistRepository() *WatchlistRepository {
 	}
 }
 
+func (r *WatchlistRepository) ensureStockID(symbol string) (string, error) {
+	query := `
+		INSERT INTO stocks (symbol)
+		VALUES ($1)
+		ON CONFLICT (symbol) DO UPDATE SET symbol = EXCLUDED.symbol
+		RETURNING id
+	`
+
+	var stockID string
+	if err := r.db.QueryRow(query, symbol).Scan(&stockID); err != nil {
+		return "", fmt.Errorf("failed to ensure stock id: %w", err)
+	}
+	return stockID, nil
+}
+
 // GetByUserID gets all watchlists for a user
 func (r *WatchlistRepository) GetByUserID(userID string) ([]models.Watchlist, error) {
 	query := `
-		SELECT watchlist_id, user_id, watchlist_name, description, tags, 
-		       is_default, subscription_level_required, created_at, updated_at
+		SELECT id, user_id, name, description, is_default, is_archived, created_at, updated_at
 		FROM watchlists
-		WHERE user_id = ?
+		WHERE user_id = $1
 		ORDER BY is_default DESC, created_at DESC
 	`
 
@@ -39,13 +53,12 @@ func (r *WatchlistRepository) GetByUserID(userID string) ([]models.Watchlist, er
 	for rows.Next() {
 		var w models.Watchlist
 		if err := rows.Scan(
-			&w.WatchlistID,
+			&w.ID,
 			&w.UserID,
-			&w.WatchlistName,
+			&w.Name,
 			&w.Description,
-			&w.Tags,
 			&w.IsDefault,
-			&w.SubscriptionLevelRequired,
+			&w.IsArchived,
 			&w.CreatedAt,
 			&w.UpdatedAt,
 		); err != nil {
@@ -60,21 +73,19 @@ func (r *WatchlistRepository) GetByUserID(userID string) ([]models.Watchlist, er
 // GetByID gets a watchlist by ID
 func (r *WatchlistRepository) GetByID(watchlistID string) (*models.Watchlist, error) {
 	query := `
-		SELECT watchlist_id, user_id, watchlist_name, description, tags,
-		       is_default, subscription_level_required, created_at, updated_at
+		SELECT id, user_id, name, description, is_default, is_archived, created_at, updated_at
 		FROM watchlists
-		WHERE watchlist_id = ?
+		WHERE id = $1
 	`
 
 	var w models.Watchlist
 	err := r.db.QueryRow(query, watchlistID).Scan(
-		&w.WatchlistID,
+		&w.ID,
 		&w.UserID,
-		&w.WatchlistName,
+		&w.Name,
 		&w.Description,
-		&w.Tags,
 		&w.IsDefault,
-		&w.SubscriptionLevelRequired,
+		&w.IsArchived,
 		&w.CreatedAt,
 		&w.UpdatedAt,
 	)
@@ -91,29 +102,20 @@ func (r *WatchlistRepository) GetByID(watchlistID string) (*models.Watchlist, er
 // Create creates a new watchlist
 func (r *WatchlistRepository) Create(watchlist *models.Watchlist) error {
 	query := `
-		INSERT INTO watchlists 
-		(watchlist_id, user_id, watchlist_name, description, tags, is_default, subscription_level_required)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO watchlists (user_id, name, description, is_default)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at, updated_at
 	`
 
-	_, err := r.db.Exec(query,
-		watchlist.WatchlistID,
+	err := r.db.QueryRow(query,
 		watchlist.UserID,
-		watchlist.WatchlistName,
+		watchlist.Name,
 		watchlist.Description,
-		watchlist.Tags,
 		watchlist.IsDefault,
-		watchlist.SubscriptionLevelRequired,
-	)
+	).Scan(&watchlist.ID, &watchlist.CreatedAt, &watchlist.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create watchlist: %w", err)
 	}
-
-	// If this is set as default, unset other defaults for this user
-	if watchlist.IsDefault {
-		return r.setAsDefault(watchlist.WatchlistID, watchlist.UserID)
-	}
-
 	return nil
 }
 
@@ -127,15 +129,15 @@ func (r *WatchlistRepository) Update(watchlistID string, updates map[string]inte
 	args := []interface{}{}
 
 	allowedFields := map[string]bool{
-		"watchlist_name": true,
-		"description":    true,
-		"tags":           true,
-		"is_default":     true,
+		"name":        true,
+		"description": true,
+		"is_default":  true,
+		"is_archived": true,
 	}
 
 	for field, value := range updates {
 		if allowedFields[field] {
-			setParts = append(setParts, fmt.Sprintf("%s = ?", field))
+			setParts = append(setParts, fmt.Sprintf("%s = $%d", field, len(args)+1))
 			args = append(args, value)
 		}
 	}
@@ -147,8 +149,11 @@ func (r *WatchlistRepository) Update(watchlistID string, updates map[string]inte
 	setParts = append(setParts, "updated_at = CURRENT_TIMESTAMP")
 	args = append(args, watchlistID)
 
-	query := fmt.Sprintf("UPDATE watchlists SET %s WHERE watchlist_id = ?",
-		strings.Join(setParts, ", "))
+	query := fmt.Sprintf(
+		"UPDATE watchlists SET %s WHERE id = $%d",
+		strings.Join(setParts, ", "),
+		len(args),
+	)
 
 	_, err := r.db.Exec(query, args...)
 	if err != nil {
@@ -156,29 +161,12 @@ func (r *WatchlistRepository) Update(watchlistID string, updates map[string]inte
 	}
 
 	// If is_default was set to true, unset other defaults
-	if isDefault, ok := updates["is_default"].(bool); ok && isDefault {
-		watchlist, err := r.GetByID(watchlistID)
-		if err == nil {
-			return r.setAsDefault(watchlistID, watchlist.UserID)
-		}
-	}
-
 	return nil
-}
-
-// setAsDefault sets a watchlist as default and unsets others
-func (r *WatchlistRepository) setAsDefault(watchlistID string, userID string) error {
-	// Unset all defaults for this user
-	_, err := r.db.Exec(
-		"UPDATE watchlists SET is_default = 0 WHERE user_id = ? AND watchlist_id != ?",
-		userID, watchlistID,
-	)
-	return err
 }
 
 // Delete deletes a watchlist
 func (r *WatchlistRepository) Delete(watchlistID string) error {
-	query := `DELETE FROM watchlists WHERE watchlist_id = ?`
+	query := `DELETE FROM watchlists WHERE id = $1`
 	_, err := r.db.Exec(query, watchlistID)
 	if err != nil {
 		return fmt.Errorf("failed to delete watchlist: %w", err)
@@ -187,12 +175,13 @@ func (r *WatchlistRepository) Delete(watchlistID string) error {
 }
 
 // GetItems gets all items in a watchlist
-func (r *WatchlistRepository) GetItems(watchlistID string) ([]models.WatchlistItem, error) {
+func (r *WatchlistRepository) GetItems(watchlistID string) ([]models.WatchlistStock, error) {
 	query := `
-		SELECT item_id, watchlist_id, stock_symbol, added_at, notes, priority, tags, alert_config
-		FROM watchlist_items
-		WHERE watchlist_id = ?
-		ORDER BY priority DESC, added_at DESC
+		SELECT ws.id, ws.watchlist_id, ws.stock_id, s.symbol, ws.added_at, ws.created_at, ws.updated_at
+		FROM watchlist_stocks ws
+		JOIN stocks s ON s.id = ws.stock_id
+		WHERE ws.watchlist_id = $1
+		ORDER BY ws.added_at DESC
 	`
 
 	rows, err := r.db.Query(query, watchlistID)
@@ -201,18 +190,17 @@ func (r *WatchlistRepository) GetItems(watchlistID string) ([]models.WatchlistIt
 	}
 	defer rows.Close()
 
-	var items []models.WatchlistItem
+	var items []models.WatchlistStock
 	for rows.Next() {
-		var item models.WatchlistItem
+		var item models.WatchlistStock
 		if err := rows.Scan(
-			&item.ItemID,
+			&item.ID,
 			&item.WatchlistID,
-			&item.StockSymbol,
+			&item.StockID,
+			&item.Symbol,
 			&item.AddedAt,
-			&item.Notes,
-			&item.Priority,
-			&item.Tags,
-			&item.AlertConfig,
+			&item.CreatedAt,
+			&item.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan watchlist item: %w", err)
 		}
@@ -222,30 +210,37 @@ func (r *WatchlistRepository) GetItems(watchlistID string) ([]models.WatchlistIt
 	return items, nil
 }
 
-// AddItem adds a stock to a watchlist
-func (r *WatchlistRepository) AddItem(item *models.WatchlistItem) error {
+// AddStock adds a stock (by symbol) to a watchlist.
+func (r *WatchlistRepository) AddStock(watchlistID string, symbol string) (*models.WatchlistStock, error) {
+	stockID, err := r.ensureStockID(symbol)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
-		INSERT OR REPLACE INTO watchlist_items 
-		(item_id, watchlist_id, stock_symbol, notes, priority, tags, alert_config)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO watchlist_stocks (watchlist_id, stock_id)
+		VALUES ($1, $2)
+		ON CONFLICT (watchlist_id, stock_id) DO UPDATE SET updated_at = NOW()
+		RETURNING id, watchlist_id, stock_id, added_at, created_at, updated_at
 	`
 
-	_, err := r.db.Exec(query,
-		item.ItemID,
-		item.WatchlistID,
-		item.StockSymbol,
-		item.Notes,
-		item.Priority,
-		item.Tags,
-		item.AlertConfig,
+	var ws models.WatchlistStock
+	ws.Symbol = symbol
+	err = r.db.QueryRow(query, watchlistID, stockID).Scan(
+		&ws.ID,
+		&ws.WatchlistID,
+		&ws.StockID,
+		&ws.AddedAt,
+		&ws.CreatedAt,
+		&ws.UpdatedAt,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to add watchlist item: %w", err)
+		return nil, fmt.Errorf("failed to add watchlist stock: %w", err)
 	}
-	return nil
+	return &ws, nil
 }
 
-// UpdateItem updates a watchlist item
+// UpdateItem updates a watchlist stock record (metadata only).
 func (r *WatchlistRepository) UpdateItem(itemID string, updates map[string]interface{}) error {
 	if len(updates) == 0 {
 		return nil
@@ -255,15 +250,12 @@ func (r *WatchlistRepository) UpdateItem(itemID string, updates map[string]inter
 	args := []interface{}{}
 
 	allowedFields := map[string]bool{
-		"notes":       true,
-		"priority":    true,
-		"tags":        true,
-		"alert_config": true,
+		"metadata": true,
 	}
 
 	for field, value := range updates {
 		if allowedFields[field] {
-			setParts = append(setParts, fmt.Sprintf("%s = ?", field))
+			setParts = append(setParts, fmt.Sprintf("%s = $%d", field, len(args)+1))
 			args = append(args, value)
 		}
 	}
@@ -272,21 +264,25 @@ func (r *WatchlistRepository) UpdateItem(itemID string, updates map[string]inter
 		return nil
 	}
 
+	setParts = append(setParts, "updated_at = NOW()")
 	args = append(args, itemID)
 
-	query := fmt.Sprintf("UPDATE watchlist_items SET %s WHERE item_id = ?",
-		strings.Join(setParts, ", "))
+	query := fmt.Sprintf(
+		"UPDATE watchlist_stocks SET %s WHERE id = $%d",
+		strings.Join(setParts, ", "),
+		len(args),
+	)
 
 	_, err := r.db.Exec(query, args...)
 	if err != nil {
-		return fmt.Errorf("failed to update watchlist item: %w", err)
+		return fmt.Errorf("failed to update watchlist stock: %w", err)
 	}
 	return nil
 }
 
 // RemoveItem removes a stock from a watchlist
 func (r *WatchlistRepository) RemoveItem(itemID string) error {
-	query := `DELETE FROM watchlist_items WHERE item_id = ?`
+	query := `DELETE FROM watchlist_stocks WHERE id = $1`
 	_, err := r.db.Exec(query, itemID)
 	if err != nil {
 		return fmt.Errorf("failed to remove watchlist item: %w", err)
@@ -294,13 +290,45 @@ func (r *WatchlistRepository) RemoveItem(itemID string) error {
 	return nil
 }
 
-// RemoveItemBySymbol removes a stock from a watchlist by symbol
+// RemoveItemBySymbol removes a stock from a watchlist by symbol.
 func (r *WatchlistRepository) RemoveItemBySymbol(watchlistID string, stockSymbol string) error {
-	query := `DELETE FROM watchlist_items WHERE watchlist_id = ? AND stock_symbol = ?`
-	_, err := r.db.Exec(query, watchlistID, stockSymbol)
+	stockID, err := r.ensureStockID(stockSymbol)
 	if err != nil {
-		return fmt.Errorf("failed to remove watchlist item: %w", err)
+		return err
+	}
+	query := `DELETE FROM watchlist_stocks WHERE watchlist_id = $1 AND stock_id = $2`
+	_, err = r.db.Exec(query, watchlistID, stockID)
+	if err != nil {
+		return fmt.Errorf("failed to remove watchlist stock: %w", err)
 	}
 	return nil
 }
 
+// GetItemByID gets a watchlist stock by its ID
+func (r *WatchlistRepository) GetItemByID(itemID string) (*models.WatchlistStock, error) {
+	query := `
+		SELECT ws.id, ws.watchlist_id, ws.stock_id, s.symbol, ws.added_at, ws.created_at, ws.updated_at
+		FROM watchlist_stocks ws
+		JOIN stocks s ON s.id = ws.stock_id
+		WHERE ws.id = $1
+	`
+
+	var item models.WatchlistStock
+	err := r.db.QueryRow(query, itemID).Scan(
+		&item.ID,
+		&item.WatchlistID,
+		&item.StockID,
+		&item.Symbol,
+		&item.AddedAt,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("watchlist item not found")
+		}
+		return nil, fmt.Errorf("failed to get watchlist item: %w", err)
+	}
+
+	return &item, nil
+}

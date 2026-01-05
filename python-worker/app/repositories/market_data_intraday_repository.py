@@ -47,7 +47,7 @@ class MarketDataIntradayRepository(BaseRepository):
         try:
             return BaseRepository.upsert_many(
                 table="raw_market_data_intraday",
-                unique_columns=["stock_symbol", "ts", "interval"],
+                unique_columns=["stock_symbol", "ts", "interval", "source"],
                 rows=rows_list,
             )
         except Exception as e:

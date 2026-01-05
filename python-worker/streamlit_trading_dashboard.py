@@ -11,6 +11,9 @@ from datetime import datetime, date, timedelta
 from typing import List, Dict, Any
 import sys
 import os
+import json
+import uuid
+import requests
 
 # Add project root so imports work
 sys.path.insert(0, os.path.dirname(__file__))
@@ -19,6 +22,8 @@ from app.database import init_database, db
 from app.services.data_aggregation_service import DataAggregationService
 from app.services.market_overview_service import MarketOverviewService
 from app.services.stock_insights_service import StockInsightsService
+from app.services.stock_screener_service import StockScreenerService
+from streamlit_enhanced_watchlist_portfolio import display_enhanced_watchlist, display_enhanced_portfolio
 from app.data_management.refresh_manager import DataRefreshManager, RefreshMode, DataType
 from app.data_sources import get_data_source
 from app.repositories.market_data_daily_repository import MarketDataDailyRepository
@@ -31,9 +36,155 @@ from app.utils.indicator_keys import (
     get_required_indicator_keys, get_required_fundamental_keys
 )
 from app.observability.logging import get_logger
+from app.clients.go_api_client import GoApiClient, GoApiClientConfig, GoApiError
 from app.utils.trading_calendar import expected_trading_days, expected_intraday_15m_timestamps
+from app.streamlit.signal_engine_interface import render_signal_engine_interface
 
 logger = get_logger("data_validation")
+
+
+def display_screeners(available_symbols: List[str]):
+    st.header("🔎 Screeners")
+
+    if 'custom_universe_symbols' not in st.session_state:
+        st.session_state.custom_universe_symbols = []
+
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        new_symbol = st.text_input("Add symbol to universe", key="screener_add_symbol_input").strip().upper()
+    with c2:
+        if st.button("Add", key="screener_add_symbol_button"):
+            if new_symbol and new_symbol not in st.session_state.custom_universe_symbols:
+                st.session_state.custom_universe_symbols.append(new_symbol)
+                st.rerun()
+
+    universe = list(dict.fromkeys((available_symbols or []) + st.session_state.custom_universe_symbols))
+
+    selected_universe = st.multiselect(
+        "Universe",
+        options=universe,
+        default=universe[:200] if universe else [],
+        key="screener_universe_multiselect",
+    )
+
+    max_symbols = st.slider("Max symbols to scan", min_value=25, max_value=500, value=200, step=25, key="screener_max_symbols")
+    symbols_to_scan = (selected_universe or universe)[:max_symbols]
+
+    screener_service = StockScreenerService()
+
+# Helper to call Python worker screener API
+def call_screener_api(params: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        base_url = os.environ.get("PYTHON_WORKER_API_URL", "http://python-worker:8000")
+        response = requests.get(f"{base_url}/api/v1/screener/stocks", params=params, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.error(f"Failed to call screener API: {e}")
+        return {"stocks": [], "count": 0}
+
+    tabs = st.tabs(["📈 Technical", "💰 Fundamentals", "🎯 Signals"])
+    symbols_param = symbols_to_scan if symbols_to_scan else None
+
+    with tabs[0]:
+        st.subheader("Technical Screener")
+        rsi_max = st.slider("RSI max (oversold)", min_value=0, max_value=100, value=35, step=1, key="screener_rsi_max")
+        rsi_min = st.slider("RSI min (overbought)", min_value=0, max_value=100, value=65, step=1, key="screener_rsi_min")
+
+        params = {"max_rsi": float(rsi_max), "limit": max_symbols}
+        if symbols_param:
+            params["symbols"] = symbols_param
+        oversold_resp = call_screener_api(params)
+
+        params = {"min_rsi": float(rsi_min), "limit": max_symbols}
+        if symbols_param:
+            params["symbols"] = symbols_param
+        overbought_resp = call_screener_api(params)
+
+        oversold_df = pd.DataFrame(oversold_resp.get("stocks", []))
+        overbought_df = pd.DataFrame(overbought_resp.get("stocks", []))
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Oversold")
+            if not oversold_df.empty:
+                st.dataframe(oversold_df.sort_values(by=["rsi"], ascending=True), width='stretch')
+            else:
+                st.info("No matches")
+        with c2:
+            st.markdown("#### Overbought")
+            if not overbought_df.empty:
+                st.dataframe(overbought_df.sort_values(by=["rsi"], ascending=False), width='stretch')
+            else:
+                st.info("No matches")
+
+    with tabs[1]:
+        st.subheader("Fundamentals Screener")
+        min_market_cap = st.number_input("Min market cap", min_value=0.0, value=0.0, step=1e9, format="%.0f", key="screener_min_market_cap")
+        max_pe = st.number_input("Max P/E", min_value=0.0, value=30.0, step=1.0, key="screener_max_pe")
+
+        fund_resp = screener_service.screen_stocks(
+            symbols=symbols_param,
+            min_market_cap=float(min_market_cap) if min_market_cap > 0 else None,
+            max_pe_ratio=float(max_pe) if max_pe > 0 else None,
+            limit=max_symbols,
+        )
+        fund_rows = fund_resp.get("stocks", [])
+        fund_df = pd.DataFrame(fund_rows)
+        if not fund_df.empty and "fundamentals" in fund_df.columns:
+            fund_df["market_cap"] = fund_df["fundamentals"].apply(lambda x: (x or {}).get("market_cap"))
+            fund_df["pe_ratio"] = fund_df["fundamentals"].apply(lambda x: (x or {}).get("pe_ratio"))
+
+        if not fund_df.empty:
+            sort_cols = [c for c in ["market_cap", "pe_ratio"] if c in fund_df.columns]
+            st.dataframe(fund_df.sort_values(by=(sort_cols[0] if sort_cols else "symbol"), ascending=False), width='stretch')
+        else:
+            st.info("No matches")
+
+    with tabs[2]:
+        st.subheader("Signals Screener")
+        signal_filter = st.selectbox("Signal", options=["Any", "BUY", "HOLD", "SELL"], index=0, key="screener_signal_filter")
+        min_conf = st.number_input("Min confidence", value=0.0, step=0.05, key="screener_min_conf")
+
+        sig_resp = screener_service.screen_stocks(
+            symbols=symbols_param,
+            signal=None if signal_filter == "Any" else signal_filter,
+            min_confidence_score=float(min_conf) if min_conf > 0 else None,
+            limit=max_symbols,
+        )
+        sig_df = pd.DataFrame(sig_resp.get("stocks", []))
+        if not sig_df.empty:
+            st.dataframe(sig_df.sort_values(by=["confidence_score"], ascending=False), width='stretch')
+        else:
+            st.info("No matches")
+
+    st.subheader("Load data for a symbol")
+    c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        load_symbol = st.selectbox("Symbol", options=(universe or ["AAPL"]), key="screener_load_symbol_select")
+    with c2:
+        if st.button("Load price+indicators", key="screener_load_price_indicators"):
+            refresh_manager = DataRefreshManager()
+            refresh_manager.refresh_data(
+                symbol=load_symbol,
+                data_types=[DataType.PRICE_HISTORICAL, DataType.INDICATORS],
+                mode=RefreshMode.ON_DEMAND,
+                force=True,
+            )
+            st.cache_data.clear()
+            st.success(f"Triggered refresh for {load_symbol}")
+    with c3:
+        if st.button("Load fundamentals", key="screener_load_fundamentals"):
+            st.cache_data.clear()
+            get_data_availability.clear()
+            refresh_manager = DataRefreshManager()
+            refresh_manager.refresh_data(
+                symbol=load_symbol,
+                data_types=[DataType.FUNDAMENTALS],
+                mode=RefreshMode.ON_DEMAND,
+                force=True,
+            )
+            st.success(f"Triggered fundamentals refresh for {load_symbol}")
 
 
 def _get_provider_status() -> Dict[str, Any]:
@@ -85,7 +236,7 @@ def display_audit(symbol: str):
             SELECT dataset, interval, source, status, last_attempt_at, last_success_at, error_message, retry_count,
                    historical_start_date, historical_end_date, cursor_date, cursor_ts, updated_at
             FROM data_ingestion_state
-            WHERE stock_symbol = :symbol
+            WHERE symbol = :symbol
             ORDER BY updated_at DESC
             """,
             {"symbol": symbol},
@@ -297,6 +448,255 @@ def display_audit(symbol: str):
                 st.write("No fundamentals snapshots")
         except Exception as e:
             st.warning(f"Fundamentals snapshot query failed: {e}")
+
+
+def display_earnings_and_news(symbol: str):
+    st.header("📅 Earnings Calendar")
+
+    @st.cache_resource
+    def _go_api_base_url() -> str:
+        return os.environ.get("GO_API_URL") or os.environ.get("GO_API_BASE_URL") or "http://localhost:8000"
+
+    @st.cache_resource
+    def _go_api_client() -> GoApiClient:
+        return GoApiClient(
+            _go_api_base_url(),
+            config=GoApiClientConfig(connect_timeout_s=5.0, read_timeout_s=30.0, total_retries=2, backoff_factor=0.3),
+        )
+
+    def _go_api_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            return _go_api_client().get(path, params=params)
+        except GoApiError as e:
+            raise RuntimeError(f"Go API request failed ({_go_api_base_url()}): {e}")
+
+    def _go_api_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            return _go_api_client().post(path, payload=payload)
+        except GoApiError as e:
+            raise RuntimeError(f"Go API request failed ({_go_api_base_url()}): {e}")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        start = st.date_input("Start", value=date.today(), key="earnings_start")
+    with col2:
+        end = st.date_input("End", value=date.today() + timedelta(days=14), key="earnings_end")
+    with col3:
+        refresh_days = st.selectbox("Refresh window", [7, 14, 30, 60, 90], index=2, key="earnings_refresh_days")
+
+    cta1, cta2 = st.columns(2)
+    with cta1:
+        if st.button("🔄 Refresh earnings calendar (window)", key="earnings_refresh_window"):
+            with st.spinner("Refreshing earnings calendar..."):
+                payload = {
+                    "symbols": None,
+                    "start_date": start.strftime("%Y-%m-%d"),
+                    "end_date": (date.today() + timedelta(days=int(refresh_days))).strftime("%Y-%m-%d"),
+                }
+                res = _go_api_post("/api/v1/admin/earnings-calendar/refresh", payload)
+                if res.get("status") == "success":
+                    st.success(f"✅ Refreshed {res.get('count', 0)} earnings rows")
+                elif res.get("status") == "no_data":
+                    st.info("No earnings returned")
+                else:
+                    st.error(res.get("error") or "Refresh failed")
+
+    with cta2:
+        selected_day = st.date_input("Earnings for date", value=date.today(), key="earnings_selected_day")
+        if st.button("🔄 Refresh earnings for selected date", key="earnings_refresh_day"):
+            with st.spinner("Refreshing earnings for date..."):
+                payload = {"earnings_date": selected_day.strftime("%Y-%m-%d"), "symbols": None}
+                res = _go_api_post("/api/v1/admin/earnings-calendar/refresh-for-date", payload)
+                if res.get("status") == "success":
+                    st.success(f"✅ Refreshed {res.get('count', 0)} earnings rows for {res.get('date')}")
+                elif res.get("status") == "no_data":
+                    st.info("No earnings returned")
+                else:
+                    st.error(res.get("error") or "Refresh failed")
+
+    try:
+        resp = _go_api_get(
+            "/api/v1/admin/earnings-calendar",
+            params={
+                "start_date": start.strftime("%Y-%m-%d"),
+                "end_date": end.strftime("%Y-%m-%d"),
+            },
+        )
+        rows = resp.get("rows", [])
+        if rows:
+            df = pd.DataFrame(rows)
+            display_cols = [c for c in ["earnings_date", "symbol", "company_name", "time", "eps_estimate", "eps_actual", "sector", "industry", "market_cap"] if c in df.columns]
+            df_disp = df[display_cols].copy() if display_cols else df
+            
+            # Add selection column for data_editor
+            df_disp.insert(0, "Select", False)
+            
+            st.subheader("Earnings Calendar (click a row to select)")
+            edited_df = st.data_editor(
+                df_disp,
+                width='stretch',
+                height=400,
+                hide_index=True,
+                column_config={"Select": st.column_config.CheckboxColumn(required=False)},
+                key="earnings_calendar_selector"
+            )
+            
+            # Find selected row(s)
+            selected_rows = edited_df[edited_df["Select"] == True]
+            if not selected_rows.empty:
+                # Get the first selected row
+                selected_idx = selected_rows.index[0]
+                selected_data = df.iloc[selected_idx].to_dict()
+                
+                st.subheader(f"📊 Earnings Details: {selected_data.get('symbol', 'Unknown')}")
+                
+                # Display all available details for the selected row
+                details_cols = st.columns(2)
+                with details_cols[0]:
+                    for key, value in selected_data.items():
+                        if key not in ["Select"] and value is not None:
+                            if isinstance(value, (int, float)):
+                                st.metric(key.replace("_", " ").title(), f"{value:,.2f}" if isinstance(value, float) else f"{value:,}")
+                            else:
+                                st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+                
+                with details_cols[1]:
+                    # Show additional context if available
+                    if selected_data.get("eps_estimate") and selected_data.get("eps_actual"):
+                        eps_surprise = float(selected_data["eps_actual"]) - float(selected_data["eps_estimate"])
+                        surprise_pct = (eps_surprise / float(selected_data["eps_estimate"])) * 100 if float(selected_data["eps_estimate"]) != 0 else 0
+                        st.metric("EPS Surprise", f"{eps_surprise:+.2f}", f"{surprise_pct:+.1f}%")
+                    
+                    if selected_data.get("earnings_date"):
+                        earnings_date = pd.to_datetime(selected_data["earnings_date"])
+                        days_until = (earnings_date.date() - date.today()).days
+                        if days_until >= 0:
+                            st.metric("Days Until Earnings", f"{days_until} days")
+                        else:
+                            st.metric("Days Since Earnings", f"{abs(days_until)} days ago")
+            
+            # Clear selection button
+            if selected_rows.empty is False and st.button("Clear Selection", key="clear_earnings_selection"):
+                st.rerun()
+                
+        else:
+            st.info("No earnings calendar rows stored for selected date range. Use refresh above.")
+    except Exception as e:
+        st.warning(f"Could not load earnings calendar: {e}")
+
+    st.header("📰 Stock News")
+    
+    # News viewer state
+    if 'selected_article' not in st.session_state:
+        st.session_state.selected_article = None
+    if 'show_article_modal' not in st.session_state:
+        st.session_state.show_article_modal = False
+    
+    try:
+        ds = get_data_source()
+        news_limit = st.slider("Articles", min_value=5, max_value=50, value=10, step=5, key="news_limit")
+        with st.spinner(f"Fetching news for {symbol}..."):
+            articles = ds.fetch_news(symbol, int(news_limit))
+        if not articles:
+            st.info("No news returned for this symbol.")
+            return
+
+        st.subheader(f"Latest News for {symbol}")
+        st.caption("*Headlines and summaries provided for informational purposes. Full content available at source.*")
+        
+        for i, a in enumerate(articles):
+            title = a.get("title") or "(no title)"
+            link = a.get("link") or ""
+            publisher = a.get("publisher") or ""
+            published = a.get("published")
+            summary = a.get("summary")
+            
+            # Create expandable news card
+            with st.expander(f"📰 {title}", expanded=False):
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    # Article metadata
+                    meta_parts = []
+                    if publisher:
+                        meta_parts.append(f"**Source:** {publisher}")
+                    if published:
+                        # Format published date
+                        try:
+                            if isinstance(published, (int, float)):
+                                pub_date = datetime.fromtimestamp(published).strftime("%Y-%m-%d %H:%M")
+                            else:
+                                pub_date = str(published)
+                            meta_parts.append(f"**Published:** {pub_date}")
+                        except:
+                            meta_parts.append(f"**Published:** {published}")
+                    
+                    if meta_parts:
+                        st.write(" | ".join(meta_parts))
+                    
+                    # Summary (truncated for compliance)
+                    if summary:
+                        # Show first 150 characters as preview
+                        preview = summary[:150] + "..." if len(summary) > 150 else summary
+                        st.write(preview)
+                
+                with col2:
+                    # Action buttons
+                    if link:
+                        st.markdown(f"[🔗 Read Full Article]({link})", unsafe_allow_html=True)
+                    
+                    # Preview button (shows expanded view without full content)
+                    if st.button("📋 Preview", key=f"preview_{i}"):
+                        st.session_state.selected_article = a
+                        st.session_state.show_article_modal = True
+                        st.rerun()
+        
+        # Article preview modal
+        if st.session_state.show_article_modal and st.session_state.selected_article:
+            article = st.session_state.selected_article
+            
+            st.markdown("---")
+            st.subheader("📋 Article Preview")
+            
+            col_close, col_title = st.columns([1, 10])
+            with col_close:
+                if st.button("✖️ Close", key="close_preview"):
+                    st.session_state.show_article_modal = False
+                    st.session_state.selected_article = None
+                    st.rerun()
+            
+            with col_title:
+                st.markdown(f"### {article.get('title', 'No title')}")
+            
+            # Article details
+            details_col1, details_col2 = st.columns(2)
+            with details_col1:
+                if article.get('publisher'):
+                    st.write(f"**Publisher:** {article['publisher']}")
+                if article.get('published'):
+                    try:
+                        if isinstance(article['published'], (int, float)):
+                            pub_date = datetime.fromtimestamp(article['published']).strftime("%Y-%m-%d %H:%M")
+                        else:
+                            pub_date = str(article['published'])
+                        st.write(f"**Published:** {pub_date}")
+                    except:
+                        st.write(f"**Published:** {article['published']}")
+            
+            with details_col2:
+                if article.get('link'):
+                    st.markdown(f"[🔗 Read Full Article]({article['link']})", unsafe_allow_html=True)
+            
+            # Summary (full summary, still compliant)
+            if article.get('summary'):
+                st.write("**Summary:**")
+                st.write(article['summary'])
+            
+            # Legal compliance notice
+            st.info("ℹ️ *This is a preview. Full article content is available at the source link above. We respect copyright and drive traffic to original publishers.*")
+            
+    except Exception as e:
+        st.warning(f"Could not fetch news: {e}")
 
 def clean_dataframe_for_streamlit(df):
     """
@@ -1646,9 +2046,27 @@ else:
 st.sidebar.header("Dashboard Controls")
 
 # Symbol selection
+if 'custom_symbols' not in st.session_state:
+    st.session_state.custom_symbols = []
+
+try:
+    _symbols_from_db = DataAggregationService().get_available_symbols()
+except Exception:
+    _symbols_from_db = []
+
+_default_symbols = ["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA", "AMZN", "META", "SPY", "QQQ", "IWM"]
+available_symbols = list(dict.fromkeys((_symbols_from_db or _default_symbols) + st.session_state.custom_symbols))
+
+new_symbol_sidebar = st.sidebar.text_input("Add custom symbol", key="sidebar_add_symbol").strip().upper()
+if st.sidebar.button("Add symbol", key="sidebar_add_symbol_btn"):
+    if new_symbol_sidebar and new_symbol_sidebar not in st.session_state.custom_symbols:
+        st.session_state.custom_symbols.append(new_symbol_sidebar)
+        st.rerun()
+
 symbol = st.sidebar.selectbox(
     "Select Symbol",
-    ["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA", "AMZN", "META", "SPY", "QQQ", "IWM"],
+    available_symbols,
+    index=0,
     help="Choose symbol to analyze"
 )
 
@@ -1666,6 +2084,77 @@ st.sidebar.subheader("📥 Data Loading")
 load_data = st.sidebar.button("Load Market Data", help="Load historical market data for selected symbol")
 load_indicators = st.sidebar.button("Load Indicators", help="Calculate technical indicators for selected symbol")
 load_fundamentals = st.sidebar.button("Load Fundamentals", help="Load fundamental data for selected symbol")
+clear_cache = st.sidebar.button("🗑️ Clear Cache", help="Clear all cached data to force refresh")
+
+# Custom Symbol Data Loading Section
+st.sidebar.subheader("🔧 Custom Symbol Loading")
+custom_symbol = st.sidebar.text_input(
+    "Enter Symbol (e.g., TQQQ, QQQ, VIX)",
+    placeholder="TQQQ",
+    help="Load historical data for any ticker symbol"
+)
+
+if custom_symbol:
+    custom_symbol = custom_symbol.upper().strip()
+    
+    col1, col2, col3 = st.sidebar.columns(3)
+    
+    with col1:
+        load_custom_price = st.button(
+            "📈 Price",
+            key=f"load_price_{custom_symbol}",
+            help=f"Load price data for {custom_symbol}"
+        )
+    
+    with col2:
+        load_custom_indicators = st.button(
+            "📊 Indicators", 
+            key=f"load_indicators_{custom_symbol}",
+            help=f"Load indicators for {custom_symbol}"
+        )
+    
+    with col3:
+        load_custom_all = st.button(
+            "🚀 All",
+            key=f"load_all_{custom_symbol}",
+            help=f"Load all data for {custom_symbol}"
+        )
+    
+    # Handle custom symbol loading
+    if load_custom_price or load_custom_indicators or load_custom_all:
+        with st.spinner(f"Loading data for {custom_symbol}..."):
+            try:
+                refresh_manager = DataRefreshManager()
+                
+                # Determine what to load
+                data_types = []
+                if load_custom_price or load_custom_all:
+                    data_types.append(DataType.PRICE_HISTORICAL)
+                if load_custom_indicators or load_custom_all:
+                    data_types.append(DataType.INDICATORS)
+                if load_custom_all:
+                    data_types.append(DataType.FUNDAMENTALS)
+                
+                result = refresh_manager.refresh_data(
+                    symbol=custom_symbol,
+                    data_types=data_types,
+                    mode=RefreshMode.ON_DEMAND,
+                    force=True,
+                )
+
+                if result.total_failed == 0:
+                    st.success(
+                        f"✅ Loaded data for {custom_symbol} (success={result.total_successful}, skipped={result.total_skipped})"
+                    )
+                    # Clear cache to force reload
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.error(f"❌ Failed to load data for {custom_symbol}. See details below.")
+                    st.json(result.to_dict())
+                    
+            except Exception as e:
+                st.error(f"❌ Error loading data for {custom_symbol}: {str(e)}")
 
 if load_data:
     with st.spinner(f"Loading {days_back} days of data for {symbol}..."):
@@ -1720,6 +2209,10 @@ if load_indicators:
 if load_fundamentals:
     with st.spinner(f"Loading fundamentals for {symbol}..."):
         try:
+            # Clear cache BEFORE refreshing to ensure fresh data
+            st.cache_data.clear()
+            # Also clear the specific data availability cache
+            get_data_availability.clear()
             refresh_manager = DataRefreshManager()
             result = refresh_manager.refresh_data(
                 symbol=symbol,
@@ -1742,13 +2235,24 @@ if load_fundamentals:
             st.error(f"❌ Error loading fundamentals: {e}")
             logger.error(f"Error loading fundamentals for {symbol}: {e}")
 
+if clear_cache:
+    st.cache_data.clear()
+    get_data_availability.clear()
+    st.success("✅ Cache cleared! Data will be refreshed on next load.")
+    st.rerun()
+
 # Create main tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "🔍 Data Validation",
     "📊 Stock Insights",
     "📈 Data Availability",
     "📚 Fundamentals & Indicators",
+    "🧠 Signal Engines",
     "🧾 Audit",
+    "📅 Earnings & News",
+    "📋 Enhanced Watchlist",
+    "💼 Enhanced Portfolio",
+    "🔎 Screeners",
 ])
 
 with tab1:
@@ -1764,7 +2268,22 @@ with tab4:
     display_fundamentals_and_indicators(symbol)
 
 with tab5:
+    render_signal_engine_interface(symbol)
+
+with tab6:
     display_audit(symbol)
+
+with tab7:
+    display_earnings_and_news(symbol)
+
+with tab8:
+    display_enhanced_watchlist()
+
+with tab9:
+    display_enhanced_portfolio()
+
+with tab10:
+    display_screeners(available_symbols)
 
 # Footer
 st.markdown("---")

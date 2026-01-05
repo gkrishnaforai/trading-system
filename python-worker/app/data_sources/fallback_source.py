@@ -45,13 +45,15 @@ class FallbackDataSource(BaseDataSource):
         symbol: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        period: str = "1y"
+        period: str = "1y",
+        interval: str = "1d"
     ) -> Optional[pd.DataFrame]:
         """Fetch historical OHLCV price data"""
         try:
-            kwargs: Dict[str, Any] = {"period": period}
+            kwargs: Dict[str, Any] = {"period": period, "interval": interval}
             if start_date and end_date:
-                kwargs.update({"start": start_date, "end": end_date})
+                kwargs["start_date"] = start_date
+                kwargs["end_date"] = end_date
             return self.primary_source.fetch_price_data(symbol, **kwargs)
         except Exception as e:
             logger.warning(f"Primary source failed for price data for {symbol}: {e}")

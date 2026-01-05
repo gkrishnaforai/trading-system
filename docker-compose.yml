@@ -31,6 +31,8 @@ services:
       context: .
       dockerfile: go-api/Dockerfile
     container_name: trading-system-go-api
+    env_file:
+      - .env
     ports:
       - "8000:8000" # REST API
       - "50051:50051" # gRPC
@@ -40,7 +42,7 @@ services:
       - GRPC_PORT=50051
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@postgres:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
-      - MIGRATIONS_DIR=/app/db/migrations_postgres
+      - MIGRATIONS_DIR=/app/supabase/migrations
       - SUPABASE_URL=${SUPABASE_URL:-}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
       - SUPABASE_DB_URL=${SUPABASE_DB_URL:-}
@@ -73,6 +75,8 @@ services:
       context: .
       dockerfile: python-worker/Dockerfile
     container_name: trading-system-python-worker
+    env_file:
+      - .env
     ports:
       - "8001:8001" # FastAPI report generation endpoint
     environment:
@@ -186,10 +190,13 @@ services:
     container_name: trading-system-admin-dashboard
     ports:
       - "8502:8501"
+    env_file:
+      - .env
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@postgres:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - GO_API_URL=${GO_API_URL:-http://go-api:8000}
       - PYTHONPATH=/app
     depends_on:
       postgres:
@@ -218,14 +225,17 @@ services:
   streamlit:
     build:
       context: .
-      dockerfile: python-worker/Dockerfile
+      dockerfile: streamlit-app/Dockerfile
     container_name: trading-system-streamlit
     ports:
       - "8501:8501"
+    env_file:
+      - .env
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@postgres:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - GO_API_URL=${GO_API_URL:-http://go-api:8000}
       - PYTHONPATH=/app
     depends_on:
       postgres:
@@ -235,7 +245,7 @@ services:
     networks:
       - trading-network
     restart: unless-stopped
-    command: [ "streamlit", "run", "streamlit_trading_dashboard.py", "--server.port=8501", "--server.address=0.0.0.0" ]
+    command: [ "streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0" ]
     healthcheck:
       test: [ "CMD-SHELL", "curl -f http://127.0.0.1:8501 || exit 1" ]
       interval: 30s

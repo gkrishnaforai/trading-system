@@ -40,8 +40,8 @@ class DatabaseQueryHelper:
         try:
             query = f"""
                 SELECT * FROM {table}
-                WHERE stock_symbol = :symbol
-                ORDER BY trade_date DESC
+                WHERE symbol = :symbol
+                ORDER BY date DESC
                 LIMIT 1
             """
             result = db.execute_query(query, {"symbol": symbol.upper()})
@@ -94,8 +94,8 @@ class DatabaseQueryHelper:
         try:
             query = """
                 SELECT * FROM indicators_daily
-                WHERE stock_symbol = :symbol
-                ORDER BY trade_date DESC
+                WHERE symbol = :symbol
+                ORDER BY date DESC
                 LIMIT 1
             """
             result = db.execute_query(query, {"symbol": symbol.upper()})
@@ -128,21 +128,26 @@ class DatabaseQueryHelper:
         
         try:
             query = """
-                SELECT trade_date as date, open, high, low, close, volume
+                SELECT date,
+                       open,
+                       high,
+                       low,
+                       close,
+                       volume
                 FROM raw_market_data_daily
-                WHERE stock_symbol = :symbol
+                WHERE symbol = :symbol
             """
             params = {"symbol": symbol.upper()}
             
             if start_date:
-                query += " AND trade_date >= :start_date"
+                query += " AND date >= :start_date"
                 params["start_date"] = start_date.isoformat()
             
             if end_date:
-                query += " AND trade_date <= :end_date"
+                query += " AND date <= :end_date"
                 params["end_date"] = end_date.isoformat()
             
-            query += " ORDER BY trade_date ASC"
+            query += " ORDER BY date ASC"
             
             if limit:
                 query += " LIMIT :limit"

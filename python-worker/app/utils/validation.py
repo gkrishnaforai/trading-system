@@ -24,11 +24,14 @@ def validate_symbol(symbol: str) -> bool:
     
     symbol = symbol.strip().upper()
     
-    # Basic validation: 1-5 characters, alphanumeric
-    if not (1 <= len(symbol) <= 5):
+    # Basic validation:
+    # - allow macro/index tickers like ^VIX, ^TNX
+    # - allow common Yahoo separators like '-', '.', '='
+    if not (1 <= len(symbol) <= 12):
         return False
     
-    if not symbol.isalnum():
+    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789^.-=")
+    if any(ch not in allowed for ch in symbol):
         return False
     
     return True

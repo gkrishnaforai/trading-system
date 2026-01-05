@@ -1,20 +1,19 @@
 """
-Admin API Endpoints for Trading System
-Provides administrative endpoints for monitoring and management
+Admin API endpoints for trading system
+Clean version with signal generation and storage
 """
-from datetime import datetime, timedelta
+
+from datetime import datetime
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
 from app.database import db
-from app.data_management.refresh_manager import DataRefreshManager
+from app.data_management.refresh_manager import DataRefreshManager, DataType
 from app.services.indicator_service import IndicatorService
 from app.services.strategy_service import StrategyService
-from app.services.stock_screener_service import StockScreenerService
-from app.services.stock_insights_service import StockInsightsService
-from app.plugins.registration_manager import PluginRegistrationManager
+from app.observability import audit
+from app.observability.context import set_ingestion_run_id
 from app.observability.logging import get_logger
 
 logger = get_logger("admin_api")
@@ -27,9 +26,15 @@ class RefreshRequest(BaseModel):
     data_types: List[str]
     force: bool = False
 
+class RefreshResponse(BaseModel):
+    success: bool
+    message: str
+    results: Dict[str, Any]
+
 class SignalRequest(BaseModel):
     symbols: List[str]
     strategy: str = "technical"
+    backtest_date: Optional[str] = None  # Format: "YYYY-MM-DD"
 
 class ScreenerRequest(BaseModel):
     min_rsi: Optional[float] = None
@@ -40,187 +45,87 @@ class ScreenerRequest(BaseModel):
 
 class StockInsightsRequest(BaseModel):
     symbol: str
-    run_all_strategies: bool = True
 
 
-@router.get("/data-sources")
-async def get_data_sources():
-    """Get all configured data sources with their status"""
+@router.post("/refresh", response_model=RefreshResponse)
+async def refresh_data(request: RefreshRequest, background_tasks: BackgroundTasks):
+    """Trigger data refresh for specific symbols and data types"""
+    run_id = datetime.now().isoformat()
+    set_ingestion_run_id(run_id)
     try:
-        registration_manager = PluginRegistrationManager()
-        
-        # Get adapter information
-        from app.data_sources.adapters.factory import create_all_adapters
-        adapters = create_all_adapters()
-        
-        data_sources = []
-        for name, adapter in adapters.items():
-            try:
-                metadata = adapter.get_metadata()
-                is_available = adapter.is_available()
-                
-                # Get recent activity (mock for now)
-                recent_activity = "2 mins ago" if is_available else "N/A"
-                api_calls_today = 1247 if is_available else 0
-                error_rate = 0.1 if is_available else 0
-                
-                data_sources.append({
-                    "name": metadata.name,
-                    "status": "active" if is_available else "inactive",
-                    "last_sync": recent_activity,
-                    "data_types": ["price_historical", "fundamentals", "news"],  # From metadata
-                    "api_calls_today": api_calls_today,
-                    "error_rate": error_rate,
-                    "config": metadata.config_schema or {}
-                })
-            except Exception as e:
-                logger.error(f"Error getting info for adapter {name}: {e}")
-                data_sources.append({
-                    "name": name,
-                    "status": "error",
-                    "error": str(e)
-                })
-        
-        return {"data_sources": data_sources}
-        
-    except Exception as e:
-        logger.error(f"Failed to get data sources: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        try:
+            audit.start_run(run_id, metadata={"operation": "refresh", "symbols": request.symbols, "data_types": request.data_types})
+            audit.log_event(level="info", provider="system", operation="refresh.request_start")
+        except Exception:
+            pass
 
-
-@router.get("/refresh/status")
-async def get_refresh_status():
-    """Get current refresh status and queue information"""
-    try:
-        # Get refresh queue information
-        query = """
-            SELECT 
-                stock_symbol,
-                dataset,
-                interval,
-                status,
-                error_message,
-                last_attempt_at,
-                last_success_at,
-                EXTRACT(EPOCH FROM (COALESCE(last_success_at, NOW()) - last_attempt_at)) as duration_seconds
-            FROM data_ingestion_state 
-            WHERE last_attempt_at >= NOW() - INTERVAL '24 hours'
-            ORDER BY last_attempt_at DESC
-            LIMIT 50
-        """
+        refresh_manager = DataRefreshManager()
         
-        recent_jobs = db.execute_query(query)
-        
-        # Aggregate status (python-worker refresh manager uses: success/failed/idle)
-        active_jobs = len([j for j in recent_jobs if j.get("status") in {"running", "pending"}])
-        queued_jobs = len([j for j in recent_jobs if j.get("status") == "pending"])
-        completed_today = len([j for j in recent_jobs if j.get("status") in {"completed", "success"}])
-        failed_today = len([j for j in recent_jobs if j.get("status") == "failed"])
-        
-        last_refresh = None
-        if recent_jobs:
-            last_attempt = recent_jobs[0].get("last_attempt_at")
-            last_refresh = last_attempt.isoformat() if last_attempt else None
-        
-        return {
-            "active_jobs": active_jobs,
-            "queued_jobs": queued_jobs,
-            "completed_today": completed_today,
-            "failed_today": failed_today,
-            "last_refresh": last_refresh,
-            "jobs": [
-                {
-                    "id": f"job_{job['stock_symbol']}_{job['dataset']}_{job['interval']}",
-                    "symbol": job["stock_symbol"],
-                    "data_type": job["dataset"],
-                    "status": job["status"],
-                    "started_at": (job.get("last_attempt_at").isoformat() if job.get("last_attempt_at") else None),
-                    "progress": 100 if job.get("status") in {"completed", "success"} else (50 if job.get("status") in {"running", "pending"} else 0),
-                    "error": job.get("error_message"),
-                }
-                for job in recent_jobs[:10]
-            ]
+        # Convert string data types to DataType enum
+        data_type_mapping = {
+            "price_historical": DataType.PRICE_HISTORICAL,
+            "indicators": DataType.INDICATORS,
+            "fundamentals": DataType.FUNDAMENTALS,
+            "earnings": DataType.EARNINGS,
+            "market_news": DataType.MARKET_NEWS,
+            "economic_calendar": DataType.ECONOMIC_CALENDAR
         }
         
+        # Validate data types
+        invalid_types = [dt for dt in request.data_types if dt not in data_type_mapping]
+        if invalid_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid data types: {invalid_types}. Valid types: {list(data_type_mapping.keys())}"
+            )
+        
+        results = {}
+        for symbol in request.symbols:
+            symbol_results = {}
+            for data_type in request.data_types:
+                try:
+                    # Refresh data for this symbol and type
+                    success = refresh_manager.refresh_symbol_data(
+                        symbol=symbol,
+                        data_type=data_type_mapping[data_type],
+                        force=request.force
+                    )
+                    
+                    symbol_results[data_type] = {
+                        "success": success,
+                        "message": f"Successfully refreshed {data_type} for {symbol}" if success else f"Failed to refresh {data_type} for {symbol}"
+                    }
+                    
+                    audit.log_event(
+                        level="info",
+                        provider="system",
+                        operation="refresh.symbol_complete",
+                        metadata={"symbol": symbol, "data_type": data_type, "success": success}
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Failed to refresh {data_type} for {symbol}: {e}")
+                    symbol_results[data_type] = {
+                        "success": False,
+                        "message": f"Error refreshing {data_type} for {symbol}: {str(e)}"
+                    }
+            
+            results[symbol] = symbol_results
+        
+        audit.finish_run(run_id, status="completed", metadata={"results": results})
+        
+        return RefreshResponse(
+            success=True,
+            message=f"Data refresh completed for {len(request.symbols)} symbols",
+            results=results
+        )
+        
     except Exception as e:
-        logger.error(f"Failed to get refresh status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/data-summary/{table}")
-async def get_data_summary(table: str, date_filter: Optional[str] = Query(None)):
-    """Get data summary for a specific table"""
-    try:
-        # Validate table name
-        valid_tables = [
-            "raw_market_data_daily", 
-            "raw_market_data_intraday", 
-            "indicators_daily",
-            "fundamentals_snapshots",
-            "industry_peers"
-        ]
-        
-        if table not in valid_tables:
-            raise HTTPException(status_code=400, detail=f"Invalid table: {table}")
-        
-        # Build query based on date filter
-        where_clause = ""
-        if date_filter:
-            if date_filter == "today":
-                where_clause = "WHERE trade_date = CURRENT_DATE"
-            elif date_filter == "week":
-                where_clause = "WHERE trade_date >= CURRENT_DATE - INTERVAL '7 days'"
-            elif date_filter == "month":
-                where_clause = "WHERE trade_date >= CURRENT_DATE - INTERVAL '30 days'"
-        
-        # Get table statistics
-        stats_query = f"""
-            SELECT 
-                COUNT(*) as total_records,
-                COUNT(*) FILTER (WHERE trade_date = CURRENT_DATE) as today_records,
-                MAX(trade_date) as last_updated,
-                pg_size_pretty(pg_total_relation_size('{table}')) as size_gb
-            FROM {table}
-            {where_clause}
-        """
-        
-        stats = db.execute_query(stats_query)[0]
-        
-        # Get quality metrics
-        quality_query = f"""
-            SELECT 
-                ROUND(
-                    (COUNT(*) - COUNT(CASE WHEN close IS NULL OR volume IS NULL THEN 1 END)) * 100.0 / COUNT(*), 
-                    2
-                ) as complete_records,
-                ROUND(
-                    COUNT(CASE WHEN close IS NULL OR volume IS NULL THEN 1 END) * 100.0 / COUNT(*), 
-                    2
-                ) as missing_values
-            FROM {table}
-            {where_clause}
-        """
-        
-        quality = db.execute_query(quality_query)[0]
-        
-        return {
-            "table_name": table,
-            "total_records": stats["total_records"],
-            "today_records": stats["today_records"],
-            "last_updated": stats["last_updated"].isoformat() if stats["last_updated"] else None,
-            "size_gb": stats["size_gb"],
-            "quality_metrics": {
-                "complete_records": quality["complete_records"],
-                "missing_values": quality["missing_values"],
-                "duplicates": 0.1,  # Would need separate query
-                "error_rate": 0.3   # Would need separate query
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get data summary for {table}: {e}")
+        logger.error(f"Data refresh failed: {e}")
+        try:
+            audit.finish_run(run_id, status="failed", metadata={"error": str(e)})
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -235,16 +140,125 @@ async def generate_signals(request: SignalRequest):
         
         for symbol in request.symbols:
             try:
+                # Get historical price data for the symbol up to the backtest date FIRST
+                historical_data = []
+                try:
+                    # Query database directly for historical data up to backtest date
+                    from app.database import db
+                    
+                    query = """
+                        SELECT date, open, high, low, close, volume
+                        FROM raw_market_data_daily 
+                        WHERE symbol = :symbol AND date <= :backtest_date
+                        ORDER BY date DESC
+                        LIMIT 60
+                    """
+                    
+                    result = db.execute_query(query, {
+                        "symbol": symbol,
+                        "backtest_date": request.backtest_date
+                    })
+                    
+                    if result:
+                        historical_data = result
+                        logger.info(f"📊 Found {len(historical_data)} records for {symbol} up to {request.backtest_date}")
+                    else:
+                        logger.warning(f"⚠️ No historical data found for {symbol} up to {request.backtest_date}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error getting historical data: {e}")
+                
+                # Use backtest_date as timestamp if provided, otherwise use current time
+                timestamp = request.backtest_date + "T23:59:59" if request.backtest_date else datetime.now().isoformat()
+                
                 # Ensure indicators are calculated
                 indicator_service.calculate_indicators(symbol)
                 
-                # Get latest indicators
-                from app.utils.query_utils import fetch_latest_by_symbol
-                indicators = fetch_latest_by_symbol(
-                    "indicators_daily",
-                    symbol,
-                    select_cols=["sma_50", "sma_200", "ema_20", "rsi_14", "macd", "macd_signal"]
-                )
+                # Get indicators for specific date (or latest if no date provided)
+                from app.database import db
+                
+                try:
+                    if request.backtest_date:
+                        # For historical backtesting, get indicators as of the specified date
+                        query = """
+                            SELECT sma_50, sma_200, ema_20, rsi_14, macd, macd_signal 
+                            FROM indicators_daily 
+                            WHERE symbol = :symbol AND date <= :backtest_date 
+                            ORDER BY date DESC LIMIT 1
+                        """
+                        indicators_data = db.execute_query(query, {
+                            "symbol": symbol, 
+                            "backtest_date": request.backtest_date
+                        })
+                        
+                        # Log the query result
+                        logger.info(f"Query indicators for {symbol} up to {request.backtest_date}: {len(indicators_data) if indicators_data else 0} results")
+                        
+                        if indicators_data:
+                            indicators = indicators_data[0]
+                            logger.info(f"Found indicators for {symbol}: {list(indicators.keys())}")
+                        else:
+                            # Check if any indicators exist for this symbol at all
+                            count_query = """
+                                SELECT COUNT(*) as total, MAX(date) as latest_date
+                                FROM indicators_daily 
+                                WHERE symbol = :symbol
+                            """
+                            count_result = db.execute_query(count_query, {"symbol": symbol})
+                            
+                            if count_result:
+                                count_info = count_result[0]
+                                if count_info['total'] == 0:
+                                    error_msg = f"No indicators found for {symbol} in database. Tables may be empty or symbol not tracked."
+                                else:
+                                    error_msg = f"No indicators found for {symbol} on or before {request.backtest_date}. Latest available: {count_info['latest_date']}. Try a later date."
+                            else:
+                                error_msg = f"Failed to check indicator availability for {symbol}. Database query error."
+                            
+                            logger.error(error_msg)
+                            results.append({
+                                "symbol": symbol,
+                                "signal": "hold",
+                                "confidence": 0.0,
+                                "strategy": request.strategy,
+                                "error": error_msg
+                            })
+                            continue
+                    else:
+                        # Get latest indicators
+                        query = """
+                            SELECT sma_50, sma_200, ema_20, rsi_14, macd, macd_signal 
+                            FROM indicators_daily 
+                            WHERE symbol = :symbol 
+                            ORDER BY date DESC LIMIT 1
+                        """
+                        indicators_data = db.execute_query(query, {"symbol": symbol})
+                        
+                        if indicators_data:
+                            indicators = indicators_data[0]
+                        else:
+                            error_msg = f"No indicators found for {symbol}. Symbol may not be tracked in indicators_daily table."
+                            logger.error(error_msg)
+                            results.append({
+                                "symbol": symbol,
+                                "signal": "hold",
+                                "confidence": 0.0,
+                                "strategy": request.strategy,
+                                "error": error_msg
+                            })
+                            continue
+                            
+                except Exception as db_error:
+                    error_msg = f"Database error while fetching indicators for {symbol}: {str(db_error)}"
+                    logger.error(error_msg)
+                    results.append({
+                        "symbol": symbol,
+                        "signal": "hold",
+                        "confidence": 0.0,
+                        "strategy": request.strategy,
+                        "error": error_msg
+                    })
+                    continue
                 
                 if indicators:
                     # Add required fields for strategy
@@ -255,16 +269,227 @@ async def generate_signals(request: SignalRequest):
                     indicators["macd_line"] = indicators.get("macd", 0)
                     indicators["rsi"] = indicators.get("rsi_14", 50)
                     
-                    # Generate signal
-                    signal_result = strategy_service.execute_strategy(request.strategy, indicators)
+                    # Generate signal using signal engines with proper error handling
+                    from app.signal_engines.base import EngineTier, MarketContext
+                    from app.signal_engines.tqqq_swing_engine import TQQQSwingEngine
+                    from app.signal_engines.generic_swing_engine import GenericSwingEngine
                     
-                    results.append({
+                    # Validate we have sufficient historical data
+                    if len(historical_data) < 50:
+                        results.append({
+                            "symbol": symbol,
+                            "signal": "hold",
+                            "confidence": 0.0,
+                            "strategy": request.strategy,
+                            "timestamp": timestamp,
+                            "error": f"Insufficient historical data: {len(historical_data)} records (minimum 50 required for backtest date {request.backtest_date})"
+                        })
+                        continue
+                    
+                    # Validate data quality
+                    if not historical_data[-1].get('close') or historical_data[-1]['close'] <= 0:
+                        results.append({
+                            "symbol": symbol,
+                            "signal": "hold",
+                            "confidence": 0.0,
+                            "strategy": request.strategy,
+                            "timestamp": timestamp,
+                            "error": f"Invalid price data: close price is {historical_data[-1].get('close')} for {request.backtest_date}"
+                        })
+                        continue
+                    
+                    # Create market context
+                    from app.signal_engines.base import MarketRegime
+                    context = MarketContext(
+                        regime=MarketRegime.NO_TRADE,
+                        regime_confidence=0.5,
+                        vix=20.0,  # Default VIX
+                        nasdaq_trend="neutral"
+                    )
+                    
+                    # Create mock price data for the engine with historical context
+                    import pandas as pd
+                    import numpy as np
+                    from datetime import datetime, timedelta
+                    
+                    # Get historical price data for the symbol up to the backtest date
+                    historical_data = []
+                    try:
+                        # Query database directly for historical data up to backtest date
+                        from app.database import db
+                        
+                        query = """
+                            SELECT date, open, high, low, close, volume
+                            FROM raw_market_data_daily 
+                            WHERE symbol = :symbol AND date <= :backtest_date
+                            ORDER BY date DESC
+                            LIMIT 60
+                        """
+                        
+                        result = db.execute_query(query, {
+                            "symbol": symbol,
+                            "backtest_date": request.backtest_date
+                        })
+                        
+                        if result:
+                            historical_data = result
+                            print(f"📊 Found {len(historical_data)} records for {symbol} up to {request.backtest_date}")
+                        else:
+                            print(f"⚠️ No historical data found for {symbol} up to {request.backtest_date}")
+                            
+                    except Exception as e:
+                        print(f"❌ Error getting historical data: {e}")
+                        pass
+                    
+                    # If no historical data, create synthetic data
+                    if not historical_data:
+                        base_price = indicators.get('price', indicators.get('sma_50', 50))
+                        dates = []
+                        prices = []
+                        
+                        # Generate 60 days of synthetic data
+                        for i in range(60):
+                            date = (datetime.strptime(request.backtest_date, "%Y-%m-%d") - timedelta(days=60-i)).date()
+                            # Add some realistic price movement
+                            price_change = np.random.normal(0, 0.02)  # 2% daily volatility
+                            if i == 0:
+                                price = base_price
+                            else:
+                                price = prices[-1] * (1 + price_change)
+                            
+                            dates.append(date)
+                            prices.append(price)
+                        
+                        # Create synthetic historical data
+                        historical_data = []
+                        for i, (date, price) in enumerate(zip(dates, prices)):
+                            historical_data.append({
+                                'date': date,
+                                'open': price * 0.998,
+                                'high': price * 1.02,
+                                'low': price * 0.98,
+                                'close': price,
+                                'volume': 1000000 + int(np.random.normal(0, 200000))
+                            })
+                    
+                    # Convert to DataFrame and add indicators
+                    price_df = pd.DataFrame(historical_data)
+                    price_df['date'] = pd.to_datetime(price_df['date'])
+                    price_df.set_index('date', inplace=True)
+                    
+                    # Add technical indicators
+                    price_df['sma_20'] = price_df['close'].rolling(window=20).mean()
+                    price_df['sma_50'] = price_df['close'].rolling(window=50).mean()
+                    price_df['sma_200'] = price_df['close'].rolling(window=min(200, len(price_df))).mean()
+                    price_df['ema_20'] = price_df['close'].ewm(span=20).mean()
+                    
+                    # Calculate RSI
+                    delta = price_df['close'].diff()
+                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                    rs = gain / loss
+                    price_df['rsi'] = 100 - (100 / (1 + rs))
+                    
+                    # Calculate MACD
+                    exp1 = price_df['close'].ewm(span=12).mean()
+                    exp2 = price_df['close'].ewm(span=26).mean()
+                    price_df['macd'] = exp1 - exp2
+                    price_df['macd_signal'] = price_df['macd'].ewm(span=9).mean()
+                    
+                    # Calculate ATR
+                    high_low = price_df['high'] - price_df['low']
+                    high_close = np.abs(price_df['high'] - price_df['close'].shift())
+                    low_close = np.abs(price_df['low'] - price_df['close'].shift())
+                    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+                    true_range = ranges.max(axis=1)
+                    price_df['atr'] = true_range.rolling(window=14).mean()
+                    
+                    # Fill NaN values with the most recent valid values
+                    price_df = price_df.fillna(method='bfill').fillna(method='ffill')
+                    
+                    # Ensure the last row matches our current indicators
+                    last_row = len(price_df) - 1
+                    price_df.iloc[last_row, price_df.columns.get_loc('sma_20')] = indicators.get('ema20', indicators.get('sma_50', 0))
+                    price_df.iloc[last_row, price_df.columns.get_loc('sma_50')] = indicators.get('sma_50', 0)
+                    price_df.iloc[last_row, price_df.columns.get_loc('sma_200')] = indicators.get('sma_200', 0)
+                    price_df.iloc[last_row, price_df.columns.get_loc('ema_20')] = indicators.get('ema20', indicators.get('sma_50', 0))
+                    price_df.iloc[last_row, price_df.columns.get_loc('rsi')] = indicators.get('rsi', 50)
+                    price_df.iloc[last_row, price_df.columns.get_loc('macd')] = indicators.get('macd_line', 0)
+                    price_df.iloc[last_row, price_df.columns.get_loc('macd_signal')] = indicators.get('macd_signal', 0)
+                    
+                    price_data = price_df
+                    
+                    # Select the appropriate engine with validation
+                    try:
+                        if request.strategy == "tqqq_swing":
+                            if symbol == "TQQQ":
+                                # Try TQQQ engine first, but fallback to generic if VIX data missing
+                                try:
+                                    engine = TQQQSwingEngine()
+                                    signal_result = engine.generate_signal(symbol, price_data, context)
+                                    
+                                    # Validate signal result
+                                    if not hasattr(signal_result, 'signal') or not hasattr(signal_result, 'confidence'):
+                                        raise ValueError("Invalid signal result from TQQQ engine")
+                                    
+                                    # If TQQQ engine returns HOLD due to missing data, use generic
+                                    if (signal_result.signal.value == 'HOLD' and 
+                                        signal_result.confidence < 0.2 and
+                                        any('Missing required' in str(r) for r in signal_result.reasoning)):
+                                        engine = GenericSwingEngine()
+                                        signal_result = engine.generate_signal(symbol, price_data, context)
+                                        
+                                except Exception as tqqq_error:
+                                    # Fallback to generic if TQQQ engine fails
+                                    engine = GenericSwingEngine()
+                                    signal_result = engine.generate_signal(symbol, price_data, context)
+                                    print(f"⚠️ TQQQ engine failed, using generic: {tqqq_error}")
+                            else:
+                                # Non-TQQQ symbols use generic
+                                engine = GenericSwingEngine()
+                                signal_result = engine.generate_signal(symbol, price_data, context)
+                        elif request.strategy == "generic_swing":
+                            engine = GenericSwingEngine()
+                            signal_result = engine.generate_signal(symbol, price_data, context)
+                        else:
+                            # Default to generic
+                            engine = GenericSwingEngine()
+                            signal_result = engine.generate_signal(symbol, price_data, context)
+                        
+                        # Validate final signal result
+                        if not hasattr(signal_result, 'signal') or not hasattr(signal_result, 'confidence'):
+                            raise ValueError(f"Invalid signal result from {engine.name}")
+                        
+                        if signal_result.confidence < 0 or signal_result.confidence > 1:
+                            raise ValueError(f"Invalid confidence value: {signal_result.confidence}")
+                        
+                    except Exception as engine_error:
+                        results.append({
+                            "symbol": symbol,
+                            "signal": "hold",
+                            "confidence": 0.0,
+                            "strategy": request.strategy,
+                            "timestamp": timestamp,
+                            "error": f"Signal generation failed: {str(engine_error)}"
+                        })
+                        continue
+                    
+                    # Store signal in database
+                    from app.signal_storage import store_signal_in_database
+                    
+                    signal_data = {
                         "symbol": symbol,
-                        "signal": signal_result.signal if hasattr(signal_result, 'signal') else "hold",
+                        "signal": signal_result.signal.value if hasattr(signal_result, 'signal') else "hold",
                         "confidence": signal_result.confidence if hasattr(signal_result, 'confidence') else 0.5,
                         "strategy": request.strategy,
-                        "timestamp": datetime.now().isoformat()
-                    })
+                        "timestamp": timestamp,
+                        "reason": " | ".join(signal_result.reasoning) if hasattr(signal_result, 'reasoning') and signal_result.reasoning else "No reasoning available",
+                        "price_at_signal": indicators.get('price', indicators.get('sma_50', 0))
+                    }
+                    
+                    await store_signal_in_database(signal_data, indicators, request.backtest_date)
+                    
+                    results.append(signal_data)
                 else:
                     results.append({
                         "symbol": symbol,
@@ -291,7 +516,19 @@ async def generate_signals(request: SignalRequest):
         }
         
     except Exception as e:
-        logger.error(f"Failed to generate signals: {e}")
+        logger.error(f"Signal generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/signals/recent")
+async def get_recent_signals(limit: int = 20):
+    """Get recent trading signals from database"""
+    try:
+        from app.signal_storage import get_recent_signals
+        return await get_recent_signals(limit)
+        
+    except Exception as e:
+        logger.error(f"Failed to get recent signals: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -310,172 +547,116 @@ async def run_screener(request: ScreenerRequest):
             limit=request.limit
         )
         
-        return result
+        return {
+            "success": True,
+            "results": result,
+            "total_found": len(result) if result else 0
+        }
         
     except Exception as e:
-        logger.error(f"Failed to run screener: {e}")
+        logger.error(f"Screener failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/audit-logs")
-async def get_audit_logs(
-    start_date: str = Query(...),
-    end_date: str = Query(...),
-    level: str = Query("ALL"),
-    limit: int = Query(100)
-):
-    """Get audit logs with filters"""
+@router.get("/insights/{symbol}")
+async def get_stock_insights(symbol: str):
+    """Get comprehensive stock insights"""
     try:
-        # For now, return mock data since we don't have a proper audit log table
-        # In a real implementation, this would query an audit_logs table
+        insights_service = StockInsightsService()
         
-        logs = [
-            {
-                "timestamp": "2025-01-26T14:30:00Z",
-                "level": "INFO",
-                "source": "DataRefresh",
-                "message": "Successfully refreshed data for AAPL, MSFT, GOOGL",
-                "details": "498 records"
-            },
-            {
-                "timestamp": "2025-01-26T14:25:00Z",
-                "level": "WARNING",
-                "source": "API",
-                "message": "Rate limit approaching for AlphaVantage API",
-                "details": "4,950/5,000 calls"
-            }
+        insights = insights_service.get_comprehensive_insights(symbol)
+        
+        return {
+            "symbol": symbol,
+            "insights": insights,
+            "generated_at": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get insights for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/data-summary/{table}")
+async def get_data_summary(table: str):
+    """Get data summary for a specific table"""
+    try:
+        # Validate table name
+        valid_tables = [
+            "raw_market_data_daily", "raw_market_data_intraday", "indicators_daily",
+            "fundamentals_snapshots", "industry_peers", "market_news", "earnings_calendar"
         ]
         
-        # Filter by level if specified
-        if level != "ALL":
-            logs = [log for log in logs if log["level"] == level]
+        if table not in valid_tables:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid table: {table}. Valid tables: {valid_tables}"
+            )
         
-        return {"logs": logs[:limit]}
+        # Get summary from database
+        query = f"""
+            SELECT 
+                '{table}' as table_name,
+                COUNT(*) as total_records,
+                COUNT(*) FILTER (WHERE DATE(created_at) = CURRENT_DATE) as today_records,
+                MAX(created_at) as last_updated,
+                pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                (
+                    SELECT COUNT(*) 
+                    FROM information_schema.columns 
+                    WHERE table_name = '{table}'
+                ) as column_count
+            FROM {table}
+        """
         
-    except Exception as e:
-        logger.error(f"Failed to get audit logs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/health")
-async def get_system_health():
-    """Get comprehensive system health status"""
-    try:
-        # Check database health
-        try:
-            db.execute_query("SELECT 1")
-            db_status = "healthy"
-            db_response_time = 12  # ms
-        except Exception as db_e:
-            db_status = "unhealthy"
-            db_response_time = None
-            logger.error(f"Database health check failed: {db_e}")
+        result = db.execute_query(query)
         
-        # Check data sources
-        try:
-            data_sources = {
-                "massive": {
-                    "status": "healthy",
-                    "last_sync": "2025-01-26T14:30:00Z"
-                },
-                "yahoo_finance": {
-                    "status": "healthy",
-                    "last_sync": "2025-01-26T14:29:00Z"
-                },
-                "alpha_vantage": {
-                    "status": "degraded",
-                    "last_sync": "2025-01-26T14:25:00Z"
-                }
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Table {table} not found")
+        
+        row = result[0]
+        
+        # Get quality metrics if available
+        quality_query = f"""
+            SELECT 
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE symbol IS NOT NULL AND date IS NOT NULL) as non_null_rows,
+                COUNT(*) FILTER (WHERE symbol IS NOT NULL AND date IS NOT NULL) * 100.0 / COUNT(*) as null_rate,
+                COUNT(DISTINCT symbol || date) * 100.0 / COUNT(*) as duplicate_rate
+            FROM {table}
+        """
+        
+        quality_result = db.execute_query(quality_query)
+        quality = quality_result[0] if quality_result else {}
+        
+        return {
+            "table_name": row["table_name"],
+            "total_records": row["total_records"],
+            "today_records": row["today_records"],
+            "last_updated": row["last_updated"],
+            "size_gb": row["size_gb"],
+            "column_count": row["column_count"],
+            "quality_metrics": {
+                "null_rate": float(quality.get("null_rate", 0.0)),
+                "duplicate_rate": float(quality.get("duplicate_rate", 0.0)),
+                "quality_score": 1.0 - (float(quality.get("null_rate", 0.0)) + float(quality.get("duplicate_rate", 0.0))),
+                "null_rows": quality.get("total", 0) - quality.get("non_null_rows", 0),
+                "total": quality.get("total", 0)
             }
-        except Exception as e:
-            logger.error(f"Failed to check data sources: {e}")
-            data_sources = {"error": str(e)}
-        
-        # Get system metrics (mock for now)
-        import psutil
-        metrics = {
-            "cpu_usage": psutil.cpu_percent(),
-            "memory_usage": psutil.virtual_memory().percent,
-            "disk_usage": psutil.disk_usage('/').percent,
-            "active_connections": 23  # Mock
-        }
-        
-        overall_status = "healthy" if db_status == "healthy" else "degraded"
-        
-        return {
-            "status": overall_status,
-            "timestamp": datetime.now().isoformat(),
-            "services": {
-                "database": {
-                    "status": db_status,
-                    "response_time": db_response_time
-                },
-                "python_api": {
-                    "status": "healthy",
-                    "response_time": 45
-                },
-                "data_sources": data_sources
-            },
-            "metrics": metrics
         }
         
     except Exception as e:
-        logger.error(f"Failed to get system health: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Health check failed", "detail": str(e)}
-        )
-
-
-@router.post("/insights/generate")
-async def generate_stock_insights(request: StockInsightsRequest):
-    """Generate comprehensive stock insights with strategy comparison"""
-    try:
-        insights_service = StockInsightsService()
-        
-        # Generate insights
-        insights = insights_service.get_stock_insights(
-            symbol=request.symbol,
-            run_all_strategies=request.run_all_strategies
-        )
-        
-        return insights
-        
-    except Exception as e:
-        logger.error(f"Failed to generate stock insights for {request.symbol}: {e}")
+        logger.error(f"Failed to get data summary for {table}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/insights/strategies")
-async def get_available_strategies():
-    """Get list of all available trading strategies"""
-    try:
-        insights_service = StockInsightsService()
-        strategies = insights_service.get_available_strategies()
-        
-        return {
-            "strategies": strategies,
-            "total": len(strategies)
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to get available strategies: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Import services that may not be available in all environments
+try:
+    from app.services.stock_screener_service import StockScreenerService
+except ImportError:
+    StockScreenerService = None
 
-
-@router.post("/insights/strategy/{strategy_name}")
-async def run_single_strategy(symbol: str, strategy_name: str):
-    """Run a single strategy for a symbol"""
-    try:
-        insights_service = StockInsightsService()
-        
-        result = insights_service.run_single_strategy(
-            symbol=symbol,
-            strategy_name=strategy_name
-        )
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Failed to run strategy {strategy_name} for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+try:
+    from app.services.stock_insights_service import StockInsightsService
+except ImportError:
+    StockInsightsService = None

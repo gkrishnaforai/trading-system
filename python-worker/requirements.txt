@@ -20,6 +20,7 @@ pandas>=2.1.0
 numpy>=1.26.0
 streamlit>=1.29.0
 yfinance==0.2.66  # Yahoo Finance data (latest released/tagged version; repo has 1.0 branch but not a PyPI tag)
+yahoo-fin>=0.8.9.1
 massive>=2.0.0  # Massive.com (formerly Polygon.io) market data API - official client
 ta-lib>=0.4.28  # Technical Analysis Library (optional)
 exchange-calendars>=4.5.0

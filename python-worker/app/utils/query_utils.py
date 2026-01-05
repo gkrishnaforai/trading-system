@@ -9,13 +9,13 @@ from app.database import db
 def fetch_latest_by_symbol(
     table: str,
     symbol: str,
-    date_column: str = "trade_date",
+    date_column: str = "date",
     select_cols: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Fetch the latest row for a symbol by date/timestamp."""
     cols = ", ".join(select_cols) if select_cols else "*"
     # Postgres-only: same query works for both
-    query = f"SELECT {cols} FROM {table} WHERE stock_symbol = :symbol ORDER BY {date_column} DESC LIMIT 1"
+    query = f"SELECT {cols} FROM {table} WHERE symbol = :symbol ORDER BY {date_column} DESC LIMIT 1"
     result = db.execute_query(query, {"symbol": symbol})
     return result[0] if result else None
 

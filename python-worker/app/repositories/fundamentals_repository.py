@@ -96,11 +96,13 @@ class FundamentalsRepository:
                 snapshot_date = datetime.now()
             
             # Prepare data for insertion using JSONB payload structure
+            from app.utils.json_sanitize import json_dumps_sanitized
+            
             data = {
                 "stock_symbol": symbol,
                 "as_of_date": snapshot_date.date(),
                 "source": "stock_insights_service",
-                "payload": json.dumps(fundamentals),  # Serialize dict to JSON string for PostgreSQL
+                "payload": json_dumps_sanitized(fundamentals),  # Serialize dict to JSON string for PostgreSQL
                 "created_at": datetime.now(),
                 "updated_at": datetime.now()
             }

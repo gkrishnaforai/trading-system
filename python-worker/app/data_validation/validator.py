@@ -30,6 +30,8 @@ class ValidationIssue:
     check_name: str
     severity: ValidationSeverity
     message: str
+    field: Optional[str] = None
+    value: Optional[Any] = None
     affected_rows: Optional[List[int]] = None
     affected_columns: Optional[List[str]] = None
     metric_value: Optional[float] = None
@@ -113,6 +115,8 @@ class ValidationReport:
                         {
                             "message": i.message,
                             "severity": i.severity.value,
+                            "field": i.field,
+                            "value": _make_json_serializable(i.value),
                             "affected_columns": i.affected_columns,
                             "metric_value": _make_json_serializable(i.metric_value),
                             "threshold": _make_json_serializable(i.threshold),

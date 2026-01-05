@@ -8,23 +8,47 @@ import os
 import pandas as pd
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any
+import requests
 
 # Add project root so imports work
 sys.path.insert(0, os.path.dirname(__file__))
 
-from app.services.earnings_calendar_service import EarningsCalendarService
 from app.observability.logging import get_logger
+from app.clients.go_api_client import GoApiClient, GoApiClientConfig, GoApiError
 
 logger = get_logger("streamlit_earnings_calendar")
 
 st.set_page_config(page_title="Earnings Calendar", layout="wide")
 
-# Initialize service
 @st.cache_resource
-def get_earnings_service():
-    return EarningsCalendarService()
+def get_go_api_base_url() -> str:
+    return os.environ.get("GO_API_URL") or os.environ.get("GO_API_BASE_URL") or "http://localhost:8000"
 
-earnings_service = get_earnings_service()
+
+@st.cache_resource
+def get_go_api_client() -> GoApiClient:
+    return GoApiClient(
+        get_go_api_base_url(),
+        config=GoApiClientConfig(connect_timeout_s=5.0, read_timeout_s=30.0, total_retries=2, backoff_factor=0.3),
+    )
+
+
+def _go_api_url(path: str) -> str:
+    return get_go_api_base_url().rstrip("/") + path
+
+
+def _go_api_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return get_go_api_client().get(path, params=params)
+    except GoApiError as e:
+        raise RuntimeError(f"Go API request failed ({get_go_api_base_url()}): {e}")
+
+
+def _go_api_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return get_go_api_client().post(path, payload=payload)
+    except GoApiError as e:
+        raise RuntimeError(f"Go API request failed ({get_go_api_base_url()}): {e}")
 
 # Helper functions
 def format_earnings_date(date_str):
@@ -106,19 +130,46 @@ selected_sector = st.sidebar.selectbox("Filter by Sector", sectors)
 # Data refresh button
 if st.sidebar.button("Refresh Data"):
     with st.spinner("Refreshing earnings data..."):
-        # Determine symbols to fetch
-        if view_type == "Portfolio":
-            # For portfolio view, fetch major symbols
-            symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "JPM", "JNJ", "V", "WMT", "PG", "UNH", "HD", "MA"]
-        else:
-            # For calendar views, fetch broader set
-            symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "JPM", "JNJ", "V", "WMT", "PG", "UNH", "HD", "MA", "DIS", "NFLX", "ADBE", "CRM", "PYPL", "INTC", "CSCO", "CMCSA", "PEP", "COST", "AVGO", "TXN", "ACN", "NKE"]
-        
-        result = earnings_service.refresh_earnings_calendar(
-            symbols=symbols,
-            start_date=start_date.strftime("%Y-%m-%d"),
-            end_date=end_date.strftime("%Y-%m-%d")
+        user_id = st.sidebar.text_input("User ID", value="a8c2c1e3-91a7-4d25-9e3c-51e5d0bda721", key="earnings_user_id")
+        subscription_level = st.sidebar.selectbox("Subscription", ["basic", "pro", "elite"], index=2, key="earnings_sub")
+
+        scope = st.sidebar.selectbox(
+            "Symbol Scope",
+            ["manual", "watchlist", "portfolio", "watchlist+portfolio"],
+            index=0,
+            key="earnings_scope",
         )
+
+        watchlist_id = st.sidebar.text_input("Watchlist ID", value="", key="earnings_watchlist_id")
+        portfolio_id = st.sidebar.text_input("Portfolio ID", value="", key="earnings_portfolio_id")
+
+        symbols: List[str] = []
+        if scope == "manual":
+            manual = st.sidebar.text_area(
+                "Symbols (one per line)",
+                value="AAPL\nMSFT\nNVDA",
+                key="earnings_manual_symbols",
+            )
+            symbols = [s.strip().upper() for s in manual.split("\n") if s.strip()]
+        else:
+            params = {
+                "user_id": user_id,
+                "subscription_level": subscription_level,
+            }
+            if "watchlist" in scope:
+                params["watchlist_id"] = watchlist_id
+            if "portfolio" in scope:
+                params["portfolio_id"] = portfolio_id
+
+            scope_resp = _go_api_get("/api/v1/symbol-scope/resolve", params=params)
+            symbols = [s.strip().upper() for s in scope_resp.get("symbols", []) if s]
+
+        payload = {
+            "symbols": symbols or None,
+            "start_date": start_date.strftime("%Y-%m-%d"),
+            "end_date": end_date.strftime("%Y-%m-%d"),
+        }
+        result = _go_api_post("/api/v1/admin/earnings-calendar/refresh", payload)
         
         if result["status"] == "success":
             st.sidebar.success(f"Refreshed {result['count']} earnings entries")
@@ -164,7 +215,14 @@ if view_type == "Portfolio":
     
 else:
     # Calendar views
-    earnings_data = earnings_service.get_earnings_calendar(start_date, end_date)
+    resp = _go_api_get(
+        "/api/v1/admin/earnings-calendar",
+        params={
+            "start_date": start_date.strftime("%Y-%m-%d"),
+            "end_date": end_date.strftime("%Y-%m-%d"),
+        },
+    )
+    earnings_data = resp.get("rows", [])
     
     # Filter by sector if selected
     if selected_sector != "All":
@@ -172,7 +230,14 @@ else:
     
     # Display summary
     st.subheader(f"Earnings Summary ({start_date} to {end_date})")
-    summary = earnings_service.get_earnings_summary(start_date, end_date)
+    # Summary can be derived locally from returned rows to avoid adding more endpoints.
+    summary = {
+        "total_companies": len(earnings_data),
+        "unique_symbols": len({e.get("symbol") for e in earnings_data if e.get("symbol")}),
+        "by_sector": {},
+        "by_date": {},
+        "market_cap_distribution": {},
+    }
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:

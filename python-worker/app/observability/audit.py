@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from typing import Any, Dict, Optional
 from uuid import UUID
 
@@ -25,7 +26,7 @@ def start_run(
         "run_id": str(run_id),
         "environment": environment,
         "git_sha": git_sha,
-        "metadata": metadata or {},
+        "metadata": json.dumps(metadata or {}),
     }
 
     with db.get_session() as session:
@@ -33,7 +34,7 @@ def start_run(
             text(
                 """
                 INSERT INTO data_ingestion_runs (run_id, started_at, status, environment, git_sha, metadata)
-                VALUES (:run_id::uuid, NOW(), 'running', :environment, :git_sha, :metadata::jsonb)
+                VALUES (CAST(:run_id AS uuid), NOW(), 'running', :environment, :git_sha, CAST(:metadata AS jsonb))
                 ON CONFLICT (run_id) DO NOTHING
                 """
             ),
@@ -45,7 +46,7 @@ def finish_run(run_id: UUID, *, status: str, metadata: Optional[Dict[str, Any]] 
     payload = {
         "run_id": str(run_id),
         "status": status,
-        "metadata": metadata or {},
+        "metadata": json.dumps(metadata or {}),
     }
 
     with db.get_session() as session:
@@ -55,8 +56,8 @@ def finish_run(run_id: UUID, *, status: str, metadata: Optional[Dict[str, Any]] 
                 UPDATE data_ingestion_runs
                 SET finished_at = NOW(),
                     status = :status,
-                    metadata = COALESCE(metadata, '{}'::jsonb) || :metadata::jsonb
-                WHERE run_id = :run_id::uuid
+                    metadata = COALESCE(metadata, '{}'::jsonb) || CAST(:metadata AS jsonb)
+                WHERE run_id = CAST(:run_id AS uuid)
                 """
             ),
             payload,
@@ -107,7 +108,7 @@ def log_event(
         "error_message": error_message,
         "root_cause_type": root_cause_type,
         "root_cause_message": root_cause_message,
-        "context": context or {},
+        "context": json.dumps(context or {}),
     }
 
     try:
@@ -120,9 +121,9 @@ def log_event(
                         duration_ms, records_in, records_saved, message,
                         error_type, error_message, root_cause_type, root_cause_message, context
                     ) VALUES (
-                        :run_id::uuid, NOW(), :level, :provider, :operation, :symbol,
+                        CAST(:run_id AS uuid), NOW(), :level, :provider, :operation, :symbol,
                         :duration_ms, :records_in, :records_saved, :message,
-                        :error_type, :error_message, :root_cause_type, :root_cause_message, :context::jsonb
+                        :error_type, :error_message, :root_cause_type, :root_cause_message, CAST(:context AS jsonb)
                     )
                     """
                 ),
