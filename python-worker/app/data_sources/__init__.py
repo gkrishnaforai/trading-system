@@ -48,20 +48,16 @@ DATA_SOURCES = {
 if POLYGON_LIBRARY_AVAILABLE and MASSIVE_AVAILABLE and settings.massive_enabled and settings.massive_api_key:
     DATA_SOURCES["massive"] = MassiveSource
 elif settings.massive_enabled and settings.massive_api_key and not POLYGON_LIBRARY_AVAILABLE:
-    # Fail fast if massive is enabled but massive library is missing
+    # Log warning but don't fail - allow system to work without massive
     import logging
     logger = logging.getLogger(__name__)
-    error_msg = (
-        "❌ CRITICAL: Massive.com is enabled but 'massive' library is not installed.\n"
-        "   'massive>=2.0.0' is in requirements.txt but the Docker container needs to be rebuilt.\n"
-        "   Run: docker-compose build python-worker\n"
-        "   Then: docker-compose up -d python-worker"
+    warning_msg = (
+        "⚠️  WARNING: Massive.com is enabled but 'massive' library is not installed.\n"
+        "   System will continue without Massive.com data source.\n"
+        "   To enable Massive.com: pip install massive>=2.0.0 and rebuild container"
     )
-    logger.error(error_msg)
-    raise ImportError(
-        "massive library not installed. Rebuild Docker container: "
-        "docker-compose build python-worker && docker-compose up -d python-worker"
-    )
+    logger.warning(warning_msg)
+    # Don't raise ImportError - allow system to continue with other data sources
 
 # Determine primary and fallback sources from config (Industry Standard pattern)
 # Priority: primary_data_provider > default_data_provider > "fallback"

@@ -242,7 +242,7 @@ class SignalReadinessValidator:
             query = """
                 SELECT COUNT(*) as row_count
                 FROM raw_market_data
-                WHERE stock_symbol = :symbol
+                WHERE symbol = :symbol
             """
             result = db.execute_query(query, {"symbol": symbol})
             row_count = result[0]['row_count'] if result else 0
@@ -271,7 +271,7 @@ class SignalReadinessValidator:
                     ema9, ema21, sma50, sma200, ema20, ema50,
                     rsi, macd, macd_signal, atr
                 FROM aggregated_indicators
-                WHERE stock_symbol = :symbol
+                WHERE symbol = :symbol
                 ORDER BY date DESC
                 LIMIT 1
             """

@@ -42,7 +42,7 @@ class APIConfig:
     @property
     def refresh_api_base(self) -> str:
         """Base URL for Refresh API endpoints"""
-        return f"{self.python_worker_url}/refresh"
+        return f"{self.python_worker_url}/api/v1/refresh"
     
     def get_universal_signal_url(self) -> str:
         """Get Universal Signal endpoint URL"""

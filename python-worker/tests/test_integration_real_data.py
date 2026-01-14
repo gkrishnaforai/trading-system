@@ -539,13 +539,17 @@ class TestRealDataIntegration(unittest.TestCase):
                 atr = calculate_atr(high, low, close)
                 
                 # Calculate pullback zones
-                pb_zones = calculate_pullback_zones(close, ema20, atr)
+                pb_lower, pb_upper = calculate_pullback_zones(close, ema20, atr)
                 
                 # Validate pullback zones
-                if pb_zones:
-                    self.assertIn('lower', pb_zones, f"{symbol}: Missing lower pullback zone")
-                    self.assertIn('upper', pb_zones, f"{symbol}: Missing upper pullback zone")
-                    self.assertLess(pb_zones['lower'], pb_zones['upper'],
+                if pb_lower is not None and pb_upper is not None:
+                    # Get last valid values
+                    lower_val = pb_lower.iloc[-1] if len(pb_lower) > 0 and not pd.isna(pb_lower.iloc[-1]) else None
+                    upper_val = pb_upper.iloc[-1] if len(pb_upper) > 0 and not pd.isna(pb_upper.iloc[-1]) else None
+                    
+                    self.assertIsNotNone(lower_val, f"{symbol}: Missing lower pullback zone")
+                    self.assertIsNotNone(upper_val, f"{symbol}: Missing upper pullback zone")
+                    self.assertLess(lower_val, upper_val,
                                   f"{symbol}: Lower > Upper pullback zone")
                 
                 # Calculate stop-loss

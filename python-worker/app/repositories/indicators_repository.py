@@ -39,8 +39,8 @@ class IndicatorsRepository(BaseRepository):
     def upsert_daily_many(rows: Iterable[DailyIndicatorUpsertRow]) -> int:
         rows_list = [
             {
-                "stock_symbol": r.stock_symbol,
-                "trade_date": r.trade_date,
+                "symbol": r.stock_symbol,
+                "date": r.trade_date,
                 "ema9": r.ema9,
                 "ema21": r.ema21,
                 "sma50": r.sma50,
@@ -61,7 +61,7 @@ class IndicatorsRepository(BaseRepository):
         try:
             return BaseRepository.upsert_many(
                 table="indicators_daily",
-                unique_columns=["stock_symbol", "trade_date"],
+                unique_columns=["symbol", "date"],
                 rows=rows_list,
             )
         except Exception as e:
@@ -75,7 +75,7 @@ class IndicatorsRepository(BaseRepository):
         """Fetch all indicators for a symbol ordered by date."""
         return BaseRepository.fetch_many(
             table="indicators_daily",
-            where={"stock_symbol": symbol},
+            where={"symbol": symbol},
             select_cols=[
                 "trade_date as date",
                 "sma_50 as sma50",
@@ -97,7 +97,7 @@ class IndicatorsRepository(BaseRepository):
         """Fetch the latest indicators for a symbol"""
         result = BaseRepository.fetch_many(
             table="indicators_daily",
-            where={"stock_symbol": symbol},
+            where={"symbol": symbol},
             select_cols=[
                 "sma_50 as sma50",
                 "sma_200 as sma200", 
@@ -120,9 +120,9 @@ class IndicatorsRepository(BaseRepository):
     def fetch_recent_symbols(days: int = 30) -> List[str]:
         """Fetch distinct symbols with indicators in the last N days."""
         query = f"""
-            SELECT DISTINCT stock_symbol
+            SELECT DISTINCT symbol
             FROM indicators_daily
-            WHERE trade_date >= CURRENT_DATE - INTERVAL '{days} days'
+            WHERE date >= CURRENT_DATE - INTERVAL '{days} days'
         """
         result = db.execute_query(query)
-        return [r["stock_symbol"] for r in result]
+        return [r["symbol"] for r in result]

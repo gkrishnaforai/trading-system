@@ -63,7 +63,13 @@ class ActionableLevelsService(BaseService):
             }
         
         # Calculate entry zone (pullback zone)
-        entry_zone = calculate_pullback_zones(price, ema20, atr)
+        entry_lower, entry_upper = calculate_pullback_zones(price, ema20, atr)
+        
+        # Convert to dict format for compatibility
+        entry_zone = {
+            'lower': entry_lower.iloc[-1] if len(entry_lower) > 0 and not pd.isna(entry_lower.iloc[-1]) else None,
+            'upper': entry_upper.iloc[-1] if len(entry_upper) > 0 and not pd.isna(entry_upper.iloc[-1]) else None
+        }
         
         # Calculate stop-loss (2x ATR)
         stop_loss = calculate_stop_loss(price, atr, multiplier=2.0, position_type='long')

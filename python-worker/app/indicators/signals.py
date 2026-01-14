@@ -1,14 +1,19 @@
 """
 Trading signal generation based on indicators
-Implements the business logic for buy/sell/hold signals
+Improved: vectorized, safer, no signal spam, fear/greed aligned
 """
+
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Dict, Tuple
 import pandas as pd
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
+
+# ============================
+# Core Signal Generator
+# ============================
 
 def generate_signal(
     price: pd.Series,
@@ -17,190 +22,173 @@ def generate_signal(
     sma200: pd.Series,
     macd_line: pd.Series,
     macd_signal: pd.Series,
-    macd_histogram: pd.Series,
     rsi: pd.Series,
     volume: pd.Series,
     volume_ma: pd.Series,
     long_term_trend: pd.Series,
-    medium_term_trend: pd.Series
+    medium_term_trend: pd.Series,
 ) -> pd.Series:
     """
-    Generate buy/sell/hold signals based on comprehensive analysis
-    
-    Strategy Implementation:
-    - Long-term trend: Price > 200-day SMA (Golden Cross)
-    - Medium-term trend: EMA20 vs SMA50 for trend context
-    - Buy Signal Requirements:
-      1. Short EMA (EMA20) crosses above long EMA (EMA50)
-      2. Trend direction confirmed: Price > SMA200 (long-term bullish)
-      3. MACD moving positive (MACD line > Signal line)
-      4. RSI not overbought (< 70)
-      5. Volume spike confirmation (volume > 1.2x volume MA)
-    - Sell Signal Requirements:
-      1. Short EMA (EMA20) crosses below long EMA (EMA50)
-      2. Momentum fading: MACD backcross (MACD < Signal) OR RSI drops below 50
-      3. Trend weakening (long-term or medium-term trend not bullish)
-    
-    Confirmation Filters:
-    - Volume spikes on crossover
-    - Pullback to EMA in confirmed trend (calculated separately)
-    - Momentum indicators (RSI/MACD) aligned with trend
-    
-    Returns:
-        Series with 'buy', 'sell', or 'hold'
+    Generates BUY / SELL / HOLD signals with:
+    - No look-ahead bias
+    - No repeated signals
+    - Buy in fear, sell in greed logic
     """
-    signals = pd.Series('hold', index=price.index)
-    
-    # Ensure all series have the same index
-    if not all(len(s) == len(price) for s in [ema20, ema50, sma200, macd_line, rsi]):
-        logger.warning("Series length mismatch in signal generation")
+
+    index = price.index
+    signals = pd.Series("hold", index=index)
+
+    # ============================
+    # Safety checks
+    # ============================
+    required = [
+        ema20, ema50, sma200,
+        macd_line, macd_signal,
+        rsi, volume, volume_ma,
+        long_term_trend, medium_term_trend
+    ]
+
+    if not all(len(s) == len(price) for s in required):
+        logger.warning("Signal generation skipped: length mismatch")
         return signals
-    
-    # Calculate EMA crossovers
-    ema_cross_above = (ema20 > ema50) & (ema20.shift(1) <= ema50.shift(1))
-    ema_cross_below = (ema20 < ema50) & (ema20.shift(1) >= ema50.shift(1))
-    
-    # Volume confirmation
+
+    # ============================
+    # Trend & Momentum Conditions
+    # ============================
+
+    bullish_long = long_term_trend == "bullish"
+    bullish_medium = medium_term_trend == "bullish"
+
+    ema_cross_up = (ema20 > ema50) & (ema20.shift(1) <= ema50.shift(1))
+    ema_cross_down = (ema20 < ema50) & (ema20.shift(1) >= ema50.shift(1))
+
+    macd_score = np.where(macd_line > macd_signal, 0.25, 0.0)
+    macd_negative = macd_line < macd_signal
+
     volume_spike = volume > volume_ma * 1.2
-    
+
+    # ============================
+    # FEAR CONDITIONS (BUY)
+    # ============================
+
+    rsi_fear_zone = (rsi >= 40) & (rsi <= 55)
+    pullback_zone = price <= ema20 * 1.01
+
+    buy_setup = (
+        bullish_long &
+        bullish_medium &
+        macd_positive &
+        rsi_fear_zone &
+        (ema_cross_up | pullback_zone)
+    )
+
+    # ============================
+    # GREED CONDITIONS (SELL)
+    # ============================
+
+    rsi_greed_zone = rsi >= 70
+    momentum_fading = macd_negative | (rsi < 50)
+    trend_breakdown = (~bullish_long) | (~bullish_medium)
+
+    sell_setup = (
+        (ema_cross_down | rsi_greed_zone | trend_breakdown) &
+        momentum_fading
+    )
+
+    # ============================
+    # Signal De-duplication
+    # ============================
+
+    position = "flat"
+
     for i in range(1, len(price)):
-        # Skip if we don't have enough data
-        if pd.isna(price.iloc[i]) or pd.isna(ema20.iloc[i]) or pd.isna(ema50.iloc[i]):
-            continue
-        
-        # Long-term trend check (Golden Cross)
-        is_bullish_long_term = long_term_trend.iloc[i] == 'bullish'
-        is_bullish_medium_term = medium_term_trend.iloc[i] == 'bullish'
-        
-        # MACD confirmation
-        macd_positive = macd_line.iloc[i] > macd_signal.iloc[i]
-        macd_negative = macd_line.iloc[i] < macd_signal.iloc[i]
-        
-        # RSI conditions
-        rsi_not_overbought = rsi.iloc[i] < 70
-        rsi_not_oversold = rsi.iloc[i] > 30
-        
-        # BUY SIGNAL CONDITIONS
-        # All conditions must be met:
-        # 1. Short EMA crosses above long EMA (EMA20 > EMA50 crossover)
-        # 2. Long-term trend confirmed (Price > SMA200)
-        # 3. MACD moving positive (MACD line > Signal line)
-        # 4. RSI not overbought (< 70)
-        # 5. Volume spike confirmation (optional but preferred)
-        ema_cross_occurred = ema_cross_above.iloc[i]
-        has_volume_confirmation = volume_spike.iloc[i] if i < len(volume_spike) else True
-        
-        if (
-            is_bullish_long_term and  # 1. Price > SMA200 (Golden Cross / long-term trend confirmed)
-            is_bullish_medium_term and  # 2. EMA20 > SMA50 (medium-term trend context)
-            macd_positive and  # 3. MACD above signal (momentum positive)
-            rsi_not_overbought and  # 4. RSI < 70 (not overbought)
-            (ema_cross_occurred or (ema20.iloc[i] > ema50.iloc[i] * 1.02))  # 5. EMA crossover or strong position
-            # Note: Volume spike is calculated but not strictly required for buy signal
-            # to allow signals in low-volume environments. Can be added as strict requirement if needed.
-        ):
-            signals.iloc[i] = 'buy'
-        
-        # SELL SIGNAL CONDITIONS
-        # Conditions for sell signal:
-        # 1. Short EMA crosses below long EMA (EMA20 < EMA50)
-        # 2. Momentum fading: MACD backcross (MACD < Signal) OR RSI drops below 50
-        # 3. Trend weakening (long-term or medium-term not bullish)
-        ema_cross_below_occurred = ema_cross_below.iloc[i]
-        momentum_fading = macd_negative or rsi.iloc[i] < 50
-        trend_weakening = not is_bullish_long_term or not is_bullish_medium_term
-        
-        if (
-            (ema_cross_below_occurred or trend_weakening) and  # EMA cross below OR trend weakening
-            momentum_fading  # MACD backcross OR RSI < 50 (momentum fading)
-        ):
-            signals.iloc[i] = 'sell'
-        
-        # Default is 'hold'
-    
+        if position == "flat" and buy_setup.iloc[i]:
+            signals.iloc[i] = "buy"
+            position = "long"
+
+        elif position == "long" and sell_setup.iloc[i]:
+            signals.iloc[i] = "sell"
+            position = "flat"
+
     return signals
 
+
+# ============================
+# Pullback Zones
+# ============================
 
 def calculate_pullback_zones(
     price: pd.Series,
     ema20: pd.Series,
     atr: pd.Series,
     trend: Optional[pd.Series] = None
-) -> dict:
+) -> Tuple[pd.Series, pd.Series]:
     """
-    Calculate pullback zones for entry
-    
-    In bullish trends: pullback zone is EMA20 ± ATR
-    In bearish trends: pullback zone is EMA20 ± ATR (for short entries)
-    
-    Args:
-        price: Price series
-        ema20: 20-period EMA
-        atr: Average True Range
-        trend: Optional trend series (not used in calculation but kept for compatibility)
-    
-    Returns:
-        Dictionary with 'lower' and 'upper' keys containing latest values
+    EMA ± ATR pullback zone with trend context
+    Returns two Series: lower_zone and upper_zone
     """
-    # Get latest values
-    if isinstance(ema20, pd.Series):
-        ema20_val = ema20.iloc[-1] if len(ema20) > 0 else None
-    else:
-        ema20_val = ema20
-    
-    if isinstance(atr, pd.Series):
-        atr_val = atr.iloc[-1] if len(atr) > 0 else None
-    else:
-        atr_val = atr
-    
-    if ema20_val is None or atr_val is None or pd.isna(ema20_val) or pd.isna(atr_val):
-        return {'lower': None, 'upper': None}
-    
-    lower_zone = ema20_val - atr_val
-    upper_zone = ema20_val + atr_val
-    
-    return {'lower': lower_zone, 'upper': upper_zone}
+    if len(ema20) == 0 or len(atr) == 0 or len(price) == 0:
+        return pd.Series([None] * len(price), index=price.index), pd.Series([None] * len(price), index=price.index)
 
+    # Initialize Series with same index as input
+    lower_zone = pd.Series([None] * len(price), index=price.index)
+    upper_zone = pd.Series([None] * len(price), index=price.index)
+    
+    # Calculate for each point
+    for i in range(len(price)):
+        if i < len(ema20) and i < len(atr):
+            ema = ema20.iloc[i]
+            atr_val = atr.iloc[i]
+            
+            if pd.isna(ema) or pd.isna(atr_val):
+                continue
+                
+            # Basic pullback zone: EMA ± ATR
+            lower_val = ema - atr_val
+            upper_val = ema + atr_val
+            
+            # Adjust zones based on trend if provided
+            if trend is not None and i < len(trend):
+                current_trend = trend.iloc[i]
+                if current_trend == 'bullish':
+                    # In bullish trend, focus on upper zone for entries
+                    lower_val = ema - (atr_val * 0.5)  # Tighter lower bound
+                    upper_val = ema + (atr_val * 1.5)  # Wider upper bound
+                elif current_trend == 'bearish':
+                    # In bearish trend, focus on lower zone for entries
+                    lower_val = ema - (atr_val * 1.5)  # Wider lower bound
+                    upper_val = ema + (atr_val * 0.5)  # Tighter upper bound
+            
+            lower_zone.iloc[i] = lower_val
+            upper_zone.iloc[i] = upper_val
+
+    return lower_zone, upper_zone
+
+
+# ============================
+# ATR Stop Loss
+# ============================
 
 def calculate_stop_loss(
     price: pd.Series,
     atr: pd.Series,
     multiplier: float = 2.0,
-    position_type: str = 'long'
-) -> float:
+    position_type: str = "long"
+) -> Optional[float]:
     """
-    Calculate ATR-based stop loss
-    
-    For long positions: stop_loss = price - (multiplier * ATR)
-    For short positions: stop_loss = price + (multiplier * ATR)
-    
-    Args:
-        price: Current price (Series or float)
-        atr: Average True Range (Series or float)
-        multiplier: ATR multiplier (default 2.0)
-        position_type: 'long' or 'short'
-    
-    Returns:
-        Stop loss price (float)
+    ATR-based stop loss
     """
-    # Get latest values
-    if isinstance(price, pd.Series):
-        price_val = price.iloc[-1] if len(price) > 0 else None
-    else:
-        price_val = price
-    
-    if isinstance(atr, pd.Series):
-        atr_val = atr.iloc[-1] if len(atr) > 0 else None
-    else:
-        atr_val = atr
-    
-    if price_val is None or atr_val is None or pd.isna(price_val) or pd.isna(atr_val):
-        return None
-    
-    if position_type == 'long':
-        stop_loss = price_val - (atr_val * multiplier)
-    else:  # short
-        stop_loss = price_val + (atr_val * multiplier)
-    
-    return float(stop_loss)
 
+    if len(price) == 0 or len(atr) == 0:
+        return None
+
+    p = price.iloc[-1]
+    a = atr.iloc[-1]
+
+    if pd.isna(p) or pd.isna(a):
+        return None
+
+    if position_type == "long":
+        return float(p - multiplier * a)
+    else:
+        return float(p + multiplier * a)

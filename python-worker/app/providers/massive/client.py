@@ -130,10 +130,16 @@ class MassiveClient:
             logger.error(f"Error fetching price data for {symbol} from Massive.com: {e}")
             raise DataSourceError(f"Failed to fetch price data from Massive.com: {e}") from e
 
-    def fetch_current_price(self, symbol: str) -> Optional[float]:
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
         try:
             trade = self._client.get_last_trade(ticker=symbol.upper())
-            return float(trade.price) if trade else None
+            if trade:
+                return {
+                    "price": float(trade.price),
+                    "volume": int(trade.size) if hasattr(trade, 'size') and trade.size else None,
+                    "source": "massive"
+                }
+            return None
         except Exception as e:
             error_str = str(e).lower()
             if any(

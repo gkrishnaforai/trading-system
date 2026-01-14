@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements
 COPY python-worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
-    python3 -c "from massive import RESTClient; print('✅ massive library installed successfully')" || \
-    (echo "❌ CRITICAL: massive library failed to install from requirements.txt" && exit 1)
+    python3 -c "import fastapi, passlib, jose, apscheduler; print('✅ Portfolio management dependencies installed successfully')" || \
+    (echo "❌ CRITICAL: Portfolio management dependencies failed to install from requirements.txt" && exit 1)
 
 # Runtime stage
 FROM python:3.11-slim
@@ -54,5 +54,5 @@ ENV PYTHONUNBUFFERED=1
 # Expose FastAPI port
 EXPOSE 8001
 
-# Start both batch worker (background) and API server (foreground)
-CMD ["sh", "-c", "python -m app.main & python app/api_app.py"]
+# Start the API server (with our growth quality endpoints)
+CMD ["python", "app/api_server.py"]

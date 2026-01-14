@@ -96,6 +96,23 @@ BEGIN
     ALTER TABLE industry_peers ADD CONSTRAINT industry_peers_unique UNIQUE (symbol, peer_symbol, data_source);
 END $$;
 
+-- Fix fundamentals_snapshots table
+DO $$
+BEGIN
+    -- Add standard columns if they don't exist
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fundamentals_snapshots' AND column_name = 'symbol') THEN
+        ALTER TABLE fundamentals_snapshots ADD COLUMN symbol VARCHAR(10);
+    END IF;
+    
+    -- Migrate data from non-standard columns
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fundamentals_snapshots' AND column_name = 'stock_symbol') THEN
+        UPDATE fundamentals_snapshots SET symbol = stock_symbol WHERE symbol IS NULL;
+        ALTER TABLE fundamentals_snapshots DROP COLUMN stock_symbol;
+    END IF;
+    
+    -- Note: Keep as_of_date as is since it's specific to fundamentals snapshots
+END $$;
+
 -- Fix data_ingestion_state table
 DO $$
 BEGIN

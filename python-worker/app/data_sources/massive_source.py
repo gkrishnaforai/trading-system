@@ -35,7 +35,7 @@ class MassiveSource(BaseDataSource):
         """Fetch historical price data"""
         return self._client.fetch_price_data(symbol, **kwargs)
 
-    def fetch_current_price(self, symbol: str) -> Optional[float]:
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Fetch current price - requires paid plan"""
         return self._client.fetch_current_price(symbol)
 

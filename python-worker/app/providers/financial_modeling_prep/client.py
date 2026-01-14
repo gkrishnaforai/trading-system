@@ -257,8 +257,8 @@ class FinancialModelingPrepClient:
             logger.error(f"Error fetching price data for {symbol}: {e}")
             return pd.DataFrame()
     
-    def fetch_current_price(self, symbol: str) -> Optional[float]:
-        """Fetch current/live price"""
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Fetch current/live price with volume"""
         try:
             endpoint = "/quote"
             params = {"symbol": symbol}
@@ -268,7 +268,11 @@ class FinancialModelingPrepClient:
                 return None
             
             quote = data[0]
-            return self._safe_float(quote.get("price"))
+            return {
+                "price": self._safe_float(quote.get("price")),
+                "volume": self._safe_int(quote.get("volume")) if quote.get("volume") else None,
+                "source": "fmp"
+            }
             
         except Exception as e:
             logger.error(f"Error fetching current price for {symbol}: {e}")

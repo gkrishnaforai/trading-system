@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Universal Backtest Dashboard
+Universal Backtest Dashboard - Enhanced Version
 Advanced backtesting for any asset type using the Universal API
+Enhanced with stock management, database integration, and beautiful UI
 """
 
 import sys
@@ -17,14 +18,33 @@ from datetime import datetime, timedelta
 import json
 
 from utils import setup_page_config, render_sidebar
+from api_client import get_go_api_client, APIClient, APIError
 
 # Page setup
-setup_page_config()
-st.title("🚀 Universal Backtest Dashboard")
-st.markdown("*Advanced backtesting for any asset type (3x ETFs, Regular ETFs, Stocks)*")
+setup_page_config("Universal Backtest Dashboard", "🚀")
+
+# 🎨 Enhanced Header
+st.markdown("""
+<div style="
+    background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+    padding: 30px;
+    border-radius: 15px;
+    margin-bottom: 25px;
+    text-align: center;
+    color: white;
+">
+    <h1 style="margin: 0; font-size: 3em;">🚀 Universal Backtest Dashboard</h1>
+    <p style="margin: 10px 0; font-size: 1.3em;">Advanced backtesting for any asset type (3x ETFs, Regular ETFs, Stocks)</p>
+    <p style="margin: 0; opacity: 0.9;">Professional Stock Analysis & Signal Generation</p>
+</div>
+""", unsafe_allow_html=True)
 
 # Sidebar
 render_sidebar()
+
+# Initialize API client
+python_api_url = os.getenv("PYTHON_API_URL", "http://127.0.0.1:8001")
+python_client = APIClient(python_api_url, timeout=30)
 
 # Asset type selection
 st.sidebar.header("Asset Configuration")
@@ -43,228 +63,327 @@ selected_asset_type_name = st.sidebar.selectbox(
 
 selected_asset_type = asset_type_options[selected_asset_type_name]
 
-# Symbol input with suggestions
-st.sidebar.subheader(f"{selected_asset_type_name} Symbol")
+# Check for transferred symbol from Portfolio Analysis
+transferred_symbol = st.session_state.get('transfer_symbol', None)
+if transferred_symbol:
+    st.sidebar.success(f"📊 Symbol transferred from Portfolio: {transferred_symbol}")
+    # Clear the transfer after displaying
+    if 'transfer_symbol' in st.session_state:
+        del st.session_state['transfer_symbol']
 
-# Popular symbols for each asset type
-symbol_suggestions = {
-    "3x_etf": ["TQQQ", "SOXL", "FNGU", "TECL", "WEBL"],
-    "regular_etf": ["QQQ", "SPY", "IWM", "VTI", "GLD"],
-    "stock": ["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA"]
-}
+# 🎯 Professional Stock Analysis Section
+st.markdown("### 🎯 Professional Stock Analysis")
 
-suggestions = symbol_suggestions.get(selected_asset_type, [])
-
-# Custom symbol input with suggestions
-symbol_input = st.sidebar.text_input(
-    f"Enter {selected_asset_type_name} Symbol",
-    value=suggestions[0] if suggestions else "",
-    placeholder=f"e.g., {suggestions[0] if suggestions else 'TQQQ'}"
-)
-
-# Show suggestions if available
-if suggestions:
-    st.sidebar.markdown("**Popular symbols:**")
-    cols = st.sidebar.columns(len(suggestions))
-    for i, suggestion in enumerate(suggestions):
-        if cols[i].button(suggestion, key=f"suggest_{suggestion}_{selected_asset_type}"):
-            symbol_input = suggestion
-            st.rerun()
-
-# Date selection
-st.sidebar.subheader("Date Selection")
-
-# Default to most recent trading day
-default_date = datetime.now().date() - timedelta(days=1)
-selected_date = st.sidebar.date_input(
-    "Select Date",
-    value=default_date,
-    max_value=datetime.now().date() - timedelta(days=1)
-)
-
-# Date range for backtesting
-st.sidebar.subheader("Backtest Period")
-backtest_days = st.sidebar.slider(
-    "Backtest Period (Days)",
-    min_value=30,
-    max_value=365,
-    value=90,
-    step=30
-)
-
-# Calculate date range
-end_date = selected_date
-start_date = end_date - timedelta(days=backtest_days)
-
-# Main content area
+# Stock Selection Section with Database Integration
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.header(f"{selected_asset_type_name} Analysis")
+    # Get available stocks from database
+    st.markdown("#### 📊 Stock Selection")
     
-    # Current signal section
-    st.subheader(f"📊 Current Signal for {symbol_input}")
-    
-    # Get current signal
-    def get_universal_signal(symbol, date, asset_type):
-        """Get signal for any asset using universal API"""
+    # If symbol was transferred, show it prominently
+    if transferred_symbol:
+        st.info(f"🎯 Analyzing transferred symbol: **{transferred_symbol}**")
+        symbol_input = transferred_symbol
+    else:
         try:
-            api_url = "http://127.0.0.1:8001/api/v1/universal/signal/universal"
-            payload = {
-                "symbol": symbol,
-                "date": date.strftime("%Y-%m-%d"),
-                "asset_type": asset_type
-            }
-            
-            response = requests.post(api_url, json=payload, timeout=30)
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("success"):
-                    return data["data"]
-                else:
-                    return {"error": data.get("error", "Unknown error")}
+            stocks_response = python_client.get("api/v1/stocks/available")
+            if stocks_response and isinstance(stocks_response, list):
+                available_stocks = stocks_response
+                
+                # Create display options with company names
+                stock_options = []
+                stock_map = {}
+                
+                for stock in available_stocks:
+                    display_name = f"{stock['symbol']} - {stock.get('company_name', 'Unknown Company')}"
+                    stock_options.append(display_name)
+                    stock_map[display_name] = stock
+                
+                # Stock selector with search
+                selected_display = st.selectbox(
+                    "🔍 Select Stock for Analysis",
+                    options=stock_options,
+                    index=0,
+                    key="stock_selector"
+                )
+                
+                # Get the actual symbol from selection
+                selected_stock = stock_map[selected_display]
+                symbol_input = selected_stock['symbol']
+                
+                # Also show manual input option
+                st.markdown("**Or enter symbol manually:**")
+                symbol_input = st.text_input(
+                    "📝 Symbol (e.g., AAPL, TSLA, QQQ)",
+                    value=symbol_input,  # Pre-fill with selected symbol
+                    key="symbol_input"
+                ).upper()
             else:
-                return {"error": f"API Error: {response.status_code} - {response.text}"}
+                # Fallback to manual input only
+                symbol_input = st.text_input(
+                    "📝 Enter Symbol (e.g., AAPL, TSLA, QQQ)",
+                    placeholder="e.g., AAPL, TSLA, QQQ",
+                    key="symbol_input_fallback"
+                ).upper()
         except Exception as e:
-            return {"error": f"Request failed: {str(e)}"}
+            st.error(f"❌ Error loading stocks: {str(e)}")
+            # Fallback to manual input
+            symbol_input = st.text_input(
+                "📝 Enter Symbol (e.g., AAPL, TSLA, QQQ)",
+                placeholder="e.g., AAPL, TSLA, QQQ",
+                key="symbol_input_error"
+            ).upper()
 
 with col2:
-    st.header("Asset Info")
+    # Asset type selection
+    st.markdown("#### ⚙️ Asset Configuration")
     
-    # Asset type information
+    selected_asset_type_name = st.selectbox(
+        "Asset Type",
+        list(asset_type_options.keys()),
+        index=0,
+        key="enhanced_asset_type",
+        help="Select the asset type for analysis parameters"
+    )
+    
+    selected_asset_type = asset_type_options[selected_asset_type_name]
+    
+    # Asset type information card
     asset_info = {
         "3x ETF": {
             "description": "3x leveraged ETFs with high volatility",
             "risk": "Very High",
             "holding_period": "Short-term (1-5 days)",
-            "examples": "TQQQ, SOXL, FNGU"
+            "examples": "TQQQ, SOXL, FNGU",
+            "color": "#FF4444"
         },
         "Regular ETF": {
             "description": "Standard ETFs with moderate volatility",
             "risk": "Medium",
             "holding_period": "Medium-term (1-4 weeks)",
-            "examples": "QQQ, SPY, IWM"
+            "examples": "QQQ, SPY, IWM",
+            "color": "#FF8800"
         },
         "Stock": {
             "description": "Individual stocks with varying volatility",
             "risk": "Variable",
             "holding_period": "Depends on stock",
-            "examples": "AAPL, MSFT, NVDA"
+            "examples": "AAPL, MSFT, NVDA",
+            "color": "#00C851"
         }
     }
     
     info = asset_info.get(selected_asset_type_name, {})
     
-    st.markdown(f"**Type:** {selected_asset_type_name}")
-    st.markdown(f"**Risk Level:** {info.get('risk', 'N/A')}")
-    st.markdown(f"**Holding Period:** {info.get('holding_period', 'N/A')}")
-    st.markdown(f"**Examples:** {info.get('examples', 'N/A')}")
+    # 🎨 Asset Info Card
+    st.markdown(f"""
+    <div style="
+        background: {info.get('color', '#667eea')};
+        padding: 15px;
+        border-radius: 10px;
+        color: white;
+        margin-bottom: 15px;
+    ">
+        <h4 style="margin: 0;">{selected_asset_type_name}</h4>
+        <p style="margin: 5px 0; font-size: 0.9em; opacity: 0.9;">{info.get('description', 'N/A')}</p>
+    </div>
+    """, unsafe_allow_html=True)
     
+    st.markdown(f"**⚠️ Risk Level:** {info.get('risk', 'N/A')}")
+    st.markdown(f"**⏱️ Holding Period:** {info.get('holding_period', 'N/A')}")
+    st.markdown(f"**📋 Examples:** {info.get('examples', 'N/A')}")
+    
+    # Add new stock functionality
     st.markdown("---")
-    st.markdown(f"**Description:**")
-    st.markdown(info.get('description', 'N/A'))
+    st.markdown("#### ➕ Add New Stock")
+    
+    new_symbol = st.text_input(
+        "Add Symbol",
+        placeholder="e.g., GME, AMC, PLTR",
+        key="new_symbol_input_enhanced",
+        help="Add a new symbol to our database (auto-fills company info)"
+    )
+    
+    if st.button("🔍 Add Stock", key="add_stock_button_enhanced", use_container_width=True):
+        if new_symbol and len(new_symbol.strip()) >= 1:
+            with st.spinner(f"Adding {new_symbol.upper()} to database..."):
+                try:
+                    add_response = python_client.post(
+                        "api/v1/stocks/add",
+                        json_data={"symbol": new_symbol.strip()}
+                    )
+                    
+                    if add_response and add_response.get('symbol'):
+                        st.success(f"✅ Successfully added {new_symbol.upper()}!")
+                        st.info(f"🏢 Company: {add_response.get('company_name', 'N/A')}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Failed to add {new_symbol.upper()}")
+                except Exception as e:
+                    st.error(f"❌ Error adding stock: {e}")
+        else:
+            st.warning("⚠️ Please enter a valid symbol")
+    
+    # Load today's data button
+    st.markdown("---")
+    st.markdown("#### 🔄 Data Management")
+    
+    if st.button("📊 Load Today's Data", key="load_today_data", use_container_width=True, help="Refresh data for selected stock"):
+        with st.spinner(f"Loading today's data for {symbol_input}..."):
+            try:
+                refresh_response = python_client.post(
+                    "refresh",
+                    json_data={
+                        "symbols": [symbol_input],
+                        "data_types": ["price_historical", "indicators"],
+                        "force": True
+                    },
+                    timeout=300
+                )
+                
+                if refresh_response and refresh_response.get("success"):
+                    st.success(f"✅ Today's data loaded for {symbol_input}!")
+                    st.info("📊 Data refreshed successfully")
+                    st.json(refresh_response)
+                else:
+                    st.warning(f"⚠️ Data refresh completed with warnings for {symbol_input}")
+                    if refresh_response:
+                        st.json(refresh_response)
+            except Exception as e:
+                st.error(f"❌ Failed to load data: {e}")
 
-# Get and display current signal
-signal_data = get_universal_signal(symbol_input, selected_date, selected_asset_type)
+# 📅 Date Selection and Analysis Controls
+st.markdown("---")
+st.markdown("### 📅 Analysis Configuration")
+
+date_col1, date_col2, date_col3 = st.columns(3)
+
+with date_col1:
+    # Date selection
+    default_date = datetime.now().date() - timedelta(days=1)
+    selected_date = st.date_input(
+        "📅 Select Analysis Date",
+        value=default_date,
+        max_value=datetime.now().date(),
+        help="Choose date for signal analysis"
+    )
+
+with date_col2:
+    # Backtest period
+    backtest_days = st.slider(
+        "📊 Backtest Period (Days)",
+        min_value=30,
+        max_value=365,
+        value=90,
+        step=30,
+        help="Period for historical analysis"
+    )
+
+with date_col3:
+    # Calculate date range info
+    end_date = selected_date
+    start_date = end_date - timedelta(days=backtest_days)
+    
+    st.markdown("**📈 Analysis Range:**")
+    st.markdown(f"**From:** {start_date.strftime('%m/%d/%Y')}")
+    st.markdown(f"**To:** {end_date.strftime('%m/%d/%Y')}")
+    st.markdown(f"**Days:** {backtest_days}")
+
+# 🚀 Run Analysis Button
+st.markdown("---")
+
+analysis_col1, analysis_col2, analysis_col3 = st.columns([1, 2, 1])
+
+with analysis_col2:
+    run_analysis = st.button(
+        "🚀 Run Analysis", 
+        type="primary", 
+        use_container_width=True,
+        help="Generate comprehensive signal analysis and backtest"
+    )
+
+# Quick refresh option (if symbol is already analyzed)
+if 'last_analyzed_symbol' in st.session_state and 'last_analysis_data' in st.session_state:
+    if st.session_state.last_analyzed_symbol == symbol_input:
+        st.markdown("---")
+        refresh_col1, refresh_col2, refresh_col3 = st.columns([1, 2, 1])
+        
+        with refresh_col2:
+            refresh_analysis = st.button(
+                "🔄 Refresh Signal Only", 
+                type="secondary",
+                use_container_width=True,
+                help="Refresh signal analysis without reloading data (faster)"
+            )
+            
+            if refresh_analysis:
+                with st.spinner(f"🔄 Refreshing signal analysis for {symbol_input}..."):
+                    try:
+                        # Get fresh signal without data reload
+                        signal_data = get_universal_signal(symbol_input, selected_date, selected_asset_type)
+                        
+                        if signal_data and not signal_data.get('error'):
+                            # Update session state with fresh data
+                            st.session_state.last_analysis_data = signal_data
+                            st.session_state.last_analyzed_symbol = symbol_input
+                            
+                            st.success(f"✅ Signal refreshed for {symbol_input}!")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Error refreshing signal: {signal_data.get('error', 'Unknown error')}")
+                    except Exception as e:
+                        st.error(f"❌ Failed to refresh signal: {str(e)}")
+
+# Only proceed if user clicks Run Analysis
+if not run_analysis:
+    st.info("👆 Click 'Run Analysis' to generate signal and backtest data")
+    st.stop()
+
+# 🎯 Enhanced Signal Analysis Section
+st.markdown("---")
+st.markdown("### 🎯 Enhanced Signal Analysis")
+
+# Get current signal
+def get_universal_signal(symbol, date, asset_type):
+    """Get signal for any asset using universal API"""
+    try:
+        api_url = f"{python_api_url}/api/v1/universal/signal/universal"
+        payload = {
+            "symbol": symbol,
+            "date": date.strftime("%Y-%m-%d"),
+            "asset_type": asset_type
+        }
+        
+        response = requests.post(api_url, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success"):
+                return data["data"]
+            else:
+                return {"error": data.get("error", "Unknown error")}
+        else:
+            return {"error": f"API Error: {response.status_code} - {response.text}"}
+    except Exception as e:
+        return {"error": f"Request failed: {str(e)}"}
+
+# Get signal data
+with st.spinner(f"🔄 Generating signal analysis for {symbol_input}..."):
+    signal_data = get_universal_signal(symbol_input, selected_date, selected_asset_type)
 
 if "error" in signal_data:
     st.error(f"❌ {signal_data['error']}")
     st.stop()
 
-# Display signal information
-signal = signal_data.get("signal", {})
-market_data = signal_data.get("market_data", {})
-analysis = signal_data.get("analysis", {})
+# Use shared analysis display component
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from components.analysis_display import display_signal_analysis
 
-# Signal display with color coding
-signal_value = signal.get("signal", "hold").upper()
-confidence = signal.get("confidence", 0.0)
-
-# Color mapping for signals
-signal_colors = {
-    "BUY": "🟢",
-    "SELL": "🔴", 
-    "HOLD": "🟡"
-}
-
-signal_color = signal_colors.get(signal_value, "⚪")
-
-st.markdown(f"### {signal_color} **{signal_value}** Signal")
-st.markdown(f"**Confidence:** {confidence:.1%}")
-
-# Signal reasoning
-reasoning = signal.get("reasoning", [])
-if reasoning:
-    st.markdown("**Reasoning:**")
-    for reason in reasoning:
-        st.markdown(f"• {reason}")
-
-# Market data display
-st.markdown("---")
-st.subheader("📈 Market Data")
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.metric("Current Price", f"${market_data.get('price', 0):.2f}")
-with col2:
-    st.metric("RSI", f"{market_data.get('rsi', 0):.1f}")
-with col3:
-    st.metric("SMA 20", f"${market_data.get('sma_20', 0):.2f}")
-with col4:
-    st.metric("SMA 50", f"${market_data.get('sma_50', 0):.2f}")
-
-# Fear/Greed analysis
-metadata = signal.get("metadata", {})
-st.markdown("---")
-st.subheader("🧠 Fear/Greed Analysis")
-
-fg_state = metadata.get("fear_greed_state", "neutral")
-fg_bias = metadata.get("fear_greed_bias", "neutral")
-recovery = metadata.get("recovery_detected", False)
-
-# Fear/Greed color coding
-fg_colors = {
-    "extreme_fear": "🔴",
-    "fear": "🟠",
-    "neutral": "🟡",
-    "greed": "🟢",
-    "extreme_greed": "🟢"
-}
-
-fg_color = fg_colors.get(fg_state, "⚪")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.markdown(f"**State:** {fg_color} {fg_state.replace('_', ' ').title()}")
-with col2:
-    st.markdown(f"**Bias:** {fg_bias.title()}")
-with col3:
-    recovery_icon = "✅" if recovery else "❌"
-    st.markdown(f"**Recovery:** {recovery_icon} {'Detected' if recovery else 'Not Detected'}")
-
-# Market analysis
-st.markdown("---")
-st.subheader("📊 Market Analysis")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("**Volatility Metrics:**")
-    st.markdown(f"• Daily Volatility: {analysis.get('real_volatility', '0.00%')}")
-    st.markdown(f"• Recent Change: {analysis.get('recent_change', '0.00%')}")
-    st.markdown(f"• Intraday Range: {analysis.get('daily_range', '0.00 - 0.00')}")
-
-with col2:
-    st.markdown("**Market Conditions:**")
-    vix_level = analysis.get('vix_level', 0)
-    market_stress = analysis.get('market_stress', False)
-    stress_icon = "⚠️" if market_stress else "✅"
-    st.markdown(f"• VIX Level: {vix_level:.2f}")
-    st.markdown(f"• Market Stress: {stress_icon} {'High' if market_stress else 'Normal'}")
-    st.markdown(f"• Volatility Level: {analysis.get('volatility_level', 'NORMAL')}")
+# Display the analysis using the shared component
+display_signal_analysis(symbol_input, signal_data, show_header=True, show_debug=True)
 
 # Historical data and backtesting
 st.markdown("---")

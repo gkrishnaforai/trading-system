@@ -227,3 +227,8 @@ def init_database():
     run_migrations()
     return db
 
+
+def get_db():
+    """FastAPI dependency for database connection"""
+    return db
+

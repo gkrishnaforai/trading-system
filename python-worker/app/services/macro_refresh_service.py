@@ -135,29 +135,29 @@ class MacroRefreshService:
             rows = db.execute_query(
                 """
                 WITH latest_ind AS (
-                  SELECT DISTINCT ON (stock_symbol)
-                    stock_symbol,
-                    trade_date,
+                  SELECT DISTINCT ON (symbol)
+                    symbol,
+                    date,
                     sma_50
                   FROM indicators_daily
                   WHERE sma_50 IS NOT NULL
-                  ORDER BY stock_symbol, trade_date DESC
+                  ORDER BY symbol, date DESC
                 ),
                 latest_px AS (
-                  SELECT DISTINCT ON (stock_symbol)
-                    stock_symbol,
-                    trade_date,
+                  SELECT DISTINCT ON (symbol)
+                    symbol,
+                    date,
                     close
                   FROM raw_market_data_daily
                   WHERE close IS NOT NULL
-                  ORDER BY stock_symbol, trade_date DESC
+                  ORDER BY symbol, date DESC
                 )
-                SELECT i.stock_symbol,
+                SELECT i.symbol,
                        p.close as close,
                        i.sma_50 as sma_50
                 FROM latest_ind i
                 JOIN latest_px p
-                  ON p.stock_symbol = i.stock_symbol
+                  ON p.symbol = i.symbol
                 """
             )
 

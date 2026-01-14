@@ -463,9 +463,23 @@ def get_universal_signal(asset_symbol: str, date: str, asset_category: str):
         return {"error": f"Request failed: {str(e)}"}
 
 def display_enhanced_backtest_results(results: dict, asset_symbol: str, asset_category: str):
-    """Enhanced display for universal backtest with Fear/Greed integration"""
+    """Enhanced display for universal backtest with Fear/Greed integration and clear direction insights"""
     
-    st.subheader(f"📊 {asset_symbol} Signal Analysis ({asset_category.replace('_', ' ').title()})")
+    # 🎨 Create visually appealing header with stock direction
+    st.markdown(f"""
+    <div style="
+        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+        text-align: center;
+        color: white;
+    ">
+        <h2 style="margin: 0; font-size: 2.5em;">📈 {asset_symbol}</h2>
+        <p style="margin: 5px 0; font-size: 1.2em;">{asset_category.replace('_', ' ').title()} Analysis</p>
+        <p style="margin: 0; opacity: 0.8;">Real-time Signal & Direction Analysis</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     if results["mode"] == "Single Date":
         signal = results["signal"]
@@ -473,244 +487,344 @@ def display_enhanced_backtest_results(results: dict, asset_symbol: str, asset_ca
         performance = results["performance"]
         analysis = results.get("analysis", {})
         
-        # 🎯 Signal Summary with Asset-Specific Colors
+        # 🎯 Enhanced Signal Display with Clear Direction
         signal_value = signal.get("signal", "N/A")
         confidence = signal.get("confidence", 0)
         
-        # Enhanced signal color mapping
-        signal_colors = {
-            "buy": ("🟢", "green"),
-            "sell": ("🔴", "red"), 
-            "hold": ("🟡", "orange")
+        # Direction-based color mapping
+        signal_config = {
+            "buy": {
+                "emoji": "🟢",
+                "color": "#00C851",
+                "bg_color": "#E8F5E8",
+                "direction": "BULLISH 📈",
+                "action": "BUY OPPORTUNITY",
+                "trend_arrow": "↗️",
+                "description": "Stock poised for upward movement"
+            },
+            "sell": {
+                "emoji": "🔴",
+                "color": "#FF4444",
+                "bg_color": "#FFEBEE",
+                "direction": "BEARISH 📉",
+                "action": "SELL WARNING",
+                "trend_arrow": "↘️",
+                "description": "Stock showing downward pressure"
+            },
+            "hold": {
+                "emoji": "🟡",
+                "color": "#FF8800",
+                "bg_color": "#FFF3E0",
+                "direction": "NEUTRAL ➡️",
+                "action": "WAIT & WATCH",
+                "trend_arrow": "➡️",
+                "description": "Stock in consolidation phase"
+            }
         }
-        signal_emoji, signal_color = signal_colors.get(signal_value.lower(), ("⚪", "gray"))
         
-        # Main signal display
-        st.markdown(f"### {signal_emoji} **{signal_value.upper()}**")
-        st.markdown(f"**Confidence:** {confidence:.1%}")
-        st.markdown(f"**Asset:** {asset_symbol} ({asset_category.replace('_', ' ').title()})")
+        config = signal_config.get(signal_value.lower(), {
+            "emoji": "⚪", "color": "#999", "bg_color": "#F5F5F5",
+            "direction": "UNKNOWN ❓", "action": "ANALYZING",
+            "trend_arrow": "❓", "description": "Signal unclear"
+        })
         
-        # 🎭 Fear/Greed State Panel (Same as before)
+        # 🎨 Main Signal Card with Direction
+        st.markdown(f"""
+        <div style="
+            background: {config['bg_color']};
+            border: 2px solid {config['color']};
+            border-radius: 15px;
+            padding: 25px;
+            text-align: center;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        ">
+            <div style="font-size: 4em; margin-bottom: 10px;">{config['emoji']}</div>
+            <h1 style="color: {config['color']}; margin: 0; font-size: 2.5em;">{signal_value.upper()}</h1>
+            <div style="font-size: 1.5em; margin: 10px 0; color: {config['color']}; font-weight: bold;">
+                {config['direction']} {config['trend_arrow']}
+            </div>
+            <div style="font-size: 1.2em; margin: 5px 0;">{config['action']}</div>
+            <div style="font-size: 1em; opacity: 0.8; margin-top: 10px;">{config['description']}</div>
+            <div style="margin-top: 15px; font-size: 1.1em;">
+                <strong>Confidence:</strong> {confidence:.1%}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 📊 Quick Direction Summary
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            price = market.get('price', 0)
+            st.metric(
+                f"{config['trend_arrow']} Current Price",
+                f"${price:.2f}",
+                delta=None
+            )
+        
+        with col2:
+            change = market.get('change', 0)
+            change_pct = market.get('change_percent', 0)
+            change_color = "normal" if change >= 0 else "inverse"
+            st.metric(
+                "📈 Daily Change",
+                f"{change:+.2f}",
+                f"{change_pct:+.2f}%",
+                delta_color=change_color
+            )
+        
+        with col3:
+            volume = market.get('volume', 0)
+            st.metric(
+                "📊 Volume",
+                f"{volume:,.0f}",
+                "Trading Activity"
+            )
+        
+        # 🎭 Fear/Greed State Panel (Enhanced for direction)
         metadata = signal.get("metadata", {})
         fear_greed_state = metadata.get("fear_greed_state", "unknown")
         fear_greed_bias = metadata.get("fear_greed_bias", "unknown")
         recovery_detected = metadata.get("recovery_detected", False)
         
-        # Enhanced Fear/Greed color mapping with descriptions
-        fg_colors = {
-            "extreme_fear": ("🟣", "purple", "Extreme Fear - Capitulation"),
-            "fear": ("🔵", "blue", "Fear - Buying Opportunity"), 
-            "neutral": ("⚪", "gray", "Neutral - Balanced"),
-            "greed": ("🟠", "orange", "Greed - Caution"),
-            "extreme_greed": ("🔴", "red", "Extreme Greed - Euphoria")
-        }
-        
-        fg_emoji, fg_color, fg_description = fg_colors.get(fear_greed_state, ("⚪", "gray", "Unknown"))
-        
-        # Bias color mapping
-        bias_colors = {
-            "strongly_bullish": ("🟢", "Strong Buy"),
-            "bullish": ("🟡", "Buy"),
-            "neutral": ("⚪", "Neutral"),
-            "bearish": ("🟠", "Sell"),
-            "strongly_bearish": ("🔴", "Strong Sell")
-        }
-        bias_emoji, bias_description = bias_colors.get(fear_greed_bias, ("⚪", "Unknown"))
-        
-        # Fear/Greed Panel
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown(f"### {fg_emoji} **Fear/Greed State**")
-            st.markdown(f"**{fear_greed_state.replace('_', ' ').title()}**")
-            st.caption(fg_description)
-            
-        with col2:
-            st.markdown(f"### {bias_emoji} **Signal Bias**")
-            st.markdown(f"**{fear_greed_bias.replace('_', ' ').title()}**")
-            st.caption(bias_description)
-            
-        with col3:
-            if recovery_detected:
-                st.markdown("### 🔄 **Recovery**")
-                st.success("**Detected**")
-                st.caption("BUY-in-Fear Opportunity")
-            else:
-                st.markdown("### 🔄 **Recovery**")
-                st.warning("**Not Detected**")
-                st.caption("Waiting for stabilization")
-        
-        # 🌊 Market Context Panel (Enhanced)
-        st.markdown("### 🌊 Market Context")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            volatility = metadata.get("volatility", analysis.get("real_volatility", 0))
-            volatility_float = float(volatility) if volatility else 0.0
-            vol_color = "🔴" if volatility_float > 8 else "🟡" if volatility_float > 5 else "🟢"
-            vol_status = "High" if volatility_float > 8 else "Moderate" if volatility_float > 5 else "Low"
-            st.metric(f"{vol_color} Volatility", f"{volatility_float:.2f}%")
-            st.caption(f"Status: {vol_status}")
-            
-        with col2:
-            vix_level = analysis.get("vix_level", 0)
-            vix_float = float(vix_level) if vix_level else 0.0
-            vix_color = "🔴" if vix_float > 30 else "🟡" if vix_float > 20 else "🟢"
-            vix_status = "Extreme Fear" if vix_float > 30 else "Fear" if vix_float > 20 else "Calm"
-            st.metric(f"{vix_color} VIX", f"{vix_float:.2f}")
-            st.caption(f"Status: {vix_status}")
-            
-        with col3:
-            recent_change = metadata.get("recent_change", analysis.get("recent_change", 0))
-            change_float = float(recent_change) if recent_change else 0.0
-            change_color = "🔴" if change_float < -3 else "🟡" if change_float < 0 else "🟢"
-            change_status = "Strong Decline" if change_float < -3 else "Decline" if change_float < 0 else "Rise"
-            st.metric(f"{change_color} 3-Day Change", f"{change_float:.2f}%")
-            st.caption(f"Status: {change_status}")
-            
-        with col4:
-            rsi = metadata.get("rsi", market.get("rsi", 50))
-            rsi_float = float(rsi) if rsi else 50.0
-            rsi_color = "🔴" if rsi_float < 30 else "🟡" if rsi_float > 70 else "🟢"
-            rsi_status = "Oversold" if rsi_float < 30 else "Overbought" if rsi_float > 70 else "Neutral"
-            st.metric(f"{rsi_color} RSI", f"{rsi_float:.1f}")
-            st.caption(f"Status: {rsi_status}")
-        
-        # 🎭 Market Regime Panel
-        regime = metadata.get("regime", "unknown")
-        
-        # Enhanced regime information
-        regime_insights = {
-            "volatility_expansion": {
-                "icon": "🌊",
-                "title": "Volatility Expansion",
-                "description": "High volatility environment - risk management priority",
-                "action": "Watch for recovery signals, avoid selling into panic"
+        # Enhanced Fear/Greed mapping with direction insights
+        fg_config = {
+            "extreme_fear": {
+                "emoji": "🟣", "color": "#6A1B9A", "bg_color": "#EDE7F6",
+                "market_state": "CAPITULATION", "direction_bias": "BOTTOMING PROCESS 🔄",
+                "opportunity": "RECOVERY SETUP", "risk": "HIGH REWARD POTENTIAL"
             },
-            "mean_reversion": {
-                "icon": "🔄", 
-                "title": "Mean Reversion",
-                "description": "Price reverting to mean - pullback opportunities",
-                "action": "Look for oversold entries and bounce plays"
+            "fear": {
+                "emoji": "🔵", "color": "#1976D2", "bg_color": "#E3F2FD",
+                "market_state": "ACCUMULATION", "direction_bias": "BUYING OPPORTUNITY 📈",
+                "opportunity": "MEAN REVERSION", "risk": "MODERATE RISK"
             },
-            "trend_continuation": {
-                "icon": "📈",
-                "title": "Trend Continuation", 
-                "description": "Strong trend in place - momentum trading",
-                "action": "Follow the trend - buy dips, sell rallies"
+            "neutral": {
+                "emoji": "⚪", "color": "#757575", "bg_color": "#FAFAFA",
+                "market_state": "CONSOLIDATION", "direction_bias": "WAIT FOR BREAKOUT ⏳",
+                "opportunity": "PATTERN FORMATION", "risk": "LOW ACTIVITY"
             },
-            "breakout": {
-                "icon": "🚀",
-                "title": "Breakout",
-                "description": "Price breaking key levels - momentum plays",
-                "action": "Momentum trading - watch for false breakouts"
+            "greed": {
+                "emoji": "🟠", "color": "#F57C00", "bg_color": "#FFF3E0",
+                "market_state": "DISTRIBUTION", "direction_bias": "SELLING PRESSURE 📉",
+                "opportunity": "PROFIT TAKING", "risk": "CORRECTION RISK"
+            },
+            "extreme_greed": {
+                "emoji": "🔴", "color": "#D32F2F", "bg_color": "#FFEBEE",
+                "market_state": "EUPHORIA", "direction_bias": "TOP FORMATION 🚨",
+                "opportunity": "SHORT OPPORTUNITY", "risk": "HIGH CORRECTION RISK"
             }
         }
         
-        regime_info = regime_insights.get(regime, {
-            "icon": "❓",
-            "title": "Unknown Regime",
-            "description": "Regime not identified",
-            "action": "Proceed with caution"
-        })
+        fg_info = fg_config.get(fear_greed_state, fg_config["neutral"])
         
-        st.markdown(f"### {regime_info['icon']} **{regime_info['title']} Regime**")
-        st.markdown(f"**Description:** {regime_info['description']}")
-        st.markdown(f"**Strategy:** {regime_info['action']}")
+        # 🎨 Fear/Greed Panel
+        st.markdown(f"""
+        <div style="
+            background: {fg_info['bg_color']};
+            border-left: 5px solid {fg_info['color']};
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        ">
+            <h3 style="color: {fg_info['color']}; margin-top: 0;">🎭 Market Psychology</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-top: 15px;">
+                <div style="text-align: center;">
+                    <div style="font-size: 2em;">{fg_info['emoji']}</div>
+                    <div style="font-weight: bold; color: {fg_info['color']};">{fg_info['market_state']}</div>
+                    <div style="font-size: 0.9em; opacity: 0.8;">{fear_greed_state.replace('_', ' ').title()}</div>
+                </div>
+                <div style="text-align: center;">
+                    <div style="font-size: 1.5em; margin-bottom: 5px;">🧭</div>
+                    <div style="font-weight: bold;">{fg_info['direction_bias']}</div>
+                    <div style="font-size: 0.9em; opacity: 0.8;">Market Direction</div>
+                </div>
+                <div style="text-align: center;">
+                    <div style="font-size: 1.5em; margin-bottom: 5px;">🎯</div>
+                    <div style="font-weight: bold;">{fg_info['opportunity']}</div>
+                    <div style="font-size: 0.9em; opacity: 0.8;">Trading Opportunity</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         
-        # 📝 Enhanced Signal Reasoning with Categories
-        if signal.get("reasoning"):
-            st.markdown("### 📝 Signal Reasoning")
-            
-            # Enhanced categorization
-            signal_ladder_reasons = []
-            fear_greed_reasons = []
-            technical_reasons = []
-            action_items = []
-            
-            for reason in signal.get("reasoning", []):
-                if "Signal Ladder" in reason:
-                    signal_ladder_reasons.append(reason)
-                elif "WAIT FOR" in reason or "→" in reason:
-                    action_items.append(reason)
-                elif "Fear" in reason or "Recovery" in reason or "VIX" in reason or "volatility" in reason:
-                    fear_greed_reasons.append(reason)
-                elif "RSI" in reason or "Price" in reason or "SMA" in reason:
-                    technical_reasons.append(reason)
-                else:
-                    technical_reasons.append(reason)
-            
-            # Display Signal Ladder (Most Important)
-            if signal_ladder_reasons:
-                st.markdown("**🎯 Signal Ladder Analysis:**")
-                for reason in signal_ladder_reasons:
-                    st.success(f"🎭 {reason}")
-            
-            # Display Action Items
-            if action_items:
-                st.markdown("**⚡ Action Items:**")
-                for reason in action_items:
-                    st.info(f"📋 {reason}")
-            
-            # Display Fear/Greed Factors
-            if fear_greed_reasons:
-                st.markdown("**🧠 Fear/Greed Factors:**")
-                for reason in fear_greed_reasons:
-                    st.warning(f"🎪 {reason}")
-            
-            # Display Technical Factors
-            if technical_reasons:
-                st.markdown("**📊 Technical Factors:**")
-                for reason in technical_reasons:
-                    st.caption(f"📈 {reason}")
+        # 🌊 Market Context with Direction Indicators
+        st.markdown("### 🌊 Market Context & Direction Indicators")
         
-        # 💡 Asset-Specific Actionable Insights
-        st.markdown("### 💡 Actionable Insights")
+        # Get market metrics
+        volatility = metadata.get("volatility", analysis.get("real_volatility", 0))
+        vix_level = analysis.get("vix_level", 0)
+        recent_change = metadata.get("recent_change", analysis.get("recent_change", 0))
+        rsi = metadata.get("rsi", market.get("rsi", 50))
+        
+        # Convert to floats
+        vol_float = float(volatility) if volatility else 0.0
+        vix_float = float(vix_level) if vix_level else 0.0
+        change_float = float(recent_change) if recent_change else 0.0
+        rsi_float = float(rsi) if rsi else 50.0
+        
+        # Create direction indicators
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            vol_status = "🔴 Extreme" if vol_float > 8 else "🟡 High" if vol_float > 5 else "🟢 Normal"
+            vol_direction = "⚡ HIGH VOLATILITY" if vol_float > 5 else "😌 CALM MARKET"
+            st.metric(f"🌊 Volatility", f"{vol_float:.2f}%", vol_status)
+            st.caption(f"Direction: {vol_direction}")
+        
+        with col2:
+            vix_status = "🔴 Fear" if vix_float > 30 else "🟡 Alert" if vix_float > 20 else "🟢 Calm"
+            vix_direction = "😱 FEAR PREMIUM" if vix_float > 25 else "😌 LOW FEAR"
+            st.metric(f"😱 VIX", f"{vix_float:.2f}", vix_status)
+            st.caption(f"Direction: {vix_direction}")
+        
+        with col3:
+            change_status = "🔴 Declining" if change_float < -2 else "🟡 Weak" if change_float < 0 else "🟢 Rising"
+            change_direction = "📉 DOWNTREND" if change_float < -2 else "📈 UPTREND" if change_float > 2 else "➡️ SIDEWAYS"
+            st.metric(f"📈 3-Day Change", f"{change_float:.2f}%", change_status)
+            st.caption(f"Direction: {change_direction}")
+        
+        with col4:
+            rsi_status = "🔴 Oversold" if rsi_float < 30 else "🟡 Overbought" if rsi_float > 70 else "🟢 Neutral"
+            rsi_direction = "🔄 RECOVERY SETUP" if rsi_float < 30 else "⚠️ CORRECTION RISK" if rsi_float > 70 else "😌 BALANCED"
+            st.metric(f"📊 RSI", f"{rsi_float:.1f}", rsi_status)
+            st.caption(f"Direction: {rsi_direction}")
+        
+        # 🎯 Overall Direction Summary
+        st.markdown("### 🎯 Overall Direction Analysis")
+        
+        # Calculate overall direction score
+        direction_score = 0
+        direction_factors = []
+        
+        # Signal contribution
+        if signal_value == "buy":
+            direction_score += 3
+            direction_factors.append("🟢 Strong BUY signal")
+        elif signal_value == "sell":
+            direction_score -= 3
+            direction_factors.append("🔴 Strong SELL signal")
+        
+        # Fear/Greed contribution
+        if fear_greed_state in ["fear", "extreme_fear"]:
+            direction_score += 2
+            direction_factors.append("🟢 Fear environment (buying opportunity)")
+        elif fear_greed_state in ["greed", "extreme_greed"]:
+            direction_score -= 2
+            direction_factors.append("🔴 Greed environment (selling pressure)")
+        
+        # Technical contribution
+        if change_float > 2:
+            direction_score += 1
+            direction_factors.append("📈 Positive momentum")
+        elif change_float < -2:
+            direction_score -= 1
+            direction_factors.append("📉 Negative momentum")
+        
+        # Determine overall direction
+        if direction_score >= 3:
+            overall_direction = "🟢 STRONGLY BULLISH"
+            direction_color = "#00C851"
+            direction_bg = "#E8F5E8"
+            direction_emoji = "🚀"
+            direction_advice = "Strong upward momentum - Consider buying"
+        elif direction_score >= 1:
+            overall_direction = "🟡 MODERATELY BULLISH"
+            direction_color = "#FF8800"
+            direction_bg = "#FFF3E0"
+            direction_emoji = "📈"
+            direction_advice = "Upward bias - Cautious buying"
+        elif direction_score <= -3:
+            overall_direction = "🔴 STRONGLY BEARISH"
+            direction_color = "#FF4444"
+            direction_bg = "#FFEBEE"
+            direction_emoji = "📉"
+            direction_advice = "Strong downward pressure - Consider selling"
+        elif direction_score <= -1:
+            overall_direction = "🟠 MODERATELY BEARISH"
+            direction_color = "#FF6B35"
+            direction_bg = "#FFE5D9"
+            direction_emoji = "⚠️"
+            direction_advice = "Downward bias - Cautious selling"
+        else:
+            overall_direction = "⚪ NEUTRAL"
+            direction_color = "#757575"
+            direction_bg = "#F5F5F5"
+            direction_emoji = "➡️"
+            direction_advice = "No clear direction - Wait for setup"
+        
+        # Display overall direction
+        st.markdown(f"""
+        <div style="
+            background: {direction_bg};
+            border: 2px solid {direction_color};
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+        ">
+            <div style="font-size: 2em; margin-bottom: 10px;">{direction_emoji}</div>
+            <h2 style="color: {direction_color}; margin: 0;">{overall_direction}</h2>
+            <p style="margin: 10px 0; font-style: italic;">{direction_advice}</p>
+            <div style="margin-top: 15px; font-size: 0.9em; opacity: 0.8;">
+                <strong>Key Factors:</strong> {', '.join(direction_factors)}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 💡 Actionable Insights with Clear Direction
+        st.markdown("### 💡 Trading Strategy & Direction")
         
         insights = []
         
-        # Asset-category specific insights
+        # Asset-category specific strategies
         if asset_category == "3x_ETFs":
-            if fear_greed_state in ["fear", "extreme_fear"]:
-                insights.append("🎯 **3x ETF Strategy**: Extreme volatility - HOLD or very small positions")
-                insights.append("⚡ **Leverage Risk**: 3x exposure requires tight risk management")
-                insights.append("🛡️ **Volatility Target**: Wait for flattening before considering entries")
-        elif asset_category == "Regular_ETFs":
-            insights.append("📊 **ETF Strategy**: Standard volatility - normal position sizes")
-            insights.append("🔄 **Mean Reversion**: ETFs tend to revert to mean more reliably")
-        else:  # Individual Stocks
-            insights.append("🏢 **Stock Strategy**: Company-specific factors at play")
-            insights.append("📈 **Earnings Awareness**: Watch for earnings dates and news")
+            if direction_score >= 1:
+                insights.extend([
+                    "🚀 **3x ETF Bullish**: High volatility - Use tight stops (2-3%)",
+                    "⚡ **Leverage Risk**: 3x exposure amplifies both gains AND losses",
+                    "📈 **Entry Strategy**: Wait for volatility confirmation before adding"
+                ])
+            else:
+                insights.extend([
+                    "🛡️ **3x ETF Bearish**: High risk - Consider reducing exposure",
+                    "⚠️ **Volatility Alert**: 3x ETFs decline 3x faster than market",
+                    "💰 **Capital Protection**: Preserve capital for next opportunity"
+                ])
         
-        # Signal-specific insights based on Fear/Greed state
-        if fear_greed_state in ["fear", "extreme_fear"]:
-            if signal_value == "hold":
-                insights.append("🎯 **Fear Strategy**: HOLD - Don't sell into panic")
-                insights.append("⏳ **Wait For**: Volatility flattening or green close")
-            elif signal_value == "buy" and recovery_detected:
-                insights.append("🔄 **Recovery Play**: Small position for mean-reversion")
+        # Fear/Greed specific strategies
+        if fear_greed_state in ["fear", "extreme_fear"] and direction_score >= 1:
+            insights.append("🎯 **Fear Buying**: Accumulate positions in fear for mean reversion")
+        elif fear_greed_state in ["greed", "extreme_greed"] and direction_score <= -1:
+            insights.append("🚨 **Greed Selling**: Take profits in greed - corrections coming")
         
-        # Display insights
-        for insight in insights:
-            st.info(insight)
+        # Display insights with priority
+        for i, insight in enumerate(insights[:6]):
+            if i < 2:  # Top 2 most important
+                st.error(insight) if "🚨" in insight or "🔴" in insight else st.warning(insight) if "⚠️" in insight else st.success(insight)
+            else:
+                st.info(insight)
         
-        # 📊 Technical Summary
-        st.markdown("### 📊 Technical Summary")
+        # 📊 Technical Summary with Direction
+        st.markdown("### 📊 Technical Analysis Summary")
+        
         tech_col1, tech_col2, tech_col3 = st.columns(3)
         
         with tech_col1:
-            st.metric("Price", f"${market.get('price', 0):.2f}")
-            st.metric("SMA 20", f"${metadata.get('sma_20', 0):.2f}")
+            st.metric("💰 Current Price", f"${market.get('price', 0):.2f}")
+            st.metric("📊 SMA 20", f"${metadata.get('sma_20', 0):.2f}")
             
         with tech_col2:
-            st.metric("SMA 50", f"${metadata.get('sma_50', 0):.2f}")
+            st.metric("📈 SMA 50", f"${metadata.get('sma_50', 0):.2f}")
             price_vs_sma = ((market.get('price', 0) - metadata.get('sma_20', 0)) / metadata.get('sma_20', 1)) * 100
-            sma_color = "🟢" if price_vs_sma > 0 else "🔴"
-            st.metric(f"{sma_color} Price vs SMA20", f"{price_vs_sma:.2f}%")
+            sma_trend = "🟢 Above" if price_vs_sma > 0 else "🔴 Below"
+            st.metric(f"{sma_trend} SMA20", f"{price_vs_sma:.2f}%")
             
         with tech_col3:
-            st.metric("Volume", f"{market.get('volume', 0):,}")
-            st.metric("High", f"${market.get('high', 0):.2f}")
-            st.metric("Low", f"${market.get('low', 0):.2f}")
+            st.metric("📊 Volume", f"{market.get('volume', 0):,}")
+            high_low = f"${market.get('low', 0):.2f} - ${market.get('high', 0):.2f}"
+            st.metric("📈 Daily Range", high_low)
 
 def main():
     """Main dashboard function"""
@@ -780,17 +894,20 @@ def main():
             selected_date = st.date_input(
                 "Select Date:",
                 datetime.now().date() - timedelta(days=1),
+                max_value=datetime.now().date(),  # Allow current day, block future dates
                 key="single_date"
             )
         elif backtest_mode == "Date Range":
             start_date = st.date_input(
                 "Start Date:",
                 datetime.now().date() - timedelta(days=30),
+                max_value=datetime.now().date(),  # Allow current day, block future dates
                 key="start_date"
             )
             end_date = st.date_input(
                 "End Date:",
                 datetime.now().date() - timedelta(days=1),
+                max_value=datetime.now().date(),  # Allow current day, block future dates
                 key="end_date"
             )
     

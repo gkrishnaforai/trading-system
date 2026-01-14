@@ -34,6 +34,80 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Import API routers
+# ========================
+# IMPORTANT: Router Prefix Management Guide
+# ========================================
+# 
+# 1. ROUTER PREFIX RULES:
+#    - NEVER add prefix to individual router files (router = APIRouter(prefix="/path"))
+#    - ONLY add prefixes in this main server file using app.include_router()
+#    - This prevents double-prefix issues like /api/v1/universal/api/v1/universal/signal
+#
+# 2. ROUTER IMPORT PATTERN:
+#    - Import routers as: from app.api.filename import router as descriptive_name
+#    - Use descriptive names like "portfolio_router", "universal_router"
+#    - Keep imports in logical groups (main, portfolio, engines, admin, etc.)
+#
+# 3. PREFIX ASSIGNMENT:
+#    - Each router gets exactly ONE prefix in app.include_router()
+#    - Format: app.include_router(router_name, prefix="/api/vX/feature")
+#    - Examples:
+#      - app.include_router(portfolio_router, prefix="/api/v1/portfolio")
+#      - app.include_router(universal_router, prefix="/api/v1/universal")
+#
+# 4. TESTING AFTER CHANGES:
+#    - After any router change, test: curl http://localhost:8001/docs
+#    - Check that all endpoints are visible and accessible
+#    - Verify no 404 errors for expected endpoints
+#
+# 5. COMMON MISTAKES TO AVOID:
+#    - ❌ router = APIRouter(prefix="/api/v1/universal")  # Don't do this!
+#    - ✅ router = APIRouter(tags=["universal"])  # Do this instead!
+#    - ❌ Duplicate prefixes in main server
+#    - ✅ One prefix per router in main server only
+#
+# ========================================
+# END OF GUIDE - Follow these rules strictly!
+# ========================================
+
+from app.api.main import router as main_router
+from app.api.portfolio_api import router as portfolio_router
+from app.api.portfolio_api_v2 import router as portfolio_v2_router
+from app.api.universal_backtest_api import router as universal_router
+from app.api.growth_quality_endpoints import router as growth_quality_router
+from app.api.stocks_api import router as stocks_router
+from app.api.stock_symbols import router as stock_symbols_router
+from app.api.admin import router as admin_router
+from app.api.bulk_operations_api import router as bulk_operations_router
+from app.api.generic_engine_api import router as generic_engine_router
+from app.api.swing_engine_api import router as swing_engine_router
+from app.api.tqqq_engine_api import router as tqqq_engine_router
+from app.api.unified_tqqq_api import router as unified_tqqq_router
+from app.api.symbol_enrichment import router as symbol_enrichment_router
+from app.api.market_endpoints import router as market_router
+
+# Include all routers with proper prefixes
+# ========================================
+# CRITICAL: Each router gets exactly ONE prefix here
+# NO prefixes should be defined in individual router files
+# ========================================
+app.include_router(main_router, prefix="/api/v1")
+app.include_router(portfolio_router, prefix="/api/v1/portfolio")
+app.include_router(portfolio_v2_router, prefix="/api/v2/portfolio")
+app.include_router(universal_router, prefix="/api/v1/universal")
+app.include_router(growth_quality_router, prefix="/api/v1/growth-quality")
+app.include_router(stocks_router, prefix="/api/v1/stocks")
+app.include_router(stock_symbols_router, prefix="/api/v1/symbols")
+app.include_router(admin_router, prefix="/admin")
+app.include_router(bulk_operations_router, prefix="/api/v1/bulk")
+app.include_router(generic_engine_router, prefix="/api/v1/generic")
+app.include_router(swing_engine_router, prefix="/api/v1/swing")
+app.include_router(tqqq_engine_router, prefix="/api/v1/tqqq")
+app.include_router(unified_tqqq_router, prefix="/api/v1/unified-tqqq")
+app.include_router(symbol_enrichment_router, prefix="/api/v1/enrichment")
+app.include_router(market_router, prefix="/api/v1")
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,

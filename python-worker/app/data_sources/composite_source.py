@@ -94,7 +94,7 @@ class CompositeDataSource(BaseDataSource):
                     raise
             raise
     
-    def fetch_current_price(self, symbol: str) -> Optional[float]:
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Fetch current/live price with automatic fallback"""
         try:
             result = self.primary_source.fetch_current_price(symbol)

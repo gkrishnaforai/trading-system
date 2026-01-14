@@ -274,14 +274,10 @@ class FlexibleDataService:
                 ema_data = loader.load_ema(symbol, limit="10")
                 result["EMA"] = ema_data
             
-            if "SMA" in indicators:
-                sma_data = loader.load_sma(symbol, limit="10")
-                result["SMA"] = sma_data
-            
             return result
             
-        except Exception as e:
-            logger.error(f"Massive indicators failed for {symbol}: {e}")
+        except (ImportError, Exception) as e:
+            logger.warning(f"Massive indicators not available for {symbol}: {e}")
             return {}
     
     def _get_yahoo_indicators(self, symbol: str, indicators: List[str]) -> Dict[str, Any]:
@@ -325,8 +321,8 @@ class FlexibleDataService:
             
             return result
             
-        except Exception as e:
-            logger.error(f"Massive fundamentals failed for {symbol}: {e}")
+        except (ImportError, Exception) as e:
+            logger.warning(f"Massive fundamentals not available for {symbol}: {e}")
             return {}
     
     def _get_yahoo_fundamentals(self, symbol: str, data_types: List[str]) -> Dict[str, Any]:

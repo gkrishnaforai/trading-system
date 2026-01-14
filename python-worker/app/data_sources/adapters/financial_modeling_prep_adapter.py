@@ -288,7 +288,7 @@ class FinancialModelingPrepAdapter(BaseDataSourceAdapter):
             raise AdapterInitializationError("rate_limit_calls must be an integer between 1 and 1000")
     
     # Delegate all other methods to the source
-    def fetch_current_price(self, symbol: str) -> Optional[float]:
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
         return self.source.fetch_current_price(symbol)
     
     def fetch_symbol_details(self, symbol: str) -> Dict[str, Any]:

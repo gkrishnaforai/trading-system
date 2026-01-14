@@ -103,7 +103,7 @@ class FinnhubSource(BaseDataSource):
         """Not implemented - use Yahoo Finance for price data"""
         raise NotImplementedError("Use Yahoo Finance for price data")
     
-    def fetch_current_price(self, symbol: str) -> Optional[float]:
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Not implemented - use Yahoo Finance for current price"""
         raise NotImplementedError("Use Yahoo Finance for current price")
     

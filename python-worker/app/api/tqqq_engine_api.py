@@ -95,10 +95,9 @@ async def generate_tqqq_signal(request: TQQQSignalRequest):
         row = df.iloc[0]
         
         # Calculate real market context
-        # db_url = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/trading_db')
         target_date = request.date if request.date else str(row['date'].date())
         
-        market_context = calculate_market_regime_context('TQQQ', target_date, db_url)
+        market_context = calculate_market_regime_context('TQQQ', target_date, settings.database_url)
         
         # Create market conditions with REAL data
         conditions = MarketConditions(

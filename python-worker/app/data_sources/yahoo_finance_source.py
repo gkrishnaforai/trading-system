@@ -42,8 +42,8 @@ class YahooFinanceSource(BaseDataSource):
             kwargs["end"] = kwargs.pop("end_date")
         return self._client.fetch_price_data(symbol, **kwargs)
     
-    def fetch_current_price(self, symbol: str) -> Optional[float]:
-        """Fetch current price - delegates to client"""
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Fetch current price with volume - delegates to client"""
         return self._client.fetch_current_price(symbol)
     
     def fetch_symbol_details(self, symbol: str) -> Dict[str, Any]:

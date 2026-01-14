@@ -10,9 +10,12 @@ from enum import Enum
 import pandas as pd
 
 class SignalType(Enum):
-    BUY = "buy"
-    SELL = "sell"
-    HOLD = "hold"
+    BUY = "buy"          # New entry position
+    ADD = "add"          # Add to existing position (trend continuation)
+    HOLD = "hold"        # No action - wait for clarity
+    REDUCE = "reduce"    # Partial position reduction (profit taking)
+    SELL = "sell"        # Full position exit (risk management)
+    EXIT = "exit"        # Emergency exit (breakdown)
 
 @dataclass
 class MarketConditions:
@@ -28,6 +31,8 @@ class MarketConditions:
     volatility: float  # Daily volatility %
     vix_level: float = 20.0  # VIX level for fear/greed analysis
     volatility_trend: str = "stable"  # 'rising', 'falling', 'stable'
+    volume: float = 0.0  # Current volume
+    avg_volume_20d: float = 0.0  # 20-day average volume
     
     @classmethod
     def from_dataframe(cls, df: pd.DataFrame) -> 'MarketConditions':

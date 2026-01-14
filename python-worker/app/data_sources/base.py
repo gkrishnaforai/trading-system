@@ -24,8 +24,9 @@ class BaseDataSource(ABC):
         pass
     
     @abstractmethod
-    def fetch_current_price(self, symbol: str) -> Optional[float]:
-        """Fetch current/live price"""
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Fetch current/live price with volume data
+        Returns dict with 'price' and 'volume' keys, or None if unavailable"""
         pass
     
     @abstractmethod

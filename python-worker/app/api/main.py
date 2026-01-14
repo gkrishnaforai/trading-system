@@ -249,3 +249,49 @@ async def get_screener_results(screener_id: str):
     except Exception as e:
         logger.error(f"Failed to get screener results: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/data/{symbol}")
+async def get_symbol_data(symbol: str, limit: int = 10):
+    """Get basic market data for a symbol"""
+    try:
+        # Get latest intraday data
+        intraday_query = """
+            SELECT symbol, ts, interval, open, high, low, close, volume, data_source
+            FROM raw_market_data_intraday
+            WHERE symbol = :symbol
+            ORDER BY ts DESC
+            LIMIT :limit
+        """
+        
+        intraday_result = db.execute_query(intraday_query, {"symbol": symbol, "limit": limit})
+        
+        # Get latest daily data if no intraday
+        if not intraday_result:
+            daily_query = """
+                SELECT symbol, date, open, high, low, close, volume
+                FROM raw_market_data_daily
+                WHERE symbol = :symbol
+                ORDER BY date DESC
+                LIMIT :limit
+            """
+            
+            daily_result = db.execute_query(daily_query, {"symbol": symbol, "limit": limit})
+            
+            return {
+                "symbol": symbol,
+                "data_type": "daily",
+                "records": daily_result,
+                "count": len(daily_result)
+            }
+        
+        return {
+            "symbol": symbol,
+            "data_type": "intraday",
+            "records": intraday_result,
+            "count": len(intraday_result)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get data for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

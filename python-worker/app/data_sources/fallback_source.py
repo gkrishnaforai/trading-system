@@ -64,8 +64,8 @@ class FallbackDataSource(BaseDataSource):
                 logger.warning(f"Finnhub doesn't support price data, cannot fallback for {symbol}")
             raise
     
-    def fetch_current_price(self, symbol: str) -> Optional[float]:
-        """Fetch current/live price"""
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Fetch current/live price with volume"""
         try:
             return self.primary_source.fetch_current_price(symbol)
         except Exception as e:
@@ -160,11 +160,19 @@ class FallbackDataSource(BaseDataSource):
             raise
     
     # Finnhub-specific fetch methods (delegate to provider-backed thin adapter)
-    def _fetch_finnhub_quote(self, symbol: str) -> Optional[float]:
+    def _fetch_finnhub_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Fetch current price from Finnhub via thin adapter."""
         try:
             details = self.fallback_source.fetch_symbol_details(symbol)
-            return float(details.get("current_price", 0)) if details and details.get("current_price") else None
+            current_price = details.get("current_price") if details else None
+            
+            if current_price:
+                return {
+                    "price": float(current_price),
+                    "volume": None,  # Finnhub doesn't provide volume in quote
+                    "source": "finnhub"
+                }
+            return None
         except Exception as e:
             logger.error(f"Finnhub quote fetch failed for {symbol}: {e}")
             raise

@@ -19,6 +19,8 @@ from datetime import datetime
 from app.signal_engines.generic_etf_engine import create_instrument_engine
 from app.signal_engines.signal_calculator_core import MarketConditions
 from app.utils.market_data_utils import calculate_market_regime_context
+from app.config import settings
+from app.observability.logging import get_logger
 
 router = APIRouter()
 
@@ -88,10 +90,9 @@ async def generate_generic_signal(request: GenericSignalRequest):
         row = df.iloc[0]
         
         # Calculate real market context
-        db_url = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/trading_db')
         target_date = request.date if request.date else str(row['date'].date())
         
-        market_context = calculate_market_regime_context(request.symbol.upper(), target_date, db_url)
+        market_context = calculate_market_regime_context(request.symbol.upper(), target_date, settings.database_url)
         
         # Create market conditions with REAL data
         conditions = MarketConditions(

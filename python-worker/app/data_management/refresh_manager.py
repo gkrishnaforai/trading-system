@@ -235,7 +235,7 @@ class DataRefreshManager(BaseService):
             """
             SELECT ts
             FROM raw_market_data_intraday
-            WHERE stock_symbol = :symbol
+            WHERE symbol = :symbol
               AND interval = '15m'
               AND ts >= :start_ts
               AND ts <= :end_ts
@@ -346,16 +346,16 @@ class DataRefreshManager(BaseService):
         try:
             holdings = db.execute_query(
                 """
-                SELECT DISTINCT stock_symbol
+                SELECT DISTINCT symbol
                 FROM holdings
-                WHERE stock_symbol IS NOT NULL AND stock_symbol != ''
-                ORDER BY stock_symbol
+                WHERE symbol IS NOT NULL AND symbol != ''
+                ORDER BY symbol
                 """
             )
         except Exception:
             holdings = []
 
-        symbols = [h.get("stock_symbol") for h in holdings if h.get("stock_symbol")]
+        symbols = [h.get("symbol") for h in holdings if h.get("symbol")]
         to_refresh: List[str] = []
         for sym in symbols:
             try:
@@ -824,14 +824,24 @@ class DataRefreshManager(BaseService):
         error_message = None
 
         try:
-            price = self.data_source.fetch_current_price(symbol)
-            if price is None:
+            price_data = self.data_source.fetch_current_price(symbol)
+            if price_data is None:
                 error_message = "No current price returned"
                 return False
 
-            # Some providers may return dict-like payloads or strings.
-            if isinstance(price, dict):
-                price = price.get("price") or price.get("last") or price.get("close")
+            # Handle new dict format with price and volume
+            if isinstance(price_data, dict):
+                price = price_data.get("price")
+                volume = price_data.get("volume")
+            else:
+                # Backward compatibility for old format
+                price = price_data
+                volume = None
+            
+            if price is None:
+                error_message = "No price in returned data"
+                return False
+                
             try:
                 price_f = float(price)
             except Exception:
@@ -848,7 +858,7 @@ class DataRefreshManager(BaseService):
                 high=price_f,
                 low=price_f,
                 close=price_f,
-                volume=None,
+                volume=int(volume) if volume is not None else None,  # ✅ Now includes volume!
                 source=self.data_source.name,
             )
             rows_saved = MarketDataIntradayRepository.upsert_many([row])
@@ -983,8 +993,9 @@ class DataRefreshManager(BaseService):
             self.logger.warning(f"Failed to audit data fetch (non-critical): {e}")
 
     def _refresh_fundamentals(self, symbol: str) -> bool:
-        """Refresh fundamental data and save to fundamentals_snapshots"""
+        """Refresh fundamental data and save to both snapshots and detailed tables"""
         import time
+        from app.data_management.enhanced_fundamentals_loader import enhanced_fundamentals_loader
 
         start_time = time.time()
         fetch_success = False
@@ -994,56 +1005,67 @@ class DataRefreshManager(BaseService):
         validation_report_id: Optional[str] = None
 
         try:
-            # Fetch enhanced fundamentals (includes all metrics)
-            if hasattr(self.data_source, 'fetch_enhanced_fundamentals'):
-                fundamentals = self.data_source.fetch_enhanced_fundamentals(symbol)
+            # First, load detailed fundamentals using enhanced loader
+            detailed_success = enhanced_fundamentals_loader.load_detailed_fundamentals(symbol)
+            
+            if detailed_success:
+                rows_fetched = 1  # Count as successful fetch
+                fetch_success = True
+                rows_saved = 1
+                self.logger.info(f"✅ Loaded detailed fundamentals for {symbol}")
             else:
-                fundamentals = self.data_source.fetch_fundamentals(symbol)
+                # Fallback to original method
+                if hasattr(self.data_source, 'fetch_enhanced_fundamentals'):
+                    fundamentals = self.data_source.fetch_enhanced_fundamentals(symbol)
+                else:
+                    fundamentals = self.data_source.fetch_fundamentals(symbol)
 
-            rows_fetched = 1 if fundamentals else 0
-            if not fundamentals:
-                error_message = "No fundamental data available"
-                return False
+                rows_fetched = 1 if fundamentals else 0
+                if not fundamentals:
+                    error_message = "No fundamental data available"
+                    return False
 
-            validator = FundamentalsValidator()
-            validation_report = validator.validate(fundamentals, symbol, "fundamentals")
-            validation_report_id = self._save_validation_report(validation_report)
+                validator = FundamentalsValidator()
+                validation_report = validator.validate(fundamentals, symbol, "fundamentals")
+                validation_report_id = self._save_validation_report(validation_report)
 
-            summary = validator.summarize_issues(validation_report)
-            metadata = {
-                **summary,
-                "source": self.data_source.name,
-            }
-
-            # Persist even if validation warns/fails; audit + ingestion state will flag retry.
-            query = """
-                INSERT INTO fundamentals_snapshots
-                (stock_symbol, as_of_date, source, payload)
-                VALUES (:symbol, :as_of_date, :source, CAST(:payload AS JSONB))
-                ON CONFLICT (stock_symbol, as_of_date)
-                DO UPDATE SET payload = EXCLUDED.payload, source = EXCLUDED.source, updated_at = NOW()
-            """
-
-            db.execute_update(
-                query,
-                {
-                    "symbol": symbol,
-                    "as_of_date": datetime.utcnow().date(),
+                summary = validator.summarize_issues(validation_report)
+                metadata = {
+                    **summary,
                     "source": self.data_source.name,
-                    "payload": json_dumps_sanitized(fundamentals),
-                },
-            )
-            rows_saved = 1
+                }
 
-            if validation_report.overall_status == "fail":
-                fetch_success = False
-                error_message = "Fundamentals validation failed: missing/invalid required fields"
-                self.logger.warning(f"⚠️ Fundamentals validation FAILED for {symbol}")
-                return False
+                # Persist to snapshots table
+                query = """
+                    INSERT INTO fundamentals_snapshots
+                    (symbol, as_of_date, source, payload)
+                    VALUES (:symbol, :as_of_date, :source, CAST(:payload AS JSONB))
+                    ON CONFLICT (symbol, as_of_date)
+                    DO UPDATE SET payload = EXCLUDED.payload, source = EXCLUDED.source, updated_at = NOW()
+                """
 
-            fetch_success = True
-            self.logger.info(f"✅ Saved fundamentals snapshot for {symbol}")
+                db.execute_update(
+                    query,
+                    {
+                        "symbol": symbol,
+                        "as_of_date": datetime.utcnow().date(),
+                        "source": self.data_source.name,
+                        "payload": json_dumps_sanitized(fundamentals),
+                    },
+                )
+                rows_saved = 1
+
+                if validation_report.overall_status == "fail":
+                    fetch_success = False
+                    error_message = "Fundamentals validation failed: missing/invalid required fields"
+                    self.logger.warning(f"⚠️ Fundamentals validation FAILED for {symbol}")
+                    return False
+
+                fetch_success = True
+                self.logger.info(f"✅ Saved fundamentals snapshot for {symbol}")
+
             return True
+            
         except Exception as e:
             error_message = str(e)
             self.logger.error(f"Error refreshing fundamentals for {symbol}: {e}", exc_info=True)
@@ -1061,7 +1083,7 @@ class DataRefreshManager(BaseService):
                 success=fetch_success,
                 error_message=error_message,
                 validation_report_id=validation_report_id,
-                metadata=metadata,
+                metadata=metadata if 'metadata' in locals() else {},
             )
 
     def _refresh_news(self, symbol: str) -> int:
@@ -1178,7 +1200,7 @@ class DataRefreshManager(BaseService):
                             db.execute_update(
                                 """
                                 INSERT INTO stock_news
-                                (news_id, stock_symbol, title, publisher, link, published_at, related_symbols, source)
+                                (news_id, symbol, title, publisher, link, published_at, related_symbols, source)
                                 VALUES (:news_id, :symbol, :title, :publisher, :link, :published_at, CAST(:related_symbols AS JSONB), :source)
                                 ON CONFLICT (news_id) DO NOTHING
                                 """,
@@ -1341,7 +1363,7 @@ class DataRefreshManager(BaseService):
                         INSERT INTO earnings_data
                         (earnings_id, stock_symbol, earnings_date, earnings_at, earnings_timezone, earnings_session,
                          eps_estimate, eps_actual, revenue_estimate, revenue_actual, surprise_percentage, source)
-                        VALUES (:earnings_id, :symbol, :earnings_date, :earnings_at, :earnings_timezone, :earnings_session,
+                        VALUES (:earnings_id, :stock_symbol, :earnings_date, :earnings_at, :earnings_timezone, :earnings_session,
                                 :eps_estimate, :eps_actual, :revenue_estimate, :revenue_actual, :surprise_percentage, :source)
                         ON CONFLICT (stock_symbol, earnings_date)
                         DO UPDATE SET
@@ -1380,7 +1402,7 @@ class DataRefreshManager(BaseService):
                     try:
                         db.execute_update(query, {
                             "earnings_id": earnings_id,
-                            "symbol": symbol,
+                            "stock_symbol": symbol,  # Map to actual column name
                             "earnings_date": earnings_date,
                             "earnings_at": earnings_at,
                             "earnings_timezone": earnings_timezone,
@@ -1529,10 +1551,9 @@ class DataRefreshManager(BaseService):
 
             db.execute_update(
                 """
-                INSERT INTO financial_statements
-                (stock_symbol, period_type, statement_type, fiscal_period, source, payload)
+                INSERT INTO financial_statements (symbol, period_type, statement_type, fiscal_period, source, payload)
                 VALUES (:symbol, :period_type, :statement_type, :fiscal_period, :source, CAST(:payload AS jsonb))
-                ON CONFLICT (stock_symbol, period_type, statement_type, fiscal_period)
+                ON CONFLICT (symbol, period_type, statement_type, fiscal_period)
                 DO UPDATE SET
                   source = EXCLUDED.source,
                   payload = EXCLUDED.payload,
@@ -1592,10 +1613,9 @@ class DataRefreshManager(BaseService):
 
             db.execute_update(
                 """
-                INSERT INTO corporate_actions
-                (stock_symbol, action_date, action_type, value, source, payload)
+                INSERT INTO corporate_actions (symbol, action_date, action_type, value, source, payload)
                 VALUES (:symbol, :action_date, :action_type, :value, :source, CAST(:payload AS jsonb))
-                ON CONFLICT (stock_symbol, action_date, action_type)
+                ON CONFLICT (symbol, action_date, action_type)
                 DO UPDATE SET
                   value = EXCLUDED.value,
                   source = EXCLUDED.source,

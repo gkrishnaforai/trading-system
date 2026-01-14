@@ -103,6 +103,21 @@ app.include_router(generic_engine_router, tags=["signal"])
 # Add universal backtest router
 from app.api.universal_backtest_api import router as universal_router
 app.include_router(universal_router, prefix="/api/v1/universal", tags=["Universal Backtest"])
+# Add stocks management router
+from app.api.stocks_api import router as stocks_router
+app.include_router(stocks_router, prefix="/api/v1", tags=["Stocks Management"])
+# Add bulk operations router
+from app.api.bulk_operations_api import router as bulk_router
+app.include_router(bulk_router, prefix="/api/v1", tags=["Bulk Operations"])
+# Add portfolio management router
+from app.api.portfolio_api import router as portfolio_router
+app.include_router(portfolio_router, tags=["Portfolio Management"])
+# Add portfolio management v2 router (industry standard)
+from app.api.portfolio_api_v2 import router as portfolio_v2_router
+app.include_router(portfolio_v2_router, tags=["Portfolio Management v2"])
+# Add growth quality analysis router
+from app.api.growth_quality_endpoints import router as growth_quality_router
+app.include_router(growth_quality_router, tags=["Growth Quality Analysis"])
 
 # Register screener endpoints
 register_screener_endpoints(app)

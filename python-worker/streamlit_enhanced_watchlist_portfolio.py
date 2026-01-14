@@ -606,6 +606,19 @@ def display_enhanced_watchlist():
         with action_col2:
             if st.button("📊 Deep Analysis", key=f"analyze_{item['symbol']}"):
                 st.info(f"🔍 Loading deep analysis for {item['symbol']}...")
+            
+            # Add Fundamentals Analysis link
+            st.markdown("---")
+            st.markdown("#### 💰 Growth Quality Analysis")
+            st.markdown(f"""
+            <a href="http://localhost:8503/?symbol={item['symbol']}" target="_blank">
+                <button style="background-color: #667eea; color: white; padding: 8px 16px; 
+                        border: none; border-radius: 4px; cursor: pointer; width: 100%;">
+                    📈 View Fundamentals Analysis
+                </button>
+            </a>
+            """, unsafe_allow_html=True)
+            st.caption("Comprehensive growth quality and early warning analysis")
         
         with action_col3:
             if st.button("🔔 Set Alert", key=f"alert_{item['symbol']}"):
@@ -964,6 +977,19 @@ def display_enhanced_portfolio():
         with detail_col3:
             st.markdown("#### 🎯 Actions")
             st.write("Use 'Close Position' to delete holding.")
+            
+            # Add Fundamentals Analysis link
+            st.markdown("---")
+            st.markdown("#### 💰 Growth Quality Analysis")
+            st.markdown(f"""
+            <a href="http://localhost:8503/?symbol={holding.get('symbol')}" target="_blank">
+                <button style="background-color: #667eea; color: white; padding: 8px 16px; 
+                        border: none; border-radius: 4px; cursor: pointer; width: 100%;">
+                    📈 View Fundamentals Analysis
+                </button>
+            </a>
+            """, unsafe_allow_html=True)
+            st.caption("Comprehensive growth quality and early warning analysis")
         
         st.markdown("#### 🎯 Position Actions")
         holding_id = holding.get("holding_id")

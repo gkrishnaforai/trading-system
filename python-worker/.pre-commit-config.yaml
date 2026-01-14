@@ -1,0 +1,11 @@
+# Pre-commit hooks for router validation
+repos:
+  - repo: local
+    hooks:
+      - id: validate-routers
+        name: Validate Router Configuration
+        entry: python validate_routers.py
+        language: system
+        files: ^app/api/.*\.py$
+        pass_filenames: false
+        always_run: true

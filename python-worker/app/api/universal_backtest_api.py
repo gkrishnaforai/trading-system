@@ -14,7 +14,7 @@ from sqlalchemy import create_engine
 
 # Import existing DRY functions (no changes to TQQQ API)
 from app.utils.database_helper import DatabaseQueryHelper
-from app.utils.market_data_utils import calculate_market_regime_context
+from app.utils.market_data_utils import calculate_market_regime_context, calculate_ema_slope
 from app.services.comprehensive_data_loader import ComprehensiveDataLoader
 from app.observability.logging import get_logger, log_exception, log_with_context
 from app.config import settings  # Import centralized settings
@@ -23,7 +23,14 @@ from app.config import settings  # Import centralized settings
 from app.signal_engines.unified_tqqq_swing_engine import UnifiedTQQQSwingEngine
 from app.signal_engines.signal_calculator_core import SignalConfig, SignalResult, MarketConditions
 
-router = APIRouter()
+# ========================================
+# IMPORTANT: Router Configuration Rules
+# ========================================
+# DO NOT ADD PREFIX HERE! Prefixes are managed in api_server.py
+# ❌ WRONG: router = APIRouter(prefix="/api/v1/universal", tags=["universal"])
+# ✅ CORRECT: router = APIRouter(tags=["universal"])
+# ========================================
+router = APIRouter(tags=["universal"])
 
 # Initialize logger for the API
 logger = get_logger(__name__)
@@ -273,9 +280,12 @@ async def get_universal_signal(request: SignalRequest):
                 )
             
             # Create market conditions using same indicators data as TQQQ methodology
+            # Debug: Log available keys in symbol_data
+            logger.info(f"Available keys in symbol_data: {list(symbol_data.keys())}")
+            
             conditions = MarketConditions(
                 rsi=symbol_data['rsi_14'],        # From indicators table (same as TQQQ)
-                sma_20=symbol_data['ema_20'],     # From indicators table (same as TQQQ)
+                sma_20=symbol_data.get('sma_20', symbol_data.get('ema_20', 0)),     # ✅ Use SMA20 if available, fallback to EMA20
                 sma_50=symbol_data['sma_50'],     # From indicators table (same as TQQQ)
                 ema_20=symbol_data['ema_20'],     # From indicators table (same as TQQQ)
                 current_price=symbol_data['close'], # From raw data (same as TQQQ)
@@ -284,8 +294,17 @@ async def get_universal_signal(request: SignalRequest):
                 macd_signal=float(symbol_data['macd_signal']) if symbol_data['macd_signal'] is not None else 0.0, # From indicators table (same as TQQQ)
                 volatility=market_context['volatility'],
                 vix_level=market_context['vix_level'],
-                volatility_trend='stable'
+                volatility_trend='stable',
+                volume=float(symbol_data['volume']) if symbol_data['volume'] is not None else 0.0,  # Current volume
+                avg_volume_20d=float(symbol_data['avg_volume_20d']) if symbol_data.get('avg_volume_20d') is not None else 0.0  # 20-day average volume
             )
+        
+        # Calculate EMA slope for trend analysis
+        try:
+            ema_slope = calculate_ema_slope(request.symbol, request.date, settings.database_url)
+        except Exception as e:
+            logger.warning(f"Failed to calculate EMA slope for {request.symbol}: {e}")
+            ema_slope = 0.0
         
         # Use TQQQ engine for all (will extend later)
         # Create appropriate config based on asset type
@@ -332,13 +351,19 @@ async def get_universal_signal(request: SignalRequest):
                 "macd": conditions.macd,
                 "macd_signal": conditions.macd_signal,
                 "high": market_context.get('high', conditions.current_price),
-                "low": market_context.get('low', conditions.current_price)
+                "low": market_context.get('low', conditions.current_price),
+                "volume": conditions.volume,  # ✅ Add current volume
+                "avg_volume_20d": conditions.avg_volume_20d,  # ✅ Add average volume
+                "data_source": "python_worker"  # ✅ Add data source
             },
             "signal": {
                 "signal": signal_result.signal.value,
                 "confidence": signal_result.confidence,
                 "reasoning": signal_result.reasoning,
-                "metadata": signal_result.metadata
+                "metadata": signal_result.metadata,
+                "volume": conditions.volume,  # ✅ Add volume to signal
+                "avg_volume_20d": conditions.avg_volume_20d,  # ✅ Add average volume to signal
+                "data_source": "python_worker"  # ✅ Add data source
             },
             "analysis": {
                 "daily_range": f"{market_context.get('low', 0):.2f} - {market_context.get('high', 0):.2f}",
@@ -347,7 +372,13 @@ async def get_universal_signal(request: SignalRequest):
                 "recent_change": f"{conditions.recent_change:.2f}%",
                 "vix_level": f"{conditions.vix_level:.2f}",
                 "market_stress": conditions.volatility > asset_config['volatility_threshold'],
-                "volatility_level": "HIGH" if conditions.volatility > asset_config['volatility_threshold'] else "NORMAL"
+                "volatility_level": "HIGH" if conditions.volatility > asset_config['volatility_threshold'] else "NORMAL",
+                "current_volume": conditions.volume,  # ✅ Add current volume for UI mapping
+                "avg_volume_20d": conditions.avg_volume_20d,  # ✅ Add average volume for UI mapping
+                "volume_ratio": conditions.volume / conditions.avg_volume_20d if conditions.avg_volume_20d > 0 else 1.0,  # ✅ Add volume ratio
+                "price_range": f"{market_context.get('low', 0):.2f} - {market_context.get('high', 0):.2f}",  # ✅ Add price range
+                "ema_slope": ema_slope,  # ✅ Add EMA slope for trend analysis
+                "data_source": "python_worker"  # ✅ Add data source
             },
             "timestamp": datetime.now().isoformat(),
             "asset_type": request.asset_type

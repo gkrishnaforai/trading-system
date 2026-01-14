@@ -251,23 +251,32 @@ class DataFetcher(BaseService):
         # Store fundamentals snapshot separately (provider-agnostic)
         if fundamental_data:
             try:
-                import json
-                from app.utils.json_sanitize import json_dumps_sanitized
+                trade_date = pd.to_datetime(date_value).date()
+            except Exception:
+                trade_date = datetime.now().date()
+        elif hasattr(date_value, 'date'):
+            try:
+                trade_date = date_value.date()
+            except Exception:
+                trade_date = datetime.now().date()
+        else:
+            trade_date = datetime.now().date()
 
-                db.execute_update(
-                    """
-                    INSERT INTO fundamentals_snapshots (stock_symbol, as_of_date, source, payload)
-                    VALUES (:symbol, :as_of_date, :source, :payload)
-                    ON CONFLICT (stock_symbol, as_of_date)
-                    DO UPDATE SET payload = EXCLUDED.payload, source = EXCLUDED.source, updated_at = NOW()
-                    """,
-                    {
-                        "symbol": symbol,
-                        "as_of_date": datetime.now().date(),
-                        "source": getattr(settings, 'default_fundamentals_source', None) or 'yahoo_finance',
-                        "payload": json_dumps_sanitized(fundamental_data),
-                    },
+        if fundamental_data:
+            try:
+                from app.repositories.fundamentals_repository import FundamentalsRepository
+                
+                success = FundamentalsRepository.upsert_fundamentals_snapshot(
+                    symbol=symbol,
+                    fundamentals=fundamental_data,
+                    snapshot_date=trade_date
                 )
+                
+                if success:
+                    self.logger.info(f"✅ Saved fundamentals snapshot for {symbol}")
+                else:
+                    self.logger.warning(f"Failed to save fundamentals snapshot for {symbol}")
+                    
             except Exception as e:
                 # Fundamentals are optional for price ingestion; don't fail the price pipeline.
                 self.logger.warning(f"Failed to save fundamentals snapshot for {symbol} (non-critical): {e}")

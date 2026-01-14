@@ -13,6 +13,7 @@ import os
 import requests
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+from streamlit.runtime.scriptrunner import RerunData, RerunException
 
 import sys
 import os
@@ -187,169 +188,263 @@ def display_universal_backtest_results(results):
     asset_symbol = results.get("symbol", "Unknown")
     asset_type = results.get("asset_type", "stock")
     asset_type_name = asset_type.replace("_", " ").title()
+    mode = results.get("mode", "Single Date")
     
-    st.subheader(f"📊 {asset_symbol} Signal Analysis ({asset_type_name})")
-    
-    # Single date results (same structure as TQQQ)
-    signal = results["signal"]
-    market = results["market_data"]
-    analysis = results.get("analysis", {})
-    engine_info = results.get("engine", {})
-    
-    # 🎯 Signal Summary with Enhanced Colors (same as TQQQ)
-    signal_value = signal.get("signal", "N/A")
-    confidence = signal.get("confidence", 0)
-    
-    # Enhanced signal color mapping (same as TQQQ)
-    signal_colors = {
-        "buy": ("🟢", "green"),
-        "sell": ("🔴", "red"), 
-        "hold": ("🟡", "orange")
-    }
-    signal_emoji, signal_color = signal_colors.get(signal_value.lower(), ("⚪", "gray"))
-    
-    # Main signal display with better formatting (same as TQQQ)
-    st.markdown(f"### {signal_emoji} **{signal_value.upper()}**")
-    st.markdown(f"**Confidence:** {confidence:.1%}")
-    
-    # 🎭 Fear/Greed State Panel (Enhanced - same as TQQQ)
-    metadata = signal.get("metadata", {})
-    fear_greed_state = metadata.get("fear_greed_state", "unknown")
-    fear_greed_bias = metadata.get("fear_greed_bias", "unknown")
-    recovery_detected = metadata.get("recovery_detected", False)
-    
-    # Enhanced Fear/Greed color mapping with descriptions (same as TQQQ)
-    fg_colors = {
-        "extreme_fear": ("🟣", "purple", "Extreme Fear - Capitulation"),
-        "fear": ("🔵", "blue", "Fear - Buying Opportunity"), 
-        "neutral": ("⚪", "gray", "Neutral - Balanced"),
-        "greed": ("🟠", "orange", "Greed - Caution"),
-        "extreme_greed": ("🔴", "red", "Extreme Greed - Euphoria")
-    }
-    
-    fg_emoji, fg_color, fg_description = fg_colors.get(fear_greed_state, ("⚪", "gray", "Unknown"))
-    
-    # Bias color mapping (same as TQQQ)
-    bias_colors = {
-        "strongly_bullish": ("🟢", "Strong Buy"),
-        "bullish": ("🟡", "Buy"),
-        "neutral": ("⚪", "Neutral"),
-        "bearish": ("🟠", "Sell"),
-        "strongly_bearish": ("🔴", "Strong Sell")
-    }
-    bias_emoji, bias_description = bias_colors.get(fear_greed_bias, ("⚪", "Unknown"))
-    
-    # Fear/Greed Panel (same as TQQQ)
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown(f"### {fg_emoji} **Fear/Greed State**")
-        st.markdown(f"**{fear_greed_state.replace('_', ' ').title()}**")
-        st.caption(fg_description)
+    if mode == "Date Range":
+        # Display date range backtest results
+        st.subheader(f"📊 {asset_symbol} Backtest Results ({asset_type_name})")
         
-    with col2:
-        st.markdown(f"### {bias_emoji} **Signal Bias**")
-        st.markdown(f"**{fear_greed_bias.replace('_', ' ').title()}**")
-        st.caption(bias_description)
+        backtest_info = results.get("backtest_info", {})
+        signals = results.get("signals", [])
+        performance = results.get("performance", {})
         
-    with col3:
-        if recovery_detected:
-            st.markdown("### 🔄 **Recovery**")
-            st.success("**Detected**")
-            st.caption("BUY-in-Fear Opportunity")
-        else:
-            st.markdown("### 🔄 **Recovery**")
-            st.warning("**Not Detected**")
-            st.caption("Waiting for stabilization")
-    
-    # 🌊 Market Context Panel (Enhanced - same as TQQQ)
-    st.markdown("### 🌊 Market Context")
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        volatility = metadata.get("volatility", analysis.get("real_volatility", 0))
-        volatility_float = float(volatility) if volatility else 0.0
-        vol_color = "🔴" if volatility_float > 8 else "🟡" if volatility_float > 5 else "🟢"
-        vol_status = "High" if volatility_float > 8 else "Moderate" if volatility_float > 5 else "Low"
-        st.metric(f"{vol_color} Volatility", f"{volatility_float:.2f}%")
-        st.caption(f"Status: {vol_status}")
-        
-    with col2:
-        vix_level = analysis.get("vix_level", 0)
-        vix_float = float(vix_level) if vix_level else 0.0
-        vix_color = "🔴" if vix_float > 30 else "🟡" if vix_float > 20 else "🟢"
-        vix_status = "Extreme Fear" if vix_float > 30 else "Fear" if vix_float > 20 else "Calm"
-        st.metric(f"{vix_color} VIX", f"{vix_float:.2f}")
-        st.caption(f"Status: {vix_status}")
-        
-    with col3:
-        recent_change = metadata.get("recent_change", analysis.get("recent_change", 0))
-        change_float = float(recent_change) if recent_change else 0.0
-        change_color = "🔴" if change_float < -3 else "🟡" if change_float < 0 else "🟢" if change_float > 3 else "⚪"
-        change_status = "Strong Down" if change_float < -3 else "Down" if change_float < 0 else "Up" if change_float > 3 else "Stable"
-        st.metric(f"{change_color} Change", f"{change_float:+.2f}%")
-        st.caption(f"Status: {change_status}")
-        
-    with col4:
-        current_price = market.get("price", 0)
-        price_float = float(current_price) if current_price else 0.0
-        st.metric(f"💰 Price", f"${price_float:.2f}")
-        st.caption(f"Asset: {asset_type_name}")
-    
-    # 📊 Technical Indicators Panel (same as TQQQ)
-    st.markdown("### 📊 Technical Indicators")
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        rsi = market.get("rsi", 0)
-        rsi_float = float(rsi) if rsi else 0.0
-        rsi_color = "🔴" if rsi_float > 70 else "🟡" if rsi_float > 30 else "🟢" if rsi_float < 30 else "⚪"
-        rsi_status = "Overbought" if rsi_float > 70 else "Oversold" if rsi_float < 30 else "Neutral"
-        st.metric(f"{rsi_color} RSI", f"{rsi_float:.1f}")
-        st.caption(f"Status: {rsi_status}")
-        
-    with col2:
-        sma_20 = market.get("sma_20", 0)
-        sma_20_float = float(sma_20) if sma_20 else 0.0
-        st.metric(f"📈 SMA 20", f"${sma_20_float:.2f}")
-        st.caption("20-day average")
-        
-    with col3:
-        sma_50 = market.get("sma_50", 0)
-        sma_50_float = float(sma_50) if sma_50 else 0.0
-        st.metric(f"📊 SMA 50", f"${sma_50_float:.2f}")
-        st.caption("50-day average")
-        
-    with col4:
-        macd = market.get("macd", 0)
-        macd_float = float(macd) if macd else 0.0
-        macd_color = "🟢" if macd_float > 0 else "🔴" if macd_float < 0 else "⚪"
-        macd_status = "Bullish" if macd_float > 0 else "Bearish" if macd_float < 0 else "Neutral"
-        st.metric(f"{macd_color} MACD", f"{macd_float:.3f}")
-        st.caption(f"Status: {macd_status}")
-    
-    # 🧠 Signal Reasoning Panel (same as TQQQ)
-    reasoning = signal.get("reasoning", [])
-    if reasoning:
-        st.markdown("### 🧠 Signal Reasoning")
-        for i, reason in enumerate(reasoning, 1):
-            st.markdown(f"**{i}.** {reason}")
-    
-    # 🔧 Engine Information Panel
-    if engine_info:
-        st.markdown("### 🔧 Engine Information")
-        col1, col2 = st.columns(2)
+        # Backtest Summary
+        st.markdown("### 📈 Backtest Summary")
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            engine_type = engine_info.get("engine_type", "Unknown")
-            st.markdown(f"**Engine Type:** {engine_type}")
-            st.markdown(f"**Asset Type:** {asset_type_name}")
+            st.metric("Total Signals", len(signals))
+        with col2:
+            st.metric("Period", f"{backtest_info.get('total_days', 0)} days")
+        with col3:
+            start_date = backtest_info.get('start_date', 'N/A')
+            st.metric("Start Date", start_date)
+        with col4:
+            end_date = backtest_info.get('end_date', 'N/A')
+            st.metric("End Date", end_date)
+        
+        # Performance Metrics
+        if performance:
+            st.markdown("### 💰 Performance Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                total_return = performance.get('total_return', 0)
+                return_color = "🟢" if total_return > 0 else "🔴" if total_return < 0 else "⚪"
+                st.metric(f"{return_color} Total Return", f"{total_return:.2%}")
+            
+            with col2:
+                win_rate = performance.get('win_rate', 0)
+                win_color = "🟢" if win_rate > 0.5 else "🔴" if win_rate < 0.4 else "⚪"
+                st.metric(f"{win_color} Win Rate", f"{win_rate:.1%}")
+            
+            with col3:
+                max_drawdown = performance.get('max_drawdown', 0)
+                dd_color = "🔴" if max_drawdown < -0.1 else "🟡" if max_drawdown < -0.05 else "🟢"
+                st.metric(f"{dd_color} Max Drawdown", f"{max_drawdown:.2%}")
+            
+            with col4:
+                sharpe_ratio = performance.get('sharpe_ratio', 0)
+                sharpe_color = "🟢" if sharpe_ratio > 1 else "🟡" if sharpe_ratio > 0.5 else "🔴"
+                st.metric(f"{sharpe_color} Sharpe Ratio", f"{sharpe_ratio:.2f}")
+        
+        # Signals Table
+        if signals:
+            st.markdown("### 📋 Signal History")
+            
+            # Convert to DataFrame for better display
+            import pandas as pd
+            signals_df = pd.DataFrame(signals)
+            
+            # Select key columns for display
+            display_columns = ['date', 'signal', 'confidence', 'price', 'reasoning']
+            available_columns = [col for col in display_columns if col in signals_df.columns]
+            
+            if available_columns:
+                display_df = signals_df[available_columns].copy()
+                
+                # Format the data for better display
+                if 'confidence' in display_df.columns:
+                    display_df['confidence'] = display_df['confidence'].apply(lambda x: f"{x:.1%}")
+                if 'price' in display_df.columns:
+                    display_df['price'] = display_df['price'].apply(lambda x: f"${x:.2f}")
+                if 'reasoning' in display_df.columns:
+                    display_df['reasoning'] = display_df['reasoning'].apply(lambda x: '; '.join(x) if isinstance(x, list) else str(x)[:50] + '...')
+                
+                # Add signal colors
+                def color_signal(val):
+                    if val.upper() == "BUY":
+                        return "🟢 BUY"
+                    elif val.upper() == "SELL":
+                        return "🔴 SELL"
+                    elif val.upper() == "HOLD":
+                        return "🟡 HOLD"
+                    else:
+                        return f"⚪ {val}"
+                
+                if 'signal' in display_df.columns:
+                    display_df['signal'] = display_df['signal'].apply(color_signal)
+                
+                st.dataframe(display_df, use_container_width=True)
+            else:
+                st.write("No signal data available to display")
+        else:
+            st.info("No signals generated in the selected period")
+    
+    else:
+        # Single Date Analysis (existing functionality)
+        st.subheader(f"📊 {asset_symbol} Signal Analysis ({asset_type_name})")
+        
+        # Single date results (same structure as TQQQ)
+        signal = results["signal"]
+        market = results["market_data"]
+        analysis = results.get("analysis", {})
+        engine_info = results.get("engine", {})
+        
+        # 🎯 Signal Summary with Enhanced Colors (same as TQQQ)
+        signal_value = signal.get("signal", "N/A")
+        confidence = signal.get("confidence", 0)
+        
+        # Enhanced signal color mapping (same as TQQQ)
+        signal_colors = {
+            "buy": ("🟢", "green"),
+            "sell": ("🔴", "red"), 
+            "hold": ("🟡", "orange")
+        }
+        signal_emoji, signal_color = signal_colors.get(signal_value.lower(), ("⚪", "gray"))
+        
+        # Main signal display with better formatting (same as TQQQ)
+        st.markdown(f"### {signal_emoji} **{signal_value.upper()}**")
+        st.markdown(f"**Confidence:** {confidence:.1%}")
+        
+        # 🎭 Fear/Greed State Panel (Enhanced - same as TQQQ)
+        metadata = signal.get("metadata", {})
+        fear_greed_state = metadata.get("fear_greed_state", "unknown")
+        fear_greed_bias = metadata.get("fear_greed_bias", "unknown")
+        recovery_detected = metadata.get("recovery_detected", False)
+        
+        # Enhanced Fear/Greed color mapping with descriptions (same as TQQQ)
+        fg_colors = {
+            "extreme_fear": ("🟣", "purple", "Extreme Fear - Capitulation"),
+            "fear": ("🔵", "blue", "Fear - Buying Opportunity"), 
+            "neutral": ("⚪", "gray", "Neutral - Balanced"),
+            "greed": ("🟠", "orange", "Greed - Caution"),
+            "extreme_greed": ("🔴", "red", "Extreme Greed - Euphoria")
+        }
+        
+        fg_emoji, fg_color, fg_description = fg_colors.get(fear_greed_state, ("⚪", "gray", "Unknown"))
+        
+        # Bias color mapping (same as TQQQ)
+        bias_colors = {
+            "strongly_bullish": ("🟢", "Strong Buy"),
+            "bullish": ("🟡", "Buy"),
+            "neutral": ("⚪", "Neutral"),
+            "bearish": ("🟠", "Sell"),
+            "strongly_bearish": ("🔴", "Strong Sell")
+        }
+        bias_emoji, bias_description = bias_colors.get(fear_greed_bias, ("⚪", "Unknown"))
+        
+        # Fear/Greed Panel (same as TQQQ)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"### {fg_emoji} **Fear/Greed State**")
+            st.markdown(f"**{fear_greed_state.replace('_', ' ').title()}**")
+            st.caption(fg_description)
             
         with col2:
-            processing_time = engine_info.get("processing_time", 0)
-            st.markdown(f"**Processing Time:** {processing_time:.3f}s")
-            timestamp = engine_info.get("timestamp", "")
-            if timestamp:
-                st.markdown(f"**Timestamp:** {timestamp}")
+            st.markdown(f"### {bias_emoji} **Signal Bias**")
+            st.markdown(f"**{fear_greed_bias.replace('_', ' ').title()}**")
+            st.caption(bias_description)
+            
+        with col3:
+            if recovery_detected:
+                st.markdown("### 🔄 **Recovery**")
+                st.success("**Detected**")
+                st.caption("BUY-in-Fear Opportunity")
+            else:
+                st.markdown("### 🔄 **Recovery**")
+                st.warning("**Not Detected**")
+                st.caption("Waiting for stabilization")
+        
+        # 🌊 Market Context Panel (Enhanced - same as TQQQ)
+        st.markdown("### 🌊 Market Context")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            volatility = metadata.get("volatility", analysis.get("real_volatility", 0))
+            volatility_float = float(volatility) if volatility else 0.0
+            vol_color = "🔴" if volatility_float > 8 else "🟡" if volatility_float > 5 else "🟢"
+            vol_status = "High" if volatility_float > 8 else "Moderate" if volatility_float > 5 else "Low"
+            st.metric(f"{vol_color} Volatility", f"{volatility_float:.2f}%")
+            st.caption(f"Status: {vol_status}")
+            
+        with col2:
+            vix_level = analysis.get("vix_level", 0)
+            vix_float = float(vix_level) if vix_level else 0.0
+            vix_color = "🔴" if vix_float > 30 else "🟡" if vix_float > 20 else "🟢"
+            vix_status = "Extreme Fear" if vix_float > 30 else "Fear" if vix_float > 20 else "Calm"
+            st.metric(f"{vix_color} VIX", f"{vix_float:.2f}")
+            st.caption(f"Status: {vix_status}")
+            
+        with col3:
+            recent_change = metadata.get("recent_change", analysis.get("recent_change", 0))
+            change_float = float(recent_change) if recent_change else 0.0
+            change_color = "🔴" if change_float < -3 else "🟡" if change_float < 0 else "🟢" if change_float > 3 else "⚪"
+            change_status = "Strong Down" if change_float < -3 else "Down" if change_float < 0 else "Up" if change_float > 3 else "Stable"
+            st.metric(f"{change_color} Change", f"{change_float:+.2f}%")
+            st.caption(f"Status: {change_status}")
+            
+        with col4:
+            current_price = market.get("price", 0)
+            price_float = float(current_price) if current_price else 0.0
+            st.metric(f"💰 Price", f"${price_float:.2f}")
+            st.caption(f"Asset: {asset_type_name}")
+        
+        # 📊 Technical Indicators Panel (same as TQQQ)
+        st.markdown("### 📊 Technical Indicators")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            rsi = market.get("rsi", 0)
+            rsi_float = float(rsi) if rsi else 0.0
+            rsi_color = "🔴" if rsi_float > 70 else "🟡" if rsi_float > 30 else "🟢" if rsi_float < 30 else "⚪"
+            rsi_status = "Overbought" if rsi_float > 70 else "Oversold" if rsi_float < 30 else "Neutral"
+            st.metric(f"{rsi_color} RSI", f"{rsi_float:.1f}")
+            st.caption(f"Status: {rsi_status}")
+            
+        with col2:
+            sma_20 = market.get("sma_20", 0)
+            sma_20_float = float(sma_20) if sma_20 else 0.0
+            st.metric(f"📈 SMA 20", f"${sma_20_float:.2f}")
+            st.caption("20-day average")
+            
+        with col3:
+            sma_50 = market.get("sma_50", 0)
+            sma_50_float = float(sma_50) if sma_50 else 0.0
+            st.metric(f"📊 SMA 50", f"${sma_50_float:.2f}")
+            st.caption("50-day average")
+            
+        with col4:
+            macd = market.get("macd", 0)
+            macd_float = float(macd) if macd else 0.0
+            macd_color = "🟢" if macd_float > 0 else "🔴" if macd_float < 0 else "⚪"
+            macd_status = "Bullish" if macd_float > 0 else "Bearish" if macd_float < 0 else "Neutral"
+            st.metric(f"{macd_color} MACD", f"{macd_float:.3f}")
+            st.caption(f"Status: {macd_status}")
+        
+        # 🧠 Signal Reasoning Panel (same as TQQQ)
+        reasoning = signal.get("reasoning", [])
+        if reasoning:
+            st.markdown("### 🧠 Signal Reasoning")
+            for i, reason in enumerate(reasoning, 1):
+                st.markdown(f"**{i}.** {reason}")
+        
+        # 🔧 Engine Information Panel
+        if engine_info:
+            st.markdown("### 🔧 Engine Information")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                engine_type = engine_info.get("engine_type", "Unknown")
+                st.markdown(f"**Engine Type:** {engine_type}")
+                st.markdown(f"**Asset Type:** {asset_type_name}")
+                
+            with col2:
+                processing_time = engine_info.get("processing_time", 0)
+                st.markdown(f"**Processing Time:** {processing_time:.3f}s")
+                timestamp = engine_info.get("timestamp", "")
+                if timestamp:
+                    st.markdown(f"**Timestamp:** {timestamp}")
 
 def display_backtest_results(results):
     """Display backtest results in a user-friendly format with Fear/Greed visualization"""
@@ -2267,11 +2362,88 @@ with tab_universal_backtest:
     st.caption("*Advanced backtesting for any asset type (3x ETFs, Regular ETFs, Stocks)*")
     
     # Asset type selection
-    st.markdown("### 🎯 Asset Configuration")
+    st.markdown("### 🎯 Professional Stock Analysis")
     
-    col1, col2 = st.columns([1, 1])
+    # Stock Selection Section
+    col1, col2 = st.columns([2, 1])
     
     with col1:
+        # Get available stocks from database
+        try:
+            stocks_response = python_client.get("api/v1/stocks/available")
+            if stocks_response and isinstance(stocks_response, list):
+                available_stocks = stocks_response
+                
+                # Create display options with company names
+                stock_options = []
+                stock_map = {}
+                
+                for stock in available_stocks:
+                    display_name = f"{stock['symbol']} - {stock.get('company_name', 'Unknown Company')}"
+                    stock_options.append(display_name)
+                    stock_map[display_name] = stock
+                
+                # Stock selector with search
+                selected_display = st.selectbox(
+                    "🔍 Select Stock for Analysis",
+                    options=stock_options,
+                    index=0,
+                    key="universal_stock_selector",
+                    help="Choose from our curated list of stocks with complete data coverage"
+                )
+                
+                # Get selected stock info
+                selected_stock = stock_map[selected_display]
+                universal_symbol = selected_stock['symbol']
+                
+                # Display selected stock info
+                st.markdown("---")
+                st.markdown("### 📊 Selected Stock Overview")
+                
+                info_col1, info_col2, info_col3 = st.columns(3)
+                
+                with info_col1:
+                    st.metric("Symbol", selected_stock['symbol'])
+                    if selected_stock.get('company_name'):
+                        st.metric("Company", selected_stock['company_name'][:20] + "..." if len(selected_stock['company_name']) > 20 else selected_stock['company_name'])
+                
+                with info_col2:
+                    if selected_stock.get('sector'):
+                        st.metric("Sector", selected_stock['sector'])
+                    if selected_stock.get('industry'):
+                        st.metric("Industry", selected_stock['industry'][:15] + "..." if len(selected_stock['industry']) > 15 else selected_stock['industry'])
+                
+                with info_col3:
+                    if selected_stock.get('market_cap'):
+                        market_cap = selected_stock['market_cap']
+                        if market_cap > 1e12:
+                            mc_display = f"${market_cap/1e12:.1f}T"
+                        elif market_cap > 1e9:
+                            mc_display = f"${market_cap/1e9:.1f}B"
+                        elif market_cap > 1e6:
+                            mc_display = f"${market_cap/1e6:.1f}M"
+                        else:
+                            mc_display = f"${market_cap:,.0f}"
+                        st.metric("Market Cap", mc_display)
+                    
+                    if selected_stock.get('country'):
+                        st.metric("Country", selected_stock['country'])
+                
+                # Show description if available
+                if selected_stock.get('description'):
+                    with st.expander("📝 Company Description", expanded=False):
+                        st.write(selected_stock['description'])
+                        
+            else:
+                st.error("Unable to load stocks from database")
+                universal_symbol = st.text_input("Enter Symbol Manually", value="TQQQ", key="fallback_symbol")
+                
+        except Exception as e:
+            st.error(f"Error loading stocks: {e}")
+            universal_symbol = st.text_input("Enter Symbol Manually", value="TQQQ", key="fallback_symbol")
+    
+    with col2:
+        # Asset type selection
         asset_type_options = {
             "3x ETF": "3x_etf",
             "Regular ETF": "regular_etf", 
@@ -2279,74 +2451,299 @@ with tab_universal_backtest:
         }
         
         selected_asset_type_name = st.selectbox(
-            "Select Asset Type",
+            "Asset Type",
             list(asset_type_options.keys()),
             index=0,
-            key="universal_asset_type"
+            key="universal_asset_type",
+            help="Select the asset type for analysis parameters"
         )
         
         selected_asset_type = asset_type_options[selected_asset_type_name]
-    
-    with col2:
-        # Popular symbols for each asset type
-        symbol_suggestions = {
-            "3x_etf": ["TQQQ", "SOXL", "FNGU", "TECL", "WEBL"],
-            "regular_etf": ["QQQ", "SPY", "IWM", "VTI", "GLD"],
-            "stock": ["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA"]
-        }
         
-        suggestions = symbol_suggestions.get(selected_asset_type, [])
+        # Add new stock functionality
+        st.markdown("---")
+        st.markdown("### ➕ Add New Stock")
         
-        # Custom symbol input
-        universal_symbol = st.text_input(
-            f"Enter {selected_asset_type_name} Symbol",
-            value=suggestions[0] if suggestions else "TQQQ",
-            key="universal_symbol",
-            placeholder=f"e.g., {suggestions[0] if suggestions else 'TQQQ'}"
+        new_symbol = st.text_input(
+            "Add Symbol",
+            placeholder="e.g., GME, AMC, PLTR",
+            key="new_symbol_input",
+            help="Add a new symbol to our database (auto-fills company info)"
         )
         
-        # Show suggestions if available
-        if suggestions:
-            st.markdown("**Quick select:**")
-            cols = st.columns(len(suggestions))
-            for i, suggestion in enumerate(suggestions):
-                if cols[i].button(suggestion, key=f"universal_suggest_{suggestion}", use_container_width=True):
-                    universal_symbol = suggestion
-                    st.rerun()
+        if st.button("🔍 Add Stock", key="add_stock_button", use_container_width=True):
+            if new_symbol and len(new_symbol.strip()) >= 1:
+                with st.spinner(f"Adding {new_symbol.upper()} to database..."):
+                    try:
+                        add_response = python_client.post(
+                            "api/v1/stocks/add",
+                            json_data={"symbol": new_symbol.strip()}
+                        )
+                        
+                        if add_response and add_response.get('symbol'):
+                            st.success(f"✅ Successfully added {new_symbol.upper()}!")
+                            st.info(f"Company: {add_response.get('company_name', 'N/A')}")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to add {new_symbol.upper()}")
+                    except Exception as e:
+                        st.error(f"❌ Error adding stock: {e}")
+            else:
+                st.warning("⚠️ Please enter a valid symbol")
+        
+        # Bulk Stock Loading Section
+        st.markdown("---")
+        st.markdown("### 🚀 Bulk Stock Loading")
+        
+        # Show current database summary
+        try:
+            summary_response = python_client.get("api/v1/bulk/stocks/database/summary")
+            if summary_response and 'error' not in summary_response:
+                st.markdown("#### 📊 Current Database Status")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Total Stocks", summary_response.get('total_stocks', 0))
+                
+                with col2:
+                    sectors = summary_response.get('by_sector', {})
+                    st.metric("Sectors", len(sectors))
+                
+                with col3:
+                    exchanges = summary_response.get('by_exchange', {})
+                    st.metric("Exchanges", len(exchanges))
+                
+                # Show top sectors if available
+                if sectors:
+                    st.markdown("**🏢 Top Sectors:**")
+                    for sector, count in list(sectors.items())[:3]:
+                        st.write(f"• {sector}: {count} stocks")
+        except Exception as e:
+            st.error(f"Error loading database summary: {e}")
+        
+        # Bulk loading controls
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("🚀 Load Popular Stocks", key="load_popular_stocks", use_container_width=True, help="Load 100+ popular stocks automatically"):
+                with st.spinner("Starting bulk stock loading..."):
+                    try:
+                        bulk_response = python_client.post("api/v1/bulk/stocks/load/popular")
+                        
+                        if bulk_response and bulk_response.get('task_id'):
+                            task_id = bulk_response['task_id']
+                            st.success(f"✅ Bulk loading started! Task ID: {task_id}")
+                            st.session_state.bulk_task_id = task_id
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to start bulk loading")
+                    except Exception as e:
+                        st.error(f"❌ Error starting bulk loading: {e}")
+        
+        with col2:
+            if st.button("📋 View Popular List", key="view_popular_list", use_container_width=True):
+                try:
+                    popular_response = python_client.get("api/v1/bulk/stocks/popular/list")
+                    
+                    if popular_response and popular_response.get('symbols'):
+                        symbols = popular_response['symbols']
+                        st.info(f"📋 {len(symbols)} popular stocks ready to load")
+                        
+                        with st.expander("🔍 View Popular Stocks List", expanded=False):
+                            # Show symbols in columns
+                            cols = st.columns(4)
+                            for i, symbol in enumerate(symbols):
+                                with cols[i % 4]:
+                                    st.write(f"**{symbol}**")
+                    else:
+                        st.error("❌ Failed to load popular stocks list")
+                except Exception as e:
+                    st.error(f"❌ Error loading popular list: {e}")
+        
+        # Show bulk loading progress if active
+        if 'bulk_task_id' in st.session_state:
+            task_id = st.session_state.bulk_task_id
+            
+            st.markdown("---")
+            st.markdown(f"### 📈 Bulk Loading Progress (Task: {task_id})")
+            
+            try:
+                status_response = python_client.get(f"api/v1/bulk/stocks/status/{task_id}")
+                
+                if status_response:
+                    status = status_response.get('status', 'unknown')
+                    message = status_response.get('message', 'No message')
+                    
+                    # Status indicator
+                    if status == 'completed':
+                        st.success(f"✅ {message}")
+                        
+                        # Show results
+                        if status_response.get('loaded') is not None:
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("Loaded", status_response.get('loaded', 0))
+                            with col2:
+                                st.metric("Failed", status_response.get('failed', 0))
+                            with col3:
+                                st.metric("Skipped", status_response.get('skipped', 0))
+                        
+                        # Clean up task
+                        if st.button("🗑️ Clear Task", key="clear_bulk_task"):
+                            del st.session_state.bulk_task_id
+                            python_client.delete(f"api/v1/bulk/tasks/{task_id}")
+                            st.rerun()
+                    
+                    elif status == 'failed':
+                        st.error(f"❌ {message}")
+                        if status_response.get('error'):
+                            st.code(status_response['error'])
+                    
+                    elif status == 'running':
+                        st.info(f"🔄 {message}")
+                        
+                        # Progress bar
+                        if status_response.get('total') and status_response.get('loaded') is not None:
+                            total = status_response['total']
+                            loaded = status_response['loaded']
+                            progress = loaded / total if total > 0 else 0
+                            
+                            st.progress(progress)
+                            st.write(f"Progress: {loaded}/{total} ({progress:.1%})")
+                    
+                    else:
+                        st.warning(f"⚠️ {message}")
+                    
+                    # Manual refresh for running tasks
+                    if status == 'running':
+                        if st.button("🔄 Refresh Status", key="refresh_bulk_status"):
+                            st.rerun()
+                        st.info("💡 Click 'Refresh Status' to update progress")
+                
+            except Exception as e:
+                st.error(f"Error checking bulk loading status: {e}")
+        
+        # Search functionality
+        st.markdown("---")
+        st.markdown("### 🔎 Search Stocks")
+        
+        search_query = st.text_input(
+            "Search",
+            placeholder="Search by symbol or company name",
+            key="stock_search_input",
+            help="Search for stocks in our database"
+        )
+        
+        if search_query and len(search_query.strip()) >= 2:
+            try:
+                search_response = python_client.get(f"api/v1/stocks/search/{search_query.strip()}")
+                if search_response and isinstance(search_response, list):
+                    st.markdown(f"**Found {len(search_response)} results:**")
+                    for stock in search_response[:5]:  # Show top 5 results
+                        company_name = stock.get('company_name', 'Unknown')
+                        st.write(f"• **{stock['symbol']}** - {company_name}")
+                else:
+                    st.write("No results found")
+            except Exception as e:
+                st.error(f"Search error: {e}")
     
     # Date selection
     st.markdown("### 📅 Date Configuration")
     
-    col1, col2 = st.columns([1, 1])
+    col1, col2, col3 = st.columns([1, 1, 1])
     
     with col1:
-        # Default to most recent trading day
-        default_date = datetime.now().date() - timedelta(days=1)
-        selected_date = st.date_input(
-            "Analysis Date",
-            value=default_date,
-            max_value=datetime.now().date() - timedelta(days=1),
-            key="universal_date"
+        # Backtesting mode selection
+        backtest_mode = st.selectbox(
+            "Backtest Mode",
+            ["Single Date", "Date Range"],
+            key="universal_backtest_mode",
+            help="Choose backtesting mode"
         )
+        
+        if backtest_mode == "Single Date":
+            # Default to most recent trading day
+            default_date = datetime.now().date() - timedelta(days=1)
+            selected_date = st.date_input(
+                "Analysis Date",
+                value=default_date,
+                max_value=datetime.now().date(),  # Allow current day, block future dates
+                key="universal_date"
+            )
+            start_date = end_date = selected_date
+        else:
+            # Date range backtesting
+            col1a, col1b = st.columns(2)
+            with col1a:
+                start_date = st.date_input(
+                    "Start Date",
+                    value=datetime.now().date() - timedelta(days=90),
+                    key="universal_start_date",
+                    help="Start date for backtesting range"
+                )
+            with col1b:
+                end_date = st.date_input(
+                    "End Date",
+                    value=datetime.now().date() - timedelta(days=1),
+                    key="universal_end_date",
+                    help="End date for backtesting range"
+                )
     
     with col2:
-        # Date range for backtesting
-        backtest_days = st.slider(
-            "Backtest Period (Days)",
-            min_value=30,
-            max_value=365,
-            value=90,
-            step=30,
-            key="universal_backtest_days"
-        )
+        if backtest_mode == "Single Date":
+            # Show asset type selection for single date
+            st.markdown("**Asset Type:**")
+            st.info(selected_asset_type_name)
+        else:
+            # Date range validation for backtesting
+            if end_date <= start_date:
+                st.error("End date must be after start date")
+            elif (end_date - start_date).days > 365:
+                st.warning("⚠️ Backtest period limited to 365 days")
     
-    # Calculate date range
-    end_date = selected_date
-    start_date = end_date - timedelta(days=backtest_days)
+    with col3:
+        if backtest_mode == "Date Range":
+            # Show backtest period info
+            period_days = (end_date - start_date).days
+            st.metric("Backtest Period", f"{period_days} days")
+            
+            # Estimated processing time
+            estimated_time = period_days * 0.1  # ~0.1s per day
+            st.caption(f"⏱️ Est. time: {estimated_time:.1f}s")
     
-    st.info(f"📊 **Analysis Period:** {backtest_days} days from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+    if backtest_mode == "Single Date":
+        st.info(f"📊 **Analysis Date:** {selected_date.strftime('%Y-%m-%d')}")
+    else:
+        st.info(f"📊 **Analysis Period:** {(end_date - start_date).days} days from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
     
     # Universal API functions
+    def get_universal_backtest(symbol, start_date, end_date, asset_type, initial_capital=10000):
+        """Get backtest results for date range using universal API"""
+        try:
+            # Use centralized API configuration
+            api_url = api_config.get_universal_backtest_url()
+            payload = {
+                "symbol": symbol,
+                "start_date": start_date.strftime("%Y-%m-%d"),
+                "end_date": end_date.strftime("%Y-%m-%d"),
+                "asset_type": asset_type,
+                "initial_capital": initial_capital
+            }
+            
+            response = requests.post(api_url, json=payload, timeout=120)  # Longer timeout for backtest
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success"):
+                    return data["data"]
+                else:
+                    return {"error": data.get("error", "Unknown error")}
+            else:
+                return {"error": f"API Error: {response.status_code} - {response.text}"}
+        except Exception as e:
+            return {"error": f"Request failed: {str(e)}"}
+    
     def get_universal_signal(symbol, date, asset_type):
         """Get signal for any asset using universal API"""
         try:
@@ -2413,7 +2810,7 @@ with tab_universal_backtest:
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("📈 Load Symbol Data", key="universal_load_data", use_container_width=True, help="Load price history and indicators"):
+        if st.button("📈 Load Symbol Data", key="universal_load_symbol_data", use_container_width=True, help="Load price history and indicators"):
             with st.spinner(f"Loading {universal_symbol} data..."):
                 try:
                     python_api_url = api_config.python_worker_url
@@ -2439,7 +2836,7 @@ with tab_universal_backtest:
                     st.error(f"❌ Error loading {universal_symbol} data: {e}")
     
     with col2:
-        if st.button("🔄 Force Refresh All", key="universal_force_refresh", use_container_width=True, help="Force refresh all market data"):
+        if st.button("🔄 Force Refresh All", key="universal_force_refresh_all", use_container_width=True, help="Force refresh all market data"):
             with st.spinner("Force refreshing all market data..."):
                 try:
                     python_api_url = api_config.python_worker_url
@@ -2464,169 +2861,158 @@ with tab_universal_backtest:
                 except Exception as e:
                     st.error(f"❌ Error refreshing market data: {e}")
     
-    # Results display area - Full width (same as TQQQ)
-    if 'universal_backtest_results' in st.session_state:
-        st.markdown("### 📈 Universal Backtest Results")
-        display_universal_backtest_results(st.session_state.universal_backtest_results)
-        
-        # Add clear results button
-        if st.button("🗑️ Clear Results", key="universal_clear_results"):
-            del st.session_state.universal_backtest_results
-            st.rerun()
-    
-    # Main analysis section
-    if st.button("🚀 Generate Analysis", key="universal_generate", type="primary"):
-        with st.spinner(f"Analyzing {universal_symbol} ({selected_asset_type_name})..."):
-            # Get current signal
-            signal_data = get_universal_signal(universal_symbol, selected_date, selected_asset_type)
-            
-            if "error" in signal_data:
-                st.error(f"❌ {signal_data['error']}")
-            else:
-                # Extract signal data from response
-                signal = signal_data.get("signal", {})
-                market_data = signal_data.get("market_data", {})
-                analysis = signal_data.get("analysis", {})
-                engine_info = signal_data.get("engine", {})
-                
-                # Store results in session state to prevent disappearing
-                st.session_state.universal_backtest_results = {
-                    "mode": "Single Date",
-                    "date": selected_date.strftime("%Y-%m-%d"),
-                    "signal": signal,
-                    "market_data": market_data,
-                    "analysis": analysis,
-                    "engine": engine_info,
-                    "asset_type": selected_asset_type,
-                    "symbol": universal_symbol
-                }
-                
-                # Display results using same format as TQQQ backtest
-                display_universal_backtest_results(st.session_state.universal_backtest_results)
-                
-                # Historical data and backtesting
-                st.markdown(f"### 📊 Historical Data & Backtesting ({backtest_days} days)")
-                
-                historical_data = get_historical_data(universal_symbol, start_date, end_date, backtest_days)
-                
-                if not historical_data:
-                    st.warning("⚠️ No historical data available for the selected period")
-                else:
-                    # Convert to DataFrame
-                    df = pd.DataFrame(historical_data)
-                    df['date'] = pd.to_datetime(df['date'])
-                    df = df.sort_values('date')
-                    
-                    # Display data summary
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.metric("Total Records", len(df))
-                    with col2:
-                        price_change = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0] * 100
-                        st.metric("Period Return", f"{price_change:.2f}%")
-                    with col3:
-                        volatility = df['close'].pct_change().std() * 100
-                        st.metric("Period Volatility", f"{volatility:.2f}%")
-                    
-                    # Simple price chart
-                    st.markdown("**📈 Price Chart:**")
-                    
-                    fig = go.Figure()
-                    
-                    # Add price line
-                    fig.add_trace(
-                        go.Scatter(
-                            x=df['date'],
-                            y=df['close'],
-                            mode='lines',
-                            name='Price',
-                            line=dict(color='blue', width=2)
-                        )
-                    )
-                    
-                    # Add moving averages if available
-                    if len(df) >= 20:
-                        df['sma_20'] = df['close'].rolling(window=20).mean()
-                        fig.add_trace(
-                            go.Scatter(
-                                x=df['date'],
-                                y=df['sma_20'],
-                                mode='lines',
-                                name='SMA 20',
-                                line=dict(color='red', width=1)
-                            )
-                        )
-                    
-                    fig.update_layout(
-                        title=f'{universal_symbol} ({selected_asset_type_name}) - {backtest_days} Day Chart',
-                        xaxis_title='Date',
-                        yaxis_title='Price ($)',
-                        height=400,
-                        showlegend=True
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # Engine information
-                st.markdown("### 🔧 Engine Information")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown(f"**Engine:** {engine_info.get('name', 'N/A')}")
-                    st.markdown(f"**Type:** {engine_info.get('type', 'N/A')}")
-                    st.markdown(f"**Description:** {engine_info.get('description', 'N/A')}")
-                
-                with col2:
-                    config = engine_info.get("config", {})
-                    if config:
-                        st.markdown("**Configuration:**")
-                        for key, value in config.items():
-                            st.markdown(f"• {key.replace('_', ' ').title()}: {value}")
-    
-    # Asset type information
+    # Professional Analysis Header
     st.markdown("---")
-    st.markdown("### 📚 Asset Type Information")
     
-    asset_info = {
-        "3x ETF": {
-            "description": "3x leveraged ETFs with high volatility",
-            "risk": "Very High",
-            "holding_period": "Short-term (1-5 days)",
-            "examples": "TQQQ, SOXL, FNGU"
-        },
-        "Regular ETF": {
-            "description": "Standard ETFs with moderate volatility",
-            "risk": "Medium",
-            "holding_period": "Medium-term (1-4 weeks)",
-            "examples": "QQQ, SPY, IWM"
-        },
-        "Stock": {
-            "description": "Individual stocks with varying volatility",
-            "risk": "Variable",
-            "holding_period": "Depends on stock",
-            "examples": "AAPL, MSFT, NVDA"
+    # Show current analysis status
+    if 'universal_backtest_results' in st.session_state:
+        results = st.session_state.universal_backtest_results
+        signal = results.get('signal', {})
+        signal_type = signal.get('signal', 'UNKNOWN').upper()
+        
+        # Color code based on signal type
+        signal_colors = {
+            'BUY': '🟢',
+            'SELL': '🔴', 
+            'HOLD': '🟡'
         }
-    }
+        signal_color = signal_colors.get(signal_type, '⚪')
+        
+        st.markdown(f"### {signal_color} Currently Analyzing: {universal_symbol} - {signal_type} Signal")
+        st.caption(f"Last Analysis: {results.get('timestamp', 'Unknown')}")
+    else:
+        st.markdown(f"### 🔍 Ready to Analyze: {universal_symbol}")
+        st.caption("Click 'Generate Analysis' to start professional analysis")
     
-    info = asset_info.get(selected_asset_type_name, {})
-    
-    col1, col2, col3, col4 = st.columns(4)
+    # Analysis Controls
+    col1, col2, col3 = st.columns([1, 1, 1])
     
     with col1:
-        st.metric("Risk Level", info.get('risk', 'N/A'))
-    with col2:
-        st.metric("Holding Period", info.get('holding_period', 'N/A'))
-    with col3:
-        st.markdown(f"**Examples:**")
-        st.markdown(info.get('examples', 'N/A'))
-    with col4:
-        st.markdown(f"**Description:**")
-        st.markdown(info.get('description', 'N/A'))
+        button_text = "🚀 Generate Analysis" if backtest_mode == "Single Date" else "🚀 Run Backtest"
+        if st.button(button_text, key="universal_generate", type="primary", use_container_width=True):
+            if backtest_mode == "Single Date":
+                with st.spinner(f"🔄 Analyzing {universal_symbol} ({selected_asset_type_name})..."):
+                    # Get current signal
+                    signal_data = get_universal_signal(universal_symbol, selected_date, selected_asset_type)
+                    
+                    if "error" in signal_data:
+                        st.error(f"❌ {signal_data['error']}")
+                    else:
+                        # Extract signal data from response
+                        signal = signal_data.get("signal", {})
+                        market_data = signal_data.get("market_data", {})
+                        analysis = signal_data.get("analysis", {})
+                        engine_info = signal_data.get("engine", {})
+                        
+                        # Store results in session state to prevent disappearing
+                        st.session_state.universal_backtest_results = {
+                            'mode': 'Single Date',
+                            'symbol': universal_symbol,
+                            'asset_type': selected_asset_type_name,
+                            'signal': signal,
+                            'market_data': market_data,
+                            'analysis': analysis,
+                            'engine': engine_info,
+                            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        }
+                        st.rerun()
+            else:
+                # Date range backtesting
+                period_days = (end_date - start_date).days
+                with st.spinner(f"🔄 Running backtest for {universal_symbol} ({period_days} days)..."):
+                    # Get backtest results
+                    backtest_data = get_universal_backtest(universal_symbol, start_date, end_date, selected_asset_type)
+                    
+                    if "error" in backtest_data:
+                        st.error(f"❌ {backtest_data['error']}")
+                    else:
+                        # Extract backtest data
+                        backtest_info = backtest_data.get("backtest_info", {})
+                        signals = backtest_data.get("signals", [])
+                        performance = backtest_data.get("performance", {})
+                        asset_config = backtest_data.get("asset_config", {})
+                        
+                        # Store results in session state
+                        st.session_state.universal_backtest_results = {
+                            'mode': 'Date Range',
+                            'symbol': universal_symbol,
+                            'asset_type': selected_asset_type_name,
+                            'backtest_info': backtest_info,
+                            'signals': signals,
+                            'performance': performance,
+                            'asset_config': asset_config,
+                            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        }
+                        st.success(f"✅ Backtest completed: {len(signals)} signals generated")
+                        st.rerun()
     
-    st.markdown("---")
-    st.markdown("*Powered by Universal Backtest API v1.0 | Data updated in real-time*")
-
+    with col2:
+        if st.button("📊 Load Data", key="universal_load_market_data", use_container_width=True, help="Load fresh market data"):
+            with st.spinner(f"📊 Loading {universal_symbol} market data..."):
+                try:
+                    python_api_url = api_config.python_worker_url
+                    python_client = APIClient(python_api_url, timeout=30)
+                    
+                    # Load data using same refresh method as TQQQ
+                    load_resp = python_client.post(
+                        "refresh",
+                        json_data={
+                            "symbols": [universal_symbol],
+                            "data_types": ["price_historical", "indicators"],
+                            "force": False
+                        }
+                    )
+                    
+                    if load_resp and load_resp.get("success"):
+                        st.success(f"✅ {universal_symbol} data loaded successfully!")
+                        st.info(f"📊 Loaded: Price history + technical indicators for {selected_asset_type_name}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Failed to load {universal_symbol} data")
+                except Exception as e:
+                    st.error(f"❌ Error loading {universal_symbol} data: {e}")
+    
+    with col3:
+        if st.button("🔄 Force Refresh", key="universal_force_refresh_data", use_container_width=True, help="Force refresh all market data"):
+            with st.spinner("🔄 Force refreshing all market data..."):
+                try:
+                    python_api_url = api_config.python_worker_url
+                    python_client = APIClient(python_api_url, timeout=60)
+                    
+                    # Force refresh all relevant data
+                    load_resp = python_client.post(
+                        "refresh",
+                        json_data={
+                            "symbols": [universal_symbol, "VIX", "QQQ"],
+                            "data_types": ["price_historical", "indicators"],
+                            "force": True
+                        }
+                    )
+                    
+                    if load_resp and load_resp.get("success"):
+                        st.success("✅ All market data refreshed successfully!")
+                        st.info(f"📊 Refreshed: {universal_symbol} + VIX + QQQ for market context")
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to refresh market data")
+                except Exception as e:
+                    st.error(f"❌ Error refreshing market data: {e}")
+    
+    # Results display area - Full width (same as TQQQ)
+    if 'universal_backtest_results' in st.session_state:
+        st.markdown("### 📈 Professional Analysis Results")
+        display_universal_backtest_results(st.session_state.universal_backtest_results)
+        
+        # Action buttons
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Re-analyze", key="universal_reanalyze", use_container_width=True):
+                del st.session_state.universal_backtest_results
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Clear Results", key="universal_clear_results", use_container_width=True):
+                del st.session_state.universal_backtest_results
+                st.rerun()
 
 # End of file - all functions are defined at the top

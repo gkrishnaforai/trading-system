@@ -36,7 +36,7 @@ class FundamentalsRepository:
             query = """
                 SELECT *
                 FROM fundamentals_snapshots
-                WHERE stock_symbol = :symbol
+                WHERE symbol = :symbol
                 ORDER BY as_of_date DESC
                 LIMIT 1
             """
@@ -99,7 +99,7 @@ class FundamentalsRepository:
             from app.utils.json_sanitize import json_dumps_sanitized
             
             data = {
-                "stock_symbol": symbol,
+                "symbol": symbol,
                 "as_of_date": snapshot_date.date(),
                 "source": "stock_insights_service",
                 "payload": json_dumps_sanitized(fundamentals),  # Serialize dict to JSON string for PostgreSQL
@@ -110,7 +110,7 @@ class FundamentalsRepository:
             # Use base repository upsert method
             success = BaseRepository.upsert_many(
                 table="fundamentals_snapshots",
-                unique_columns=["stock_symbol", "as_of_date"],
+                unique_columns=["symbol", "as_of_date"],
                 rows=[data]
             )
             
@@ -135,7 +135,7 @@ class FundamentalsRepository:
         """
         try:
             query = """
-                SELECT DISTINCT stock_symbol
+                SELECT DISTINCT symbol
                 FROM fundamentals_snapshots
                 ORDER BY as_of_date DESC
                 LIMIT :limit
@@ -144,7 +144,7 @@ class FundamentalsRepository:
             result = db.execute_query(query, {"limit": limit})
             
             if result:
-                return [row["stock_symbol"] for row in result]
+                return [row["symbol"] for row in result]
             
             return []
             

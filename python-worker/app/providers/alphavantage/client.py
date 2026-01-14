@@ -148,10 +148,11 @@ class AlphaVantageClient:
         logger.info(f"✅ Fetched {len(df)} price records for {symbol}")
         return df
     
-    def fetch_current_price(self, symbol: str) -> Optional[float]:
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         Fetch current price (intraday)
         Note: Requires paid Alpha Vantage subscription
+        Returns dict with price and volume, or None if unavailable
         """
         params = {
             "function": "TIME_SERIES_INTRADAY",
@@ -173,7 +174,11 @@ class AlphaVantageClient:
             latest_timestamp = sorted(time_series.keys())[-1]
             latest_data = time_series[latest_timestamp]
             
-            return float(latest_data["4. close"])
+            return {
+                "price": float(latest_data["4. close"]),
+                "volume": int(latest_data["5. volume"]) if latest_data.get("5. volume") else None,
+                "source": "alphavantage"
+            }
             
         except Exception as e:
             logger.warning(f"Failed to fetch current price for {symbol}: {e}")

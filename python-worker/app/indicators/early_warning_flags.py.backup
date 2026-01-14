@@ -1,0 +1,742 @@
+"""
+Early Warning Flags Engine - Growth Breakdown Detector
+
+Professional-grade system to detect structural deterioration in growth quality
+before earnings misses, guidance cuts, multiple compression, or institutional distribution.
+
+This is not about predicting crashes — it's about detecting when growth quality 
+is silently deteriorating before price reacts.
+
+Design Philosophy:
+- No single metric triggers an alarm
+- Flags emerge from divergence, not absolute values  
+- Focus on rate of change, not snapshots
+- Use TTM vs 3-5 year baselines
+- Detect cause, not effect
+"""
+
+import logging
+from typing import Dict, Any, List, Tuple, Optional
+from dataclasses import dataclass
+from enum import Enum
+from datetime import datetime, date, timedelta
+import pandas as pd
+import numpy as np
+
+from app.database import db
+from sqlalchemy import text
+from app.observability.logging import get_logger
+
+logger = get_logger("early_warning_flags")
+
+
+class RiskState(Enum):
+    """Risk classification for growth breakdown detection"""
+    GREEN = "GREEN"      # Growth intact
+    YELLOW = "YELLOW"    # Early stress - monitor
+    RED = "RED"          # Structural growth breakdown
+
+
+class DomainRisk(Enum):
+    """Risk levels for individual domains"""
+    NO_RISK = "NO_RISK"
+    EARLY_STRESS = "EARLY_STRESS" 
+    STRUCTURAL_BREAKDOWN = "STRUCTURAL_BREAKDOWN"
+
+
+@dataclass
+class RevenueQualityFlags:
+    """Domain 1: Revenue Quality Deterioration Flags"""
+    receivables_vs_revenue_divergence: bool = False
+    revenue_vs_volume_divergence: bool = False
+    geographic_concentration_risk: bool = False
+    
+    def calculate_risk(self) -> DomainRisk:
+        """Calculate revenue quality risk level"""
+        active_flags = sum([
+            self.receivables_vs_revenue_divergence,
+            self.revenue_vs_volume_divergence,
+            self.geographic_concentration_risk
+        ])
+        
+        if active_flags >= 2:
+            return DomainRisk.STRUCTURAL_BREAKDOWN
+        elif active_flags >= 1:
+            return DomainRisk.EARLY_STRESS
+        else:
+            return DomainRisk.NO_RISK
+
+
+@dataclass
+class MarginStressFlags:
+    """Domain 2: Margin & Cost Structure Stress Flags"""
+    gross_margin_vs_revenue_divergence: bool = False
+    operating_margin_artificial_stability: bool = False
+    cost_growth_lag: bool = False
+    
+    def calculate_risk(self) -> DomainRisk:
+        """Calculate margin stress risk level"""
+        active_flags = sum([
+            self.gross_margin_vs_revenue_divergence,
+            self.operating_margin_artificial_stability,
+            self.cost_growth_lag
+        ])
+        
+        if active_flags >= 2:
+            return DomainRisk.STRUCTURAL_BREAKDOWN
+        elif active_flags >= 1:
+            return DomainRisk.EARLY_STRESS
+        else:
+            return DomainRisk.NO_RISK
+
+
+@dataclass
+class CapitalEfficiencyFlags:
+    """Domain 3: Capital Efficiency & Return Decay Flags"""
+    roic_trend_decay: bool = False
+    growth_vs_capital_mismatch: bool = False
+    incremental_roic_collapse: bool = False
+    
+    def calculate_risk(self) -> DomainRisk:
+        """Calculate capital efficiency risk level"""
+        active_flags = sum([
+            self.roic_trend_decay,
+            self.growth_vs_capital_mismatch,
+            self.incremental_roic_collapse
+        ])
+        
+        if active_flags >= 2:
+            return DomainRisk.STRUCTURAL_BREAKDOWN
+        elif active_flags >= 1:
+            return DomainRisk.EARLY_STRESS
+        else:
+            return DomainRisk.NO_RISK
+
+
+@dataclass
+class ManagementSignalsFlags:
+    """Domain 4: Management Signals & Behavioral Shifts Flags"""
+    guidance_language_shift: bool = False
+    kpi_redefinition_removal: bool = False
+    buybacks_rising_debt: bool = False
+    
+    def calculate_risk(self) -> DomainRisk:
+        """Calculate management signals risk level"""
+        active_flags = sum([
+            self.guidance_language_shift,
+            self.kpi_redefinition_removal,
+            self.buybacks_rising_debt
+        ])
+        
+        if active_flags >= 2:
+            return DomainRisk.STRUCTURAL_BREAKDOWN
+        elif active_flags >= 1:
+            return DomainRisk.EARLY_STRESS
+        else:
+            return DomainRisk.NO_RISK
+
+
+@dataclass
+class EarlyWarningResult:
+    """Complete early warning analysis result"""
+    symbol: str
+    analysis_date: date
+    
+    # Domain results
+    revenue_quality: RevenueQualityFlags
+    margin_stress: MarginStressFlags
+    capital_efficiency: CapitalEfficiencyFlags
+    management_signals: ManagementSignalsFlags
+    
+    # Risk classifications
+    revenue_risk: DomainRisk
+    margin_risk: DomainRisk
+    capital_risk: DomainRisk
+    management_risk: DomainRisk
+    
+    # Final classification
+    overall_risk: RiskState
+    
+    # Detailed metrics for analysis
+    metrics: Dict[str, Any]
+    
+    # Actionable insights
+    warnings: List[str]
+    insights: List[str]
+
+
+class EarlyWarningEngine:
+    """
+    Early Warning Flags Engine - Growth Breakdown Detector
+    
+    Detects structural deterioration in growth quality before:
+    - Earnings miss
+    - Guidance cut  
+    - Multiple compression
+    - Institutional distribution
+    """
+    
+    def __init__(self):
+        self.logger = logger
+        self.logger.info("🚨 Early Warning Flags Engine initialized")
+    
+    def analyze_growth_health(self, symbol: str) -> EarlyWarningResult:
+        """
+        Complete growth health analysis across all 4 domains
+        
+        Args:
+            symbol: Stock symbol to analyze
+            
+        Returns:
+            EarlyWarningResult with comprehensive analysis
+        """
+        try:
+            # Get fundamentals data
+            fundamentals_data = self._get_fundamentals_data(symbol)
+            
+            if not fundamentals_data:
+                raise ValueError(f"No fundamentals data available for {symbol}")
+            
+            # Analyze each domain
+            revenue_flags, revenue_metrics = self._analyze_revenue_quality(symbol, fundamentals_data)
+            margin_flags, margin_metrics = self._analyze_margin_stress(symbol, fundamentals_data)
+            capital_flags, capital_metrics = self._analyze_capital_efficiency(symbol, fundamentals_data)
+            management_flags, management_metrics = self._analyze_management_signals(symbol, fundamentals_data)
+            
+            # Calculate risk levels
+            revenue_risk = revenue_flags.calculate_risk()
+            margin_risk = margin_flags.calculate_risk()
+            capital_risk = capital_flags.calculate_risk()
+            management_risk = management_flags.calculate_risk()
+            
+            # Determine overall risk
+            overall_risk = self._calculate_overall_risk(revenue_risk, margin_risk, capital_risk, management_risk)
+            
+            # Generate warnings and insights
+            warnings, insights = self._generate_warnings_and_insights(
+                revenue_flags, margin_flags, capital_flags, management_flags,
+                revenue_risk, margin_risk, capital_risk, management_risk,
+                overall_risk
+            )
+            
+            # Combine all metrics
+            all_metrics = {
+                **revenue_metrics,
+                **margin_metrics,
+                **capital_metrics,
+                **management_metrics
+            }
+            
+            result = EarlyWarningResult(
+                symbol=symbol,
+                analysis_date=date.today(),
+                revenue_quality=revenue_flags,
+                margin_stress=margin_flags,
+                capital_efficiency=capital_flags,
+                management_signals=management_flags,
+                revenue_risk=revenue_risk,
+                margin_risk=margin_risk,
+                capital_risk=capital_risk,
+                management_risk=management_risk,
+                overall_risk=overall_risk,
+                metrics=all_metrics,
+                warnings=warnings,
+                insights=insights
+            )
+            
+            self.logger.info(f"🚨 Early warning analysis complete for {symbol}: {overall_risk.value}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error analyzing growth health for {symbol}: {str(e)}")
+            raise
+    
+    def _get_fundamentals_data(self, symbol: str) -> Dict[str, Any]:
+        """Get comprehensive fundamentals data from new table structure"""
+        try:
+            with db.get_session() as session:
+                # Fetch income statement data
+                income_query = """
+                SELECT fiscal_date_ending, total_revenue, gross_profit, operating_income, 
+                       net_income, research_and_development, interest_expense
+                FROM income_statements 
+                WHERE symbol = :symbol 
+                ORDER BY fiscal_date_ending DESC 
+                LIMIT 8
+                """
+                income_result = session.execute(text(income_query), {"symbol": symbol}).fetchall()
+                
+                # Get balance sheets data
+                balance_query = """
+                SELECT fiscal_date_ending, total_assets, total_liabilities, net_receivables,
+                       cash_and_cash_equivalents, long_term_debt
+                FROM balance_sheets 
+                WHERE symbol = :symbol 
+                ORDER BY fiscal_date_ending DESC 
+                LIMIT 8
+                """
+                balance_result = session.execute(text(balance_query), {"symbol": symbol}).fetchall()
+                
+                # Get cash flow statements data
+                cashflow_query = """
+                SELECT fiscal_date_ending, operating_cash_flow, investing_cash_flow,
+                       financing_cash_flow, free_cash_flow, capital_expenditures
+                FROM cash_flow_statements 
+                WHERE symbol = :symbol 
+                ORDER BY fiscal_date_ending DESC 
+                LIMIT 8
+                """
+                cashflow_result = session.execute(text(cashflow_query), {"symbol": symbol}).fetchall()
+                
+                # Get financial ratios data
+                ratios_query = """
+                SELECT fiscal_date_ending, roe, debt_to_equity, current_ratio,
+                       receivables_turnover, days_sales_outstanding, roic
+                FROM financial_ratios 
+                WHERE symbol = :symbol 
+                ORDER BY fiscal_date_ending DESC 
+                LIMIT 8
+                """
+                ratios_result = session.execute(text(ratios_query), {"symbol": symbol}).fetchall()
+                
+                if not income_result or not balance_result:
+                    return {}
+                
+                return {
+                    'income_statements': [dict(row) for row in income_result],
+                    'balance_sheets': [dict(row) for row in balance_result],
+                    'cash_flow_statements': [dict(row) for row in cashflow_result],
+                    'financial_ratios': [dict(row) for row in ratios_result]
+                }
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error fetching fundamentals data for {symbol}: {str(e)}")
+            return {}
+    
+    def _analyze_revenue_quality(self, symbol: str, data: Dict[str, Any]) -> Tuple[RevenueQualityFlags, Dict[str, Any]]:
+        """
+        Domain 1: Revenue Quality Deterioration Analysis
+        
+        Detects:
+        - Revenue vs Receivables Divergence
+        - Revenue Growth vs Volume Growth  
+        - Geographic/Segment Growth Concentration
+        """
+        flags = RevenueQualityFlags()
+        metrics = {}
+        
+        income_data = data.get('income_statements', [])
+        balance_data = data.get('balance_sheets', [])
+        
+        if len(income_data) < 2 or len(balance_data) < 2:
+            return flags, metrics
+        
+        # Convert to DataFrames for easier analysis
+        income_df = pd.DataFrame(income_data)
+        balance_df = pd.DataFrame(balance_data)
+        
+        # Sort by date (oldest first for trend calculation)
+        income_df['fiscal_date_ending'] = pd.to_datetime(income_df['fiscal_date_ending'])
+        balance_df['fiscal_date_ending'] = pd.to_datetime(balance_df['fiscal_date_ending'])
+        income_df = income_df.sort_values('fiscal_date_ending')
+        balance_df = balance_df.sort_values('fiscal_date_ending')
+        
+        # Flag 1: Revenue vs Receivables Divergence
+        if 'total_revenue' in income_df.columns and 'net_receivables' in balance_df.columns:
+            # Calculate growth rates
+            revenue_growth = income_df['total_revenue'].pct_change().iloc[-2:]  # Last 2 periods
+            receivables_growth = balance_df['net_receivables'].pct_change().iloc[-2:]
+            
+            # Check if receivables growing faster than revenue for 2+ periods
+            if len(receivables_growth) >= 2 and len(revenue_growth) >= 2:
+                divergence_periods = sum(1 for i in range(len(receivables_growth)) 
+                                       if receivables_growth.iloc[i] > revenue_growth.iloc[i])
+                if divergence_periods >= 2:
+                    flags.receivables_vs_revenue_divergence = True
+                    metrics['receivables_vs_revenue_growth'] = 'divergence_detected'
+                else:
+                    metrics['receivables_vs_revenue_growth'] = 'normal'
+            else:
+                metrics['receivables_vs_revenue_growth'] = 'insufficient_data'
+        
+        # Flag 2: Revenue Growth Quality (using operating margin trends)
+        if 'operating_income' in income_df.columns and 'total_revenue' in income_df.columns:
+            income_df['operating_margin'] = income_df['operating_income'] / income_df['total_revenue']
+            margin_trend = income_df['operating_margin'].iloc[-2:].pct_change()
+            
+            # Check if margins are declining while revenue grows
+            revenue_growth = income_df['total_revenue'].pct_change().iloc[-2:]
+            margin_decline = sum(1 for i in range(len(margin_trend)) if margin_trend.iloc[i] < 0)
+            revenue_growth_positive = sum(1 for i in range(len(revenue_growth)) if revenue_growth.iloc[i] > 0)
+            
+            if margin_decline >= 1 and revenue_growth_positive >= 1:
+                flags.margin_stress = True
+                metrics['margin_trend'] = 'declining_with_growth'
+            else:
+                metrics['margin_trend'] = 'stable'
+        
+        return flags, metrics
+    
+    def _analyze_margin_stress(self, symbol: str, data: Dict[str, Any]) -> Tuple[MarginStressFlags, Dict[str, Any]]:
+        """
+        Domain 2: Margin & Cost Structure Stress Analysis
+        
+        Detects:
+        - Operating Margin Compression
+        - SG&A vs Revenue Growth Divergence
+        - R&D Efficiency Decline
+        """
+        flags = MarginStressFlags()
+        metrics = {}
+        
+        income_data = data.get('income_statements', [])
+        ratios_data = data.get('financial_ratios', [])
+        
+        if len(income_data) < 2:
+            return flags, metrics
+        
+        # Convert to DataFrames
+        income_df = pd.DataFrame(income_data)
+        income_df['fiscal_date_ending'] = pd.to_datetime(income_df['fiscal_date_ending'])
+        income_df = income_df.sort_values('fiscal_date_ending')
+        
+        # Flag 1: Operating Margin Compression
+        if 'operating_income' in income_df.columns and 'total_revenue' in income_df.columns:
+            income_df['operating_margin'] = income_df['operating_income'] / income_df['total_revenue']
+            margins = income_df['operating_margin'].dropna()
+            
+            if len(margins) >= 2:
+                margin_trend = margins.iloc[-1] - margins.iloc[0]  # Change over period
+                if margin_trend < -0.02:  # More than 2% decline
+                    flags.operating_margin_compression = True
+                    metrics['margin_trend'] = 'compressing'
+                else:
+                    metrics['margin_trend'] = 'stable'
+        
+        # Flag 2: R&D Efficiency (using ratios data if available)
+        if ratios_data:
+            ratios_df = pd.DataFrame(ratios_data)
+            if 'roe' in ratios_df.columns:
+                roe_trend = ratios_df['roe'].iloc[-2:].pct_change().dropna()
+                if len(roe_trend) > 0 and roe_trend.iloc[-1] < -0.1:  # 10% ROE decline
+                    flags.rd_efficiency_decline = True
+                    metrics['roe_trend'] = 'declining'
+                else:
+                    metrics['roe_trend'] = 'stable'
+        
+        return flags, metrics
+    
+    def _analyze_capital_efficiency(self, symbol: str, data: Dict[str, Any]) -> Tuple[CapitalEfficiencyFlags, Dict[str, Any]]:
+        
+        Detects:
+        - Gross Margin vs Revenue Growth Divergence
+        - Operating Margin Artificial Stability  
+        - Cost Growth Lag
+        """
+        flags = MarginStressFlags()
+        metrics = {}
+        
+        income_data = data.get('income_statements', [])
+        
+        if len(income_data) < 4:
+            return flags, metrics
+        
+        # Convert to DataFrame
+        income_df = pd.DataFrame(income_data)
+        income_df['fiscal_date_ending'] = pd.to_datetime(income_df['fiscal_date_ending'])
+        income_df = income_df.sort_values('fiscal_date_ending')
+        
+        # Calculate margins
+        if all(col in income_df.columns for col in ['total_revenue', 'gross_profit', 'operating_income']):
+            income_df['gross_margin'] = income_df['gross_profit'] / income_df['total_revenue']
+            income_df['operating_margin'] = income_df['operating_income'] / income_df['total_revenue']
+            
+            # Flag 1: Gross Margin vs Revenue Growth Divergence
+            revenue_growth = income_df['total_revenue'].pct_change().iloc[-2:]
+            gross_margin_change = income_df['gross_margin'].diff().iloc[-2:]
+            
+            # Revenue growing but margins declining
+            margin_decline_periods = (revenue_growth > 0) & (gross_margin_change < -0.01)  # 1% margin decline
+            flags.gross_margin_vs_revenue_divergence = margin_decline_periods.sum() >= 2
+            
+            metrics.update({
+                'revenue_growth_avg': revenue_growth.mean() if len(revenue_growth) > 0 else None,
+                'gross_margin_change_avg': gross_margin_change.mean() if len(gross_margin_change) > 0 else None,
+                'margin_decline_periods': margin_decline_periods.sum() if len(margin_decline_periods) > 0 else 0
+            })
+            
+            # Flag 2: Operating Margin Artificial Stability
+            # Check if operating margin stable while gross margin declining
+            gross_margin_volatility = income_df['gross_margin'].std()
+            operating_margin_volatility = income_df['operating_margin'].std()
+            
+            flags.operating_margin_artificial_stability = (
+                gross_margin_volatility > operating_margin_volatility * 2 and
+                income_df['gross_margin'].iloc[-1] < income_df['gross_margin'].iloc[-3]  # Recent decline
+            )
+            
+            metrics.update({
+                'gross_margin_volatility': gross_margin_volatility,
+                'operating_margin_volatility': operating_margin_volatility,
+                'gross_margin_trend': income_df['gross_margin'].iloc[-1] - income_df['gross_margin'].iloc[-3]
+            })
+            
+            # Flag 3: Cost Growth Lag (simplified using R&D and SG&A trends)
+            if 'research_and_development' in income_df.columns:
+                r_and_d_growth = income_df['research_and_development'].pct_change().iloc[-2:]
+                revenue_growth_recent = income_df['total_revenue'].pct_change().iloc[-2:]
+                
+                # R&D growing slower than revenue (potential underinvestment)
+                cost_lag_periods = (r_and_d_growth < revenue_growth_recent - 0.05).sum()  # 5% threshold
+                flags.cost_growth_lag = cost_lag_periods.sum() >= 2
+                
+                metrics.update({
+                    'rd_growth_avg': r_and_d_growth.mean() if len(r_and_d_growth) > 0 else None,
+                    'revenue_growth_recent_avg': revenue_growth_recent.mean() if len(revenue_growth_recent) > 0 else None,
+                    'cost_lag_periods': cost_lag_periods.sum() if len(cost_lag_periods) > 0 else 0
+                })
+        
+        return flags, metrics
+    
+    def _analyze_capital_efficiency(self, symbol: str, data: Dict[str, Any]) -> Tuple[CapitalEfficiencyFlags, Dict[str, Any]]:
+        """
+        Domain 3: Capital Efficiency & Return Decay Analysis
+        
+        Detects:
+        - ROIC Trend Decay
+        - Growth vs Capital Consumption Mismatch
+        - Incremental ROIC Collapse
+        """
+        flags = CapitalEfficiencyFlags()
+        metrics = {}
+        
+        ratios_data = data.get('financial_ratios', [])
+        income_data = data.get('income_statements', [])
+        balance_data = data.get('balance_sheets', [])
+        
+        if len(ratios_data) < 4:
+            return flags, metrics
+        
+        # Convert to DataFrames
+        ratios_df = pd.DataFrame(ratios_data)
+        income_df = pd.DataFrame(income_data)
+        balance_df = pd.DataFrame(balance_data)
+        
+        ratios_df['fiscal_date_ending'] = pd.to_datetime(ratios_df['fiscal_date_ending'])
+        ratios_df = ratios_df.sort_values('fiscal_date_ending')
+        
+        # Flag 1: ROIC Trend Decay (using ROE as proxy if ROIC not available)
+        if 'roe' in ratios_df.columns:
+            roe_trend = ratios_df['roe'].dropna()
+            
+            if len(roe_trend) >= 4:
+                # Check if ROE trending down for 3+ periods
+                roe_decline_periods = (roe_trend.diff() < 0).rolling(window=3).sum()
+                flags.roic_trend_decay = roe_decline_periods.iloc[-1] >= 3
+                
+                metrics.update({
+                    'roe_latest': roe_trend.iloc[-1],
+                    'roe_trend_slope': np.polyfit(range(len(roe_trend)), roe_trend, 1)[0],
+                    'roe_decline_periods': roe_decline_periods.iloc[-1] if len(roe_decline_periods) > 0 else 0
+                })
+        
+        # Flag 2: Growth vs Capital Consumption Mismatch
+        if (len(income_df) >= 4 and len(balance_df) >= 4 and 
+            'total_revenue' in income_df.columns and 'total_assets' in balance_df.columns):
+            
+            income_df['fiscal_date_ending'] = pd.to_datetime(income_df['fiscal_date_ending'])
+            balance_df['fiscal_date_ending'] = pd.to_datetime(balance_df['fiscal_date_ending'])
+            
+            # Calculate growth rates
+            revenue_growth = income_df['total_revenue'].pct_change().iloc[-2:].mean()
+            asset_growth = balance_df['total_assets'].pct_change().iloc[-2:].mean()
+            
+            # Assets growing faster than revenue (inefficient growth)
+            flags.growth_vs_capital_mismatch = asset_growth > revenue_growth + 0.1  # 10% threshold
+            
+            metrics.update({
+                'revenue_growth_avg': revenue_growth,
+                'asset_growth_avg': asset_growth,
+                'capital_efficiency_ratio': revenue_growth / asset_growth if asset_growth != 0 else None
+            })
+        
+        # Flag 3: Incremental ROIC Collapse (simplified)
+        if 'roe' in ratios_df.columns and len(ratios_df) >= 4:
+            roe_values = ratios_df['roe'].dropna()
+            
+            if len(roe_values) >= 4:
+                # Compare recent ROE to historical average
+                recent_roe = roe_values.iloc[-2:].mean()
+                historical_roe = roe_values.iloc[:-2].mean()
+                
+                if historical_roe > 0:
+                    roe_decline_pct = (recent_roe - historical_roe) / historical_roe
+                    flags.incremental_roic_collapse = roe_decline_pct < -0.3  # 30% decline
+                    
+                    metrics.update({
+                        'recent_roe': recent_roe,
+                        'historical_roe': historical_roe,
+                        'roe_decline_percentage': roe_decline_pct
+                    })
+        
+        return flags, metrics
+    
+    def _analyze_management_signals(self, symbol: str, data: Dict[str, Any]) -> Tuple[ManagementSignalsFlags, Dict[str, Any]]:
+        """
+        Domain 4: Management Signals & Behavioral Shifts Analysis
+        
+        Detects:
+        - Guidance Language Shift
+        - KPI Redefinition or Removal  
+        - Buybacks + Rising Debt
+        """
+        flags = ManagementSignalsFlags()
+        metrics = {}
+        
+        # Note: This domain requires qualitative data (news, transcripts, etc.)
+        # For now, we'll use proxy indicators from financial statements
+        
+        balance_data = data.get('balance_sheets', [])
+        cashflow_data = data.get('cash_flow_statements', [])
+        
+        if len(balance_data) < 4 or len(cashflow_data) < 4:
+            return flags, metrics
+        
+        # Convert to DataFrames
+        balance_df = pd.DataFrame(balance_data)
+        cashflow_df = pd.DataFrame(cashflow_data)
+        
+        balance_df['fiscal_date_ending'] = pd.to_datetime(balance_df['fiscal_date_ending'])
+        cashflow_df['fiscal_date_ending'] = pd.to_datetime(cashflow_df['fiscal_date_ending'])
+        
+        balance_df = balance_df.sort_values('fiscal_date_ending')
+        cashflow_df = cashflow_df.sort_values('fiscal_date_ending')
+        
+        # Flag 3: Buybacks + Rising Debt (most quantifiable)
+        if ('long_term_debt' in balance_df.columns and 
+            'financing_cash_flow' in cashflow_df.columns):
+            
+            # Calculate debt trend
+            debt_growth = balance_df['long_term_debt'].pct_change().iloc[-2:].mean()
+            
+            # Check for significant buybacks (negative financing cash flow)
+            buyback_periods = (cashflow_df['financing_cash_flow'] < -1000000).iloc[-2:].sum()  # >$1M buybacks
+            
+            flags.buybacks_rising_debt = (debt_growth > 0.05) and (buyback_periods >= 1)  # 5% debt growth + buybacks
+            
+            metrics.update({
+                'debt_growth_avg': debt_growth,
+                'buyback_periods': buyback_periods,
+                'recent_buyback_amount': cashflow_df['financing_cash_flow'].iloc[-1] if len(cashflow_df) > 0 else None
+            })
+        
+        # Flags 1 & 2 would require NLP analysis of transcripts, news, etc.
+        # For now, we'll set them to False and note the limitation
+        flags.guidance_language_shift = False
+        flags.kpi_redefinition_removal = False
+        
+        metrics.update({
+            'guidance_analysis_available': False,
+            'kpi_analysis_available': False,
+            'note': 'Guidance and KPI analysis require text data sources'
+        })
+        
+        return flags, metrics
+    
+    def _calculate_overall_risk(self, revenue_risk: DomainRisk, margin_risk: DomainRisk, 
+                               capital_risk: DomainRisk, management_risk: DomainRisk) -> RiskState:
+        """
+        Calculate overall growth risk based on domain risks
+        
+        Escalation Rules:
+        - 2+ YELLOW domains → Overall YELLOW
+        - Any 1 RED domain → Overall RED
+        - RED overrides technical BUY signals
+        """
+        
+        # Count risk levels
+        yellow_count = sum([
+            revenue_risk == DomainRisk.EARLY_STRESS,
+            margin_risk == DomainRisk.EARLY_STRESS,
+            capital_risk == DomainRisk.EARLY_STRESS,
+            management_risk == DomainRisk.EARLY_STRESS
+        ])
+        
+        red_count = sum([
+            revenue_risk == DomainRisk.STRUCTURAL_BREAKDOWN,
+            margin_risk == DomainRisk.STRUCTURAL_BREAKDOWN,
+            capital_risk == DomainRisk.STRUCTURAL_BREAKDOWN,
+            management_risk == DomainRisk.STRUCTURAL_BREAKDOWN
+        ])
+        
+        # Apply escalation rules
+        if red_count >= 1:
+            return RiskState.RED
+        elif yellow_count >= 2:
+            return RiskState.YELLOW
+        else:
+            return RiskState.GREEN
+    
+    def _generate_warnings_and_insights(self, revenue_flags: RevenueQualityFlags, 
+                                        margin_flags: MarginStressFlags,
+                                        capital_flags: CapitalEfficiencyFlags,
+                                        management_flags: ManagementSignalsFlags,
+                                        revenue_risk: DomainRisk, margin_risk: DomainRisk,
+                                        capital_risk: DomainRisk, management_risk: DomainRisk,
+                                        overall_risk: RiskState) -> Tuple[List[str], List[str]]:
+        """Generate actionable warnings and insights"""
+        warnings = []
+        insights = []
+        
+        # Revenue Quality Warnings
+        if revenue_flags.receivables_vs_revenue_divergence:
+            warnings.append("🚨 Revenue growing faster than cash collection - potential demand weakness or incentive-driven sales")
+        
+        if revenue_flags.revenue_vs_volume_divergence:
+            warnings.append("⚠️ Revenue growth decelerating - pricing power may be weakening")
+        
+        if revenue_flags.geographic_concentration_risk:
+            warnings.append("⚠️ High revenue volatility - potential geographic concentration risk")
+        
+        # Margin Stress Warnings
+        if margin_flags.gross_margin_vs_revenue_divergence:
+            warnings.append("🚨 Margins declining while revenue grows - growth being bought, not earned")
+        
+        if margin_flags.operating_margin_artificial_stability:
+            warnings.append("⚠️ Operating margins artificially stable - potential cost cutting or underinvestment")
+        
+        if margin_flags.cost_growth_lag:
+            warnings.append("⚠️ R&D growing slower than revenue - potential underinvestment in future growth")
+        
+        # Capital Efficiency Warnings
+        if capital_flags.roic_trend_decay:
+            warnings.append("🚨 ROE/ROIC trending down - declining capital productivity")
+        
+        if capital_flags.growth_vs_capital_mismatch:
+            warnings.append("⚠️ Assets growing faster than revenue - inefficient capital deployment")
+        
+        if capital_flags.incremental_roic_collapse:
+            warnings.append("🚨 Incremental returns collapsed - new investments lower quality")
+        
+        # Management Signals Warnings
+        if management_flags.buybacks_rising_debt:
+            warnings.append("🚨 Buybacks funded with debt - financial engineering masking weakness")
+        
+        # Overall Risk Assessment
+        if overall_risk == RiskState.RED:
+            warnings.append("🔴 STRUCTURAL GROWTH BREAKDOWN DETECTED - Consider reducing exposure")
+            insights.append("This company shows multiple signs of growth quality deterioration")
+            insights.append("Institutional distribution may precede further price decline")
+        elif overall_risk == RiskState.YELLOW:
+            warnings.append("🟡 EARLY GROWTH STRESS DETECTED - Monitor closely")
+            insights.append("Early signs of growth quality deterioration detected")
+            insights.append("Maintain positions but reduce new allocations")
+        else:
+            insights.append("Growth quality appears intact - no structural issues detected")
+            insights.append("Company fundamentals support continued growth")
+        
+        return warnings, insights
+
+
+# Global instance
+early_warning_engine = EarlyWarningEngine()

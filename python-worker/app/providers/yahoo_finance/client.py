@@ -243,9 +243,10 @@ class YahooFinanceClient:
             logger.error(f"Failed to fetch price data for {symbol}: {e}")
             raise
     
-    def fetch_current_price(self, symbol: str) -> Optional[float]:
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
-        Fetch current price
+        Fetch current price with volume data
+        Returns dict with price and volume, or None if unavailable
         """
         try:
             ticker = self._get_ticker(symbol)
@@ -255,12 +256,24 @@ class YahooFinanceClient:
             current_price = info.get("regularMarketPrice") or info.get("currentPrice")
             
             if current_price is not None:
-                return float(current_price)
+                # Get volume data from info
+                volume = info.get("regularMarketVolume") or info.get("volume")
+                
+                return {
+                    "price": float(current_price),
+                    "volume": int(volume) if volume is not None else None,
+                    "source": "yahoo_finance"
+                }
             
             # Fallback to latest historical data
             hist = ticker.history(period="1d", interval="1m")
             if not hist.empty:
-                return float(hist["Close"].iloc[-1])
+                latest_row = hist.iloc[-1]
+                return {
+                    "price": float(latest_row["Close"]),
+                    "volume": int(latest_row["Volume"]) if "Volume" in latest_row and latest_row["Volume"] is not None else None,
+                    "source": "yahoo_finance_historical"
+                }
             
             return None
             

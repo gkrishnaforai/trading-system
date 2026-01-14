@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from app.database import init_database, db
 from app.services.data_aggregation_service import DataAggregationService
 from app.services.market_overview_service import MarketOverviewService
-from app.services.stock_insights_service import StockInsightsService
+from app.services.signal_history_tracker import create_signal_tracker, RecoverySignal, SignalType, SignalQuality, RiskLevel
 from app.services.stock_screener_service import StockScreenerService
 from streamlit_enhanced_watchlist_portfolio import display_enhanced_watchlist, display_enhanced_portfolio
 from app.data_management.refresh_manager import DataRefreshManager, RefreshMode, DataType
@@ -254,16 +254,16 @@ def display_audit(symbol: str):
         start_date = end_date - timedelta(days=int(completeness_days))
         daily_dates = db.execute_query(
             """
-            SELECT trade_date
+            SELECT date
             FROM raw_market_data_daily
-            WHERE stock_symbol = :symbol
-              AND trade_date >= :start_date
-              AND trade_date <= :end_date
-            ORDER BY trade_date ASC
+            WHERE symbol = :symbol
+              AND date >= :start_date
+              AND date <= :end_date
+            ORDER BY date ASC
             """,
             {"symbol": symbol, "start_date": start_date, "end_date": end_date},
         )
-        present = {r["trade_date"] for r in daily_dates if r.get("trade_date") is not None}
+        present = {r["date"] for r in daily_dates if r.get("date") is not None}
         expected = set(expected_trading_days(start_date, end_date))
         missing = sorted(expected - present)
         c1, c2, c3 = st.columns(3)
@@ -292,7 +292,7 @@ def display_audit(symbol: str):
                 """
                 SELECT ts
                 FROM raw_market_data_intraday
-                WHERE stock_symbol = :symbol
+                WHERE symbol = :symbol
                   AND interval = '15m'
                   AND ts >= :start_ts
                   AND ts <= :end_ts
@@ -331,7 +331,7 @@ def display_audit(symbol: str):
                 """
                 SELECT MAX(ts) AS last_ts
                 FROM raw_market_data_intraday
-                WHERE stock_symbol = :symbol
+                WHERE symbol = :symbol
                   AND interval = 'last'
                 """,
                 {"symbol": symbol},
@@ -386,9 +386,9 @@ def display_audit(symbol: str):
         try:
             rows = db.execute_query(
                 """
-                SELECT COUNT(*) AS cnt, MIN(trade_date) AS min_date, MAX(trade_date) AS max_date
+                SELECT COUNT(*) AS cnt, MIN(date) AS min_date, MAX(date) AS max_date
                 FROM raw_market_data_daily
-                WHERE stock_symbol = :symbol
+                WHERE symbol = :symbol
                 """,
                 {"symbol": symbol},
             )
@@ -400,7 +400,7 @@ def display_audit(symbol: str):
                 """
                 SELECT source, COUNT(*) AS cnt
                 FROM raw_market_data_daily
-                WHERE stock_symbol = :symbol
+                WHERE symbol = :symbol
                 GROUP BY source
                 ORDER BY cnt DESC
                 LIMIT 10
@@ -417,9 +417,9 @@ def display_audit(symbol: str):
         try:
             rows = db.execute_query(
                 """
-                SELECT COUNT(*) AS cnt, MIN(trade_date) AS min_date, MAX(trade_date) AS max_date
+                SELECT COUNT(*) AS cnt, MIN(date) AS min_date, MAX(date) AS max_date
                 FROM indicators_daily
-                WHERE stock_symbol = :symbol
+                WHERE symbol = :symbol
                 """,
                 {"symbol": symbol},
             )
@@ -435,7 +435,7 @@ def display_audit(symbol: str):
                 """
                 SELECT as_of_date, source, updated_at
                 FROM fundamentals_snapshots
-                WHERE stock_symbol = :symbol
+                WHERE symbol = :symbol
                 ORDER BY as_of_date DESC
                 LIMIT 10
                 """,
@@ -751,6 +751,598 @@ def format_signal(signal):
     else:
         return "➡️ Hold"
 
+def display_advanced_technical_analysis(symbol: str):
+    """Display advanced technical analysis with MACD, Volume, and VIX data"""
+    try:
+        from app.utils.market_data_utils import get_symbol_indicators_data, calculate_market_regime_context
+        from app.config import settings
+        from datetime import date
+        
+        # Get today's date for analysis
+        target_date = date.today().strftime("%Y-%m-%d")
+        
+        # Get symbol data with enhanced logging
+        symbol_data = get_symbol_indicators_data(symbol, target_date, settings.database_url)
+        
+        if symbol_data:
+            # Get market context for VIX
+            market_context = calculate_market_regime_context(symbol, target_date, settings.database_url, 'stock')
+            
+            # Create columns for better layout
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.markdown("### 📊 Volume & Price Action")
+                current_volume = symbol_data.get('volume', 0)
+                avg_volume_20d = symbol_data.get('avg_volume_20d', 0)
+                volume_ratio = symbol_data.get('volume_ratio', 0)
+                price_range = symbol_data.get('price_range', 0)
+                high_price = symbol_data.get('high', 0)
+                low_price = symbol_data.get('low', 0)
+                open_price = symbol_data.get('open', 0)
+                close_price = symbol_data.get('close', 0)
+                
+                st.metric("Current Volume", f"{current_volume:,.0f}")
+                st.metric("20d Avg Volume", f"{avg_volume_20d:,.0f}")
+                
+                # Volume ratio with color coding
+                volume_color = "🟢" if volume_ratio >= 1.2 else "🟡" if volume_ratio >= 0.8 else "🔴"
+                st.metric(f"Volume Ratio {volume_color}", f"{volume_ratio:.2f}x")
+                
+                st.markdown(f"**Price Range:** ${low_price:.2f} - ${high_price:.2f}")
+                st.markdown(f"**Today's Move:** ${open_price:.2f} → ${close_price:.2f}")
+                
+                # Critical Analysis #2: Volume-Price Relationship
+                st.markdown("### 🎯 Volume-Price Confirmation")
+                volume_price_confirmation = symbol_data.get('volume_price_confirmation', False)
+                volume_price_reason = symbol_data.get('volume_price_reason', '')
+                
+                if volume_price_confirmation:
+                    st.success("✅ **CONFIRMED** - Genuine buying pressure")
+                    st.info(volume_price_reason)
+                else:
+                    st.warning("⚠️ **NOT CONFIRMED** - Potential fake pump")
+                    st.info(volume_price_reason)
+                
+                # Volume interpretation
+                if volume_ratio >= 1.5:
+                    st.success("🔥 **High Volume** - Strong institutional interest")
+                elif volume_ratio >= 1.2:
+                    st.info("📈 **Above Average** - Healthy trading activity")
+                elif volume_ratio >= 0.8:
+                    st.warning("⚠️ **Normal Volume** - Typical trading levels")
+                else:
+                    st.error("📉 **Low Volume** - Weak trading interest")
+            
+            with col2:
+                st.markdown("### 📈 MACD & Trend Analysis")
+                macd_line = symbol_data.get('macd', 0)
+                macd_signal = symbol_data.get('macd_signal', 0)
+                macd_histogram = symbol_data.get('macd_histogram', macd_line - macd_signal)
+                
+                st.metric("MACD Line", f"{macd_line:.4f}")
+                st.metric("Signal Line", f"{macd_signal:.4f}")
+                
+                # Industry-standard MACD analysis
+                # 1. Trend direction (MACD Line vs 0)
+                macd_trend = "bullish" if macd_line > 0 else "bearish"
+                trend_color = "🟢" if macd_trend == "bullish" else "🔴"
+                
+                # 2. Momentum direction (MACD Line vs Signal Line)
+                macd_momentum = "bullish" if macd_line > macd_signal else "bearish"
+                momentum_color = "🟢" if macd_momentum == "bullish" else "🔴"
+                
+                # 3. Momentum strength (Histogram)
+                histogram_strength = "strengthening" if (macd_histogram > 0 and macd_momentum == "bullish") or (macd_histogram < 0 and macd_momentum == "bearish") else "weakening"
+                strength_color = "🟢" if histogram_strength == "strengthening" else "🔴"
+                
+                st.metric(f"Histogram {strength_color}", f"{macd_histogram:.4f}")
+                
+                # Display trend and momentum separately
+                col2a, col2b = st.columns(2)
+                with col2a:
+                    st.metric(f"Trend {trend_color}", macd_trend.title())
+                with col2b:
+                    st.metric(f"Momentum {momentum_color}", macd_momentum.title())
+                
+                # Critical Analysis #1: Trend Confirmation Trigger
+                st.markdown("### 🎯 Trend Confirmation")
+                trend_confirmation = symbol_data.get('trend_confirmation', False)
+                trend_confirmation_reason = symbol_data.get('trend_confirmation_reason', '')
+                
+                if trend_confirmation:
+                    st.success("✅ **CONFIRMED** - Trend supports bullish move")
+                    st.info(trend_confirmation_reason)
+                else:
+                    st.error("❌ **NOT CONFIRMED** - Trend against bullish move")
+                    st.info(trend_confirmation_reason)
+                
+                # Advanced interpretation based on combination
+                if macd_trend == "bullish" and macd_momentum == "bullish":
+                    st.success("🚀 **Strong Bullish** - Trend and momentum aligned")
+                elif macd_trend == "bearish" and macd_momentum == "bearish":
+                    st.error("📉 **Strong Bearish** - Trend and momentum aligned")
+                elif macd_trend == "bearish" and macd_momentum == "bullish":
+                    st.warning("🔄 **Early Recovery** - Bullish momentum in bearish trend")
+                elif macd_trend == "bullish" and macd_momentum == "bearish":
+                    st.warning("⚠️ **Momentum Weakening** - Bearish momentum in bullish trend")
+                
+                with st.expander("📚 Industry-Standard MACD Analysis"):
+                    st.markdown("""
+                    **MACD Components:**
+                    - **MACD Line** = 12-EMA - 26-EMA (Trend direction)
+                    - **Signal Line** = 9-EMA of MACD Line (Momentum trigger)
+                    - **Histogram** = MACD Line - Signal Line (Momentum strength)
+                    
+                    **Professional Interpretation:**
+                    
+                    **1. Trend Analysis (MACD Line vs 0):**
+                    - MACD > 0: Bullish trend (price above long-term average)
+                    - MACD < 0: Bearish trend (price below long-term average)
+                    
+                    **2. Momentum Analysis (MACD vs Signal):**
+                    - MACD > Signal: Bullish momentum
+                    - MACD < Signal: Bearish momentum
+                    
+                    **3. Momentum Strength (Histogram):**
+                    - Positive histogram: Momentum strengthening in direction of trend
+                    - Negative histogram: Momentum weakening against trend
+                    
+                    **Key Combinations:**
+                    - **Bullish Trend + Bullish Momentum**: Strong buy signal
+                    - **Bearish Trend + Bearish Momentum**: Strong sell signal
+                    - **Bearish Trend + Bullish Momentum**: Early recovery/potential reversal
+                    - **Bullish Trend + Bearish Momentum**: Trend weakening/potential reversal
+                    
+                    **Your Example Analysis:**
+                    - MACD Line: -0.099 (Bearish trend)
+                    - Signal Line: -0.247 (MACD above signal = Bullish momentum)
+                    - Histogram: +0.147 (Momentum strengthening)
+                    - **Interpretation**: Early recovery - bullish momentum emerging in bearish trend
+                    """)
+            
+            with col3:
+                st.markdown("### 🎯 Market Context")
+                vix_level = market_context.get('vix_level', 20)
+                volatility = market_context.get('volatility', 0)
+                recent_change = market_context.get('recent_change', 0)
+                
+                st.metric("VIX Level", f"{vix_level:.2f}")
+                st.metric("Volatility", f"{volatility:.2f}%")
+                st.metric("Recent Change", f"{recent_change:.2f}%")
+                
+                # VIX interpretation
+                if vix_level < 15:
+                    st.success("😌 **Low Fear** - Market complacency")
+                elif vix_level < 25:
+                    st.info("😐 **Moderate** - Normal market conditions")
+                elif vix_level < 35:
+                    st.warning("😰 **Elevated** - Market uncertainty")
+                else:
+                    st.error("😱 **High Fear** - Market panic")
+                
+                with st.expander("📖 VIX & Market Context"):
+                    st.markdown(f"""
+                    **VIX (CBOE Volatility Index):**
+                    - Measures market fear/greed through S&P 500 options
+                    - **< 15**: Low volatility, potential complacency
+                    - **15-25**: Normal market conditions
+                    - **25-35**: Elevated uncertainty
+                    - **> 35**: High fear, potential buying opportunity
+                    
+                    **Current Market:**
+                    - Volatility: {volatility:.2f}% (stock-specific)
+                    - Recent Change: {recent_change:.2f}% (price momentum)
+                    """)
+            
+            with col4:
+                st.markdown("### 🔄 Recovery Detection")
+                
+                # Get recovery data
+                relative_strength = symbol_data.get('relative_strength', 0)
+                stability_score = symbol_data.get('stability_score', 0)
+                no_new_lows = symbol_data.get('no_new_lows', False)
+                range_stable = symbol_data.get('range_stable', False)
+                close_upper_half = symbol_data.get('close_upper_half', False)
+                
+                # Layer 1: Market Context
+                vix_level = market_context.get('vix_level', 20)
+                volatility = market_context.get('volatility', 0)
+                context_ok = vix_level < 25 and volatility < 8.0
+                
+                st.metric("VIX Level", f"{vix_level:.1f}")
+                st.metric("Volatility", f"{volatility:.1f}%")
+                
+                if context_ok:
+                    st.success("✅ Context Favorable")
+                else:
+                    st.error("❌ Context Unfavorable")
+                
+                # Layer 2: Downtrend Weakening
+                st.markdown("#### 📉 Downtrend Status")
+                downtrend_weakening = no_new_lows and range_stable
+                
+                if downtrend_weakening:
+                    st.success("✅ Weakening")
+                else:
+                    st.error("❌ Still Strong")
+                
+                # Show stability details
+                st.markdown(f"No new lows: {'✅' if no_new_lows else '❌'}")
+                st.markdown(f"Range stable: {'✅' if range_stable else '❌'}")
+                st.markdown(f"Close upper half: {'✅' if close_upper_half else '❌'}")
+                
+                # Layer 3: Momentum Shift
+                st.markdown("#### 📈 Momentum Shift")
+                macd_histogram = symbol_data.get('macd_histogram', 0)
+                rsi = symbol_data.get('rsi_14', 50)
+                
+                macd_positive = macd_histogram > 0
+                rsi_range = 40 <= rsi <= 55
+                momentum_ok = macd_positive and rsi_range
+                
+                if momentum_ok:
+                    st.success("✅ Shifting Positive")
+                else:
+                    st.error("❌ Not Shifting")
+                
+                st.markdown(f"MACD: {macd_histogram:+.4f} ({'✅' if macd_positive else '❌'})")
+                st.markdown(f"RSI: {rsi:.0f} ({'✅' if rsi_range else '❌'})")
+                
+                # Layer 4: Accumulation
+                st.markdown("#### 💰 Accumulation")
+                volume_price_confirmation = symbol_data.get('volume_price_confirmation', False)
+                high_volume = symbol_data.get('high_volume', False)
+                
+                accumulation_ok = volume_price_confirmation and high_volume
+                
+                if accumulation_ok:
+                    st.success("✅ Smart Money")
+                else:
+                    st.error("❌ No Accumulation")
+                
+                # Layer 5: Relative Strength (CRITICAL)
+                st.markdown("#### 🏎️ Relative Strength")
+                relative_strength_positive = relative_strength > 0
+                
+                if relative_strength_positive:
+                    st.success(f"✅ +{relative_strength:.3f}")
+                else:
+                    st.error(f"❌ {relative_strength:.3f}")
+                
+                st.markdown(f"vs SPY: {relative_strength:+.3f}")
+                
+                # Overall Recovery Signal with comprehensive output
+                st.markdown("### 🎯 Recovery Signal")
+                
+                recovery_confidence = 0.0
+                recovery_factors = []
+                
+                # Layer 1: Context Gate (must pass)
+                if context_ok:
+                    recovery_confidence += 0.0  # Base requirement
+                else:
+                    recovery_confidence = 0.0
+                    st.error("🔴 CONTEXT BLOCKED")
+                    st.stop()
+                
+                # Layer 2: Downtrend Weakening
+                if downtrend_weakening:
+                    recovery_confidence += 0.10
+                    recovery_factors.append("Downtrend weakening")
+                
+                # Layer 3: Momentum Shift
+                if momentum_ok:
+                    recovery_confidence += 0.35  # MACD + RSI
+                    recovery_factors.append("Momentum shift")
+                
+                # Layer 4: Accumulation
+                if accumulation_ok:
+                    recovery_confidence += 0.25
+                    recovery_factors.append("Smart money accumulation")
+                
+                # Layer 5: Relative Strength
+                if relative_strength_positive:
+                    recovery_confidence += 0.25
+                    recovery_factors.append("Outperforming SPY")
+                
+                # Calculate position sizing and risk level
+                position_size = 30 + int(recovery_confidence * 20)  # 30-50%
+                risk_level = "LOW" if recovery_confidence >= 0.65 else "MODERATE" if recovery_confidence >= 0.55 else "HIGH"
+                
+                # Generate signal type
+                if recovery_confidence >= 0.55:
+                    signal_type = "BUY"
+                    signal_name = "RECOVERY_ENTRY"
+                    signal_color = "🟢"
+                elif recovery_confidence >= 0.30:
+                    signal_type = "HOLD" 
+                    signal_name = "MONITORING"
+                    signal_color = "🟡"
+                else:
+                    signal_type = "SELL"
+                    signal_name = "AVOID"
+                    signal_color = "🔴"
+                
+                # Display comprehensive signal output
+                st.markdown(f"### {signal_color} Signal: {signal_type}")
+                
+                col_signal1, col_signal2, col_signal3 = st.columns(3)
+                
+                with col_signal1:
+                    st.metric("Type", signal_name)
+                    st.metric("Confidence", f"{recovery_confidence:.2f}")
+                
+                with col_signal2:
+                    st.metric("Risk Level", risk_level)
+                    st.metric("Position Size", f"{position_size}%")
+                
+                with col_signal3:
+                    st.metric("Signal Quality", "HIGH" if recovery_confidence >= 0.55 else "MEDIUM" if recovery_confidence >= 0.30 else "LOW")
+                    st.metric("Execution Size", "REDUCED" if position_size < 50 else "NORMAL")
+                
+                # Hard stop calculation
+                swing_low = symbol_data.get('low', 0)
+                stop_loss = swing_low * 0.95  # 5% buffer below swing low
+                
+                st.markdown(f"**🛡️ Hard Stop:** ${stop_loss:.2f} (5% below swing low ${swing_low:.2f})")
+                
+                # Soft fail conditions
+                soft_fail_conditions = []
+                if macd_histogram <= 0:
+                    soft_fail_conditions.append("MACD histogram turns negative")
+                if relative_strength <= 0:
+                    soft_fail_conditions.append("Relative strength turns negative")
+                if not no_new_lows:
+                    soft_fail_conditions.append("Price makes new lower low")
+                
+                if soft_fail_conditions:
+                    st.markdown(f"**⚠️ Soft Fail Triggers:** {', '.join(soft_fail_conditions)}")
+                
+                # Winner scaling rules
+                sma_20 = symbol_data.get('ema_20', 0)  # Using EMA20 as proxy
+                sma_50 = symbol_data.get('sma_50', 0)
+                
+                scaling_rules = []
+                if close_price > sma_20:
+                    scaling_rules.append("Add size when price > SMA20")
+                if sma_20 > sma_50:
+                    scaling_rules.append("Add again when SMA20 > SMA50")
+                
+                if scaling_rules:
+                    st.markdown(f"**📈 Winner Scaling:** {', '.join(scaling_rules)}")
+                
+                # Signal tracking and comparison
+                signal_tracker = create_signal_tracker()
+                
+                # Create current signal object
+                current_signal = RecoverySignal(
+                    symbol=symbol,
+                    signal_type=SignalType(signal_type),
+                    signal_name=signal_name,
+                    confidence=recovery_confidence,
+                    risk_level=RiskLevel(risk_level),
+                    position_size=position_size,
+                    signal_quality=SignalQuality("HIGH" if recovery_confidence >= 0.55 else "MEDIUM" if recovery_confidence >= 0.30 else "LOW"),
+                    execution_size="REDUCED" if position_size < 50 else "NORMAL",
+                    
+                    # Recovery-specific metrics
+                    recovery_confidence=recovery_confidence,
+                    context_ok=context_ok,
+                    downtrend_weakening=downtrend_weakening,
+                    momentum_shift=momentum_ok,
+                    accumulation_ok=accumulation_ok,
+                    relative_strength_positive=relative_strength_positive,
+                    
+                    # Risk management
+                    hard_stop=stop_loss,
+                    swing_low=swing_low,
+                    
+                    # Market context
+                    vix_level=vix_level,
+                    volatility=volatility,
+                    relative_strength=relative_strength,
+                    
+                    # Technical indicators
+                    macd_histogram=macd_histogram,
+                    rsi=symbol_data.get('rsi_14', 50),
+                    volume_ratio=volume_ratio,
+                    
+                    # Metadata
+                    timestamp=datetime.now(),
+                    analysis_date=date.today()
+                )
+                
+                # Save current signal
+                signal_tracker.save_signal(current_signal)
+                
+                # Get previous signal for comparison
+                previous_signal = signal_tracker.get_signal_history(symbol, days=7)
+                if previous_signal and len(previous_signal) > 1:
+                    prev_signal = previous_signal[1]  # Get most recent previous signal
+                    
+                    # Show signal comparison
+                    st.markdown("### 📊 Signal Comparison")
+                    
+                    col_comp1, col_comp2, col_comp3 = st.columns(3)
+                    
+                    with col_comp1:
+                        st.markdown("**Previous Signal:**")
+                        st.metric("Type", prev_signal.signal_type.value)
+                        st.metric("Confidence", f"{prev_signal.confidence:.2f}")
+                        st.metric("Date", prev_signal.analysis_date.strftime("%m/%d"))
+                    
+                    with col_comp2:
+                        st.markdown("**Current Signal:**")
+                        st.metric("Type", current_signal.signal_type.value)
+                        st.metric("Confidence", f"{current_signal.confidence:.2f}")
+                        st.metric("Date", current_signal.analysis_date.strftime("%m/%d"))
+                    
+                    with col_comp3:
+                        st.markdown("**Change Analysis:**")
+                        
+                        # Signal type change
+                        if prev_signal.signal_type != current_signal.signal_type:
+                            change_emoji = "🔄" if prev_signal.signal_type != SignalType.BUY and current_signal.signal_type == SignalType.BUY else "⚠️"
+                            st.success(f"{change_emoji} {prev_signal.signal_type.value} → {current_signal.signal_type.value}")
+                        else:
+                            st.info("➡️ No signal type change")
+                        
+                        # Confidence change
+                        conf_change = current_signal.confidence - prev_signal.confidence
+                        if abs(conf_change) > 0.05:  # Significant change
+                            conf_emoji = "📈" if conf_change > 0 else "📉"
+                            st.metric(f"Confidence {conf_emoji}", f"{conf_change:+.2f}")
+                        else:
+                            st.metric("Confidence", "~ Stable")
+                    
+                    # Show recent changes for alerts
+                    recent_changes = signal_tracker.get_signal_changes(symbol, hours=24)
+                    if recent_changes:
+                        st.markdown("### 🔔 Recent Signal Changes")
+                        
+                        for change in recent_changes[:3]:  # Show last 3 changes
+                            change_time = change['timestamp'].strftime("%H:%M")
+                            change_type = change['change_type']
+                            
+                            if change_type == 'SIGNAL_TYPE_CHANGE':
+                                st.warning(f"🔄 {change_time}: Signal changed {change['old_value']} → {change['new_value']}")
+                            elif change_type == 'CONFIDENCE_THRESHOLD_CHANGE':
+                                st.info(f"📊 {change_time}: Confidence {change['old_value']} → {change['new_value']}")
+                            elif change_type == 'RISK_LEVEL_CHANGE':
+                                st.error(f"⚠️ {change_time}: Risk {change['old_value']} → {change['new_value']}")
+                if recovery_confidence >= 0.55:
+                    st.success(f"🟢 RECOVERY BUY")
+                    st.metric("Confidence", f"{recovery_confidence:.2f}")
+                    st.metric("Position Size", f"{30 + int(recovery_confidence * 20)}%")
+                    
+                    with st.expander("🧮 Recovery Logic"):
+                        st.markdown("**Why RECOVERY BUY:**")
+                        for factor in recovery_factors:
+                            st.markdown(f"✅ {factor}")
+                        
+                        st.markdown(f"\n**Confidence Score:** {recovery_confidence:.2f}")
+                        st.markdown(f"**Position Size:** {30 + int(recovery_confidence * 20)}% (reduced sizing)")
+                        st.markdown(f"**Risk Level:** {'LOW' if recovery_confidence >= 0.65 else 'MODERATE'}")
+                        
+                        st.markdown("\n**Recovery Philosophy:**")
+                        st.markdown("• Buy in fear → Early relief rally")
+                        st.markdown("• Before breakout confirmation")
+                        st.markdown("• Asymmetric risk/reward setup")
+                        st.markdown("• Smart money accumulation detected")
+                        
+                else:
+                    st.warning(f"⚪ NO RECOVERY")
+                    st.metric("Confidence", f"{recovery_confidence:.2f}")
+                    
+                    with st.expander("🧮 Why No Recovery Signal Failed"):
+                        missing_factors = []
+                        
+                        if not downtrend_weakening:
+                            missing_factors.append("Downtrend not weakening")
+                        if not momentum_ok:
+                            missing_factors.append("Momentum not shifting")
+                        if not accumulation_ok:
+                            missing_factors.append("No smart money accumulation")
+                        if not relative_strength_positive:
+                            missing_factors.append("Underperforming SPY")
+                        
+                        st.markdown("**Missing Requirements:**")
+                        for factor in missing_factors:
+                            st.markdown(f"❌ {factor}")
+                        
+                        st.markdown(f"\n**Current Confidence:** {recovery_confidence:.2f} (Need ≥0.55)")
+                        st.markdown("**Recommendation:** Wait for clearer recovery signals")
+            
+            # Summary section at bottom
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("### 📋 Technical Summary")
+                
+                # Overall technical signal using corrected MACD + critical analysis
+                macd_momentum_bullish = macd_line > macd_signal
+                macd_trend_bullish = macd_line > 0
+                volume_strong = volume_ratio >= 1.2
+                vix_low = vix_level < 25
+                
+                # Get critical analysis results
+                trend_confirmation = symbol_data.get('trend_confirmation', False)
+                volume_price_confirmation = symbol_data.get('volume_price_confirmation', False)
+                
+                # Get recovery signal
+                recovery_confidence = 0.0
+                if context_ok and symbol_data.get('stability_score', 0) > 0.67:
+                    recovery_confidence += 0.10
+                if macd_histogram > 0 and 40 <= symbol_data.get('rsi_14', 50) <= 55:
+                    recovery_confidence += 0.35
+                if volume_price_confirmation and symbol_data.get('high_volume', False):
+                    recovery_confidence += 0.25
+                if relative_strength > 0:
+                    recovery_confidence += 0.25
+                
+                recovery_signal = recovery_confidence >= 0.55
+                
+                # Enhanced signal combination with critical rules + recovery
+                if recovery_signal:
+                    st.success("🟢 **RECOVERY BUY SETUP** - Early recovery detected")
+                elif trend_confirmation and volume_price_confirmation and macd_momentum_bullish:
+                    st.success("🟢 **STRONG BUY SETUP** - All critical confirmations met")
+                elif trend_confirmation and macd_momentum_bullish and not volume_price_confirmation:
+                    st.warning("🟡 **BUY WITH CAUTION** - Trend & momentum good, but volume weak")
+                elif not trend_confirmation and volume_price_confirmation and macd_momentum_bullish:
+                    st.warning("🔄 **EARLY RECOVERY** - Volume & momentum bullish, trend turning")
+                elif trend_confirmation and not macd_momentum_bullish:
+                    st.warning("⚠️ **HOLD** - Trend confirmed but momentum bearish")
+                elif not trend_confirmation and not volume_price_confirmation:
+                    st.error("🔴 **STRONG SELL SETUP** - All critical signals negative")
+                else:
+                    st.info("📊 **MIXED SIGNALS** - Wait for clearer confirmation")
+                
+                # Show critical rules status
+                st.markdown("### 🎯 Critical Rules Status:")
+                col_summary1, col_summary2, col_summary3 = st.columns(3)
+                
+                with col_summary1:
+                    st.markdown(f"**Trend Confirmation:** {'✅' if trend_confirmation else '❌'}")
+                    st.markdown(f"**Volume-Price:** {'✅' if volume_price_confirmation else '❌'}")
+                
+                with col_summary2:
+                    st.markdown(f"**MACD Momentum:** {'✅' if macd_momentum_bullish else '❌'}")
+                    st.markdown(f"**Volume Strength:** {'✅' if volume_strong else '❌'}")
+                
+                with col_summary3:
+                    st.markdown(f"**Recovery Signal:** {'✅' if recovery_signal else '❌'}")
+                    st.markdown(f"**Recovery Confidence:** {recovery_confidence:.2f}")
+            
+            with col2:
+                st.markdown("### 🎯 Trading Insights")
+                
+                insights = []
+                if volume_ratio >= 1.5:
+                    insights.append(f"🔥 **Exceptional Volume**: {volume_ratio:.1f}x normal - Institutional activity detected")
+                if abs(macd_histogram) > 0.5:
+                    insights.append(f"📈 **Strong MACD**: {macd_histogram:.3f} - Momentum accelerating")
+                if vix_level > 30:
+                    insights.append(f"😱 **High VIX**: {vix_level:.1f} - Fear creates opportunity")
+                if volatility > 3:
+                    insights.append(f"📊 **High Volatility**: {volatility:.1f}% - Higher risk/reward")
+                
+                if insights:
+                    for insight in insights[:3]:  # Show top 3 insights
+                        st.markdown(f"• {insight}")
+                else:
+                    st.info("📊 Normal market conditions - No unusual signals detected")
+        
+        else:
+            st.warning(f"⚠️ No technical data available for {symbol}")
+            st.info("💡 Load market data and indicators using the sidebar buttons")
+            
+    except Exception as e:
+        st.error(f"❌ Error loading advanced analysis: {e}")
+        logger.error(f"Error in advanced technical analysis: {e}")
+
 def display_analysis_section(section_name: str, section_data: Dict[str, Any]):
     """Display a single analysis section"""
     if not section_data:
@@ -1045,6 +1637,10 @@ def display_stock_insights(symbol: str):
                     if run_all_strategies and insights.get("strategy_comparison"):
                         st.subheader("⚖️ Strategy Comparison")
                         display_strategy_comparison(insights["strategy_comparison"])
+                    
+                    # Advanced Technical Analysis Section
+                    st.subheader("🔬 Advanced Technical Analysis")
+                    display_advanced_technical_analysis(symbol)
                 
                 elif run_strategy and selected_strategy != "None":
                     # Run single strategy
@@ -1824,6 +2420,152 @@ def display_data_availability(symbol: str):
         else:
             st.info("💡 Generate insights using the Stock Insights tab")
 
+def display_growth_quality_analysis(symbol: str):
+    """Display institutional-grade growth quality analysis"""
+    st.header("💰 Growth Quality Analysis")
+    st.markdown("Institutional-grade growth health classification with clear investment guidance")
+    
+    try:
+        # Fetch growth health classification
+        with st.spinner(f"Analyzing growth health for {symbol}..."):
+            response = requests.get(f"http://localhost:8001/api/v1/growth-quality/growth-health/{symbol}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                _render_institutional_analysis(data)
+            else:
+                st.error(f"❌ Failed to analyze {symbol}")
+                st.info("💡 Make sure fundamentals data is loaded using the 'Load All Data' button")
+                
+    except Exception as e:
+        st.error(f"❌ Error in growth quality analysis: {e}")
+        logger.error(f"Error in growth quality analysis for {symbol}: {e}")
+
+
+def _render_institutional_analysis(data: Dict[str, Any]):
+    """Render institutional-grade analysis with clear messaging"""
+    symbol = data.get('symbol', 'Unknown')
+    
+    # Structural Risk Assessment
+    structural_risk = data.get('structural_risk', 'LOW')
+    structural_colors = {
+        'LOW': '#38ef7d',
+        'MEDIUM': '#f5576c', 
+        'HIGH': '#eb3349'
+    }
+    structural_icons = {
+        'LOW': '🟢',
+        'MEDIUM': '🟡',
+        'HIGH': '🔴'
+    }
+    
+    # Growth Phase Assessment
+    growth_phase = data.get('growth_phase', 'MATURE_COMPOUNDER')
+    growth_display = {
+        'HEALTHY_COMPOUNDER': '🟢 Healthy Compounder',
+        'MATURE_COMPOUNDER': '🟡 Mature Compounder',
+        'GROWTH_DEGRADATION': '🟠 Growth Degradation',
+        'GROWTH_BREAKDOWN': '🔴 Growth Breakdown'
+    }
+    
+    # Investment Posture
+    investment_posture = data.get('investment_posture', 'HOLD_SELECTIVE_ADD')
+    posture_display = {
+        'BUY': '🟢 BUY',
+        'HOLD_SELECTIVE_ADD': '🟡 HOLD / SELECTIVE ADD',
+        'TRIM_REDUCE': '🟠 TRIM / REDUCE',
+        'EXIT_AVOID': '🔴 EXIT / AVOID'
+    }
+    
+    # Main Assessment Card
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                padding: 30px; border-radius: 15px; color: white; margin: 20px 0;">
+        <h2>📊 Overall Assessment — {symbol}</h2>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
+            <div>
+                <h3>Structural Risk: {structural_icons.get(structural_risk, '')} {structural_risk}</h3>
+                <p style="font-size: 14px; opacity: 0.9;">Balance sheet and revenue quality assessment</p>
+            </div>
+            <div>
+                <h3>Growth Phase: {growth_display.get(growth_phase, growth_phase)}</h3>
+                <p style="font-size: 14px; opacity: 0.9;">Business lifecycle stage and trajectory</p>
+            </div>
+        </div>
+        
+        <div style="margin-top: 20px; padding: 15px; background: rgba(255,255,255,0.1); border-radius: 10px;">
+            <h3>Investment Posture: {posture_display.get(investment_posture, investment_posture)}</h3>
+            <p style="font-size: 14px; opacity: 0.9;">Clear action guidance based on risk and growth profile</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Detailed Analysis Sections
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 🎯 Investment Reasoning")
+        for reason in data.get('reasoning', []):
+            st.markdown(f"• {reason}")
+        
+        st.markdown("### 💰 Forward Return Expectations")
+        st.info(data.get('forward_return_expectation', 'Not available'))
+    
+    with col2:
+        st.markdown("### ⚠️ Risk Factors to Monitor")
+        for risk in data.get('risk_factors', []):
+            st.markdown(f"• {risk}")
+        
+        st.markdown("### 🚀 Potential Opportunities")
+        for opportunity in data.get('opportunities', []):
+            st.markdown(f"• {opportunity}")
+    
+    # Confidence and Analysis Date
+    confidence = data.get('confidence', 0) * 100
+    st.markdown(f"**Confidence in Assessment:** {confidence:.0f}%")
+    st.caption(f"Analysis as of: {data.get('analysis_date', 'Unknown')}")
+    
+    # Investment Guidance Summary
+    st.markdown("---")
+    st.markdown("### 📋 Investment Guidance Summary")
+    
+    if investment_posture == 'BUY':
+        st.success("""
+        **🟢 BUY - Aggressive Accumulation**
+        
+        **Why:** Strong structural health + accelerating growth trajectory
+        **Action:** Build core position, consider adding on weakness
+        **Sizing:** Above-average position size (2-3% of portfolio)
+        """)
+    elif investment_posture == 'HOLD_SELECTIVE_ADD':
+        st.warning("""
+        **🟡 HOLD / SELECTIVE ADD - Long-term Compounder**
+        
+        **Why:** Strong structural health + mature growth phase
+        **Action:** Hold core position, add only on meaningful corrections (15%+ pullbacks)
+        **Sizing:** Standard position size (1-2% of portfolio)
+        **Note:** Do NOT chase breakouts - growth is priced in
+        """)
+    elif investment_posture == 'TRIM_REDUCE':
+        st.error("""
+        **🟠 TRIM / REDUCE - Growth Slowing**
+        
+        **Why:** Growth trajectory showing material slowdown
+        **Action:** Reduce position size by 25-50%
+        **Sizing:** Below-average position size (0.5-1% of portfolio)
+        **Note:** Consider redeploying capital to higher-growth opportunities
+        """)
+    else:
+        st.error("""
+        **🔴 EXIT / AVOID - Structural Issues**
+        
+        **Why:** Structural risk or growth breakdown detected
+        **Action:** Sell existing position or avoid entirely
+        **Sizing:** Zero exposure
+        **Note:** Capital preservation priority over growth potential
+        """)
+
 def display_fundamentals_and_indicators(symbol: str):
     """Display latest fundamentals and indicators side by side using canonical keys"""
     st.header("📚 Fundamentals & Indicators")
@@ -2242,11 +2984,12 @@ if clear_cache:
     st.rerun()
 
 # Create main tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "🔍 Data Validation",
-    "📊 Stock Insights",
+    "📊 Stock Insights", 
     "📈 Data Availability",
     "📚 Fundamentals & Indicators",
+    "💰 Growth Quality Analysis",
     "🧠 Signal Engines",
     "🧾 Audit",
     "📅 Earnings & News",
@@ -2268,21 +3011,24 @@ with tab4:
     display_fundamentals_and_indicators(symbol)
 
 with tab5:
-    render_signal_engine_interface(symbol)
+    display_growth_quality_analysis(symbol)
 
 with tab6:
-    display_audit(symbol)
+    render_signal_engine_interface(symbol)
 
 with tab7:
-    display_earnings_and_news(symbol)
+    display_audit(symbol)
 
 with tab8:
-    display_enhanced_watchlist()
+    display_earnings_and_news(symbol)
 
 with tab9:
-    display_enhanced_portfolio()
+    display_enhanced_watchlist()
 
 with tab10:
+    display_enhanced_portfolio()
+
+with tab11:
     display_screeners(available_symbols)
 
 # Footer

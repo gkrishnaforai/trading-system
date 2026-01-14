@@ -8,7 +8,14 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, date
 import pandas as pd
 from sqlalchemy import text
-from massive import RESTClient
+
+# Try to import massive library (optional)
+try:
+    from massive import RESTClient
+    MASSIVE_AVAILABLE = True
+except ImportError:
+    MASSIVE_AVAILABLE = False
+    RESTClient = None
 
 from app.config import settings
 from app.observability.tracing import trace_function
@@ -23,6 +30,9 @@ class MassiveFundamentalsLoader:
     """Comprehensive fundamentals data loader for Massive.com"""
     
     def __init__(self):
+        if not MASSIVE_AVAILABLE:
+            raise ImportError("Massive library not installed. Install with: pip install massive")
+        
         self.api_key = settings.massive_api_key
         if not self.api_key:
             raise ValueError("Massive API key required")
