@@ -18,7 +18,14 @@ from app.observability.logging import get_logger
 
 logger = get_logger("admin_api")
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+# ========================================
+# IMPORTANT: Router Configuration Rules
+# ========================================
+# DO NOT ADD PREFIX HERE! Prefixes are managed in api_server.py
+# WRONG: router = APIRouter(prefix="/admin", tags=["admin"])
+# CORRECT: router = APIRouter(tags=["admin"])
+# ========================================
+router = APIRouter(tags=["admin"])
 
 # Request/Response Models
 class RefreshRequest(BaseModel):
@@ -929,13 +936,13 @@ async def get_audit_logs(start_date: str = None, end_date: str = None, level: st
                 level,
                 provider,
                 operation,
-                timestamp,
+                event_ts as timestamp,
                 message,
-                metadata
+                context as metadata
             FROM data_ingestion_events
-            WHERE timestamp BETWEEN :start_date AND :end_date
+            WHERE event_ts BETWEEN :start_date AND :end_date
             AND (:level = 'ALL' OR level = :level)
-            ORDER BY timestamp DESC
+            ORDER BY event_ts DESC
             LIMIT :limit
         """
         

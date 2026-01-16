@@ -83,7 +83,7 @@ The admin dashboard integrates with both the Python Worker API and Go API:
 
 ### Python Worker API Endpoints
 - `/admin/data-sources` - Data source management
-- `/refresh` - Data refresh operations
+- `/api/v1/refresh` - Data refresh operations
 - `/admin/data-summary/{table}` - Table statistics
 - `/signals/generate` - Signal generation
 - `/screener/run` - Stock screening

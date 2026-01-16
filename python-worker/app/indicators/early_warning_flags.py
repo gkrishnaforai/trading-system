@@ -603,10 +603,11 @@ class EarlyWarningEngine:
         if high_risk_domains:
             insights.append(f"⚠️ Structural breakdown detected in: {', '.join(high_risk_domains)}")
         
-        if domain_risks['revenue_quality'] == DomainRisk.NO_RISK:
+        # Add domain-specific insights with defensive programming
+        if domain_risks.get('revenue_quality') == DomainRisk.NO_RISK:
             insights.append("✅ Revenue quality appears healthy")
         
-        if domain_risks['margin_stress'] == DomainRisk.NO_RISK:
+        if domain_risks.get('margin_stress') == DomainRisk.NO_RISK:
             insights.append("✅ Margin structure appears stable")
         
         return warnings, insights
@@ -621,7 +622,12 @@ class EarlyWarningEngine:
             margin_stress=MarginStressFlags(),
             capital_efficiency=CapitalEfficiencyFlags(),
             management_signals=ManagementSignalsFlags(),
-            domain_risks={},
+            domain_risks={
+                'revenue_quality': DomainRisk.NO_RISK,
+                'margin_stress': DomainRisk.NO_RISK,
+                'capital_efficiency': DomainRisk.NO_RISK,
+                'management_signals': DomainRisk.NO_RISK
+            },
             metrics={},
             warnings=["⚠️ Insufficient data for comprehensive analysis"],
             insights=[]

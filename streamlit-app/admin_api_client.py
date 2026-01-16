@@ -87,7 +87,7 @@ class AdminAPIClient:
             "data_types": data_types,
             "force": force
         }
-        return self._make_request(f"{self.python_api_url}/refresh", "POST", data)
+        return self._make_request(f"{self.python_api_url}/api/v1/refresh", "POST", data)
     
     def get_refresh_status(self) -> Dict[str, Any]:
         """Get current refresh status and queue"""

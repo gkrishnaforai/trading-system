@@ -22,8 +22,8 @@ logger = get_logger("portfolio_api_v2")
 # IMPORTANT: Router Configuration Rules
 # ========================================
 # DO NOT ADD PREFIX HERE! Prefixes are managed in api_server.py
-# ❌ WRONG: router = APIRouter(prefix="/api/v2/portfolio", tags=["portfolio-v2"])
-# ✅ CORRECT: router = APIRouter(tags=["portfolio-v2"])
+# WRONG: router = APIRouter(prefix="/api/v2/portfolio", tags=["portfolio-v2"])
+# CORRECT: router = APIRouter(tags=["portfolio-v2"])
 # ========================================
 router = APIRouter(tags=["portfolio-v2"])
 
@@ -473,6 +473,135 @@ async def add_holding(
         industry=holding['industry'],
         stock_currency=holding['stock_currency']
     )
+
+@router.put("/portfolios/{portfolio_id}/holdings/{symbol}", response_model=HoldingResponse)
+async def update_holding(
+    portfolio_id: str,
+    symbol: str,
+    holding_data: HoldingCreate,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db)
+):
+    """Update a holding in a portfolio"""
+    
+    # Verify portfolio ownership
+    portfolio = db.execute_query_positional(
+        "SELECT id FROM portfolios WHERE id = $1 AND user_id = $2",
+        [portfolio_id, current_user["id"]]
+    )
+    
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portfolio not found"
+        )
+    
+    # Check if holding exists
+    existing = db.execute_query_positional(
+        "SELECT id FROM portfolio_holdings WHERE portfolio_id = $1 AND symbol = $2",
+        [portfolio_id, symbol.upper()]
+    )
+    
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Holding for {symbol.upper()} not found in this portfolio"
+        )
+    
+    # Update holding
+    db.execute_update_positional(
+        """
+        UPDATE portfolio_holdings 
+        SET shares_held = $1, average_cost = $2, asset_type = $3, 
+            notes = $4, updated_at = CURRENT_TIMESTAMP
+        WHERE portfolio_id = $5 AND symbol = $6
+        """,
+        [
+            holding_data.shares_held,
+            holding_data.average_cost,
+            holding_data.asset_type,
+            holding_data.notes or "",
+            portfolio_id,
+            symbol.upper()
+        ]
+    )
+    
+    # Get updated holding
+    updated_holding = db.execute_query_positional(
+        """
+        SELECT ph.*, s.company_name, s.exchange, s.sector, s.industry, s.currency as stock_currency
+        FROM portfolio_holdings ph
+        LEFT JOIN stocks s ON ph.symbol = s.symbol
+        WHERE ph.portfolio_id = $1 AND ph.symbol = $2
+        """,
+        [portfolio_id, symbol.upper()]
+    )
+    
+    if updated_holding:
+        holding = updated_holding[0]
+        return HoldingResponse(
+            id=str(holding['id']),
+            portfolio_id=str(holding['portfolio_id']),
+            symbol=holding['symbol'],
+            asset_type=holding['asset_type'],
+            shares_held=float(holding['shares_held']),
+            average_cost=float(holding['average_cost']),
+            total_cost=float(holding['shares_held'] * holding['average_cost']),
+            current_price=None,
+            market_value=None,
+            unrealized_pnl=None,
+            unrealized_pnl_pct=None,
+            status=holding['status'],
+            created_at=holding['created_at'],
+            updated_at=holding['updated_at'],
+            notes=holding['notes'],
+            company_name=holding['company_name'],
+            exchange=holding['exchange'],
+            sector=holding['sector'],
+            industry=holding['industry'],
+            stock_currency=holding['stock_currency']
+        )
+
+@router.delete("/portfolios/{portfolio_id}/holdings/{symbol}")
+async def delete_holding(
+    portfolio_id: str,
+    symbol: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db)
+):
+    """Delete a holding from a portfolio"""
+    
+    # Verify portfolio ownership
+    portfolio = db.execute_query_positional(
+        "SELECT id FROM portfolios WHERE id = $1 AND user_id = $2",
+        [portfolio_id, current_user["id"]]
+    )
+    
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portfolio not found"
+        )
+    
+    # Check if holding exists
+    existing = db.execute_query_positional(
+        "SELECT id FROM portfolio_holdings WHERE portfolio_id = $1 AND symbol = $2",
+        [portfolio_id, symbol.upper()]
+    )
+    
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Holding for {symbol.upper()} not found in this portfolio"
+        )
+    
+    # Delete holding
+    db.execute_update_positional(
+        "DELETE FROM portfolio_holdings WHERE portfolio_id = $1 AND symbol = $2",
+        [portfolio_id, symbol.upper()]
+    )
+    
+    return {"message": f"Holding for {symbol.upper()} deleted successfully"}
 
 @router.get("/stocks/search", response_model=List[Dict[str, Any]])
 async def search_stocks(

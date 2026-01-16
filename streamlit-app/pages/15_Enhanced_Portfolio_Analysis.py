@@ -28,14 +28,130 @@ except ImportError:
 
 from utils import setup_page_config, render_sidebar
 from api_client import APIClient, APIError
+from api_config import api_config
 
 # Import shared analysis display component
 from components.analysis_display import display_signal_analysis, display_no_data_message
 
 # Initialize API client
-python_api_url = os.getenv("PYTHON_API_URL", "http://python-worker:8001")
+python_api_url = api_config.python_worker_url
 python_client = APIClient(python_api_url, timeout=30)
-portfolio_api_url = os.getenv("PORTFOLIO_API_URL", "http://python-worker:8001/api/v2/portfolio")
+portfolio_api_url = f"{python_api_url}/api/v2/portfolio"
+
+# ========================================
+# Helper Functions for DRY Code
+# ========================================
+
+def create_portfolio_selector(portfolios: List[Dict[str, Any]], key: str = "portfolio") -> Dict[str, Any]:
+    """Create standardized portfolio selector dropdown"""
+    portfolio_options = {f"{p['name']} ({p['portfolio_type'].title()})": p for p in portfolios}
+    selected_name = st.selectbox(
+        "Select Portfolio",
+        options=list(portfolio_options.keys()),
+        key=f"{key}_selector",
+        help="Choose a portfolio to manage"
+    )
+    return portfolio_options[selected_name]
+
+def format_currency(value: Any, default: str = "$0.00") -> str:
+    """Safely format currency values"""
+    try:
+        if value is None or value == "":
+            return default
+        return f"${float(value):,.2f}"
+    except (ValueError, TypeError):
+        return str(value) if value else default
+
+def format_percentage(value: Any, default: str = "0.00%") -> str:
+    """Safely format percentage values"""
+    try:
+        if value is None or value == "":
+            return default
+        return f"{float(value):+.2f}%"
+    except (ValueError, TypeError):
+        return str(value) if value else default
+
+def format_shares(value: Any, default: str = "0") -> str:
+    """Safely format share values"""
+    try:
+        if value is None or value == "":
+            return default
+        return f"{float(value):,.2f}"
+    except (ValueError, TypeError):
+        return str(value) if value else default
+
+def create_portfolio_metrics(portfolio: Dict[str, Any]) -> None:
+    """Create standardized portfolio metrics display"""
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Portfolio Type", portfolio['portfolio_type'].title())
+    
+    with col2:
+        initial_capital = portfolio.get('initial_capital', 0)
+        try:
+            initial_capital = float(initial_capital)
+            st.metric("Initial Capital", f"${initial_capital:,.2f}")
+        except (ValueError, TypeError):
+            st.metric("Initial Capital", str(initial_capital))
+    
+    with col3:
+        st.metric("Holdings", portfolio.get('holdings_count', 0))
+    
+    with col4:
+        status = "🟢 Active" if portfolio.get('is_active', True) else "🔴 Inactive"
+        st.metric("Status", status)
+
+def create_holdings_table(holdings: List[Dict[str, Any]], show_actions: bool = True) -> pd.DataFrame:
+    """Create standardized holdings table with formatting"""
+    holdings_data = []
+    
+    for holding in holdings:
+        # Get signal with color formatting
+        signal = get_stock_signal(holding['symbol'])
+        signal_colors = {'BUY': '🟢', 'SELL': '🔴', 'HOLD': '🟡'}
+        color = signal_colors.get(signal, '⚪')
+        formatted_signal = f"{color} {signal}"
+        
+        # Safe numeric formatting
+        avg_cost = holding.get('average_cost', 0)
+        current_price = holding.get('current_price')
+        market_value = holding.get('market_value')
+        pnl_pct = holding.get('unrealized_pnl_pct')
+        
+        holdings_data.append({
+            'Symbol': holding['symbol'],
+            'Shares': format_shares(holding['shares_held']),
+            'Avg Cost': format_currency(avg_cost),
+            'Current Price': format_currency(current_price),
+            'Market Value': format_currency(market_value),
+            'P&L': format_percentage(pnl_pct),
+            'Signal': formatted_signal
+        })
+    
+    return pd.DataFrame(holdings_data)
+
+def create_portfolio_action_buttons(portfolio: Dict[str, Any]) -> None:
+    """Create standardized portfolio action buttons"""
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("✏️ Edit Portfolio", key=f"edit_{portfolio['id']}"):
+            st.session_state.edit_portfolio = portfolio['id']
+    
+    with col2:
+        if st.button("🗑️ Delete Portfolio", key=f"delete_{portfolio['id']}"):
+            if portfolio.get('holdings_count', 0) == 0:
+                delete_portfolio(portfolio['id'])
+                st.success("Portfolio deleted successfully!")
+                st.rerun()
+            else:
+                st.error("Cannot delete portfolio with holdings. Remove all holdings first.")
+    
+    with col3:
+        if st.button("📊 View Analysis", key=f"analyze_{portfolio['id']}"):
+            st.session_state.selected_portfolio = portfolio['id']
+            st.session_state.show_analysis = True
 
 # ========================================
 # Authentication Functions
@@ -151,7 +267,9 @@ def add_portfolio_holding(portfolio_id: str, symbol: str, asset_type: str = "sto
                          shares_held: float = 0, average_cost: float = 0) -> Optional[Dict[str, Any]]:
     """Add a holding to portfolio with timeout handling"""
     try:
-        response = requests.post(f"{portfolio_api_url}/portfolios/{portfolio_id}/holdings",
+        url = f"{portfolio_api_url}/portfolios/{portfolio_id}/holdings"
+        
+        response = requests.post(url,
                                json={
                                    "symbol": symbol.upper(),
                                    "asset_type": asset_type,
@@ -311,6 +429,315 @@ Username: admin
 Password: admin123
         """)
 
+def show_portfolio_management_tab(portfolios):
+    """Portfolio Management tab with CRUD operations"""
+    st.markdown("### 📋 Portfolio Management")
+    
+    # Portfolio selection and actions
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        selected_portfolio = create_portfolio_selector(portfolios, "management")
+    
+    with col2:
+        if st.button("➕ Create New", type="primary", use_container_width=True, key="create_portfolio_mgmt"):
+            st.session_state.show_create_portfolio = True
+    
+    # Show create portfolio form if requested
+    if st.session_state.get('show_create_portfolio', False):
+        st.markdown("#### ➕ Create New Portfolio")
+        show_create_portfolio_form("management")
+        if st.button("❌ Cancel", key="cancel_create_mgmt"):
+            st.session_state.show_create_portfolio = False
+            st.rerun()
+        return
+    
+    # Portfolio details and actions
+    if selected_portfolio:
+        st.markdown("---")
+        
+        # Use helper function for portfolio metrics
+        create_portfolio_metrics(selected_portfolio)
+        
+        # Use helper function for action buttons
+        create_portfolio_action_buttons(selected_portfolio)
+        
+        # Portfolio holdings
+        st.markdown("#### 📈 Portfolio Holdings")
+        holdings = get_portfolio_holdings(selected_portfolio['id'])
+        
+        if holdings:
+            # Use helper function for holdings table
+            df_holdings = create_holdings_table(holdings)
+            
+            # Display the dataframe without styling the Signal column
+            st.dataframe(df_holdings, use_container_width=True, hide_index=True)
+            
+            # Action buttons for each holding
+            st.markdown("#### 🎯 Stock Actions")
+            for holding in holdings:
+                col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+                
+                with col1:
+                    st.write(f"**{holding['symbol']}**")
+                
+                with col2:
+                    if st.button("✏️ Edit", key=f"mgmt_edit_{holding['symbol']}"):
+                        st.session_state.show_edit_stock = True
+                        st.session_state.edit_symbol = holding['symbol']
+                        st.session_state.edit_holding = holding
+                        st.rerun()
+                
+                with col3:
+                    if st.button("🗑️ Delete", key=f"mgmt_delete_{holding['symbol']}"):
+                        if st.session_state.get(f'confirm_delete_{holding["symbol"]}', False):
+                            success = delete_portfolio_holding(selected_portfolio['id'], holding['symbol'])
+                            if success:
+                                st.success(f"✅ {holding['symbol']} deleted successfully!")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to delete {holding['symbol']}")
+                        else:
+                            st.session_state[f'confirm_delete_{holding["symbol"]}'] = True
+                            st.warning(f"⚠️ Click again to confirm deleting {holding['symbol']}")
+                            st.rerun()
+                
+                with col4:
+                    signal = get_stock_signal(holding['symbol'])
+                    signal_colors = {'BUY': '🟢', 'SELL': '🔴', 'HOLD': '🟡'}
+                    color = signal_colors.get(signal, '⚪')
+                    if st.button(f"{color} {signal}", key=f"mgmt_signal_{holding['symbol']}"):
+                        # Clear any previous analysis state
+                        if 'show_symbol_analysis' in st.session_state:
+                            st.session_state.show_symbol_analysis = False
+                        if 'selected_symbol_for_analysis' in st.session_state:
+                            del st.session_state.selected_symbol_for_analysis
+                        
+                        # Set new symbol for analysis
+                        st.session_state.selected_symbol_for_analysis = holding['symbol']
+                        st.session_state.show_symbol_analysis = True
+                        st.success(f"🔄 Loading analysis for {holding['symbol']}...")
+                        st.rerun()
+            
+            # Show edit stock form if requested
+            if st.session_state.get('show_edit_stock', False) and st.session_state.get('edit_holding'):
+                show_edit_stock_form(selected_portfolio['id'], st.session_state.edit_holding)
+            
+            # Add stock button
+            st.markdown("---")
+            if st.button("➕ Add Stock to Portfolio", type="primary", key="add_stock_mgmt"):
+                st.session_state.show_add_stock = True
+            
+            # Add stock form
+            if st.session_state.get('show_add_stock', False):
+                show_add_stock_form(selected_portfolio['id'])
+        else:
+            st.info("📋 No holdings in this portfolio. Add stocks to get started!")
+            if st.button("➕ Add Your First Stock", type="primary", key="add_first_stock"):
+                st.session_state.show_add_stock = True
+            
+            # Add stock form
+            if st.session_state.get('show_add_stock', False):
+                show_add_stock_form(selected_portfolio['id'])
+
+def update_portfolio_holding(portfolio_id: str, symbol: str, shares_held: float, average_cost: float, asset_type: str = "stock") -> Optional[Dict[str, Any]]:
+    """Update a holding in portfolio"""
+    try:
+        url = f"{portfolio_api_url}/portfolios/{portfolio_id}/holdings/{symbol}"
+        
+        response = requests.put(url,
+                              json={
+                                  "shares_held": shares_held,
+                                  "average_cost": average_cost,
+                                  "asset_type": asset_type
+                              },
+                              headers=get_auth_headers(),
+                              timeout=30)
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error updating holding: {response.json().get('detail', 'Unknown error')}")
+            return None
+    except requests.exceptions.Timeout:
+        st.error("⏰ Updating holding timed out. Please try again.")
+        return None
+    except Exception as e:
+        st.error(f"Error updating holding: {str(e)}")
+        return None
+
+def delete_portfolio_holding(portfolio_id: str, symbol: str) -> bool:
+    """Delete a holding from portfolio"""
+    try:
+        url = f"{portfolio_api_url}/portfolios/{portfolio_id}/holdings/{symbol}"
+        
+        response = requests.delete(url,
+                                 headers=get_auth_headers(),
+                                 timeout=30)
+        
+        if response.status_code == 200:
+            return True
+        else:
+            st.error(f"Error deleting holding: {response.json().get('detail', 'Unknown error')}")
+            return False
+    except requests.exceptions.Timeout:
+        st.error("⏰ Deleting holding timed out. Please try again.")
+        return False
+    except Exception as e:
+        st.error(f"Error deleting holding: {str(e)}")
+        return False
+
+def show_edit_stock_form(portfolio_id: str, holding: Dict[str, Any]):
+    """Show edit stock form"""
+    with st.form("edit_stock_form"):
+        st.markdown(f"#### ✏️ Edit {holding['symbol']}")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.text_input("Symbol", value=holding['symbol'], disabled=True)
+        
+        with col2:
+            asset_type = st.selectbox("Type*", ["stock", "regular_etf", "3x_etf"], 
+                                     index=["stock", "regular_etf", "3x_etf"].index(holding.get('asset_type', 'stock')))
+        
+        with col3:
+            shares = st.number_input("Shares*", min_value=0.0, value=float(holding['shares_held']), step=10.0)
+        
+        with col4:
+            avg_cost = st.number_input("Avg Cost ($)*", min_value=0.0, value=float(holding['average_cost']), step=0.01)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.form_submit_button("💾 Update Stock", type="primary"):
+                updated_holding = update_portfolio_holding(portfolio_id, holding['symbol'], shares, avg_cost, asset_type)
+                if updated_holding:
+                    st.success(f"✅ {holding['symbol']} updated successfully!")
+                    st.session_state.show_edit_stock = False
+                    st.session_state.edit_symbol = None
+                    st.rerun()
+        
+        with col2:
+            if st.form_submit_button("❌ Cancel"):
+                st.session_state.show_edit_stock = False
+                st.session_state.edit_symbol = None
+                st.rerun()
+
+def get_stock_signal(symbol: str) -> str:
+    """Get stock signal (mock implementation - replace with real API call)"""
+    # This is a mock implementation - replace with actual signal API call
+    import random
+    signals = ['BUY', 'SELL', 'HOLD']
+    return random.choice(signals)
+
+def delete_portfolio(portfolio_id: str) -> bool:
+    """Delete a portfolio"""
+    try:
+        response = requests.delete(f"{portfolio_api_url}/portfolios/{portfolio_id}",
+                                headers=get_auth_headers())
+        return response.status_code == 200
+    except:
+        return False
+
+def show_add_stock_form(portfolio_id: str):
+    """Show add stock form"""
+    with st.form("add_stock_form"):
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            symbol = st.text_input("Symbol*", placeholder="e.g., AAPL").upper()
+        
+        with col2:
+            asset_type = st.selectbox("Type*", ["stock", "regular_etf", "3x_etf"])
+        
+        with col3:
+            shares = st.number_input("Shares", min_value=0.0, value=100.0, step=10.0)
+        
+        with col4:
+            avg_cost = st.number_input("Avg Cost ($)", min_value=0.0, value=0.0, step=0.01)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.form_submit_button("➕ Add Stock", type="primary"):
+                if symbol:
+                    holding = add_portfolio_holding(portfolio_id, symbol, asset_type, shares, avg_cost)
+                    if holding:
+                        st.success(f"✅ {symbol} added to portfolio!")
+                        st.session_state.show_add_stock = False
+                        st.rerun()
+                else:
+                    st.error("Symbol is required")
+        
+        with col2:
+            if st.form_submit_button("❌ Cancel"):
+                st.session_state.show_add_stock = False
+                st.rerun()
+
+def show_portfolio_overview_tab(portfolios):
+    """Portfolio Overview tab"""
+    show_portfolio_overview()
+
+def show_stock_analysis_tab(portfolios):
+    """Stock Analysis tab with clickable signals"""
+    st.markdown("### 📈 Stock Analysis")
+    
+    # Use helper function for portfolio selection
+    selected_portfolio = create_portfolio_selector(portfolios, "analysis")
+    
+    # Get holdings
+    holdings = get_portfolio_holdings(selected_portfolio['id'])
+    
+    if holdings:
+        st.markdown("#### 📊 Portfolio Stocks with Signals")
+        
+        for holding in holdings:
+            signal = get_stock_signal(holding['symbol'])
+            
+            # Signal color
+            signal_colors = {
+                'BUY': '🟢',
+                'SELL': '🔴', 
+                'HOLD': '🟡'
+            }
+            color = signal_colors.get(signal, '⚪')
+            
+            # Create clickable signal
+            col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
+            
+            with col1:
+                st.write(f"**{holding['symbol']}**")
+            
+            with col2:
+                st.write(f"Shares: {format_shares(holding['shares_held'])}")
+            
+            with col3:
+                st.write(f"Cost: {format_currency(holding.get('average_cost', 0))}")
+            
+            with col4:
+                if st.button(f"{color} {signal}", key=f"analysis_signal_{holding['symbol']}"):
+                    # Clear any previous analysis state
+                    if 'show_symbol_analysis' in st.session_state:
+                        st.session_state.show_symbol_analysis = False
+                    if 'selected_symbol_for_analysis' in st.session_state:
+                        del st.session_state.selected_symbol_for_analysis
+                    
+                    # Set new symbol for analysis
+                    st.session_state.selected_symbol_for_analysis = holding['symbol']
+                    st.session_state.show_symbol_analysis = True
+                    st.success(f"🔄 Loading analysis for {holding['symbol']}...")
+                    st.rerun()
+            
+            with col5:
+                current_price = holding.get('current_price')
+                st.write(f"Price: {format_currency(current_price)}")
+    else:
+        st.info("📋 No holdings in this portfolio. Add stocks to see analysis.")
+
+def show_settings_tab():
+    """Settings tab"""
+    st.markdown("### ⚙️ Settings")
+    st.info("Settings functionality coming soon...")
+
 def show_portfolio_overview():
     """Show institutional-grade portfolio overview page"""
     user = st.session_state.current_user
@@ -323,16 +750,11 @@ def show_portfolio_overview():
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <div>
                 <h1 style="margin: 0; font-size: 2.5rem; font-weight: 700;">🏛️ Portfolio Management</h1>
-                <p style="margin: 0.5rem 0 0 0; font-size: 1.1rem; opacity: 0.9;">
-                    Welcome back, {user['full_name'] or user['username']} | 
-                    <span style="background: rgba(255,255,255,0.2); padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.875rem;">
-                        {user['role'].title()}
-                    </span>
-                </p>
+                <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">Institutional-grade portfolio analysis and management</p>
             </div>
             <div style="text-align: right;">
-                <div style="font-size: 0.875rem; opacity: 0.8;">Last Updated</div>
-                <div style="font-size: 1.1rem; font-weight: 600;">{datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
+                <div style="font-size: 1.2rem; font-weight: 600;">{user['full_name'] or user['username']}</div>
+                <div style="opacity: 0.8;">{user['role'].title()} Account</div>
             </div>
         </div>
     </div>
@@ -342,7 +764,7 @@ def show_portfolio_overview():
     portfolios = get_user_portfolios()
     
     if not portfolios:
-        # Institutional empty state
+        # Show create portfolio form for first-time users
         st.markdown("""
         <div style="background: #f8fafc; padding: 3rem; border-radius: 15px; text-align: center; border: 2px dashed #cbd5e1;">
             <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
@@ -351,28 +773,10 @@ def show_portfolio_overview():
         </div>
         """, unsafe_allow_html=True)
         
-        # Show create portfolio form
-        with st.expander("➕ Create Your First Portfolio", expanded=True):
-            show_create_portfolio_form()
+        show_create_portfolio_form("first_portfolio")
     else:
-        # Portfolio selector with enhanced styling
-        portfolio_options = {f"{p['name']} ({p['portfolio_type'].title()})": p for p in portfolios}
-        
-        if 'selected_portfolio' not in st.session_state:
-            st.session_state.selected_portfolio = portfolios[0]['id']
-        
-        # Enhanced portfolio selector
-        st.markdown("### 📋 Portfolio Selection")
-        selected_name = st.selectbox(
-            "Select Portfolio",
-            options=list(portfolio_options.keys()),
-            index=list(portfolio_options.keys()).index(
-                next(k for k, v in portfolio_options.items() if v['id'] == st.session_state.selected_portfolio)
-            ) if st.session_state.selected_portfolio in [v['id'] for v in portfolio_options.values()] else 0,
-            help="Choose a portfolio to analyze and manage"
-        )
-        
-        selected_portfolio = portfolio_options[selected_name]
+        # Use helper function for portfolio selection
+        selected_portfolio = create_portfolio_selector(portfolios, "overview")
         st.session_state.selected_portfolio = selected_portfolio['id']
         
         # Institutional action buttons
@@ -380,7 +784,7 @@ def show_portfolio_overview():
         col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
         
         with col1:
-            if st.button("📊 Institutional Analysis", type="primary", use_container_width=True):
+            if st.button("📊 Institutional Analysis", type="primary", use_container_width=True, key="overview_analysis"):
                 with st.spinner("Running institutional-grade analysis..."):
                     result = analyze_portfolio(selected_portfolio['id'])
                     if result and result.get('success'):
@@ -390,19 +794,19 @@ def show_portfolio_overview():
                         st.error("❌ Analysis failed")
         
         with col2:
-            if st.button("🔄 Refresh Data", use_container_width=True):
+            if st.button("🔄 Refresh Data", use_container_width=True, key="overview_refresh"):
                 load_portfolio_data(selected_portfolio['id'])
         
         with col3:
-            if st.button("📈 Risk Metrics", use_container_width=True):
+            if st.button("📈 Risk Metrics", use_container_width=True, key="overview_risk"):
                 st.session_state.show_risk_metrics = True
         
         with col4:
-            if st.button("➕ Add Symbol", use_container_width=True):
+            if st.button("➕ Add Symbol", use_container_width=True, key="overview_add"):
                 st.session_state.show_add_symbol = True
         
         with col5:
-            if st.button("🔄 Load All Data", use_container_width=True):
+            if st.button("🔄 Load All Data", use_container_width=True, key="overview_load_all"):
                 load_all_portfolio_data(selected_portfolio['id'])
         
         # Show portfolio details with institutional formatting
@@ -416,9 +820,10 @@ def show_portfolio_overview():
         if 'last_analysis_result' in st.session_state:
             show_institutional_analysis_results(st.session_state.last_analysis_result)
 
-def show_create_portfolio_form():
+def show_create_portfolio_form(location: str = "main"):
     """Show create portfolio form"""
-    with st.form("create_portfolio_form"):
+    form_key = f"create_portfolio_form_{location}"
+    with st.form(form_key):
         col1, col2 = st.columns(2)
         
         with col1:
@@ -722,6 +1127,9 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
     with st.spinner("Loading portfolio holdings..."):
         holdings = get_portfolio_holdings(portfolio['id'])
     
+    # Initialize holdings_data to avoid UnboundLocalError
+    holdings_data = []
+    
     if holdings:
         st.markdown("### 📋 Portfolio Holdings")
         
@@ -740,7 +1148,7 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                 <div style="font-size: 0.875rem; color: #166534;">Total Value</div>
                 <div style="font-size: 1.25rem; font-weight: 700; color: #16a34a;">${:,.2f}</div>
             </div>
-            """.format(total_value), unsafe_allow_html=True)
+            """.format(float(total_value) if total_value else 0), unsafe_allow_html=True)
         
         with col2:
             st.markdown("""
@@ -748,14 +1156,15 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                 <div style="font-size: 0.875rem; color: #991b1b;">Total Cost</div>
                 <div style="font-size: 1.25rem; font-weight: 700; color: #dc2626;">${:,.2f}</div>
             </div>
-            """.format(total_cost), unsafe_allow_html=True)
+            """.format(float(total_cost) if total_cost else 0), unsafe_allow_html=True)
         
         with col3:
             color = "#16a34a" if total_return >= 0 else "#dc2626"
+            total_return_float = float(total_return) if total_return else 0
             st.markdown(f"""
             <div style="background: {'#f0fdf4' if total_return >= 0 else '#fef2f2'}; padding: 1rem; border-radius: 10px; text-align: center;">
                 <div style="font-size: 0.875rem; color: {color};">Total Return</div>
-                <div style="font-size: 1.25rem; font-weight: 700; color: {color};">${total_return:,.2f}</div>
+                <div style="font-size: 1.25rem; font-weight: 700; color: {color};">${total_return_float:,.2f}</div>
             </div>
             """, unsafe_allow_html=True)
         
@@ -773,7 +1182,6 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
         
         # Process holdings in batches to avoid timeout
         batch_size = 10
-        holdings_data = []
         
         for i in range(0, len(holdings), batch_size):
             batch = holdings[i:i+batch_size]
@@ -793,13 +1201,13 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                 
                 holdings_data.append({
                     'Symbol': holding.get('symbol', 'N/A'),
-                    'Shares': f"{shares_held:,.2f}",
-                    'Avg Cost': f"${average_cost:.2f}",
-                    'Current Price': f"${holding.get('current_price', 0):.2f}",
-                    'Market Value': f"${market_value:,.2f}",
-                    'Cost Basis': f"${cost_basis:,.2f}",
-                    'P&L %': f"{unrealized_pct:+.2f}%",
-                    'Weight': f"{(market_value/total_value*100):.2f}%" if total_value > 0 else "0.00%"
+                    'Shares': format_shares(shares_held),
+                    'Avg Cost': format_currency(average_cost),
+                    'Current Price': format_currency(holding.get('current_price', 0)),
+                    'Market Value': format_currency(market_value),
+                    'Cost Basis': format_currency(cost_basis),
+                    'P&L %': format_percentage(unrealized_pct),
+                    'Weight': f"{(float(market_value)/float(total_value)*100):.2f}%" if total_value and market_value else "0.00%"
                 })
         
         if holdings_data:
@@ -835,11 +1243,19 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                 symbol = holding_data['Symbol']
                 
                 with cols[col_idx]:
-                    if st.button(f"📊 {symbol}", key=f"analysis_btn_{symbol}", 
+                    if st.button(f"📊 {symbol}", key=f"overview_analysis_btn_{symbol}", 
                                help=f"View detailed analysis for {symbol}",
                                use_container_width=True):
+                        # Clear any previous analysis state
+                        if 'show_symbol_analysis' in st.session_state:
+                            st.session_state.show_symbol_analysis = False
+                        if 'selected_symbol_for_analysis' in st.session_state:
+                            del st.session_state.selected_symbol_for_analysis
+                        
+                        # Set new symbol for analysis
                         st.session_state.selected_symbol_for_analysis = symbol
                         st.session_state.show_symbol_analysis = True
+                        st.success(f"🔄 Loading analysis for {symbol}...")
                         st.rerun()
             
             # Portfolio allocation chart
@@ -905,9 +1321,17 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
             for i, holding_data in enumerate(holdings_data):
                 col_idx = i % len(cols)
                 with cols[col_idx]:
-                    if st.button(f"📊 {holding_data['Symbol']}", key=f"analyze_{holding_data['Symbol']}", help=f"View detailed analysis for {holding_data['Symbol']}"):
+                    if st.button(f"📊 {holding_data['Symbol']}", key=f"details_analyze_{holding_data['Symbol']}", help=f"View detailed analysis for {holding_data['Symbol']}"):
+                        # Clear any previous analysis state
+                        if 'show_symbol_analysis' in st.session_state:
+                            st.session_state.show_symbol_analysis = False
+                        if 'selected_symbol_for_analysis' in st.session_state:
+                            del st.session_state.selected_symbol_for_analysis
+                        
+                        # Set new symbol for analysis
                         st.session_state.selected_symbol_for_analysis = holding_data['Symbol']
                         st.session_state.show_symbol_analysis = True
+                        st.success(f"🔄 Loading analysis for {holding_data['Symbol']}...")
                         st.rerun()
             
             st.markdown("---")
@@ -920,16 +1344,16 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.metric("Total Value", f"${total_value:,.2f}")
+                st.metric("Total Value", format_currency(total_value, "$0.00"))
             
             with col2:
-                st.metric("Total Cost", f"${total_cost:,.2f}")
+                st.metric("Total Cost", format_currency(total_cost, "$0.00"))
             
             with col3:
-                st.metric("Total P&L", f"${total_pnl:,.2f}")
+                st.metric("Total P&L", format_currency(total_pnl, "$0.00"))
             
             with col4:
-                st.metric("Return %", f"{total_pnl_pct:.2f}%")
+                st.metric("Return %", f"{float(total_pnl_pct):.2f}%" if total_pnl_pct is not None else "0.00%")
         
         # Add symbol form
         if st.session_state.get('show_add_symbol', False):
@@ -1044,7 +1468,7 @@ def load_all_symbol_data(symbol: str):
     
     with st.spinner(f"Loading all data for {symbol} ({', '.join(all_data_types)})..."):
         try:
-            response = python_client.post("refresh", json_data={
+            response = python_client.post("api/v1/refresh", json_data={
                 "symbols": [symbol],
                 "data_types": all_data_types,
                 "force": True,  # Always force refresh for Load All Data
@@ -1095,7 +1519,7 @@ def load_all_portfolio_data(portfolio_id: str):
     
     with st.spinner(f"Loading all data for {len(symbols)} symbols ({', '.join(all_data_types)})..."):
         try:
-            response = python_client.post("refresh", json_data={
+            response = python_client.post("api/v1/refresh", json_data={
                 "symbols": symbols,
                 "data_types": all_data_types,
                 "force": True,  # Always force refresh for Load All Data
@@ -1123,7 +1547,7 @@ def load_portfolio_data(portfolio_id: str):
         
         with st.spinner(f"Loading data for {len(symbols)} symbols..."):
             try:
-                response = python_client.post("refresh", json_data={
+                response = python_client.post("api/v1/refresh", json_data={
                     "symbols": symbols,
                     "data_types": ["price_historical", "indicators"],
                     "force": True
@@ -1253,17 +1677,15 @@ def show_symbol_analysis(symbol: str):
     
     st.markdown("---")
     
-    # Check if we have cached analysis
-    cache_key = f"analysis_{symbol}"
-    if cache_key in st.session_state:
-        analysis_data = st.session_state[cache_key]
-    else:
-        # Get fresh analysis
+    # ALWAYS get fresh analysis for the selected symbol (no caching)
+    with st.spinner(f"Loading fresh analysis for {symbol}..."):
         asset_type = "stock"  # Default, could be enhanced to get from holdings
         analysis_data = get_symbol_analysis(symbol, asset_type)
-        
-        if analysis_data and not analysis_data.get('error'):
-            st.session_state[cache_key] = analysis_data
+    
+    # Cache the analysis for potential reuse within this session
+    cache_key = f"analysis_{symbol}"
+    if analysis_data and not analysis_data.get('error'):
+        st.session_state[cache_key] = analysis_data
     
     # Display analysis using shared component
     if analysis_data and not analysis_data.get('error'):
@@ -1289,7 +1711,7 @@ def show_symbol_analysis(symbol: str):
         # Fundamentals analysis
         try:
             with st.spinner(f"Loading fundamentals analysis for {symbol}..."):
-                response = requests.get(f"http://python-worker:8001/api/v1/growth-quality/growth-health/{symbol}")
+                response = requests.get(f"{python_api_url}/api/v1/growth-quality/growth-health/{symbol}")
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -1358,18 +1780,22 @@ def _render_comprehensive_fundamentals_analysis(symbol: str):
     """Render comprehensive fundamentals analysis with professional visualizations"""
     try:
         # Fetch early warning analysis
-        response = requests.get(f"http://python-worker:8001/api/v1/growth-quality/early-warning/{symbol}")
+        response = requests.get(f"{python_api_url}/api/v1/growth-quality/early-warning/{symbol}")
         
         if response.status_code == 200:
             analysis_data = response.json()
             _render_fundamentals_risk_overview(analysis_data, symbol)
             _render_fundamentals_detailed_flags(analysis_data)
             _render_fundamentals_metrics_dashboard(analysis_data)
+        elif response.status_code == 404:
+            st.warning(f"⚠️ No fundamentals data available for {symbol}")
         else:
-            st.error(f"❌ Failed to load comprehensive analysis for {symbol}")
+            st.error(f"❌ Failed to load comprehensive analysis for {symbol} (HTTP {response.status_code})")
             
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Network error loading analysis for {symbol}: {str(e)}")
     except Exception as e:
-        st.error(f"❌ Error loading comprehensive analysis: {e}")
+        st.error(f"❌ Error loading comprehensive analysis for {symbol}: {str(e)}")
 
 def _render_fundamentals_risk_overview(analysis_data: Dict[str, Any], symbol: str):
     """Render risk overview with professional styling"""
@@ -1522,7 +1948,7 @@ def _render_fundamentals_metrics_dashboard(analysis_data: Dict[str, Any]):
 
 
 def _render_fundamentals_analysis(data: Dict[str, Any]):
-    """Render institutional-grade fundamentals analysis"""
+    """Render institutional-grade fundamentals analysis with corrected logic"""
     symbol = data.get('symbol', 'Unknown')
     
     # Structural Risk Assessment
@@ -1533,104 +1959,183 @@ def _render_fundamentals_analysis(data: Dict[str, Any]):
         'HIGH': '🔴'
     }
     
+    structural_descriptions = {
+        'LOW': 'Low Structural Risk - Balance sheet strong, revenue quality clean',
+        'MEDIUM': 'Medium Structural Risk - Some concerns but no critical issues',
+        'HIGH': 'High Structural Risk - Structural issues or red flags detected'
+    }
+    
     # Growth Phase Assessment
     growth_phase = data.get('growth_phase', 'MATURE_COMPOUNDER')
-    growth_display = {
-        'HEALTHY_COMPOUNDER': '🟢 Healthy Compounder',
-        'MATURE_COMPOUNDER': '🟡 Mature Compounder',
-        'GROWTH_DEGRADATION': '🟠 Growth Degradation',
-        'GROWTH_BREAKDOWN': '🔴 Growth Breakdown'
+    growth_icons = {
+        'HEALTHY_COMPOUNDER': '🟢',
+        'MATURE_COMPOUNDER': '🟡',
+        'GROWTH_DEGRADATION': '🟠',
+        'GROWTH_BREAKDOWN': '🔴'
+    }
+    
+    growth_descriptions = {
+        'HEALTHY_COMPOUNDER': 'Accelerating Compounder - Revenue + margins + ROIC expanding',
+        'MATURE_COMPOUNDER': 'Mature Compounder - Growth persists but efficiency and margins are no longer expanding',
+        'GROWTH_DEGRADATION': 'Growth Degrading - Growth trajectory showing material slowdown',
+        'GROWTH_BREAKDOWN': 'Growth Breakdown - Structural business issues detected'
     }
     
     # Investment Posture
     investment_posture = data.get('investment_posture', 'HOLD_SELECTIVE_ADD')
-    posture_display = {
-        'BUY': '🟢 BUY',
-        'HOLD_SELECTIVE_ADD': '🟡 HOLD / SELECTIVE ADD',
-        'TRIM_REDUCE': '🟠 TRIM / REDUCE',
-        'EXIT_AVOID': '🔴 EXIT / AVOID'
-    }
-    
-    # Main Assessment Card using Streamlit native components
-    st.markdown("---")
-    st.markdown(f"### 📊 {symbol} Fundamentals Assessment")
-    
-    # Structural Risk and Growth Phase
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        risk_color = {
-            'LOW': '🟢',
-            'MEDIUM': '🟡', 
-            'HIGH': '🔴'
-        }
-        st.markdown(f"#### Structural Risk: {risk_color.get(structural_risk, '')} {structural_risk}")
-        st.caption("Balance sheet health assessment")
-    
-    with col2:
-        st.markdown(f"#### Growth Phase: {growth_display.get(growth_phase, growth_phase)}")
-        st.caption("Business lifecycle stage")
-    
-    # Investment Posture
-    st.markdown("---")
-    
-    # Use metric for investment posture
-    posture_emoji = {
+    posture_icons = {
         'BUY': '🟢',
         'HOLD_SELECTIVE_ADD': '🟡',
         'TRIM_REDUCE': '🟠',
         'EXIT_AVOID': '🔴'
     }
     
-    posture_text = posture_display.get(investment_posture, investment_posture)
-    st.metric(
-        label="Investment Posture",
-        value=f"{posture_emoji.get(investment_posture, '')} {posture_text}",
-        delta=None
-    )
-    st.caption("Clear investment guidance")
+    posture_descriptions = {
+        'BUY': 'BUY - Aggressive accumulation recommended',
+        'HOLD_SELECTIVE_ADD': 'HOLD / SELECTIVE ADD - Suitable for core holding; add selectively during market pullbacks',
+        'TRIM_REDUCE': 'TRIM / REDUCE - Reduce position size',
+        'EXIT_AVOID': 'EXIT / AVOID - Capital preservation priority'
+    }
     
-    # Detailed Analysis
+    # Forward Returns
+    forward_returns = data.get('forward_return_expectation', '6-10% annualized (cash flows + buybacks)')
+    
+    # Main Assessment Card
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                padding: 25px; border-radius: 15px; color: white; margin: 20px 0;">
+        <h2>{structural_icons.get(structural_risk, '🟢')} {symbol} Fundamentals Assessment</h2>
+        <p style="font-size: 18px; margin: 15px 0;"><strong>{structural_descriptions.get(structural_risk, '')}</strong></p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Growth Phase and Investment Posture
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### 🎯 Investment Reasoning")
-        for reason in data.get('reasoning', []):
-            st.markdown(f"• {reason}")
-        
-        st.markdown("#### 💰 Forward Returns")
-        st.info(data.get('forward_return_expectation', 'Not available'))
+        st.markdown(f"""
+        <div style="background: {growth_phase == 'HEALTHY_COMPOUNDER' and '#d4edda' or growth_phase == 'MATURE_COMPOUNDER' and '#fff3cd' or growth_phase == 'GROWTH_DEGRADATION' and '#f8d7da' or '#f5c6cb'}; 
+                    padding: 20px; border-radius: 10px; margin: 10px 0;">
+            <h3>{growth_icons.get(growth_phase, '🟡')} Growth Phase</h3>
+            <p><strong>{growth_descriptions.get(growth_phase, '')}</strong></p>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        st.markdown("#### ⚠️ Risk Factors")
-        for risk in data.get('risk_factors', []):
-            st.markdown(f"• {risk}")
-        
-        st.markdown("#### 🚀 Opportunities")
-        for opportunity in data.get('opportunities', []):
-            st.markdown(f"• {opportunity}")
+        st.markdown(f"""
+        <div style="background: {investment_posture == 'BUY' and '#d4edda' or investment_posture == 'HOLD_SELECTIVE_ADD' and '#fff3cd' or investment_posture == 'TRIM_REDUCE' and '#f8d7da' or '#f5c6cb'}; 
+                    padding: 20px; border-radius: 10px; margin: 10px 0;">
+            <h3>{posture_icons.get(investment_posture, '🟡')} Investment Posture</h3>
+            <p><strong>{posture_descriptions.get(investment_posture, '')}</strong></p>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Investment Guidance
-    confidence = data.get('confidence', 0) * 100
+    # Forward Return Expectation
+    st.markdown(f"""
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin: 15px 0; border-left: 5px solid #007bff;">
+        <h3>📈 Forward Return Outlook</h3>
+        <p style="font-size: 16px;"><strong>{forward_returns}</strong></p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    # Show confidence as a metric
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Analysis Confidence", f"{confidence:.0f}%")
+    # Key Insights
+    reasoning = data.get('reasoning', [])
+    if reasoning:
+        st.markdown("### 🎯 Key Assessment Points")
+        for point in reasoning:
+            st.success(f"• {point}")
     
-    with col2:
-        if investment_posture == 'BUY':
-            st.success("**🟢 Action: BUY**")
-            st.caption("Aggressive accumulation recommended")
-        elif investment_posture == 'HOLD_SELECTIVE_ADD':
-            st.warning("**🟡 Action: HOLD**")
-            st.caption("Add only on meaningful corrections")
-        elif investment_posture == 'TRIM_REDUCE':
-            st.error("**🟠 Action: TRIM**")
-            st.caption("Reduce position size")
+    # Risk Factors with Critical Impact Analysis
+    risk_factors = data.get('risk_factors', [])
+    if risk_factors:
+        st.markdown("### ⚠️ Critical Risk Factors")
+        for factor in risk_factors:
+            # Determine risk impact level
+            if any(phrase in factor.lower() for phrase in ['margin declining', 'growth vs capital mismatch', 'structural breakdown']):
+                st.error(f"🚨 **CRITICAL**: {factor} - Prevents BUY recommendation")
+            elif any(phrase in factor.lower() for phrase in ['monitor', 'concerns', 'pressure']):
+                st.warning(f"⚠️ **WARNING**: {factor} - May limit returns")
+            else:
+                st.info(f"ℹ️ **NOTE**: {factor}")
+    
+    # Risk-to-Decision Summary
+    st.markdown("### 📋 Risk-to-Decision Analysis")
+    
+    # Show why investment posture was chosen
+    if investment_posture == 'BUY':
+        st.success("✅ **BUY Justification**: All critical risk factors cleared - Growth phase accelerating with strong fundamentals")
+    elif investment_posture == 'HOLD_SELECTIVE_ADD':
+        if growth_phase == 'MATURE_COMPOUNDER':
+            st.info("🟡 **HOLD Justification**: Mature compounder with stable but non-accelerating growth - Suitable for core holding")
         else:
-            st.error("**🔴 Action: EXIT**")
-            st.caption("Avoid or sell position")
+            st.warning("🟡 **HOLD Justification**: Some risk factors present - Monitor closely")
+    elif investment_posture == 'TRIM_REDUCE':
+        st.warning("🟠 **TRIM Justification**: Growth degradation or medium structural risk detected - Reduce exposure")
+    elif investment_posture == 'EXIT_AVOID':
+        st.error("🔴 **EXIT Justification**: Structural breakdown or growth breakdown detected - Capital preservation priority")
+    
+    # Risk Gate Status
+    st.markdown("### 🚪 Risk Gate Status")
+    
+    # Get domain risks from analysis data
+    domain_risks = data.get('domain_risks', {})
+    
+    # Ensure domain_risks is a dictionary
+    if not isinstance(domain_risks, dict):
+        st.error("❌ Invalid domain risks data format")
+        domain_risks = {}
+    
+    gates = {
+        "Revenue Quality": domain_risks.get('revenue_risk', 'NO_RISK') == 'NO_RISK',
+        "Margin Stability": domain_risks.get('margin_risk', 'NO_RISK') == 'NO_RISK', 
+        "Capital Efficiency": domain_risks.get('capital_risk', 'NO_RISK') == 'NO_RISK',
+        "Structural Risk": structural_risk == 'LOW'
+    }
+    
+    for gate_name, passed in gates.items():
+        if passed:
+            st.success(f"✅ {gate_name}: PASSED")
+        else:
+            st.error(f"❌ {gate_name}: FAILED - Blocks BUY signal")
+    
+    # Golden Rule Status
+    st.markdown("### 🏛️ Golden Rule Check")
+    if investment_posture == 'BUY' and growth_phase == 'HEALTHY_COMPOUNDER':
+        st.success("✅ **PASSED**: BUY allowed only when Growth Phase = Accelerating")
+    elif investment_posture != 'BUY' and growth_phase != 'HEALTHY_COMPOUNDER':
+        st.info("ℹ️ **CORRECTLY APPLIED**: Non-BUY posture for non-accelerating growth")
+    else:
+        st.warning("⚠️ **REVIEW**: Check if posture matches growth phase")
+    
+    # Opportunities
+    opportunities = data.get('opportunities', [])
+    if opportunities:
+        st.markdown("### 💡 Opportunities")
+        for opportunity in opportunities:
+            st.info(f"• {opportunity}")
+    
+    # Confidence Score
+    confidence = data.get('confidence', 0.85)
+    st.markdown(f"""
+    <div style="background: #e9ecef; padding: 15px; border-radius: 8px; margin: 15px 0;">
+        <p><strong>Analysis Confidence:</strong> {confidence:.1%}</p>
+        <div style="background: #ddd; height: 10px; border-radius: 5px;">
+            <div style="background: #28a745; width: {confidence*100}%; height: 10px; border-radius: 5px;"></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Critical Rule Display (Golden Rule)
+    if investment_posture == 'BUY' and growth_phase != 'HEALTHY_COMPOUNDER':
+        st.error("🚨 **CRITICAL WARNING**: This analysis shows a BUY recommendation but growth phase is not accelerating. This violates the golden rule: NEVER allow BUY when Growth Phase ≠ Accelerating. Please review the analysis logic.")
+    elif investment_posture == 'BUY' and growth_phase == 'HEALTHY_COMPOUNDER':
+        st.success("✅ **Valid BUY Signal**: Growth phase is accelerating, supporting the BUY recommendation.")
+    elif investment_posture == 'HOLD_SELECTIVE_ADD' and growth_phase == 'MATURE_COMPOUNDER':
+        st.info("✅ **Valid HOLD Signal**: Mature compounder with low structural risk - appropriate for core holding.")
+    
+    # Analysis Date
+    analysis_date = data.get('analysis_date', datetime.now().strftime('%Y-%m-%d'))
+    st.caption(f"Analysis as of: {analysis_date}")
 
 
 # Main Page Logic
@@ -1805,7 +2310,7 @@ def main():
     if not is_authenticated():
         show_login_page()
     else:
-        # Sidebar with user info and actions
+        # Sidebar with user info only
         with st.sidebar:
             user = st.session_state.current_user
             
@@ -1814,44 +2319,65 @@ def main():
             
             st.divider()
             
-            # Quick actions
-            if st.button("➕ New Portfolio", use_container_width=True):
-                st.session_state.show_create_portfolio = True
-            
             if st.button("🔄 Refresh Data", use_container_width=True):
                 if 'selected_portfolio' in st.session_state:
                     load_portfolio_data(st.session_state.selected_portfolio)
             
             if st.button("🚪 Logout", use_container_width=True):
                 logout_user()
-            
-            st.divider()
-            
-            # Show create portfolio form if requested
-            if st.session_state.get('show_create_portfolio', False):
-                st.markdown("#### ➕ Create New Portfolio")
-                show_create_portfolio_form()
         
-        # Main content
-        if st.session_state.get('show_create_portfolio', False):
-            st.markdown("### ➕ Create New Portfolio")
-            show_create_portfolio_form()
-        elif st.session_state.get('show_symbol_analysis', False):
-            # Show individual symbol analysis
-            symbol = st.session_state.get('selected_symbol_for_analysis')
-            if symbol:
-                show_symbol_analysis(symbol)
-            else:
-                st.error("No symbol selected for analysis")
-                st.session_state.show_symbol_analysis = False
-                st.rerun()
-        else:
+        # Main content with tabs
+        portfolios = get_user_portfolios()
+        
+        if not portfolios:
+            # Show create portfolio form for first-time users
             show_portfolio_overview()
             
-            # Show scheduling section for selected portfolio
-            if 'selected_portfolio' in st.session_state:
-                st.divider()
-                show_scheduling_section(st.session_state.selected_portfolio)
+            st.markdown("""
+            <div style="background: #f8fafc; padding: 3rem; border-radius: 15px; text-align: center; border: 2px dashed #cbd5e1;">
+                <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
+                <h2 style="color: #475569; margin-bottom: 1rem;">No Portfolios Yet</h2>
+                <p style="color: #64748b; margin-bottom: 2rem;">Create your first portfolio to start institutional-grade analysis</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            show_create_portfolio_form("first_portfolio")
+        else:
+            # Tabbed interface for portfolio management
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "📊 Portfolio Overview", 
+                "📋 Portfolio Management", 
+                "📈 Stock Analysis", 
+                "⚙️ Settings"
+            ])
+            
+            # Check if symbol analysis is requested and show it instead of tabs
+            if st.session_state.get('show_symbol_analysis', False):
+                symbol = st.session_state.get('selected_symbol_for_analysis')
+                if symbol:
+                    # Clear any cached analysis for this symbol to ensure fresh data
+                    cache_key = f"analysis_{symbol}"
+                    if cache_key in st.session_state:
+                        del st.session_state[cache_key]
+                    
+                    # Always show fresh analysis for the selected symbol
+                    show_symbol_analysis(symbol)
+                else:
+                    st.error("No symbol selected for analysis")
+                    st.session_state.show_symbol_analysis = False
+                    st.rerun()
+            else:
+                with tab1:
+                    show_portfolio_overview_tab(portfolios)
+                
+                with tab2:
+                    show_portfolio_management_tab(portfolios)
+                
+                with tab3:
+                    show_stock_analysis_tab(portfolios)
+                
+                with tab4:
+                    show_settings_tab()
 
 if __name__ == "__main__":
     main()

@@ -43,7 +43,14 @@ class StockSymbolList(BaseModel):
 
 
 # Router
-router = APIRouter(prefix="/api/v1/stocks", tags=["stocks"])
+# ========================================
+# IMPORTANT: Router Configuration Rules
+# ========================================
+# DO NOT ADD PREFIX HERE! Prefixes are managed in api_server.py
+# WRONG: router = APIRouter(prefix="/api/v1/stocks", tags=["stocks"])
+# CORRECT: router = APIRouter(tags=["stocks"])
+# ========================================
+router = APIRouter(tags=["stocks"])
 logger = get_logger("stock_symbols_api")
 
 

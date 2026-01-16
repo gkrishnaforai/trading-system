@@ -27,8 +27,8 @@ from app.signal_engines.signal_calculator_core import SignalConfig, SignalResult
 # IMPORTANT: Router Configuration Rules
 # ========================================
 # DO NOT ADD PREFIX HERE! Prefixes are managed in api_server.py
-# ❌ WRONG: router = APIRouter(prefix="/api/v1/universal", tags=["universal"])
-# ✅ CORRECT: router = APIRouter(tags=["universal"])
+# WRONG: router = APIRouter(prefix="/api/v1/universal", tags=["universal"])
+# CORRECT: router = APIRouter(tags=["universal"])
 # ========================================
 router = APIRouter(tags=["universal"])
 

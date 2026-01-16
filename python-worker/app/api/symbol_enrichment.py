@@ -11,7 +11,14 @@ from app.services.symbol_enrichment_service import SymbolEnrichmentService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/symbols", tags=["symbols"])
+# ========================================
+# IMPORTANT: Router Configuration Rules
+# ========================================
+# DO NOT ADD PREFIX HERE! Prefixes are managed in api_server.py
+# WRONG: router = APIRouter(prefix="/symbols", tags=["symbols"])
+# CORRECT: router = APIRouter(tags=["symbols"])
+# ========================================
+router = APIRouter(tags=["symbols"])
 
 class EnrichSymbolsRequest(BaseModel):
     batch_size: int = 10

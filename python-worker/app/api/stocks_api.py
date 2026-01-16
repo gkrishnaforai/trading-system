@@ -10,7 +10,14 @@ import requests
 from app.config import settings
 from app.database import db
 
-router = APIRouter(prefix="/stocks", tags=["stocks"])
+# ========================================
+# IMPORTANT: Router Configuration Rules
+# ========================================
+# DO NOT ADD PREFIX HERE! Prefixes are managed in api_server.py
+# WRONG: router = APIRouter(prefix="/stocks", tags=["stocks"])
+# CORRECT: router = APIRouter(tags=["stocks"])
+# ========================================
+router = APIRouter(tags=["stocks"])
 
 class StockInfo(BaseModel):
     symbol: str

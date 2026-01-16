@@ -2,7 +2,7 @@
  
  Backend model:
  - Read/display APIs: Go API only (/api/v1/*)
- - Real-time data loading (refresh): python-worker directly (/refresh)
+ - Real-time data loading (refresh): python-worker directly (/api/v1/refresh)
  
  Note: In production, data loading is expected to be handled by scheduled batch jobs.
  """
@@ -94,7 +94,7 @@ def load_tqqq_test_data():
     """Load test data for TQQQ backtesting"""
     try:
         with st.spinner("🔄 Loading December 2025 test data..."):
-            python_api_url = os.getenv("PYTHON_API_URL", "http://python-worker:8001")
+            python_api_url = api_config.python_worker_url
             python_client = APIClient(python_api_url, timeout=30)
             
             # This would call a custom endpoint to load test data
@@ -110,7 +110,7 @@ def load_tqqq_test_data():
 def view_recent_signals():
     """View recent TQQQ signals"""
     try:
-        python_api_url = os.getenv("PYTHON_API_URL", "http://python-worker:8001")
+        python_api_url = api_config.python_worker_url
         python_client = APIClient(python_api_url, timeout=30)
         
         signals_resp = python_client.get("admin/signals/recent?limit=20")
@@ -779,7 +779,7 @@ def run_tqqq_backtest(mode, test_date, start_date, week_selection, strategy):
     try:
         with st.spinner("🔄 Running backtest..."):
             # Use existing python_client instead of undefined function
-            python_api_url = os.getenv("PYTHON_API_URL", "http://python-worker:8001")
+            python_api_url = api_config.python_worker_url
             python_client = APIClient(python_api_url, timeout=30)
             
             if mode == "Single Date":
@@ -969,7 +969,7 @@ def check_data_availability():
     
     try:
         # Use python-worker API for data availability
-        python_api_url = os.getenv("PYTHON_API_URL", "http://python-worker:8001")
+        python_api_url = api_config.python_worker_url
         api_client = APIClient(python_api_url, timeout=10)
         
         # Check data availability via API
@@ -1024,7 +1024,7 @@ st.title("📊 Trading Dashboard")
  
 st.info(
     "Reads use Go API ONLY (/api/v1/*). "
-    "Real-time data loading uses python-worker directly (/refresh). "
+    "Real-time data loading uses python-worker directly (/api/v1/refresh). "
     "In production, data load is expected to be handled by scheduled batch jobs."
 )
 
@@ -1035,7 +1035,7 @@ try:
 except Exception:
     python_api_url = None
 if not python_api_url:
-    python_api_url = os.getenv("PYTHON_API_URL", "http://python-worker:8001")
+    python_api_url = api_config.python_worker_url
 python_client = APIClient(python_api_url, timeout=30)
 
 # Symbol selection (shared across tabs)
@@ -1057,7 +1057,7 @@ data_load_mode = st.sidebar.selectbox(
     key="td_data_load_mode",
 )
 if data_load_mode == "python-worker (real-time)":
-    st.sidebar.caption(f"POST {python_api_url}/refresh")
+    st.sidebar.caption(f"POST {python_api_url}/api/v1/refresh")
 else:
     st.sidebar.caption("Data loading disabled in UI")
 
@@ -1346,7 +1346,7 @@ with tab_availability:
         with st.spinner(f"Loading all data for {symbol} ({', '.join(all_data_types)})..."):
             try:
                 resp = python_client.post(
-                    "refresh",
+                    "/api/v1/refresh",
                     json_data={
                         "symbols": [symbol],
                         "data_types": all_data_types,

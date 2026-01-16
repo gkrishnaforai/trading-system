@@ -29,9 +29,19 @@ def check_router_prefixes(router_files: List[Path]) -> Dict[str, Any]:
         with open(router_file, 'r') as f:
             content = f.read()
         
-        # Look for APIRouter with prefix
+        # Remove comments to avoid false positives
+        lines = content.split('\n')
+        code_lines = []
+        for line in lines:
+            # Remove inline comments
+            if '#' in line:
+                line = line[:line.index('#')]
+            code_lines.append(line)
+        code_content = '\n'.join(code_lines)
+        
+        # Look for APIRouter with prefix in actual code (not comments)
         prefix_pattern = r'APIRouter\s*\(\s*[^)]*prefix\s*='
-        if re.search(prefix_pattern, content):
+        if re.search(prefix_pattern, code_content):
             issues.append({
                 'file': str(router_file),
                 'issue': 'PREFIX_IN_ROUTER_FILE',
@@ -68,13 +78,23 @@ def check_api_server_imports() -> Dict[str, Any]:
     with open(api_server_file, 'r') as f:
         content = f.read()
     
-    # Check for router imports
-    import_pattern = r'from app\.api\.\w+\s+import\s+router\s+as\s+\w+_router'
+    # Remove comments to avoid false positives
+    lines = content.split('\n')
+    code_lines = []
+    for line in lines:
+        # Remove inline comments
+        if '#' in line:
+            line = line[:line.index('#')]
+        code_lines.append(line)
+    code_content = '\n'.join(code_lines)
+    
+    # Check for router imports - more flexible pattern
+    import_pattern = r'from\s+app\.api\.[\w_]+\s+import\s+router\s+as\s+\w+_router'
     imports = re.findall(import_pattern, content)
     
-    # Check for include_router statements
-    include_pattern = r'app\.include_router\(\w+_router'
-    includes = re.findall(include_pattern, content)
+    # Check for include_router statements - more precise pattern (ignore comments)
+    include_pattern = r'app\.include_router\(\w+_router\s*,'
+    includes = re.findall(include_pattern, code_content)
     
     if len(imports) != len(includes):
         issues.append({

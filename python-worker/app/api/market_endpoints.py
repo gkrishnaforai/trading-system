@@ -13,7 +13,14 @@ import logging
 
 from app.observability.logging import get_logger
 
-router = APIRouter(prefix="/api/v1/market", tags=["market"])
+# ========================================
+# IMPORTANT: Router Configuration Rules
+# ========================================
+# DO NOT ADD PREFIX HERE! Prefixes are managed in api_server.py
+# WRONG: router = APIRouter(prefix="/api/v1/market", tags=["market"])
+# CORRECT: router = APIRouter(tags=["market"])
+# ========================================
+router = APIRouter(tags=["market"])
 logger = get_logger(__name__)
 
 class MarketMover(BaseModel):

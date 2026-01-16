@@ -1,6 +1,14 @@
 """
 Centralized API Configuration
 Provides consistent API URLs across all Streamlit apps
+
+For local development:
+- Python Worker: http://localhost:8001
+- Go API: http://localhost:8000
+
+For Docker deployment (set PYTHON_WORKER_URL environment variable):
+- Python Worker: http://python-worker:8001
+- Go API: http://go-api:8000
 """
 
 import os
@@ -11,17 +19,18 @@ class APIConfig:
     
     def __init__(self):
         # Get Python Worker URL from environment with fallbacks
+        # Default to localhost for local development (not docker)
         self.python_worker_url = os.getenv(
             'PYTHON_WORKER_URL', 
             os.getenv('PYTHON_API_URL', 
-            'http://python-worker:8001')  # Docker default
+            'http://localhost:8001')  # Local development default
         )
         
         # Get Go API URL from environment with fallbacks
         self.go_api_url = os.getenv(
             'GO_API_URL',
             os.getenv('NEXT_PUBLIC_API_URL',
-            'http://go-api:8000')  # Docker default
+            'http://localhost:8000')  # Local development default
         )
     
     @property

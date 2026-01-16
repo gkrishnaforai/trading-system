@@ -17,7 +17,14 @@ from app.observability.logging import get_logger
 
 logger = get_logger("portfolio_api")
 
-router = APIRouter(prefix="/api/v1/portfolio", tags=["portfolio"])
+# ========================================
+# IMPORTANT: Router Configuration Rules
+# ========================================
+# DO NOT ADD PREFIX HERE! Prefixes are managed in api_server.py
+# WRONG: router = APIRouter(prefix="/api/v1/portfolio", tags=["portfolio"])
+# CORRECT: router = APIRouter(tags=["portfolio"])
+# ========================================
+router = APIRouter(tags=["portfolio"])
 
 # Test endpoint
 @router.get("/test")

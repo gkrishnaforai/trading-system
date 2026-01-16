@@ -647,7 +647,7 @@ with tab2:
                 with st.spinner(f"🔄 Loading all data for {symbol} ({', '.join(all_data_types)})..."):
                     try:
                         resp = python_client.post(
-                            "/refresh",
+                            "/api/v1/refresh",
                             {
                                 "symbols": [symbol],
                                 "data_types": all_data_types,
@@ -1593,7 +1593,7 @@ with tab5:
                 with st.spinner(f"🔄 Loading all data for {load_all_symbol} ({', '.join(all_data_types)})..."):
                     try:
                         resp = python_client.post(
-                            "/refresh",
+                            "/api/v1/refresh",
                             {
                                 "symbols": [load_all_symbol],
                                 "data_types": all_data_types,
@@ -1630,7 +1630,7 @@ with tab5:
             if st.button("🔄 Refresh Data", type="primary", key="refresh_symbol_data"):
                 if refresh_symbol and data_types:
                     try:
-                        response = python_client.post("/refresh", {
+                        response = python_client.post("/api/v1/refresh", {
                             "symbols": [refresh_symbol.upper()],
                             "data_types": data_types,
                             "force": True

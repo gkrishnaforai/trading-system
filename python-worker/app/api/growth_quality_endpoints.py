@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 from datetime import date, datetime
 import logging
 
-from app.indicators.early_warning_flags import EarlyWarningEngine
+from app.indicators.early_warning_flags import EarlyWarningEngine, DomainRisk
 from app.indicators.growth_health_classifier import growth_health_classifier, GrowthHealthState
 from app.signal_engines.growth_quality_engine import GrowthQualitySignalEngine, GrowthQualitySignal
 # Auth temporarily removed for testing
@@ -24,8 +24,8 @@ logger = get_logger("growth_quality_api")
 # IMPORTANT: Router Configuration Rules
 # ========================================
 # DO NOT ADD PREFIX HERE! Prefixes are managed in api_server.py
-# ❌ WRONG: router = APIRouter(prefix="/api/v1/growth-quality", tags=["growth-quality"])
-# ✅ CORRECT: router = APIRouter(tags=["growth-quality"])
+# WRONG: router = APIRouter(prefix="/api/v1/growth-quality", tags=["growth-quality"])
+# CORRECT: router = APIRouter(tags=["growth-quality"])
 # ========================================
 router = APIRouter(tags=["growth-quality"])
 
@@ -128,10 +128,10 @@ async def get_early_warning_analysis(
             analysis_date=result.analysis_date,
             overall_risk=result.overall_risk.value,
             domain_risks=DomainRiskResponse(
-                revenue_risk=result.domain_risks['revenue_quality'].value,
-                margin_risk=result.domain_risks['margin_stress'].value,
-                capital_risk=result.domain_risks['capital_efficiency'].value,
-                management_risk=result.domain_risks['management_signals'].value
+                revenue_risk=result.domain_risks.get('revenue_quality', DomainRisk.NO_RISK).value,
+                margin_risk=result.domain_risks.get('margin_stress', DomainRisk.NO_RISK).value,
+                capital_risk=result.domain_risks.get('capital_efficiency', DomainRisk.NO_RISK).value,
+                management_risk=result.domain_risks.get('management_signals', DomainRisk.NO_RISK).value
             ),
             warnings=result.warnings,
             insights=result.insights,
@@ -268,10 +268,10 @@ async def analyze_portfolio_growth_quality(
                         technical_action="HOLD",
                         growth_risk=early_warning_result.overall_risk.value,
                         domain_risks=DomainRiskResponse(
-                            revenue_risk=early_warning_result.domain_risks['revenue_quality'].value,
-                            margin_risk=early_warning_result.domain_risks['margin_stress'].value,
-                            capital_risk=early_warning_result.domain_risks['capital_efficiency'].value,
-                            management_risk=early_warning_result.domain_risks['management_signals'].value
+                            revenue_risk=early_warning_result.domain_risks.get('revenue_quality', DomainRisk.NO_RISK).value,
+                            margin_risk=early_warning_result.domain_risks.get('margin_stress', DomainRisk.NO_RISK).value,
+                            capital_risk=early_warning_result.domain_risks.get('capital_efficiency', DomainRisk.NO_RISK).value,
+                            management_risk=early_warning_result.domain_risks.get('management_signals', DomainRisk.NO_RISK).value
                         ),
                         position_sizing_adjustment=1.0,
                         technical_reasoning=["Technical analysis not included in this request"],
@@ -333,7 +333,7 @@ async def get_growth_risk_metrics(
             "overall_risk": result.overall_risk.value,
             "domain_risks": {
                 "revenue_quality": {
-                    "risk_level": result.domain_risks['revenue_quality'].value,
+                    "risk_level": result.domain_risks.get('revenue_quality', DomainRisk.NO_RISK).value,
                     "flags": {
                         "receivables_vs_revenue_divergence": result.revenue_quality.receivables_vs_revenue_divergence,
                         "margin_stress": result.revenue_quality.margin_stress,
@@ -341,14 +341,14 @@ async def get_growth_risk_metrics(
                     }
                 },
                 "margin_stress": {
-                    "risk_level": result.domain_risks['margin_stress'].value,
+                    "risk_level": result.domain_risks.get('margin_stress', DomainRisk.NO_RISK).value,
                     "flags": {
                         "operating_margin_compression": result.margin_stress.operating_margin_compression,
                         "rd_efficiency_decline": result.margin_stress.rd_efficiency_decline
                     }
                 },
                 "capital_efficiency": {
-                    "risk_level": result.domain_risks['capital_efficiency'].value,
+                    "risk_level": result.domain_risks.get('capital_efficiency', DomainRisk.NO_RISK).value,
                     "flags": {
                         "roic_trend_decay": result.capital_efficiency.roic_trend_decay,
                         "growth_vs_capital_mismatch": result.capital_efficiency.growth_vs_capital_mismatch,
@@ -356,7 +356,7 @@ async def get_growth_risk_metrics(
                     }
                 },
                 "management_signals": {
-                    "risk_level": result.domain_risks['management_signals'].value,
+                    "risk_level": result.domain_risks.get('management_signals', DomainRisk.NO_RISK).value,
                     "flags": {
                         "guidance_language_shift": result.management_signals.guidance_language_shift,
                         "kpi_redefinition_removal": result.management_signals.kpi_redefinition_removal,

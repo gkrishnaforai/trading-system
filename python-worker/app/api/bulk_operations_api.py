@@ -13,7 +13,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/bulk", tags=["Bulk Operations"])
+# ========================================
+# IMPORTANT: Router Configuration Rules
+# ========================================
+# DO NOT ADD PREFIX HERE! Prefixes are managed in api_server.py
+# WRONG: router = APIRouter(prefix="/bulk", tags=["Bulk Operations"])
+# CORRECT: router = APIRouter(tags=["Bulk Operations"])
+# ========================================
+router = APIRouter(tags=["Bulk Operations"])
 
 class BulkLoadRequest(BaseModel):
     symbols: List[str] = []

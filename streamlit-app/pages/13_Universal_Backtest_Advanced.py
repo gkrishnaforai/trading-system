@@ -19,6 +19,7 @@ import json
 
 from utils import setup_page_config, render_sidebar
 from api_client import get_go_api_client, APIClient, APIError
+from api_config import api_config
 
 # Page setup
 setup_page_config("Universal Backtest Dashboard", "🚀")
@@ -43,7 +44,7 @@ st.markdown("""
 render_sidebar()
 
 # Initialize API client
-python_api_url = os.getenv("PYTHON_API_URL", "http://127.0.0.1:8001")
+python_api_url = api_config.python_worker_url
 python_client = APIClient(python_api_url, timeout=30)
 
 # Asset type selection
