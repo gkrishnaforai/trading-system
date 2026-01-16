@@ -2344,10 +2344,11 @@ def main():
             show_create_portfolio_form("first_portfolio")
         else:
             # Tabbed interface for portfolio management
-            tab1, tab2, tab3, tab4 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
                 "📊 Portfolio Overview", 
                 "📋 Portfolio Management", 
                 "📈 Stock Analysis", 
+                "🏢 Stock Symbols",
                 "⚙️ Settings"
             ])
             
@@ -2377,7 +2378,287 @@ def main():
                     show_stock_analysis_tab(portfolios)
                 
                 with tab4:
+                    show_stock_symbols_tab()
+                
+                with tab5:
                     show_settings_tab()
+
+def show_stock_symbols_tab():
+    """Stock Symbols Management Tab - Add and view stock symbols"""
+    st.markdown("## 🏢 Stock Symbols Management")
+    st.markdown("Manage stock symbols in the system - add new symbols and view existing ones")
+    
+    # Initialize session state for form
+    if 'add_symbol_form_visible' not in st.session_state:
+        st.session_state.add_symbol_form_visible = False
+    
+    # Add new symbol section
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.markdown("### ➕ Add New Symbol")
+        st.markdown("Add a new stock symbol to the system for portfolio management")
+        st.caption("💡 Company information is automatically fetched from Yahoo Finance")
+    
+    with col2:
+        if st.button("📝 Add Symbol", type="primary", use_container_width=True):
+            st.session_state.add_symbol_form_visible = not st.session_state.add_symbol_form_visible
+            st.rerun()
+    
+    # Show add symbol form
+    if st.session_state.add_symbol_form_visible:
+        show_add_symbol_form()
+    
+    # List all symbols section
+    st.markdown("### 📋 All Stock Symbols")
+    st.markdown("View and manage all stock symbols available in the system")
+    
+    # Fetch all symbols
+    symbols_data = get_all_stock_symbols()
+    
+    if symbols_data:
+        # Show success message with count
+        st.success(f"✅ Found {len(symbols_data)} stock symbols in the system")
+        
+        # Search and filter
+        col_search, col_filter = st.columns([2, 1])
+        
+        with col_search:
+            search_term = st.text_input("🔍 Search symbols", placeholder="Search by symbol or company name...")
+        
+        with col_filter:
+            filter_status = st.selectbox("📊 Status", ["All", "Active", "Inactive"], index=0)
+        
+        # Filter symbols
+        filtered_symbols = filter_symbols(symbols_data, search_term, filter_status)
+        
+        if filtered_symbols:
+            # Display symbols in a nice table
+            display_symbols_table(filtered_symbols)
+        else:
+            st.info("🔍 No symbols found matching your criteria")
+    else:
+        st.warning("⚠️ No stock symbols found in the system")
+        st.info("💡 Add your first stock symbol using the form above")
+
+def show_add_symbol_form():
+    """Show form to add a new stock symbol"""
+    with st.expander("📝 Add New Stock Symbol", expanded=True):
+        st.markdown("**🚀 Auto-populated from Yahoo Finance** - Enter symbol and optionally company details")
+        
+        with st.form("add_symbol_form"):
+            symbol = st.text_input(
+                "📈 Stock Symbol *", 
+                placeholder="e.g., AAPL, GOOGL, MSFT",
+                help="Enter the stock ticker symbol (e.g., AAPL, GOOGL, MSFT)"
+            ).upper()
+            
+            st.markdown("---")
+            st.markdown("**📝 Optional Company Information**")
+            st.caption("Yahoo Finance API may be rate-limited. You can manually enter company details below.")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                company_name = st.text_input(
+                    "🏢 Company Name", 
+                    placeholder="e.g., Apple Inc.",
+                    help="Company name (optional - will be fetched from Yahoo Finance if not provided)"
+                )
+                
+                sector = st.text_input(
+                    "🏭 Sector", 
+                    placeholder="e.g., Technology",
+                    help="Industry sector (optional)"
+                )
+            
+            with col2:
+                industry = st.text_input(
+                    "⚙️ Industry", 
+                    placeholder="e.g., Consumer Electronics",
+                    help="Industry (optional)"
+                )
+                
+                country = st.text_input(
+                    "🌍 Country", 
+                    placeholder="e.g., United States",
+                    help="Country (optional)"
+                )
+            
+            description = st.text_area(
+                "📝 Description", 
+                placeholder="Brief company description...",
+                help="Enter a brief description of the company (optional)",
+                height=80
+            )
+            
+            st.info("💡 **Tip**: If Yahoo Finance API is rate-limited, you can manually enter company details above")
+            
+            # Submit buttons
+            col_submit, col_cancel = st.columns([1, 1])
+            
+            with col_submit:
+                submitted = st.form_submit_button("➕ Add Symbol", type="primary", use_container_width=True)
+            
+            with col_cancel:
+                if st.form_submit_button("❌ Cancel", use_container_width=True):
+                    st.session_state.add_symbol_form_visible = False
+                    st.rerun()
+            
+            if submitted:
+                if symbol:
+                    success = add_stock_symbol(
+                        symbol=symbol,
+                        company_name=company_name,
+                        sector=sector,
+                        industry=industry,
+                        description=description
+                    )
+                    
+                    if success:
+                        st.session_state.add_symbol_form_visible = False
+                        st.rerun()
+                else:
+                    st.error("❌ Stock Symbol is required")
+
+def get_all_stock_symbols():
+    """Fetch all stock symbols from the database"""
+    try:
+        response = python_client.get("api/v1/stocks/available")
+        
+        if response and isinstance(response, list):
+            return response
+        else:
+            st.error("❌ Failed to fetch stock symbols")
+            return []
+            
+    except Exception as e:
+        st.error(f"❌ Error fetching stock symbols: {str(e)}")
+        return []
+
+def filter_symbols(symbols_data, search_term, filter_status):
+    """Filter symbols based on search term and status"""
+    filtered = symbols_data.copy()
+    
+    # Filter by search term
+    if search_term:
+        search_term = search_term.lower()
+        filtered = [
+            symbol for symbol in filtered 
+            if search_term in symbol.get('symbol', '').lower() 
+            or (symbol.get('company_name') and search_term in symbol.get('company_name').lower())
+        ]
+    
+    # Filter by status
+    if filter_status != "All":
+        is_active = filter_status == "Active"
+        filtered = [
+            symbol for symbol in filtered 
+            if symbol.get('is_active', True) == is_active
+        ]
+    
+    return filtered
+
+def display_symbols_table(symbols_data):
+    """Display symbols in a formatted table"""
+    # Create display data
+    display_data = []
+    for symbol in symbols_data:
+        display_data.append({
+            'Symbol': symbol.get('symbol', 'N/A'),
+            'Company Name': symbol.get('company_name') or 'N/A',
+            'Sector': symbol.get('sector') or 'N/A',
+            'Industry': symbol.get('industry') or 'N/A',
+            'Country': symbol.get('country') or 'N/A',
+            'Exchange': symbol.get('exchange') or 'N/A',
+            'Status': '🟢 Active' if symbol.get('is_active', True) else '🔴 Inactive'
+        })
+    
+    # Convert to DataFrame for better display
+    if display_data:
+        import pandas as pd
+        df = pd.DataFrame(display_data)
+        
+        # Display with formatting
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Symbol": st.column_config.TextColumn("📈 Symbol", width="small"),
+                "Company Name": st.column_config.TextColumn("🏢 Company Name", width="large"),
+                "Sector": st.column_config.TextColumn("🏭 Sector", width="medium"),
+                "Industry": st.column_config.TextColumn("⚙️ Industry", width="medium"),
+                "Country": st.column_config.TextColumn("🌍 Country", width="small"),
+                "Exchange": st.column_config.TextColumn("📊 Exchange", width="small"),
+                "Status": st.column_config.TextColumn("📊 Status", width="small")
+            }
+        )
+        
+        # Show summary stats
+        st.markdown("### 📊 Summary Statistics")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            total_symbols = len(symbols_data)
+            st.metric("📈 Total Symbols", total_symbols)
+        
+        with col2:
+            active_symbols = len([s for s in symbols_data if s.get('is_active', True)])
+            st.metric("🟢 Active Symbols", active_symbols)
+        
+        with col3:
+            inactive_symbols = len([s for s in symbols_data if not s.get('is_active', True)])
+            st.metric("🔴 Inactive Symbols", inactive_symbols)
+
+def add_stock_symbol(symbol, company_name=None, sector=None, industry=None, description=None, is_active=True):
+    """Add a new stock symbol to the database"""
+    try:
+        # Prepare payload with manual company information if provided
+        payload = {
+            "symbol": symbol.upper()
+        }
+        
+        # Add optional fields if provided
+        if company_name:
+            payload["company_name"] = company_name
+        if sector:
+            payload["sector"] = sector
+        if industry:
+            payload["industry"] = industry
+        if description:
+            payload["description"] = description
+        
+        response = python_client.post("api/v1/stocks/add", json_data=payload)
+        
+        if response and isinstance(response, dict):
+            st.success(f"✅ Successfully added {symbol} to the system!")
+            
+            # Show what information was used
+            if company_name or sector or industry:
+                st.info(f"📝 Used manual company information")
+                if response.get('company_name'):
+                    st.info(f"🏢 Company: {response.get('company_name')}")
+                if response.get('sector'):
+                    st.info(f"🏭 Sector: {response.get('sector')}")
+                if response.get('industry'):
+                    st.info(f"⚙️ Industry: {response.get('industry')}")
+            else:
+                # Show the auto-populated company info
+                if response.get('company_name'):
+                    st.info(f"📝 Company info auto-populated: {response.get('company_name')}")
+            
+            return True
+        else:
+            error_msg = "Unknown error"
+            if isinstance(response, dict) and response.get('detail'):
+                error_msg = response.get('detail')
+            st.error(f"❌ Failed to add symbol: {error_msg}")
+            return False
+            
+    except Exception as e:
+        st.error(f"❌ Error adding symbol: {str(e)}")
+        return False
 
 if __name__ == "__main__":
     main()

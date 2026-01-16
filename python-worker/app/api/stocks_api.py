@@ -32,6 +32,11 @@ class StockInfo(BaseModel):
 
 class AddStockRequest(BaseModel):
     symbol: str
+    company_name: Optional[str] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    country: Optional[str] = None
+    description: Optional[str] = None
 
 @router.get("/available", response_model=List[StockInfo])
 async def get_available_stocks():
@@ -67,7 +72,7 @@ async def get_available_stocks():
 
 @router.post("/add", response_model=StockInfo)
 async def add_stock(request: AddStockRequest):
-    """Add a new stock symbol with auto-populated company information"""
+    """Add a new stock symbol with auto-populated or manual company information"""
     try:
         symbol = request.symbol.upper().strip()
         
@@ -78,8 +83,23 @@ async def add_stock(request: AddStockRequest):
         if existing:
             raise HTTPException(status_code=400, detail=f"Symbol {symbol} already exists")
         
-        # Fetch company information from Yahoo Finance API
-        company_info = await fetch_company_info(symbol)
+        # If manual company information is provided, use it
+        if request.company_name or request.sector or request.industry or request.country:
+            # Use manual company information
+            company_info = {
+                'company_name': request.company_name or symbol,
+                'sector': request.sector,
+                'industry': request.industry,
+                'market_cap': None,
+                'country': request.country,
+                'currency': 'USD',
+                'exchange': None
+            }
+            print(f"Using manual company info: {company_info}")
+        else:
+            # Try to fetch from Yahoo Finance API
+            company_info = await fetch_company_info(symbol)
+            print(f"Using Yahoo Finance company info: {company_info}")
         
         # Insert into stocks table
         insert_query = """
