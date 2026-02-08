@@ -78,8 +78,8 @@ class YahooFinanceSource(BaseDataSource):
     def fetch_splits(self, symbol: str) -> List[Dict[str, Any]]:
         return self._client.fetch_splits(symbol)
 
-    def fetch_financial_statements(self, symbol: str, *, quarterly: bool = True) -> Dict[str, Any]:
-        return self._client.fetch_financial_statements(symbol, quarterly=quarterly)
+    def fetch_financial_statements(self, symbol: str, period: str = None) -> Dict[str, Any]:
+        return self._client.fetch_financial_statements(symbol, period=period)
     
     def fetch_earnings_calendar(self, symbols: List[str] = None, start_date: str = None, end_date: str = None) -> List[Dict[str, Any]]:
         return self._client.fetch_earnings_calendar(symbols, start_date, end_date)

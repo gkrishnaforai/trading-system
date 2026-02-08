@@ -35,7 +35,7 @@ class APIClient:
     No fallbacks, no silent failures - all errors are logged and raised
     """
     
-    def __init__(self, base_url: str, timeout: int = 30):
+    def __init__(self, base_url: str, timeout: int = 30, default_headers: Optional[Dict[str, str]] = None):
         """
         Initialize API client
         
@@ -51,6 +51,7 @@ class APIClient:
         
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
+        self.default_headers = default_headers or {}
         logger.info(f"Initialized API client for {self.base_url}")
     
     def _make_request(
@@ -59,7 +60,8 @@ class APIClient:
         endpoint: str,
         params: Optional[Dict[str, Any]] = None,
         json_data: Optional[Dict[str, Any]] = None,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        headers: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """
         Make HTTP request with robust error handling
@@ -85,6 +87,8 @@ class APIClient:
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         timeout = timeout or self.timeout
         
+        merged_headers: Dict[str, str] = {**self.default_headers, **(headers or {})}
+
         logger.debug(f"{method} {url} - params={params}, json={json_data is not None}")
         
         try:
@@ -93,6 +97,7 @@ class APIClient:
                 url=url,
                 params=params,
                 json=json_data,
+                headers=merged_headers if merged_headers else None,
                 timeout=timeout
             )
             
@@ -141,21 +146,58 @@ class APIClient:
             logger.error(error_msg)
             raise APIConnectionError(error_msg) from e
     
-    def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None, timeout: Optional[int] = None) -> Dict[str, Any]:
+    def get(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: Optional[int] = None,
+        headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
         """GET request"""
-        return self._make_request("GET", endpoint, params=params, timeout=timeout)
+        return self._make_request("GET", endpoint, params=params, timeout=timeout, headers=headers)
     
-    def post(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None, timeout: Optional[int] = None) -> Dict[str, Any]:
+    def post(
+        self,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: Optional[int] = None,
+        headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
         """POST request"""
-        return self._make_request("POST", endpoint, params=params, json_data=json_data, timeout=timeout)
+        return self._make_request("POST", endpoint, params=params, json_data=json_data, timeout=timeout, headers=headers)
     
-    def put(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None, timeout: Optional[int] = None) -> Dict[str, Any]:
+    def put(
+        self,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: Optional[int] = None,
+        headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
         """PUT request"""
-        return self._make_request("PUT", endpoint, json_data=json_data, timeout=timeout)
+        return self._make_request("PUT", endpoint, params=params, json_data=json_data, timeout=timeout, headers=headers)
+
+    def patch(
+        self,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: Optional[int] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """PATCH request"""
+        return self._make_request("PATCH", endpoint, params=params, json_data=json_data, timeout=timeout, headers=headers)
     
-    def delete(self, endpoint: str, timeout: Optional[int] = None) -> Dict[str, Any]:
+    def delete(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: Optional[int] = None,
+        headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
         """DELETE request"""
-        return self._make_request("DELETE", endpoint, timeout=timeout)
+        return self._make_request("DELETE", endpoint, params=params, timeout=timeout, headers=headers)
 
 
 # Global API clients - initialized once, fail fast if invalid
@@ -177,10 +219,14 @@ def get_go_api_client() -> APIClient:
     
     if _go_api_client is None:
         import os
-        API_BASE_URL = os.getenv("API_BASE_URL", "http://go-api:8000")
-        if not API_BASE_URL:
-            raise ValueError("API_BASE_URL not configured")
-        _go_api_client = APIClient(API_BASE_URL, timeout=30)
+        go_api_url = (
+            os.getenv("GO_API_URL")
+            or os.getenv("API_BASE_URL")
+            or "http://localhost:8000"
+        )
+        if not go_api_url:
+            raise ValueError("GO_API_URL/API_BASE_URL not configured")
+        _go_api_client = APIClient(go_api_url, timeout=30)
     
     return _go_api_client
 

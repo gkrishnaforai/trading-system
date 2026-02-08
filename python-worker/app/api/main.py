@@ -3,8 +3,9 @@ Main API Endpoints for Trading System
 Provides core functionality endpoints
 """
 from datetime import datetime
+import uuid
 from uuid import uuid4
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
@@ -22,6 +23,8 @@ router = APIRouter(tags=["main"])
 
 # Request/Response Models
 class RefreshRequest(BaseModel):
+    run_id: Optional[str] = None
+    portfolio_id: Optional[str] = None
     symbols: List[str]
     data_types: List[str]
     force: bool = False
@@ -35,11 +38,23 @@ class RefreshResponse(BaseModel):
 @router.post("/refresh", response_model=RefreshResponse)
 async def refresh_data(request: RefreshRequest, background_tasks: BackgroundTasks):
     """Trigger data refresh for specific symbols and data types"""
-    run_id = uuid4()
+    try:
+        run_id = uuid4() if not request.run_id else uuid.UUID(request.run_id)
+    except Exception:
+        run_id = uuid4()
+
     set_ingestion_run_id(run_id)
     try:
         try:
-            audit.start_run(run_id, metadata={"operation": "refresh", "symbols": request.symbols, "data_types": request.data_types})
+            audit.start_run(
+                run_id,
+                metadata={
+                    "operation": "refresh",
+                    "symbols": request.symbols,
+                    "data_types": request.data_types,
+                    "portfolio_id": request.portfolio_id,
+                },
+            )
             audit.log_event(level="info", provider="system", operation="refresh.request_start")
         except Exception:
             pass
@@ -47,15 +62,65 @@ async def refresh_data(request: RefreshRequest, background_tasks: BackgroundTask
         refresh_manager = DataRefreshManager()
         
         # Convert string data types to DataType enum
+        # Updated to include all implemented data types with corresponding database tables
         data_type_mapping = {
+            # === MARKET DATA ===
             "price_historical": DataType.PRICE_HISTORICAL,
             "price_current": DataType.PRICE_CURRENT,
-            "price_intraday_15m": DataType.PRICE_INTRADAY_15M,
+            "price_intraday_5m": DataType.PRICE_INTRADAY_5M,  # Updated from 15m to 5m
+            
+            # === FINANCIAL STATEMENTS ===
             "fundamentals": DataType.FUNDAMENTALS,
+            "income_statements": DataType.INCOME_STATEMENTS,
+            "balance_sheets": DataType.BALANCE_SHEETS,
+            "cash_flow_statements": DataType.CASH_FLOW_STATEMENTS,
+            
+            # === FINANCIAL METRICS ===
             "indicators": DataType.INDICATORS,
+            "financial_ratios": DataType.FINANCIAL_RATIOS,
+            
+            # === NEWS & EVENTS ===
             "news": DataType.NEWS,
             "earnings": DataType.EARNINGS,
-            "industry_peers": DataType.INDUSTRY_PEERS
+            "industry_peers": DataType.INDUSTRY_PEERS,
+            "corporate_actions": DataType.CORPORATE_ACTIONS,
+            
+            # === ANALYST & GRADING DATA (FMP Primary) ===
+            "stock_grades": DataType.STOCK_GRADES,
+            "consensus_data": DataType.CONSENSUS_DATA,
+            "price_targets": DataType.PRICE_TARGETS,
+            
+            # === SYSTEM DATA ===
+            "signals": DataType.SIGNALS,
+            
+            # === PARTIALLY IMPLEMENTED (have tables but limited APIs) ===
+            # These will be handled with fallback logic
+            "analyst_ratings": DataType.ANALYST_RATINGS,
+            "ratings_snapshot": DataType.RATINGS_SNAPSHOT,
+            "historical_grades": DataType.HISTORICAL_GRADES,
+            "earnings_transcripts": DataType.EARNINGS_TRANSCRIPTS,
+            "key_metrics_ttm": DataType.KEY_METRICS_TTM,
+            "financial_scores": DataType.FINANCIAL_SCORES,
+            
+            # === NEW DATA TYPES ===
+            "institutional_buying": DataType.INSTITUTIONAL_BUYING,  # Added institutional buying
+            
+            # === GROWTH METRICS ===
+            "income_statement_growth": DataType.INCOME_STATEMENT_GROWTH,
+            "balance_sheet_growth": DataType.BALANCE_SHEET_GROWTH,
+            "cash_flow_growth": DataType.CASH_FLOW_GROWTH,
+            "financial_growth": DataType.FINANCIAL_GROWTH,
+            
+            # === NOT YET IMPLEMENTED (will show warnings) ===
+            # These will be marked as unknown until tables/APIs are created
+            "short_interest": DataType.SHORT_INTEREST,
+            "short_volume": DataType.SHORT_VOLUME,
+            "share_float": DataType.SHARE_FLOAT,
+            "risk_factors": DataType.RISK_FACTORS,
+            "owner_earnings": DataType.OWNER_EARNINGS,
+            "reports": DataType.REPORTS,
+            "weekly_aggregation": DataType.WEEKLY_AGGREGATION,
+            "growth_calculations": DataType.GROWTH_CALCULATIONS
         }
         
         results = {}
@@ -66,16 +131,42 @@ async def refresh_data(request: RefreshRequest, background_tasks: BackgroundTask
             try:
                 logger.info(f"Starting refresh for symbol: {symbol}")
                 
-                # Convert data types
+                # Convert data types with better handling for implementation status
                 data_types = []
                 unknown_types: List[str] = []
+                partially_implemented_types: List[str] = []
+                not_implemented_types: List[str] = []
+                
                 for dt in request.data_types:
                     if dt in data_type_mapping:
-                        data_types.append(data_type_mapping[dt])
-                        logger.info(f"Will refresh data type '{dt}' for symbol {symbol}")
+                        data_type_enum = data_type_mapping[dt]
+                        
+                        # Check implementation status and provide appropriate warnings
+                        if dt in ["short_interest", "short_volume", "share_float", "risk_factors", 
+                                 "owner_earnings", "reports", "weekly_aggregation", "growth_calculations"]:
+                            not_implemented_types.append(dt)
+                            logger.warning(f"🚧 Data type '{dt}' for {symbol} - NOT YET IMPLEMENTED (no table/API)")
+                            # Still add to list so it gets proper error handling
+                            data_types.append(data_type_enum)
+                        elif dt in ["analyst_ratings", "ratings_snapshot", "historical_grades", 
+                                   "earnings_transcripts", "key_metrics_ttm", "financial_scores"]:
+                            partially_implemented_types.append(dt)
+                            logger.warning(f"⚠️ Data type '{dt}' for {symbol} - PARTIALLY IMPLEMENTED (limited API)")
+                            data_types.append(data_type_enum)
+                        else:
+                            data_types.append(data_type_enum)
+                            logger.info(f"✅ Will refresh data type '{dt}' for {symbol}")
                     else:
                         unknown_types.append(dt)
-                        logger.warning(f"Unknown data type '{dt}' requested for symbol {symbol}")
+                        logger.error(f"❌ Unknown data type '{dt}' requested for symbol {symbol}")
+                
+                # Log implementation summary
+                if partially_implemented_types:
+                    logger.info(f"⚠️ Partially implemented types for {symbol}: {', '.join(partially_implemented_types)}")
+                if not_implemented_types:
+                    logger.info(f"🚧 Not yet implemented types for {symbol}: {', '.join(not_implemented_types)}")
+                if unknown_types:
+                    logger.error(f"❌ Unknown types for {symbol}: {', '.join(unknown_types)}")
                 
                 logger.info(f"Calling refresh_manager.refresh_data for {symbol} with {len(data_types)} known data types")
                 

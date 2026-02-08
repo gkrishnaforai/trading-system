@@ -13,18 +13,53 @@ type MarketDataRepository struct {
 }
 
 func (r *MarketDataRepository) GetLatestFundamentalsSnapshot(symbol string) (map[string]interface{}, error) {
-	query := `
+	var hasSymbolCol bool
+	if err := r.db.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='fundamentals_snapshots' AND column_name='symbol')",
+	).Scan(&hasSymbolCol); err != nil {
+		return nil, fmt.Errorf("failed to check fundamentals_snapshots schema: %w", err)
+	}
+
+	var hasStockSymbolCol bool
+	if err := r.db.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='fundamentals_snapshots' AND column_name='stock_symbol')",
+	).Scan(&hasStockSymbolCol); err != nil {
+		return nil, fmt.Errorf("failed to check fundamentals_snapshots schema: %w", err)
+	}
+
+	queryTmpl := `
         SELECT payload
         FROM fundamentals_snapshots
-        WHERE stock_symbol = $1
+        WHERE UPPER(%s) = UPPER($1)
         ORDER BY as_of_date DESC
         LIMIT 1
     `
 
-	var payloadBytes []byte
-	err := r.db.QueryRow(query, symbol).Scan(&payloadBytes)
-	if err == sql.ErrNoRows {
+	// Prefer the column that exists; if both exist, try symbol first then stock_symbol.
+	colsToTry := make([]string, 0, 2)
+	if hasSymbolCol {
+		colsToTry = append(colsToTry, "symbol")
+	}
+	if hasStockSymbolCol {
+		colsToTry = append(colsToTry, "stock_symbol")
+	}
+	if len(colsToTry) == 0 {
 		return nil, fmt.Errorf("fundamentals not found for symbol: %s", symbol)
+	}
+
+	var payloadBytes []byte
+	var err error
+	for i, col := range colsToTry {
+		query := fmt.Sprintf(queryTmpl, col)
+		err = r.db.QueryRow(query, symbol).Scan(&payloadBytes)
+		if err == sql.ErrNoRows {
+			// Try next candidate column, if any.
+			if i < len(colsToTry)-1 {
+				continue
+			}
+			return nil, fmt.Errorf("fundamentals not found for symbol: %s", symbol)
+		}
+		break
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get fundamentals: %w", err)

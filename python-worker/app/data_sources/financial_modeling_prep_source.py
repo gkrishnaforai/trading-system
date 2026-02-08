@@ -85,9 +85,9 @@ class FinancialModelingPrepSource(BaseDataSource):
         """Fetch stock splits - delegates to client"""
         return self._client.fetch_splits(symbol)
     
-    def fetch_financial_statements(self, symbol: str, *, quarterly: bool = True) -> Dict[str, Any]:
+    def fetch_financial_statements(self, symbol: str, period: str = None) -> Dict[str, Any]:
         """Fetch financial statements - delegates to client"""
-        return self._client.fetch_financial_statements(symbol, quarterly=quarterly)
+        return self._client.fetch_financial_statements(symbol, period=period)
     
     def fetch_quarterly_earnings_history(self, symbol: str) -> List[Dict[str, Any]]:
         """Fetch quarterly earnings history - delegates to client"""
@@ -96,6 +96,22 @@ class FinancialModelingPrepSource(BaseDataSource):
     def fetch_analyst_recommendations(self, symbol: str) -> List[Dict[str, Any]]:
         """Fetch analyst recommendations - delegates to client"""
         return self._client.fetch_analyst_recommendations(symbol)
+    
+    def fetch_technical_indicators(self, symbol: str, timeframe: str = "1day") -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch all technical indicators for a symbol - delegates to client"""
+        return self._client.get_all_technical_indicators(symbol, timeframe)
+    
+    def fetch_ema_data(self, symbol: str, period_length: int = 20, timeframe: str = "1day") -> List[Dict[str, Any]]:
+        """Fetch EMA data - delegates to client"""
+        return self._client.get_technical_indicators_ema(symbol, period_length, timeframe)
+    
+    def fetch_sma_data(self, symbol: str, period_length: int = 20, timeframe: str = "1day") -> List[Dict[str, Any]]:
+        """Fetch SMA data - delegates to client"""
+        return self._client.get_technical_indicators_sma(symbol, period_length, timeframe)
+    
+    def fetch_rsi_data(self, symbol: str, period_length: int = 14, timeframe: str = "1day") -> List[Dict[str, Any]]:
+        """Fetch RSI data - delegates to client"""
+        return self._client.get_technical_indicators_rsi(symbol, period_length, timeframe)
     
     def is_available(self) -> bool:
         """Check availability - delegates to client"""

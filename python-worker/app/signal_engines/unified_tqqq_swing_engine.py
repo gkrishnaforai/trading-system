@@ -114,6 +114,10 @@ class UnifiedTQQQSwingEngine:
         Priority: Volatility > Mean Reversion (extreme RSI) > Trend > Breakout > Mean Reversion
         """
         
+        # Defensive checks for None values
+        if conditions.sma_20 is None or conditions.sma_50 is None or conditions.current_price is None:
+            return MarketRegime.NO_TRADE
+        
         # Calculate trend conditions (more relaxed for TQQQ)
         is_uptrend = (
             conditions.sma_20 > conditions.sma_50 and
@@ -156,6 +160,28 @@ class UnifiedTQQQSwingEngine:
         Unified signal generator with Fear/Greed integration
         DRY, volatility-aware, execution-ready
         """
+        
+        # Comprehensive defensive checks for None values
+        if any([
+            conditions.rsi is None,
+            conditions.sma_20 is None,
+            conditions.sma_50 is None,
+            conditions.ema_20 is None,
+            conditions.current_price is None,
+            conditions.volatility is None,
+            conditions.recent_change is None,
+            conditions.macd is None,
+            conditions.macd_signal is None,
+            conditions.vix_level is None,
+            conditions.volume is None,
+            conditions.avg_volume_20d is None
+        ]):
+            return SignalResult(
+                signal=SignalType.HOLD,
+                confidence=0.0,
+                reasoning=["Insufficient or invalid market data - some indicators are None"],
+                metadata={"error": "None values in market conditions", "engine": "unified_tqqq_swing"}
+            )
 
         self.logger.info("🔍 Starting TQQQ signal generation", extra={
             "context": {

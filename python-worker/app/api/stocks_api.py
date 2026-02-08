@@ -38,15 +38,17 @@ class AddStockRequest(BaseModel):
     country: Optional[str] = None
     description: Optional[str] = None
 
-@router.get("/available", response_model=List[StockInfo])
+@router.get("/available")
 async def get_available_stocks():
     """Get all available stocks from the stocks table"""
     try:
         query = """
-            SELECT symbol, company_name, sector, industry, market_cap, country, currency, exchange, is_active
+            SELECT symbol, company_name, sector, industry, market_cap, 
+                   country, currency, exchange, is_active
             FROM stocks 
             WHERE symbol IS NOT NULL AND is_active = true
             ORDER BY symbol
+            LIMIT 10000
         """
         
         result = db.execute_query(query)
@@ -65,12 +67,19 @@ async def get_available_stocks():
                 is_active=row.get('is_active')
             ))
         
-        return stocks
+        return {
+            "success": True,
+            "data": stocks,
+            "count": len(stocks)
+        }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
-@router.post("/add", response_model=StockInfo)
+@router.post("/add")
 async def add_stock(request: AddStockRequest):
     """Add a new stock symbol with auto-populated or manual company information"""
     try:
@@ -81,7 +90,10 @@ async def add_stock(request: AddStockRequest):
         existing = db.execute_query(check_query, {"symbol": symbol})
         
         if existing:
-            raise HTTPException(status_code=400, detail=f"Symbol {symbol} already exists")
+            return {
+                "success": False,
+                "error": f"Symbol {symbol} already exists"
+            }
         
         # If manual company information is provided, use it
         if request.company_name or request.sector or request.industry or request.country:
@@ -131,7 +143,7 @@ async def add_stock(request: AddStockRequest):
         
         if result:
             row = result[0]
-            return StockInfo(
+            stock_info = StockInfo(
                 symbol=row['symbol'],
                 company_name=row.get('company_name'),
                 sector=row.get('sector'),
@@ -142,13 +154,21 @@ async def add_stock(request: AddStockRequest):
                 exchange=row.get('exchange'),
                 is_active=row.get('is_active')
             )
+            return {
+                "success": True,
+                "data": stock_info.dict()
+            }
         else:
-            raise HTTPException(status_code=500, detail="Failed to add stock")
+            return {
+                "success": False,
+                "error": "Failed to add stock"
+            }
             
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 async def fetch_company_info(symbol: str) -> dict:
     """Fetch company information from Yahoo Finance API"""
@@ -240,10 +260,163 @@ async def search_stocks(query: str):
                 is_active=row.get('is_active')
             ))
         
-        return stocks
+        return {
+            "success": True,
+            "data": stocks,
+            "count": len(stocks)
+        }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@router.put("/update/{symbol}")
+async def update_stock(symbol: str, request: AddStockRequest):
+    """Update existing stock information"""
+    try:
+        symbol = symbol.upper().strip()
+        
+        # Check if symbol exists
+        check_query = "SELECT symbol FROM stocks WHERE symbol = :symbol"
+        existing = db.execute_query(check_query, {"symbol": symbol})
+        
+        if not existing:
+            return {
+                "success": False,
+                "error": f"Symbol {symbol} not found"
+            }
+        
+        # Update with provided information
+        update_query = """
+            UPDATE stocks 
+            SET company_name = COALESCE(:company_name, company_name),
+                sector = COALESCE(:sector, sector),
+                industry = COALESCE(:industry, industry),
+                country = COALESCE(:country, country),
+                updated_at = NOW()
+            WHERE symbol = :symbol
+            RETURNING symbol, company_name, sector, industry, market_cap, country, currency, exchange, is_active
+        """
+        
+        result = db.execute_query(update_query, {
+            "symbol": symbol,
+            "company_name": request.company_name,
+            "sector": request.sector,
+            "industry": request.industry,
+            "country": request.country
+        })
+        
+        if result:
+            row = result[0]
+            stock_info = StockInfo(
+                symbol=row['symbol'],
+                company_name=row.get('company_name'),
+                sector=row.get('sector'),
+                industry=row.get('industry'),
+                market_cap=row.get('market_cap'),
+                country=row.get('country'),
+                currency=row.get('currency'),
+                exchange=row.get('exchange'),
+                is_active=row.get('is_active')
+            )
+            return {
+                "success": True,
+                "data": stock_info.dict()
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Failed to update stock"
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@router.delete("/delete/{symbol}")
+async def delete_stock(symbol: str):
+    """Soft delete (deactivate) a stock symbol"""
+    try:
+        symbol = symbol.upper().strip()
+        
+        # Check if symbol exists
+        check_query = "SELECT symbol FROM stocks WHERE symbol = :symbol"
+        existing = db.execute_query(check_query, {"symbol": symbol})
+        
+        if not existing:
+            return {
+                "success": False,
+                "error": f"Symbol {symbol} not found"
+            }
+        
+        # Soft delete by setting is_active = false
+        delete_query = """
+            UPDATE stocks 
+            SET is_active = false, updated_at = NOW()
+            WHERE symbol = :symbol
+        """
+        
+        db.execute_query(delete_query, {"symbol": symbol})
+        
+        return {
+            "success": True,
+            "data": {"message": f"Symbol {symbol} deactivated successfully"}
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@router.get("/{symbol}/coverage")
+async def get_stock_coverage(symbol: str):
+    """Get data coverage information for a specific stock"""
+    try:
+        symbol = symbol.upper().strip()
+        
+        # Check price data coverage
+        price_query = "SELECT COUNT(*) as count FROM price_historical_daily WHERE symbol = :symbol"
+        price_result = db.execute_query(price_query, {"symbol": symbol})
+        has_price_data = price_result[0]['count'] > 0 if price_result else False
+        
+        # Check indicator data coverage
+        indicator_query = "SELECT COUNT(*) as count FROM indicators_daily WHERE symbol = :symbol"
+        indicator_result = db.execute_query(indicator_query, {"symbol": symbol})
+        has_indicator_data = indicator_result[0]['count'] > 0 if indicator_result else False
+        
+        # Check fundamentals coverage
+        fundamentals_query = "SELECT COUNT(*) as count FROM fundamentals_snapshots WHERE symbol = :symbol"
+        fundamentals_result = db.execute_query(fundamentals_query, {"symbol": symbol})
+        has_fundamentals_data = fundamentals_result[0]['count'] > 0 if fundamentals_result else False
+        
+        coverage_percentage = (
+            100 if has_price_data and has_indicator_data and has_fundamentals_data
+            else 66 if (has_price_data and has_indicator_data) or (has_price_data and has_fundamentals_data) or (has_indicator_data and has_fundamentals_data)
+            else 33 if has_price_data or has_indicator_data or has_fundamentals_data
+            else 0
+        )
+        
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol,
+                "has_price_data": has_price_data,
+                "has_indicator_data": has_indicator_data,
+                "has_fundamentals_data": has_fundamentals_data,
+                "coverage_percentage": coverage_percentage
+            }
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 @router.get("/{symbol}")
 async def get_stock_info(symbol: str):
@@ -258,10 +431,13 @@ async def get_stock_info(symbol: str):
         result = db.execute_query(query, {"symbol": symbol.upper()})
         
         if not result:
-            raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
+            return {
+                "success": False,
+                "error": f"Symbol {symbol} not found"
+            }
         
         row = result[0]
-        return StockInfo(
+        stock_info = StockInfo(
             symbol=row['symbol'],
             company_name=row.get('company_name'),
             sector=row.get('sector'),
@@ -273,7 +449,13 @@ async def get_stock_info(symbol: str):
             is_active=row.get('is_active')
         )
         
-    except HTTPException:
-        raise
+        return {
+            "success": True,
+            "data": stock_info.dict()
+        }
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "success": False,
+            "error": str(e)
+        }

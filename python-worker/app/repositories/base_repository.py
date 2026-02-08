@@ -44,6 +44,8 @@ class BaseRepository:
         rows: List[Dict[str, Any]],
         returning: Optional[str],
     ) -> int:
+        from app.utils.json_sanitize import sanitize_json_value
+
         try:
             from psycopg2.extras import Json as PsycopgJson  # type: ignore
         except Exception:  # pragma: no cover
@@ -95,7 +97,8 @@ class BaseRepository:
                     v = float(v)
 
                 if isinstance(v, (dict, list)):
-                    adapted[k] = PsycopgJson(v) if PsycopgJson is not None else json.dumps(v)
+                    sv = sanitize_json_value(v)
+                    adapted[k] = PsycopgJson(sv) if PsycopgJson is not None else json.dumps(sv, allow_nan=False)
                 else:
                     adapted[k] = v
             adapted_rows.append(adapted)

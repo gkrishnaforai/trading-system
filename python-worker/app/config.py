@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     
     # Environment
     environment: str = "development"
-    log_level: str = "INFO"
+    log_level: str = "DEBUG"  # Changed to DEBUG for detailed logging
     
     # Database
     database_url: str = "sqlite:///./db/trading.db"  # Fallback if not in .env

@@ -20,8 +20,8 @@ from components.ticker_search import render_ticker_search
 logger = logging.getLogger(__name__)
 
 # Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "http://go-api:8000")
-PYTHON_API_URL = os.getenv("PYTHON_API_URL", "http://python-worker:8001")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+PYTHON_API_URL = os.getenv("PYTHON_API_URL", "http://localhost:8001")
 SUBSCRIPTION_LEVELS = ["basic", "pro", "elite"]
 
 # Custom CSS

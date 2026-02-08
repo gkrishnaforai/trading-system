@@ -636,7 +636,7 @@ with tab2:
                 all_data_types = [
                     "price_historical",
                     "price_current", 
-                    "price_intraday_15m",
+                    "price_intraday_5m",
                     "fundamentals",
                     "indicators",
                     "news",
@@ -1582,7 +1582,7 @@ with tab5:
                 all_data_types = [
                     "price_historical",
                     "price_current", 
-                    "price_intraday_15m",
+                    "price_intraday_5m",
                     "fundamentals",
                     "indicators",
                     "news",
@@ -1622,7 +1622,7 @@ with tab5:
             refresh_symbol = st.text_input("Symbol to Refresh:", placeholder="AAPL", key="refresh_symbol_input")
             data_types = st.multiselect(
                 "Data Types:",
-                ["price_historical", "price_current", "price_intraday_15m", "indicators", "fundamentals"],
+                ["price_historical", "price_current", "price_intraday_5m", "indicators", "fundamentals"],
                 default=["price_historical", "indicators"],
                 key="refresh_data_types"
             )

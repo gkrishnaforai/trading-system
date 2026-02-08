@@ -7,6 +7,7 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime, timedelta, date, time
+import time
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import json
@@ -29,14 +30,14 @@ except ImportError:
 from utils import setup_page_config, render_sidebar
 from api_client import APIClient, APIError
 from api_config import api_config
+from api_client import get_go_api_client
+from shared_functions import get_portfolio_data
 
 # Import shared analysis display component
 from components.analysis_display import display_signal_analysis, display_no_data_message
 
-# Initialize API client
-python_api_url = api_config.python_worker_url
-python_client = APIClient(python_api_url, timeout=30)
-portfolio_api_url = f"{python_api_url}/api/v2/portfolio"
+# Initialize API clients
+go_client = get_go_api_client()
 
 # ========================================
 # Helper Functions for DRY Code
@@ -153,47 +154,49 @@ def create_portfolio_action_buttons(portfolio: Dict[str, Any]) -> None:
             st.session_state.selected_portfolio = portfolio['id']
             st.session_state.show_analysis = True
 
-# ========================================
-# Authentication Functions
-# ========================================
 
-def login_user(username: str, password: str) -> bool:
-    """Login user and store token in session state"""
+def _load_users() -> List[Dict[str, Any]]:
+    resp = go_client.get("api/v1/users")
+    return (resp or {}).get("users") or []
+
+
+def _resolve_default_user() -> Dict[str, Any]:
+    # Align with streamlit Portfolio page default
+    base_user_id = "4f8b2cb1-4ed6-4fb5-bd44-48e5acc830a4"
     try:
-        response = requests.post(f"{portfolio_api_url}/users/login", 
-                               json={"username": username, "password": password})
-        
-        if response.status_code == 200:
-            data = response.json()
-            st.session_state.auth_token = data["access_token"]
-            st.session_state.current_user = data["user"]
-            return True
-        else:
-            st.error(f"Login failed: {response.json().get('detail', 'Unknown error')}")
-            return False
-    except Exception as e:
-        st.error(f"Login error: {str(e)}")
-        return False
+        users = _load_users()
+        for u in users or []:
+            if not isinstance(u, dict):
+                continue
+            if (u.get("user_id") or u.get("id")) == base_user_id:
+                return u
+    except Exception:
+        pass
 
-def logout_user():
-    """Logout user and clear session state"""
-    if 'auth_token' in st.session_state:
-        del st.session_state.auth_token
-    if 'current_user' in st.session_state:
-        del st.session_state.current_user
-    if 'selected_portfolio' in st.session_state:
-        del st.session_state.selected_portfolio
-    st.rerun()
+    return {
+        "user_id": base_user_id,
+        "id": base_user_id,
+        "username": "default_user",
+        "role": "user",
+    }
 
-def get_auth_headers() -> Dict[str, str]:
-    """Get authorization headers for API requests"""
-    if 'auth_token' in st.session_state:
-        return {"Authorization": f"Bearer {st.session_state.auth_token}"}
-    return {}
 
-def is_authenticated() -> bool:
-    """Check if user is authenticated"""
-    return 'auth_token' in st.session_state and 'current_user' in st.session_state
+def _load_portfolios_for_user(user_id: str) -> List[Dict[str, Any]]:
+    if not user_id:
+        return []
+    resp = go_client.get(f"api/v1/portfolios/user/{user_id}")
+    return (resp or {}).get("portfolios") or []
+
+
+def _normalize_portfolio_for_ui(p: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": p.get("id"),
+        "name": p.get("name") or p.get("portfolio_name") or p.get("id"),
+        "description": p.get("notes") or "",
+        "portfolio_type": (p.get("portfolio_type") or "custom"),
+        "initial_capital": p.get("initial_capital"),
+        "holdings_count": p.get("holdings_count") or 0,
+    }
 
 # ========================================
 # Portfolio Management Functions
@@ -202,18 +205,10 @@ def is_authenticated() -> bool:
 def get_user_portfolios() -> List[Dict[str, Any]]:
     """Get all portfolios for current user"""
     try:
-        response = requests.get(f"{portfolio_api_url}/portfolios", 
-                              headers=get_auth_headers(),
-                              timeout=30)  # 30 second timeout
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Error loading portfolios: {response.json().get('detail', 'Unknown error')}")
-            return []
-    except requests.exceptions.Timeout:
-        st.error("⏰ Loading portfolios timed out. Please try again.")
-        return []
+        user = st.session_state.get("current_user") or {}
+        user_id = user.get("user_id") or user.get("id")
+        portfolios = _load_portfolios_for_user(user_id)
+        return [_normalize_portfolio_for_ui(p) for p in portfolios if p]
     except Exception as e:
         st.error(f"Error loading portfolios: {str(e)}")
         return []
@@ -222,24 +217,17 @@ def create_portfolio(name: str, description: str = "", portfolio_type: str = "cu
                     initial_capital: float = 10000.0) -> Optional[Dict[str, Any]]:
     """Create a new portfolio"""
     try:
-        response = requests.post(f"{portfolio_api_url}/portfolios",
-                               json={
-                                   "name": name,
-                                   "description": description,
-                                   "portfolio_type": portfolio_type,
-                                   "initial_capital": initial_capital
-                               },
-                               headers=get_auth_headers(),
-                               timeout=30)  # 30 second timeout
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Error creating portfolio: {response.json().get('detail', 'Unknown error')}")
+        user = st.session_state.get("current_user") or {}
+        user_id = user.get("user_id") or user.get("id")
+        if not user_id:
+            st.error("Select a user first")
             return None
-    except requests.exceptions.Timeout:
-        st.error("⏰ Creating portfolio timed out. Please try again.")
-        return None
+
+        created = go_client.post(
+            f"api/v1/portfolio/{user_id}",
+            json_data={"portfolio_name": name, "notes": (description or "").strip() or None},
+        )
+        return _normalize_portfolio_for_ui(created or {})
     except Exception as e:
         st.error(f"Error creating portfolio: {str(e)}")
         return None
@@ -247,18 +235,14 @@ def create_portfolio(name: str, description: str = "", portfolio_type: str = "cu
 def get_portfolio_holdings(portfolio_id: str) -> List[Dict[str, Any]]:
     """Get holdings for a portfolio with timeout handling"""
     try:
-        response = requests.get(f"{portfolio_api_url}/portfolios/{portfolio_id}/holdings",
-                              headers=get_auth_headers(),
-                              timeout=30)  # 30 second timeout
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Error loading holdings: {response.json().get('detail', 'Unknown error')}")
+        user = st.session_state.get("current_user") or {}
+        user_id = user.get("user_id") or user.get("id")
+        if not user_id:
             return []
-    except requests.exceptions.Timeout:
-        st.error("⏰ Loading holdings timed out. Please try again.")
-        return []
+
+        data = get_portfolio_data(user_id, portfolio_id, subscription_level=st.session_state.get("subscription_level") or "basic")
+        holdings = (data or {}).get("holdings") or []
+        return holdings
     except Exception as e:
         st.error(f"Error loading holdings: {str(e)}")
         return []
@@ -267,26 +251,23 @@ def add_portfolio_holding(portfolio_id: str, symbol: str, asset_type: str = "sto
                          shares_held: float = 0, average_cost: float = 0) -> Optional[Dict[str, Any]]:
     """Add a holding to portfolio with timeout handling"""
     try:
-        url = f"{portfolio_api_url}/portfolios/{portfolio_id}/holdings"
-        
-        response = requests.post(url,
-                               json={
-                                   "symbol": symbol.upper(),
-                                   "asset_type": asset_type,
-                                   "shares_held": shares_held,
-                                   "average_cost": average_cost
-                               },
-                               headers=get_auth_headers(),
-                               timeout=30)  # 30 second timeout
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Error adding holding: {response.json().get('detail', 'Unknown error')}")
+        user = st.session_state.get("current_user") or {}
+        user_id = user.get("user_id") or user.get("id")
+        if not user_id:
+            st.error("Select a user first")
             return None
-    except requests.exceptions.Timeout:
-        st.error("⏰ Adding holding timed out. Please try again.")
-        return None
+
+        created = go_client.post(
+            f"api/v1/portfolio/{user_id}/{portfolio_id}/holdings",
+            json_data={
+                "stock_symbol": symbol.upper(),
+                "quantity": float(shares_held),
+                "avg_entry_price": float(average_cost),
+                "position_type": "long",
+                "purchase_date": date.today().strftime("%Y-%m-%d"),
+            },
+        )
+        return created
     except Exception as e:
         st.error(f"Error adding holding: {str(e)}")
         return None
@@ -294,100 +275,96 @@ def add_portfolio_holding(portfolio_id: str, symbol: str, asset_type: str = "sto
 def analyze_portfolio(portfolio_id: str, target_date: Optional[date] = None) -> Optional[Dict[str, Any]]:
     """Run analysis on portfolio with timeout handling"""
     try:
-        payload = {}
+        payload: Dict[str, Any] = {}
         if target_date:
-            payload["target_date"] = target_date.isoformat()
-        
-        response = requests.post(f"{portfolio_api_url}/portfolios/{portfolio_id}/analyze",
-                               json=payload,
-                               headers=get_auth_headers(),
-                               timeout=60)  # 60 second timeout for analysis
-        
-        if response.status_code == 200:
-            return response.json()
+            payload["target_date"] = target_date.strftime("%Y-%m-%d")
         else:
-            st.error(f"Error analyzing portfolio: {response.json().get('error', 'Unknown error')}")
-            return None
-    except requests.exceptions.Timeout:
-        st.error("⏰ Portfolio analysis timed out. Please try again.")
-        return None
+            payload["target_date"] = date.today().strftime("%Y-%m-%d")
+
+        resp = go_client.post(
+            f"api/v1/portfolios/{portfolio_id}/analysis-run",
+            json_data=payload,
+            timeout=30,
+        )
+        if isinstance(resp, dict) and resp.get("run_id"):
+            st.session_state["epa_last_analysis_run_id"] = str(resp.get("run_id"))
+        return resp if isinstance(resp, dict) else {"success": False, "error": "invalid response"}
     except Exception as e:
-        st.error(f"Error analyzing portfolio: {str(e)}")
-        return None
+        st.error(f"❌ Failed to start portfolio analysis run: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def _format_ts(v: Any) -> str:
+    if not v:
+        return ""
+    try:
+        s = str(v)
+        return s.replace("T", " ").replace("Z", "")
+    except Exception:
+        return str(v)
+
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None:
+            return float(default)
+        if isinstance(v, bool):
+            return float(default)
+        if isinstance(v, (int, float)):
+            return float(v)
+        s = str(v).strip()
+        if not s:
+            return float(default)
+        return float(s)
+    except Exception:
+        return float(default)
+
+
+def fetch_run(run_id: str) -> Dict[str, Any]:
+    if not run_id:
+        return {}
+    resp = go_client.get(f"api/v1/data-load/runs/{run_id}")
+    return resp if isinstance(resp, dict) else {}
+
+
+def fetch_run_notifications(run_id: str) -> Dict[str, Any]:
+    if not run_id:
+        return {}
+    resp = go_client.get(f"api/v1/notifications/queue/by-correlation/{run_id}")
+    return resp if isinstance(resp, dict) else {}
 
 def get_symbol_signal_history(symbol: str, limit: int = 50) -> List[Dict[str, Any]]:
     """Get signal history for a symbol with timeout handling"""
-    try:
-        response = requests.get(f"{portfolio_api_url}/symbols/{symbol}/signals?limit={limit}",
-                              headers=get_auth_headers(),
-                              timeout=30)  # 30 second timeout
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return []
-    except requests.exceptions.Timeout:
-        st.warning(f"⏰ Signal history for {symbol} timed out.")
-        return []
-    except Exception as e:
-        st.warning(f"Error getting signal history for {symbol}: {str(e)}")
-        return []
+    _ = symbol
+    _ = limit
+    return []
 
 def get_portfolio_schedules(portfolio_id: str) -> List[Dict[str, Any]]:
     """Get scheduled analyses for portfolio with timeout handling"""
-    try:
-        response = requests.get(f"{portfolio_api_url}/portfolios/{portfolio_id}/schedules",
-                              headers=get_auth_headers(),
-                              timeout=30)  # 30 second timeout
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return []
-    except requests.exceptions.Timeout:
-        st.warning("⏰ Loading schedules timed out.")
-        return []
-    except Exception as e:
-        st.warning(f"Error loading schedules: {str(e)}")
-        return []
+    _ = portfolio_id
+    return []
 
 def create_portfolio_schedule(portfolio_id: str, schedule_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Create a scheduled analysis with timeout handling"""
-    try:
-        response = requests.post(f"{portfolio_api_url}/portfolios/{portfolio_id}/schedules",
-                               json=schedule_data,
-                               headers=get_auth_headers(),
-                               timeout=30)  # 30 second timeout
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Error creating schedule: {response.json().get('detail', 'Unknown error')}")
-            return None
-    except requests.exceptions.Timeout:
-        st.error("⏰ Creating schedule timed out. Please try again.")
-        return None
-    except Exception as e:
-        st.error(f"Error creating schedule: {str(e)}")
-        return None
+    _ = portfolio_id
+    _ = schedule_data
+    st.warning("Scheduling is not supported via Go API yet for this page (Phase 2/3).")
+    return None
 
 def refresh_symbol_analysis(symbol: str, asset_type: str = "stock") -> bool:
     """Refresh analysis for a symbol with timeout handling"""
+    _ = asset_type
     try:
-        response = requests.post(f"{portfolio_api_url}/symbols/{symbol}/analyze",
-                               json={"asset_type": asset_type},
-                               headers=get_auth_headers(),
-                               timeout=60)  # 60 second timeout for analysis
-        
-        if response.status_code == 200:
-            st.success(f"✅ Analysis refreshed for {symbol}")
-            return True
-        else:
-            st.error(f"Error refreshing analysis: {response.json().get('detail', 'Unknown error')}")
-            return False
-    except requests.exceptions.Timeout:
-        st.error(f"⏰ Analysis refresh for {symbol} timed out. Please try again.")
-        return False
+        go_client.post(
+            "api/v1/admin/refresh",
+            json_data={
+                "symbols": [symbol],
+                "data_types": ["price_historical", "indicators"],
+                "force": True,
+            },
+            timeout=180,
+        )
+        return True
     except Exception as e:
         st.error(f"Error refreshing analysis: {str(e)}")
         return False
@@ -397,37 +374,35 @@ def refresh_symbol_analysis(symbol: str, asset_type: str = "stock") -> bool:
 # ========================================
 
 def show_login_page():
-    """Show login page"""
-    st.markdown("""
+    """Show login page with session persistence info"""
+    st.markdown(f"""
     <div style="text-align: center; padding: 4rem; color: #666;">
         <h1>🔐 Portfolio Management System</h1>
-        <p>Please login to access your portfolios</p>
+        <p>Select a user to access portfolios</p>
     </div>
     """, unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col2:
-        with st.form("login_form"):
-            st.markdown("### Login")
-            
-            username = st.text_input("Username", placeholder="Enter your username")
-            password = st.text_input("Password", type="password", placeholder="Enter your password")
-            
-            if st.form_submit_button("Login", type="primary", use_container_width=True):
-                if username and password:
-                    if login_user(username, password):
-                        st.success("✅ Login successful!")
-                        st.rerun()
-                else:
-                    st.error("Please enter both username and password")
-        
-        st.markdown("---")
-        st.markdown("#### 📝 Default Admin Account")
-        st.code("""
-Username: admin
-Password: admin123
-        """)
+
+    users = []
+    try:
+        users = _load_users()
+    except Exception as e:
+        st.error(f"❌ Failed to load users from Go API: {e}")
+        return
+
+    user_options = {
+        f"{u.get('username', 'unknown')} ({u.get('subscription_level', 'basic')})": u
+        for u in users
+        if u and (u.get('user_id') or u.get('id'))
+    }
+
+    if not user_options:
+        st.error("No users returned from Go API")
+        return
+
+    selected_label = st.selectbox("User", options=list(user_options.keys()), key="enh_portfolio_user_select")
+    if st.button("Continue", type="primary", use_container_width=True, key="enh_portfolio_user_continue"):
+        st.session_state.current_user = user_options[selected_label]
+        st.rerun()
 
 def show_portfolio_management_tab(portfolios):
     """Portfolio Management tab with CRUD operations"""
@@ -491,7 +466,7 @@ def show_portfolio_management_tab(portfolios):
                 with col3:
                     if st.button("🗑️ Delete", key=f"mgmt_delete_{holding['symbol']}"):
                         if st.session_state.get(f'confirm_delete_{holding["symbol"]}', False):
-                            success = delete_portfolio_holding(selected_portfolio['id'], holding['symbol'])
+                            success = delete_portfolio_holding(holding.get('id'))
                             if success:
                                 st.success(f"✅ {holding['symbol']} deleted successfully!")
                                 st.rerun()
@@ -540,56 +515,36 @@ def show_portfolio_management_tab(portfolios):
             if st.session_state.get('show_add_stock', False):
                 show_add_stock_form(selected_portfolio['id'])
 
-def update_portfolio_holding(portfolio_id: str, symbol: str, shares_held: float, average_cost: float, asset_type: str = "stock") -> Optional[Dict[str, Any]]:
+def update_portfolio_holding(holding_id: str, shares_held: float, average_cost: float, asset_type: str = "stock") -> Optional[Dict[str, Any]]:
     """Update a holding in portfolio"""
+    _ = asset_type
     try:
-        url = f"{portfolio_api_url}/portfolios/{portfolio_id}/holdings/{symbol}"
-        
-        response = requests.put(url,
-                              json={
-                                  "shares_held": shares_held,
-                                  "average_cost": average_cost,
-                                  "asset_type": asset_type
-                              },
-                              headers=get_auth_headers(),
-                              timeout=30)
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Error updating holding: {response.json().get('detail', 'Unknown error')}")
+        payload: Dict[str, Any] = {}
+        if shares_held is not None and shares_held > 0:
+            payload["quantity"] = float(shares_held)
+        if average_cost is not None and average_cost > 0:
+            payload["avg_price"] = float(average_cost)
+        if not payload:
             return None
-    except requests.exceptions.Timeout:
-        st.error("⏰ Updating holding timed out. Please try again.")
-        return None
+        return go_client.put(f"api/v1/holdings/{holding_id}", json_data=payload)
     except Exception as e:
         st.error(f"Error updating holding: {str(e)}")
         return None
 
-def delete_portfolio_holding(portfolio_id: str, symbol: str) -> bool:
+def delete_portfolio_holding(holding_id: str) -> bool:
     """Delete a holding from portfolio"""
     try:
-        url = f"{portfolio_api_url}/portfolios/{portfolio_id}/holdings/{symbol}"
-        
-        response = requests.delete(url,
-                                 headers=get_auth_headers(),
-                                 timeout=30)
-        
-        if response.status_code == 200:
-            return True
-        else:
-            st.error(f"Error deleting holding: {response.json().get('detail', 'Unknown error')}")
+        if not holding_id:
             return False
-    except requests.exceptions.Timeout:
-        st.error("⏰ Deleting holding timed out. Please try again.")
-        return False
+        go_client.delete(f"api/v1/holdings/{holding_id}")
+        return True
     except Exception as e:
-        st.error(f"Error deleting holding: {str(e)}")
+        st.error(f"Error deleting holding: {e}")
         return False
 
 def show_edit_stock_form(portfolio_id: str, holding: Dict[str, Any]):
     """Show edit stock form"""
-    with st.form("edit_stock_form"):
+    with st.form(f"edit_stock_form_{holding['symbol']}"):
         st.markdown(f"#### ✏️ Edit {holding['symbol']}")
         
         col1, col2, col3, col4 = st.columns(4)
@@ -610,7 +565,11 @@ def show_edit_stock_form(portfolio_id: str, holding: Dict[str, Any]):
         col1, col2 = st.columns(2)
         with col1:
             if st.form_submit_button("💾 Update Stock", type="primary"):
-                updated_holding = update_portfolio_holding(portfolio_id, holding['symbol'], shares, avg_cost, asset_type)
+                holding_id = holding.get("id")
+                if not holding_id:
+                    st.error("Holding id missing; cannot update")
+                    return
+                updated_holding = update_portfolio_holding(holding_id, shares, avg_cost, asset_type)
                 if updated_holding:
                     st.success(f"✅ {holding['symbol']} updated successfully!")
                     st.session_state.show_edit_stock = False
@@ -624,19 +583,29 @@ def show_edit_stock_form(portfolio_id: str, holding: Dict[str, Any]):
                 st.rerun()
 
 def get_stock_signal(symbol: str) -> str:
-    """Get stock signal (mock implementation - replace with real API call)"""
-    # This is a mock implementation - replace with actual signal API call
-    import random
-    signals = ['BUY', 'SELL', 'HOLD']
-    return random.choice(signals)
+    """Get stock signal from Go API"""
+    try:
+        resp = go_client.get(f"api/v1/signal/{symbol}")
+        if not resp:
+            return "HOLD"
+        if isinstance(resp, dict) and resp.get("signal"):
+            return str(resp.get("signal") or "HOLD").upper()
+        if isinstance(resp, str):
+            return resp.upper()
+        return "HOLD"
+    except Exception:
+        return "HOLD"
 
 def delete_portfolio(portfolio_id: str) -> bool:
     """Delete a portfolio"""
     try:
-        response = requests.delete(f"{portfolio_api_url}/portfolios/{portfolio_id}",
-                                headers=get_auth_headers())
-        return response.status_code == 200
-    except:
+        user = st.session_state.get("current_user") or {}
+        user_id = user.get("user_id") or user.get("id")
+        if not user_id:
+            return False
+        go_client.delete(f"api/v1/portfolio/{user_id}/{portfolio_id}")
+        return True
+    except Exception:
         return False
 
 def show_add_stock_form(portfolio_id: str):
@@ -734,13 +703,505 @@ def show_stock_analysis_tab(portfolios):
         st.info("📋 No holdings in this portfolio. Add stocks to see analysis.")
 
 def show_settings_tab():
-    """Settings tab"""
-    st.markdown("### ⚙️ Settings")
-    st.info("Settings functionality coming soon...")
+    """Comprehensive Settings Tab - Industry Standard Trading System Configuration"""
+    st.markdown("## ⚙️ System Settings")
+    st.markdown("Configure your trading system with institutional-grade settings")
+    
+    # Initialize session state for settings
+    if 'settings' not in st.session_state:
+        st.session_state.settings = {
+            'portfolio': {
+                'risk_tolerance': 'Moderate',
+                'max_position_size': 10.0,
+                'max_portfolio_exposure': 100.0,
+                'rebalancing_frequency': 'Monthly',
+                'sector_concentration_limit': 25.0
+            },
+            'risk_management': {
+                'stop_loss_percentage': 5.0,
+                'take_profit_percentage': 15.0,
+                'max_drawdown_limit': 20.0,
+                'daily_loss_limit': 10.0,
+                'volatility_threshold': 2.0
+            },
+            'trading': {
+                'default_order_type': 'Market',
+                'execution_preference': 'Immediate',
+                'slippage_tolerance': 0.5,
+                'time_in_force': 'Day',
+                'minimum_trade_size': 1000.0
+            },
+            'alerts': {
+                'price_alerts': True,
+                'volume_alerts': True,
+                'portfolio_alerts': True,
+                'risk_alerts': True,
+                'notification_method': 'Email'
+            },
+            'data': {
+                'primary_data_source': 'Yahoo Finance',
+                'backup_data_source': 'Alpha Vantage',
+                'update_frequency': 'Daily',
+                'cache_duration': 3600,
+                'api_rate_limit': 100
+            }
+        }
+    
+    # Settings categories
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 Portfolio", 
+        "⚠️ Risk Management", 
+        "📈 Trading", 
+        "🔔 Alerts", 
+        "🌐 Data & API"
+    ])
+    
+    with tab1:
+        show_portfolio_settings()
+    
+    with tab2:
+        show_risk_management_settings()
+    
+    with tab3:
+        show_trading_settings()
+    
+    with tab4:
+        show_alerts_settings()
+    
+    with tab5:
+        show_data_api_settings()
+
+def show_portfolio_settings():
+    """Portfolio Management Settings"""
+    st.markdown("### 📊 Portfolio Management Settings")
+    st.markdown("Configure portfolio-level parameters and constraints")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🎯 Risk Profile")
+        
+        risk_tolerance = st.selectbox(
+            "Risk Tolerance",
+            ["Conservative", "Moderate", "Aggressive", "Very Aggressive"],
+            index=["Conservative", "Moderate", "Aggressive", "Very Aggressive"].index(
+                st.session_state.settings['portfolio']['risk_tolerance']
+            ),
+            help="Overall risk appetite for portfolio management"
+        )
+        
+        max_position_size = st.slider(
+            "Maximum Position Size (%)",
+            min_value=1.0,
+            max_value=50.0,
+            value=st.session_state.settings['portfolio']['max_position_size'],
+            step=0.5,
+            help="Maximum percentage of portfolio for single position"
+        )
+        
+        max_portfolio_exposure = st.slider(
+            "Maximum Portfolio Exposure (%)",
+            min_value=50.0,
+            max_value=150.0,
+            value=st.session_state.settings['portfolio']['max_portfolio_exposure'],
+            step=5.0,
+            help="Maximum total exposure (includes leverage)"
+        )
+    
+    with col2:
+        st.markdown("#### 🔄 Rebalancing")
+        
+        rebalancing_frequency = st.selectbox(
+            "Rebalancing Frequency",
+            ["Daily", "Weekly", "Monthly", "Quarterly", "Annually"],
+            index=["Daily", "Weekly", "Monthly", "Quarterly", "Annually"].index(
+                st.session_state.settings['portfolio']['rebalancing_frequency']
+            ),
+            help="How often to rebalance portfolio"
+        )
+        
+        sector_concentration_limit = st.slider(
+            "Sector Concentration Limit (%)",
+            min_value=10.0,
+            max_value=60.0,
+            value=st.session_state.settings['portfolio']['sector_concentration_limit'],
+            step=5.0,
+            help="Maximum exposure to any single sector"
+        )
+        
+        st.markdown("#### 📊 Portfolio Summary")
+        st.info(f"""
+        **Current Configuration:**
+        - Risk Profile: {risk_tolerance}
+        - Max Position: {max_position_size}%
+        - Max Exposure: {max_portfolio_exposure}%
+        - Rebalancing: {rebalancing_frequency}
+        - Sector Limit: {sector_concentration_limit}%
+        """)
+    
+    # Update settings
+    if st.button("💾 Save Portfolio Settings", type="primary"):
+        st.session_state.settings['portfolio'].update({
+            'risk_tolerance': risk_tolerance,
+            'max_position_size': max_position_size,
+            'max_portfolio_exposure': max_portfolio_exposure,
+            'rebalancing_frequency': rebalancing_frequency,
+            'sector_concentration_limit': sector_concentration_limit
+        })
+        st.success("✅ Portfolio settings saved!")
+
+def show_risk_management_settings():
+    """Risk Management Settings"""
+    st.markdown("### ⚠️ Risk Management Settings")
+    st.markdown("Configure risk parameters and loss limits")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🛡️ Loss Protection")
+        
+        stop_loss_percentage = st.slider(
+            "Stop Loss Percentage (%)",
+            min_value=1.0,
+            max_value=20.0,
+            value=st.session_state.settings['risk_management']['stop_loss_percentage'],
+            step=0.5,
+            help="Automatic stop loss trigger percentage"
+        )
+        
+        take_profit_percentage = st.slider(
+            "Take Profit Percentage (%)",
+            min_value=5.0,
+            max_value=50.0,
+            value=st.session_state.settings['risk_management']['take_profit_percentage'],
+            step=1.0,
+            help="Automatic take profit trigger percentage"
+        )
+        
+        max_drawdown_limit = st.slider(
+            "Maximum Drawdown Limit (%)",
+            min_value=5.0,
+            max_value=50.0,
+            value=st.session_state.settings['risk_management']['max_drawdown_limit'],
+            step=2.5,
+            help="Maximum portfolio drawdown before action"
+        )
+    
+    with col2:
+        st.markdown("#### 📊 Risk Metrics")
+        
+        daily_loss_limit = st.slider(
+            "Daily Loss Limit (%)",
+            min_value=1.0,
+            max_value=25.0,
+            value=st.session_state.settings['risk_management']['daily_loss_limit'],
+            step=1.0,
+            help="Maximum daily loss before trading halt"
+        )
+        
+        volatility_threshold = st.slider(
+            "Volatility Threshold (σ)",
+            min_value=0.5,
+            max_value=5.0,
+            value=st.session_state.settings['risk_management']['volatility_threshold'],
+            step=0.1,
+            help="Volatility threshold for risk alerts"
+        )
+        
+        st.markdown("#### 🚨 Risk Summary")
+        risk_score = calculate_risk_score(
+            stop_loss_percentage, 
+            take_profit_percentage, 
+            max_drawdown_limit
+        )
+        
+        risk_color = "🟢 Low" if risk_score < 3 else "🟡 Medium" if risk_score < 7 else "🔴 High"
+        st.info(f"""
+        **Risk Assessment: {risk_color}**
+        **Risk Score: {risk_score}/10**
+        
+        - Stop Loss: {stop_loss_percentage}%
+        - Take Profit: {take_profit_percentage}%
+        - Max Drawdown: {max_drawdown_limit}%
+        - Daily Limit: {daily_loss_limit}%
+        - Volatility: {volatility_threshold}σ
+        """)
+    
+    if st.button("💾 Save Risk Settings", type="primary"):
+        st.session_state.settings['risk_management'].update({
+            'stop_loss_percentage': stop_loss_percentage,
+            'take_profit_percentage': take_profit_percentage,
+            'max_drawdown_limit': max_drawdown_limit,
+            'daily_loss_limit': daily_loss_limit,
+            'volatility_threshold': volatility_threshold
+        })
+        st.success("✅ Risk management settings saved!")
+
+def show_trading_settings():
+    """Trading Preferences Settings"""
+    st.markdown("### 📈 Trading Preferences")
+    st.markdown("Configure execution and order preferences")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 📋 Order Configuration")
+        
+        default_order_type = st.selectbox(
+            "Default Order Type",
+            ["Market", "Limit", "Stop Loss", "Stop Limit"],
+            index=["Market", "Limit", "Stop Loss", "Stop Limit"].index(
+                st.session_state.settings['trading']['default_order_type']
+            ),
+            help="Default order type for trades"
+        )
+        
+        execution_preference = st.selectbox(
+            "Execution Preference",
+            ["Immediate", "Best Price", "Lowest Cost", "Fastest"],
+            index=["Immediate", "Best Price", "Lowest Cost", "Fastest"].index(
+                st.session_state.settings['trading']['execution_preference']
+            ),
+            help="Order execution priority"
+        )
+        
+        time_in_force = st.selectbox(
+            "Time in Force",
+            ["Day", "GTC", "IOC", "FOK"],
+            index=["Day", "GTC", "IOC", "FOK"].index(
+                st.session_state.settings['trading']['time_in_force']
+            ),
+            help="Order duration and execution rules"
+        )
+    
+    with col2:
+        st.markdown("#### ⚙️ Execution Parameters")
+        
+        slippage_tolerance = st.slider(
+            "Slippage Tolerance (%)",
+            min_value=0.1,
+            max_value=5.0,
+            value=st.session_state.settings['trading']['slippage_tolerance'],
+            step=0.1,
+            help="Acceptable price slippage"
+        )
+        
+        minimum_trade_size = st.number_input(
+            "Minimum Trade Size ($)",
+            min_value=100.0,
+            max_value=100000.0,
+            value=st.session_state.settings['trading']['minimum_trade_size'],
+            step=100.0,
+            help="Minimum trade size in dollars"
+        )
+        
+        st.markdown("#### 📊 Trading Summary")
+        st.info(f"""
+        **Trading Configuration:**
+        - Order Type: {default_order_type}
+        - Execution: {execution_preference}
+        - Time in Force: {time_in_force}
+        - Slippage: {slippage_tolerance}%
+        - Min Trade: ${minimum_trade_size:,.0f}
+        """)
+    
+    if st.button("💾 Save Trading Settings", type="primary"):
+        st.session_state.settings['trading'].update({
+            'default_order_type': default_order_type,
+            'execution_preference': execution_preference,
+            'time_in_force': time_in_force,
+            'slippage_tolerance': slippage_tolerance,
+            'minimum_trade_size': minimum_trade_size
+        })
+        st.success("✅ Trading settings saved!")
+
+def show_alerts_settings():
+    """Alerts and Notifications Settings"""
+    st.markdown("### 🔔 Alerts & Notifications")
+    st.markdown("Configure alert preferences and notification methods")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🚨 Alert Types")
+        
+        price_alerts = st.checkbox(
+            "Price Alerts",
+            value=st.session_state.settings['alerts']['price_alerts'],
+            help="Alert on significant price movements"
+        )
+        
+        volume_alerts = st.checkbox(
+            "Volume Alerts",
+            value=st.session_state.settings['alerts']['volume_alerts'],
+            help="Alert on unusual volume activity"
+        )
+        
+        portfolio_alerts = st.checkbox(
+            "Portfolio Alerts",
+            value=st.session_state.settings['alerts']['portfolio_alerts'],
+            help="Alert on portfolio rebalancing needs"
+        )
+        
+        risk_alerts = st.checkbox(
+            "Risk Alerts",
+            value=st.session_state.settings['alerts']['risk_alerts'],
+            help="Alert on risk threshold breaches"
+        )
+    
+    with col2:
+        st.markdown("#### 📧 Notification Methods")
+        
+        notification_method = st.selectbox(
+            "Primary Notification Method",
+            ["Email", "SMS", "Push", "Webhook"],
+            index=["Email", "SMS", "Push", "Webhook"].index(
+                st.session_state.settings['alerts']['notification_method']
+            ),
+            help="How to receive notifications"
+        )
+        
+        if notification_method == "Email":
+            email_address = st.text_input(
+                "Email Address",
+                placeholder="trader@example.com",
+                help="Email for notifications"
+            )
+        
+        st.markdown("#### 📊 Alert Summary")
+        active_alerts = sum([price_alerts, volume_alerts, portfolio_alerts, risk_alerts])
+        st.info(f"""
+        **Alert Configuration:**
+        - Active Alerts: {active_alerts}/4
+        - Notification: {notification_method}
+        - Price Alerts: {'✅' if price_alerts else '❌'}
+        - Volume Alerts: {'✅' if volume_alerts else '❌'}
+        - Portfolio Alerts: {'✅' if portfolio_alerts else '❌'}
+        - Risk Alerts: {'✅' if risk_alerts else '❌'}
+        """)
+    
+    if st.button("💾 Save Alert Settings", type="primary"):
+        st.session_state.settings['alerts'].update({
+            'price_alerts': price_alerts,
+            'volume_alerts': volume_alerts,
+            'portfolio_alerts': portfolio_alerts,
+            'risk_alerts': risk_alerts,
+            'notification_method': notification_method
+        })
+        st.success("✅ Alert settings saved!")
+
+def show_data_api_settings():
+    """Data and API Settings"""
+    st.markdown("### 🌐 Data & API Settings")
+    st.markdown("Configure data sources and API parameters")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 📊 Data Sources")
+        
+        primary_data_source = st.selectbox(
+            "Primary Data Source",
+            ["Yahoo Finance", "Alpha Vantage", "Bloomberg", "Reuters"],
+            index=["Yahoo Finance", "Alpha Vantage", "Bloomberg", "Reuters"].index(
+                st.session_state.settings['data']['primary_data_source']
+            ),
+            help="Primary source for market data"
+        )
+        
+        backup_data_source = st.selectbox(
+            "Backup Data Source",
+            ["Alpha Vantage", "Yahoo Finance", "IEX Cloud", "Polygon"],
+            index=["Alpha Vantage", "Yahoo Finance", "IEX Cloud", "Polygon"].index(
+                st.session_state.settings['data']['backup_data_source']
+            ),
+            help="Fallback data source"
+        )
+        
+        update_frequency = st.selectbox(
+            "Update Frequency",
+            ["Real-time", "5 minutes", "15 minutes", "Hourly", "Daily"],
+            index=["Real-time", "5 minutes", "15 minutes", "Hourly", "Daily"].index(
+                st.session_state.settings['data']['update_frequency']
+            ),
+            help="How often to update data"
+        )
+    
+    with col2:
+        st.markdown("#### ⚙️ API Configuration")
+        
+        cache_duration = st.slider(
+            "Cache Duration (seconds)",
+            min_value=60,
+            max_value=86400,
+            value=st.session_state.settings['data']['cache_duration'],
+            step=60,
+            help="How long to cache API responses"
+        )
+        
+        api_rate_limit = st.slider(
+            "API Rate Limit (requests/minute)",
+            min_value=10,
+            max_value=1000,
+            value=st.session_state.settings['data']['api_rate_limit'],
+            step=10,
+            help="Maximum API requests per minute"
+        )
+        
+        st.markdown("#### 📊 Data Summary")
+        st.info(f"""
+        **Data Configuration:**
+        - Primary: {primary_data_source}
+        - Backup: {backup_data_source}
+        - Updates: {update_frequency}
+        - Cache: {cache_duration}s
+        - Rate Limit: {api_rate_limit}/min
+        """)
+    
+    if st.button("💾 Save Data Settings", type="primary"):
+        st.session_state.settings['data'].update({
+            'primary_data_source': primary_data_source,
+            'backup_data_source': backup_data_source,
+            'update_frequency': update_frequency,
+            'cache_duration': cache_duration,
+            'api_rate_limit': api_rate_limit
+        })
+        st.success("✅ Data settings saved!")
+
+def calculate_risk_score(stop_loss, take_profit, max_drawdown):
+    """Calculate risk score based on parameters"""
+    # Simple risk scoring algorithm
+    score = 0
+    
+    # Higher stop loss = lower risk
+    if stop_loss >= 10:
+        score += 1
+    elif stop_loss >= 5:
+        score += 2
+    else:
+        score += 3
+    
+    # Higher take profit = lower risk
+    if take_profit >= 25:
+        score += 1
+    elif take_profit >= 15:
+        score += 2
+    else:
+        score += 3
+    
+    # Higher max drawdown = higher risk
+    if max_drawdown <= 10:
+        score += 1
+    elif max_drawdown <= 20:
+        score += 2
+    else:
+        score += 4
+    
+    return min(score, 10)
 
 def show_portfolio_overview():
     """Show institutional-grade portfolio overview page"""
-    user = st.session_state.current_user
+    user = st.session_state.current_user or {}
     
     # Institutional header with professional styling
     st.markdown(f"""
@@ -753,8 +1214,8 @@ def show_portfolio_overview():
                 <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">Institutional-grade portfolio analysis and management</p>
             </div>
             <div style="text-align: right;">
-                <div style="font-size: 1.2rem; font-weight: 600;">{user['full_name'] or user['username']}</div>
-                <div style="opacity: 0.8;">{user['role'].title()} Account</div>
+                <div style="font-size: 1.2rem; font-weight: 600;">{(user.get('full_name') or user.get('username') or user.get('email') or user.get('user_id') or 'User')}</div>
+                <div style="opacity: 0.8;">{str(user.get('role') or 'user').title()} Account</div>
             </div>
         </div>
     </div>
@@ -785,13 +1246,12 @@ def show_portfolio_overview():
         
         with col1:
             if st.button("📊 Institutional Analysis", type="primary", use_container_width=True, key="overview_analysis"):
-                with st.spinner("Running institutional-grade analysis..."):
+                with st.spinner("Starting portfolio analysis run..."):
                     result = analyze_portfolio(selected_portfolio['id'])
-                    if result and result.get('success'):
-                        st.success(f"✅ Analysis complete! Generated {result['signals_generated']} institutional signals")
-                        st.session_state.last_analysis_result = result
+                    if result and result.get('run_id'):
+                        st.success(f"✅ Analysis run started: {result.get('run_id')}")
                     else:
-                        st.error("❌ Analysis failed")
+                        st.error("❌ Failed to start analysis run")
         
         with col2:
             if st.button("🔄 Refresh Data", use_container_width=True, key="overview_refresh"):
@@ -819,6 +1279,99 @@ def show_portfolio_overview():
         # Show last analysis results with institutional formatting
         if 'last_analysis_result' in st.session_state:
             show_institutional_analysis_results(st.session_state.last_analysis_result)
+
+        st.markdown("### 🧵 Analysis Run Inspector")
+
+        run_id_input = st.text_input(
+            "Run ID",
+            value=st.session_state.get("epa_last_analysis_run_id", ""),
+            key="epa_run_id",
+        )
+
+        auto_col1, auto_col2, auto_col3 = st.columns([1, 1, 2])
+        with auto_col1:
+            auto_refresh = st.checkbox("Auto refresh", value=True, key="epa_auto_refresh")
+        with auto_col2:
+            auto_refresh_seconds = st.number_input("Every (sec)", min_value=1, max_value=30, value=3, step=1, key="epa_auto_refresh_seconds")
+        with auto_col3:
+            st.caption("Polls Go API: GET /api/v1/data-load/runs/:run_id")
+
+        if auto_refresh and run_id_input:
+            try:
+                if hasattr(st, "autorefresh"):
+                    st.autorefresh(interval=int(auto_refresh_seconds) * 1000, key="epa_autorefresh")
+            except Exception:
+                pass
+
+        col_a, col_b, col_c = st.columns([1, 1, 2])
+        with col_a:
+            fetch_latest_clicked = st.button("Fetch latest", key="epa_fetch_latest")
+        with col_b:
+            show_notifications = st.checkbox("Show notifications", value=False, key="epa_show_notifications")
+        with col_c:
+            event_view = st.selectbox("Events view", options=["All", "Errors only"], index=0, key="epa_event_view")
+
+        if fetch_latest_clicked and run_id_input:
+            try:
+                st.session_state["epa_last_run_details"] = fetch_run(run_id_input)
+            except Exception as e:
+                st.error(f"Failed to fetch run: {e}")
+
+        if auto_refresh and run_id_input:
+            try:
+                details_now = fetch_run(run_id_input)
+                if isinstance(details_now, dict) and details_now.get("success"):
+                    st.session_state["epa_last_run_details"] = details_now
+            except Exception:
+                pass
+
+        details = st.session_state.get("epa_last_run_details")
+        if isinstance(details, dict) and details:
+            run_obj = details.get("run") or {}
+            status = str((run_obj or {}).get("status") or "")
+            started_at = _format_ts((run_obj or {}).get("started_at"))
+            finished_at = _format_ts((run_obj or {}).get("finished_at"))
+
+            st.markdown("#### Run")
+            st.write({
+                "run_id": (run_obj or {}).get("run_id"),
+                "status": status,
+                "started_at": started_at,
+                "finished_at": finished_at,
+            })
+
+            events = details.get("events") or []
+            if not isinstance(events, list):
+                events = []
+            if event_view == "Errors only":
+                events = [e for e in events if str((e or {}).get("level") or "").lower() == "error"]
+
+            st.markdown(f"#### Events ({len(events)})")
+            if events:
+                rows = []
+                for e in events:
+                    if not isinstance(e, dict):
+                        continue
+                    rows.append({
+                        "ts": _format_ts(e.get("event_ts")),
+                        "level": e.get("level"),
+                        "operation": e.get("operation"),
+                        "symbol": e.get("symbol"),
+                        "message": e.get("message"),
+                        "error": e.get("error_message"),
+                    })
+                df = pd.DataFrame(rows)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.caption("No events yet.")
+
+            if show_notifications and run_id_input:
+                st.markdown("#### Notifications (by correlation_id=run_id)")
+                try:
+                    n = fetch_run_notifications(run_id_input)
+                    st.json(n)
+                except Exception as e:
+                    st.error(f"Failed to fetch notifications: {e}")
 
 def show_create_portfolio_form(location: str = "main"):
     """Show create portfolio form"""
@@ -1089,7 +1642,7 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
             <h4 style="margin: 0; color: #0c4a6e;">💰 Initial Capital</h4>
             <div style="font-size: 1.5rem; font-weight: 700; color: #0284c7;">${:.2f}</div>
         </div>
-        """.format(float(portfolio.get('initial_capital', 0))), unsafe_allow_html=True)
+        """.format(_safe_float(portfolio.get('initial_capital'), 0.0)), unsafe_allow_html=True)
     
     with col2:
         st.markdown("""
@@ -1134,8 +1687,8 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
         st.markdown("### 📋 Portfolio Holdings")
         
         # Holdings summary
-        total_value = sum(float(h.get('market_value', 0)) for h in holdings if h.get('market_value'))
-        total_cost = sum(float(h['average_cost']) * float(h['shares_held']) for h in holdings if h.get('average_cost') and h.get('shares_held'))
+        total_value = sum(_safe_float(h.get('market_value'), 0.0) for h in holdings)
+        total_cost = sum(_safe_float(h.get('average_cost'), 0.0) * _safe_float(h.get('shares_held'), 0.0) for h in holdings)
         total_return = total_value - total_cost
         total_return_pct = (total_return / total_cost * 100) if total_cost > 0 else 0
         
@@ -1148,7 +1701,7 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                 <div style="font-size: 0.875rem; color: #166534;">Total Value</div>
                 <div style="font-size: 1.25rem; font-weight: 700; color: #16a34a;">${:,.2f}</div>
             </div>
-            """.format(float(total_value) if total_value else 0), unsafe_allow_html=True)
+            """.format(_safe_float(total_value, 0.0)), unsafe_allow_html=True)
         
         with col2:
             st.markdown("""
@@ -1156,7 +1709,7 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                 <div style="font-size: 0.875rem; color: #991b1b;">Total Cost</div>
                 <div style="font-size: 1.25rem; font-weight: 700; color: #dc2626;">${:,.2f}</div>
             </div>
-            """.format(float(total_cost) if total_cost else 0), unsafe_allow_html=True)
+            """.format(_safe_float(total_cost, 0.0)), unsafe_allow_html=True)
         
         with col3:
             color = "#16a34a" if total_return >= 0 else "#dc2626"
@@ -1192,9 +1745,23 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                 st.progress(progress, text=f"Processing holdings {i+len(batch)}/{len(holdings)}...")
             
             for holding in batch:
-                market_value = float(holding.get('market_value', 0)) if holding.get('market_value') else 0
-                average_cost = float(holding['average_cost']) if isinstance(holding['average_cost'], str) else holding['average_cost']
-                shares_held = float(holding['shares_held']) if isinstance(holding['shares_held'], str) else holding['shares_held']
+                market_value = _safe_float(holding.get('market_value'), 0.0)
+                average_cost = _safe_float(
+                    holding.get('average_cost')
+                    if holding.get('average_cost') is not None
+                    else holding.get('avg_price')
+                    if holding.get('avg_price') is not None
+                    else holding.get('avg_entry_price')
+                    if holding.get('avg_entry_price') is not None
+                    else holding.get('avg_cost'),
+                    0.0,
+                )
+                shares_held = _safe_float(
+                    holding.get('shares_held')
+                    if holding.get('shares_held') is not None
+                    else holding.get('quantity'),
+                    0.0,
+                )
                 cost_basis = average_cost * shares_held
                 unrealized_pnl = market_value - cost_basis
                 unrealized_pct = (unrealized_pnl / cost_basis * 100) if cost_basis > 0 else 0
@@ -1203,11 +1770,11 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                     'Symbol': holding.get('symbol', 'N/A'),
                     'Shares': format_shares(shares_held),
                     'Avg Cost': format_currency(average_cost),
-                    'Current Price': format_currency(holding.get('current_price', 0)),
+                    'Current Price': format_currency(_safe_float(holding.get('current_price'), 0.0)),
                     'Market Value': format_currency(market_value),
                     'Cost Basis': format_currency(cost_basis),
                     'P&L %': format_percentage(unrealized_pct),
-                    'Weight': f"{(float(market_value)/float(total_value)*100):.2f}%" if total_value and market_value else "0.00%"
+                    'Weight': f"{((_safe_float(market_value, 0.0) / _safe_float(total_value, 0.0)) * 100):.2f}%" if _safe_float(total_value, 0.0) > 0 and _safe_float(market_value, 0.0) > 0 else "0.00%"
                 })
         
         if holdings_data:
@@ -1222,7 +1789,7 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                     color = '#dc2626'
                 return f'color: {color}'
             
-            # Display the holdings table without View Analysis column
+            # Display the dataframe without View Analysis column
             display_columns = ['Symbol', 'Shares', 'Avg Cost', 'Current Price', 'Market Value', 'Cost Basis', 'P&L %', 'Weight']
             df_display = df_holdings[display_columns]
             
@@ -1264,7 +1831,7 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
             # Create allocation pie chart
             fig = go.Figure(data=[go.Pie(
                 labels=[h['symbol'] for h in holdings],
-                values=[float(h.get('market_value', 0)) for h in holdings],
+                values=[_safe_float(h.get('market_value'), 0.0) for h in holdings],
                 hole=0.3,
                 textinfo='label+percent',
                 textposition='outside'
@@ -1458,7 +2025,7 @@ def load_all_symbol_data(symbol: str):
     all_data_types = [
         "price_historical",
         "price_current", 
-        "price_intraday_15m",
+        "price_intraday_5m",
         "fundamentals",
         "indicators",
         "news",
@@ -1468,7 +2035,7 @@ def load_all_symbol_data(symbol: str):
     
     with st.spinner(f"Loading all data for {symbol} ({', '.join(all_data_types)})..."):
         try:
-            response = python_client.post("api/v1/refresh", json_data={
+            response = go_client.post("api/v1/admin/refresh", json_data={
                 "symbols": [symbol],
                 "data_types": all_data_types,
                 "force": True,  # Always force refresh for Load All Data
@@ -1509,7 +2076,7 @@ def load_all_portfolio_data(portfolio_id: str):
     all_data_types = [
         "price_historical",
         "price_current", 
-        "price_intraday_15m",
+        "price_intraday_5m",
         "fundamentals",
         "indicators",
         "news",
@@ -1519,7 +2086,7 @@ def load_all_portfolio_data(portfolio_id: str):
     
     with st.spinner(f"Loading all data for {len(symbols)} symbols ({', '.join(all_data_types)})..."):
         try:
-            response = python_client.post("api/v1/refresh", json_data={
+            response = go_client.post("api/v1/admin/refresh", json_data={
                 "symbols": symbols,
                 "data_types": all_data_types,
                 "force": True,  # Always force refresh for Load All Data
@@ -1547,7 +2114,7 @@ def load_portfolio_data(portfolio_id: str):
         
         with st.spinner(f"Loading data for {len(symbols)} symbols..."):
             try:
-                response = python_client.post("api/v1/refresh", json_data={
+                response = go_client.post("api/v1/admin/refresh", json_data={
                     "symbols": symbols,
                     "data_types": ["price_historical", "indicators"],
                     "force": True
@@ -1633,7 +2200,7 @@ def get_symbol_analysis(symbol: str, asset_type: str = "stock"):
             "asset_type": asset_type
         }
         
-        response = python_client.post("api/v1/universal/signal/universal", json_data=payload)
+        response = go_client.post("api/v1/admin/universal/signal/universal", json_data=payload)
         
         if response and response.get("success"):
             return response["data"]
@@ -1645,14 +2212,21 @@ def get_symbol_analysis(symbol: str, asset_type: str = "stock"):
 
 def refresh_symbol_analysis(symbol: str, asset_type: str = "stock"):
     """Refresh analysis for a specific symbol"""
-    with st.spinner(f"Refreshing analysis for {symbol}..."):
-        analysis_data = get_symbol_analysis(symbol, asset_type)
-        
-        if analysis_data and not analysis_data.get('error'):
-            st.success(f"✅ Analysis refreshed for {symbol}!")
-            st.session_state[f"analysis_{symbol}"] = analysis_data
-        else:
-            st.error(f"❌ Error refreshing {symbol}: {analysis_data.get('error', 'Unknown error')}")
+    _ = asset_type
+    try:
+        go_client.post(
+            "api/v1/admin/refresh",
+            json_data={
+                "symbols": [symbol],
+                "data_types": ["price_historical", "indicators"],
+                "force": True,
+            },
+            timeout=180,
+        )
+        return True
+    except Exception as e:
+        st.error(f"Error refreshing analysis: {str(e)}")
+        return False
 
 def show_symbol_analysis(symbol: str):
     """Show detailed analysis for a symbol using shared component"""
@@ -1673,6 +2247,7 @@ def show_symbol_analysis(symbol: str):
     with col3:
         if st.button("← Back to Portfolio", use_container_width=True):
             st.session_state.show_symbol_analysis = False
+            st.session_state.selected_symbol_for_analysis = None
             st.rerun()
     
     st.markdown("---")
@@ -1691,7 +2266,7 @@ def show_symbol_analysis(symbol: str):
     if analysis_data and not analysis_data.get('error'):
         display_signal_analysis(symbol, analysis_data, show_header=True, show_debug=True)
     else:
-        display_no_data_message(symbol, analysis_data.get('error') if analysis_data else None)
+        display_no_data_message(symbol, analysis_data.get('error') if analysis_data else None, context="main")
     
     # Add Fundamentals Analysis section
     st.markdown("---")
@@ -1705,53 +2280,25 @@ def show_symbol_analysis(symbol: str):
         if analysis_data and not analysis_data.get('error'):
             st.info("Technical analysis shown above")
         else:
-            display_no_data_message(symbol, analysis_data.get('error') if analysis_data else None)
+            display_no_data_message(symbol, analysis_data.get('error') if analysis_data else None, context="tab1")
     
     with tab2:
         # Fundamentals analysis
         try:
-            with st.spinner(f"Loading fundamentals analysis for {symbol}..."):
-                response = requests.get(f"{python_api_url}/api/v1/growth-quality/growth-health/{symbol}")
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    
-                    # Validate that we have real data (not placeholder)
-                    if data.get('symbol') and data.get('structural_risk'):
-                        _render_fundamentals_analysis(data)
-                        
-                        # Add comprehensive analysis section
-                        st.markdown("---")
-                        _render_comprehensive_fundamentals_analysis(symbol)
-                        
-                    else:
-                        st.error("❌ Incomplete fundamentals data received")
-                        st.info("💡 Try loading fresh data using the 'Load All Data' button")
-                        
-                        # Show retry button
-                        if st.button("🔄 Retry Fundamentals Analysis", key=f"retry_fundamentals_{symbol}"):
-                            st.rerun()
-                            
-                elif response.status_code == 404:
-                    st.error(f"❌ No fundamentals data available for {symbol}")
-                    st.info("💡 Please load fundamentals data first using the 'Load All Data' button")
-                    
-                    # Show retry button
-                    if st.button("🔄 Load Data & Retry", key=f"load_retry_fundamentals_{symbol}"):
-                        # Trigger data load
-                        load_all_symbol_data(symbol)
-                        st.rerun()
-                        
+            cached = get_cached_fundamentals_analysis(symbol)
+            if cached:
+                _render_fundamentals_analysis(cached)
+            else:
+                with st.spinner(f"Loading fundamentals analysis for {symbol}..."):
+                    response = go_client.get(f"api/v1/admin/growth-quality/growth-health/{symbol}")
+
+                if response and isinstance(response, dict):
+                    data = response
+                    cache_fundamentals_analysis(symbol, data)
+                    _render_fundamentals_analysis(data)
                 else:
-                    error_detail = "Unknown error"
-                    try:
-                        error_json = response.json()
-                        error_detail = error_json.get('detail', str(error_json))
-                    except:
-                        error_detail = response.text
-                    
-                    st.error(f"❌ Failed to load fundamentals analysis: {response.status_code}")
-                    st.error(f"🔍 Details: {error_detail}")
+                    err = response.get('error', 'Unknown error') if isinstance(response, dict) else 'Unknown error'
+                    st.error(f"❌ Error: {err}")
                     
                     # Show retry button
                     if st.button("🔄 Retry Analysis", key=f"retry_error_fundamentals_{symbol}"):
@@ -1780,17 +2327,14 @@ def _render_comprehensive_fundamentals_analysis(symbol: str):
     """Render comprehensive fundamentals analysis with professional visualizations"""
     try:
         # Fetch early warning analysis
-        response = requests.get(f"{python_api_url}/api/v1/growth-quality/early-warning/{symbol}")
+        analysis_data = go_client.get(f"api/v1/admin/growth-quality/early-warning/{symbol}")
         
-        if response.status_code == 200:
-            analysis_data = response.json()
+        if analysis_data and isinstance(analysis_data, dict):
             _render_fundamentals_risk_overview(analysis_data, symbol)
             _render_fundamentals_detailed_flags(analysis_data)
             _render_fundamentals_metrics_dashboard(analysis_data)
-        elif response.status_code == 404:
-            st.warning(f"⚠️ No fundamentals data available for {symbol}")
         else:
-            st.error(f"❌ Failed to load comprehensive analysis for {symbol} (HTTP {response.status_code})")
+            st.warning(f"⚠️ No fundamentals data available for {symbol}")
             
     except requests.exceptions.RequestException as e:
         st.error(f"❌ Network error loading analysis for {symbol}: {str(e)}")
@@ -1814,9 +2358,9 @@ def _render_fundamentals_risk_overview(analysis_data: Dict[str, Any], symbol: st
     }
     
     risk_descriptions = {
-        'GREEN': 'Low Risk - Healthy growth fundamentals',
-        'YELLOW': 'Medium Risk - Early warning signs detected',
-        'RED': 'High Risk - Structural breakdown detected'
+        'GREEN': 'Low Structural Risk - Balance sheet strong, revenue quality clean',
+        'YELLOW': 'Medium Structural Risk - Some concerns but no critical issues',
+        'RED': 'High Structural Risk - Structural issues or red flags detected'
     }
     
     # Main risk card
@@ -2142,8 +2686,14 @@ def _render_fundamentals_analysis(data: Dict[str, Any]):
 # ========================================
 
 def main():
-    """Main page logic"""
+    """Main page logic with session persistence"""
     setup_page_config("Portfolio Analysis", "📊")
+    
+    # Initialize session state variables if they don't exist
+    if 'session_initialized' not in st.session_state:
+        st.session_state.session_initialized = True
+        if 'current_user' not in st.session_state:
+            st.session_state.current_user = None
     
     # Custom CSS for institutional appearance
     st.markdown("""
@@ -2306,82 +2856,109 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     
-    # Check authentication
-    if not is_authenticated():
-        show_login_page()
-    else:
-        # Sidebar with user info only
-        with st.sidebar:
-            user = st.session_state.current_user
-            
-            st.markdown(f"### 👤 {user['full_name'] or user['username']}")
-            st.caption(f"Role: {user['role'].title()}")
-            
-            st.divider()
-            
-            if st.button("🔄 Refresh Data", use_container_width=True):
-                if 'selected_portfolio' in st.session_state:
-                    load_portfolio_data(st.session_state.selected_portfolio)
-            
-            if st.button("🚪 Logout", use_container_width=True):
-                logout_user()
+    # Default user (no login selector on this page)
+    # Option A: always use the base portfolio owner user_id
+    st.session_state.current_user = _resolve_default_user()
+    
+    # User is authenticated - show full interface
+    # Sidebar with user info and session status
+    with st.sidebar:
+        user = st.session_state.current_user or {}
+
+        st.markdown(
+            f"### 👤 {(user.get('full_name') or user.get('username') or user.get('email') or user.get('user_id') or 'User')}"
+        )
+        st.caption(f"Role: {str(user.get('role') or 'user').title()}")
         
-        # Main content with tabs
-        portfolios = get_user_portfolios()
-        
-        if not portfolios:
-            # Show create portfolio form for first-time users
-            show_portfolio_overview()
-            
-            st.markdown("""
-            <div style="background: #f8fafc; padding: 3rem; border-radius: 15px; text-align: center; border: 2px dashed #cbd5e1;">
-                <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
-                <h2 style="color: #475569; margin-bottom: 1rem;">No Portfolios Yet</h2>
-                <p style="color: #64748b; margin-bottom: 2rem;">Create your first portfolio to start institutional-grade analysis</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            show_create_portfolio_form("first_portfolio")
-        else:
-            # Tabbed interface for portfolio management
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "📊 Portfolio Overview", 
-                "📋 Portfolio Management", 
-                "📈 Stock Analysis", 
-                "🏢 Stock Symbols",
-                "⚙️ Settings"
-            ])
-            
-            # Check if symbol analysis is requested and show it instead of tabs
-            if st.session_state.get('show_symbol_analysis', False):
-                symbol = st.session_state.get('selected_symbol_for_analysis')
-                if symbol:
-                    # Clear any cached analysis for this symbol to ensure fresh data
-                    cache_key = f"analysis_{symbol}"
-                    if cache_key in st.session_state:
-                        del st.session_state[cache_key]
-                    
-                    # Always show fresh analysis for the selected symbol
-                    show_symbol_analysis(symbol)
+        # Show session status
+        if 'login_time' in st.session_state:
+            try:
+                login_time = datetime.fromisoformat(st.session_state.login_time)
+                hours_since_login = (datetime.now() - login_time).total_seconds() / 3600
+                remaining_hours = 24 - hours_since_login
+                
+                if remaining_hours > 0:
+                    st.success(f"🔓 Session active")
+                    st.caption(f"⏰ Expires in {remaining_hours:.1f} hours")
                 else:
-                    st.error("No symbol selected for analysis")
-                    st.session_state.show_symbol_analysis = False
-                    st.rerun()
+                    st.warning("⚠️ Session expired")
+                    if st.button("🔄 Refresh Session", use_container_width=True):
+                        logout_user()
+            except:
+                st.warning("⚠️ Session status unknown")
+        
+        st.divider()
+        
+        if st.button("🔄 Refresh Data", use_container_width=True):
+            if 'selected_portfolio' in st.session_state:
+                load_portfolio_data(st.session_state.selected_portfolio)
+        
+        # Logout removed from this page (no login state)
+    
+    # Main content with tabs
+    portfolios = get_user_portfolios()
+    
+    if not portfolios:
+        # Show create portfolio form for first-time users
+        show_portfolio_overview()
+        
+        st.markdown("""
+        <div style="background: #f8fafc; padding: 3rem; border-radius: 15px; text-align: center; border: 2px dashed #cbd5e1;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">📋</div>
+            <h2 style="color: #475569; margin-bottom: 1rem;">No Portfolios Yet</h2>
+            <p style="color: #64748b; margin-bottom: 2rem;">Create your first portfolio to start institutional-grade analysis</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        show_create_portfolio_form("first_portfolio")
+    else:
+        # Tabbed interface for portfolio management
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+            "📊 Portfolio Overview", 
+            "📋 Portfolio Management", 
+            "📈 Stock Analysis", 
+            "🏢 Stock Symbols",
+            "📊 Analyst Ratings",
+            "🔔 Alert Management",
+            "⚙️ Settings"
+        ])
+        
+        # Check if symbol analysis is requested and show it instead of tabs
+        if st.session_state.get('show_symbol_analysis', False):
+            symbol = st.session_state.get('selected_symbol_for_analysis')
+            if symbol:
+                # Clear any cached analysis for this symbol to ensure fresh data
+                cache_key = f"analysis_{symbol}"
+                if cache_key in st.session_state:
+                    del st.session_state[cache_key]
+                
+                # Always show fresh analysis for the selected symbol
+                show_symbol_analysis(symbol)
             else:
-                with tab1:
-                    show_portfolio_overview_tab(portfolios)
-                
-                with tab2:
-                    show_portfolio_management_tab(portfolios)
-                
-                with tab3:
-                    show_stock_analysis_tab(portfolios)
-                
-                with tab4:
-                    show_stock_symbols_tab()
-                
-                with tab5:
-                    show_settings_tab()
+                st.error("No symbol selected for analysis")
+                st.session_state.show_symbol_analysis = False
+                st.rerun()
+        else:
+            with tab1:
+                show_portfolio_overview_tab(portfolios)
+            
+            with tab2:
+                show_portfolio_management_tab(portfolios)
+            
+            with tab3:
+                show_stock_analysis_tab(portfolios)
+            
+            with tab4:
+                show_stock_symbols_tab()
+            
+            with tab5:
+                show_analyst_ratings_tab()
+            
+            with tab6:
+                show_alert_management_tab()
+            
+            with tab7:
+                show_settings_tab()
 
 def show_stock_symbols_tab():
     """Stock Symbols Management Tab - Add and view stock symbols"""
@@ -2392,7 +2969,97 @@ def show_stock_symbols_tab():
     if 'add_symbol_form_visible' not in st.session_state:
         st.session_state.add_symbol_form_visible = False
     
+    # Initialize session state for data loading
+    if 'data_loading_config' not in st.session_state:
+        st.session_state.data_loading_config = {
+            'auto_refresh': False,
+            'refresh_interval': 15,  # minutes
+            'last_refresh': None,
+            'loading_status': 'idle'
+        }
+    
+    # Data Loading Controls Section
+    st.markdown("### 🔄 Data Loading Configuration")
+    st.markdown("Configure automatic data loading for all stock symbols")
+    
+    # Get scheduler status
+    scheduler_status = get_scheduler_status()
+    
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+    
+    with col1:
+        auto_refresh = st.checkbox(
+            "🔄 Auto-refresh Data",
+            value=scheduler_status.get('is_running', False),
+            help="Enable automatic data refresh for all symbols (background service)"
+        )
+    
+    with col2:
+        refresh_interval = st.selectbox(
+            "⏱️ Refresh Interval",
+            options=[5, 10, 15, 30, 60],
+            index=[5, 10, 15, 30, 60].index(
+                st.session_state.data_loading_config['refresh_interval']
+            ),
+            help="Minutes between automatic refreshes (configurable per data type)"
+        )
+    
+    with col3:
+        # Show scheduler stats
+        if scheduler_status.get('is_running'):
+            st.info(f"🟢 Active: {scheduler_status.get('active_schedules', 0)} schedules")
+        else:
+            st.info(f"🔴 Inactive: {scheduler_status.get('total_scheduled', 0)} schedules")
+    
+    with col4:
+        # Scheduler control buttons
+        if scheduler_status.get('is_running'):
+            if st.button("⏹️ Stop", use_container_width=True):
+                stop_scheduler()
+        else:
+            if st.button("▶️ Start", use_container_width=True):
+                start_scheduler()
+    
+    # Manual Load All Stocks Button
+    col_load1, col_load2, col_load3 = st.columns([2, 1, 1])
+    
+    with col_load1:
+        if st.button("🚀 Load All Stocks Data", type="primary", use_container_width=True):
+            load_all_stocks_data()
+    
+    with col_load2:
+        if st.button("🔄 Quick Refresh", use_container_width=True):
+            load_all_stocks_data(quick_mode=True)
+    
+    with col_load3:
+        if st.button("📋 Schedule All", use_container_width=True):
+            schedule_all_symbols()
+    
+    # Show scheduler details
+    if scheduler_status.get('is_running'):
+        st.markdown("### 📊 Scheduler Status")
+        
+        col_sched1, col_sched2, col_sched3 = st.columns(3)
+        
+        with col_sched1:
+            st.metric("🔄 Active Schedules", scheduler_status.get('active_schedules', 0))
+        
+        with col_sched2:
+            st.metric("⏰ Next Refresh", 
+                     format_time(scheduler_status.get('next_refresh')) if scheduler_status.get('next_refresh') else "N/A")
+        
+        with col_sched3:
+            st.metric("📈 Total Symbols", scheduler_status.get('total_scheduled', 0))
+        
+        # Show upcoming refreshes
+        upcoming = get_upcoming_refreshes()
+        if upcoming.get('upcoming_refreshes'):
+            st.markdown("#### 📅 Upcoming Refreshes")
+            for refresh in upcoming['upcoming_refreshes'][:5]:
+                st.info(f"🕐 {refresh['symbol']} - {refresh['data_type']} at {format_time(refresh['next_refresh'])}")
+    
     # Add new symbol section
+    st.markdown("---")
     col1, col2 = st.columns([3, 1])
     
     with col1:
@@ -2440,6 +3107,765 @@ def show_stock_symbols_tab():
     else:
         st.warning("⚠️ No stock symbols found in the system")
         st.info("💡 Add your first stock symbol using the form above")
+    
+    # Update session state
+    st.session_state.data_loading_config.update({
+        'auto_refresh': auto_refresh,
+        'refresh_interval': refresh_interval
+    })
+
+def show_analyst_ratings_tab():
+    """Analyst Ratings Tab - Industry standard page with smart caching"""
+    st.markdown("## 📊 Analyst Ratings & Grades")
+    st.markdown("View analyst ratings, stock grades, and recent changes for any symbol")
+    
+    # Symbol selection with improved UX
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        # Get available stocks from Go API (Redis cached)
+        available_stocks = get_all_stock_symbols()
+        
+        if available_stocks:
+            # Create symbol options with company names for better UX
+            stock_options = {}
+            for stock in available_stocks:
+                symbol = stock.get('symbol', '')
+                company = stock.get('company_name', '')
+                if symbol and company:
+                    display_name = f"{symbol} - {company[:50]}{'...' if len(company) > 50 else ''}"
+                    stock_options[display_name] = symbol
+                elif symbol:
+                    stock_options[symbol] = symbol
+            
+            # Sort options by symbol
+            sorted_options = dict(sorted(stock_options.items(), key=lambda x: x[1]))
+            
+            # Add search functionality
+            search_term = st.text_input("🔎 Search Symbols", placeholder="Type to search...", key="symbol_search")
+            
+            if search_term:
+                # Filter options based on search
+                filtered_options = {
+                    k: v for k, v in sorted_options.items() 
+                    if search_term.upper() in v.upper() or search_term.upper() in k.upper()
+                }
+                
+                if filtered_options:
+                    selected_display = st.selectbox(
+                        "🔍 Select Stock Symbol",
+                        options=list(filtered_options.keys()),
+                        key="analyst_ratings_symbol_filtered",
+                        help="Select a stock symbol to view analyst ratings and grades"
+                    )
+                    selected_symbol = filtered_options.get(selected_display, "")
+                else:
+                    st.warning("No symbols found matching your search.")
+                    selected_symbol = ""
+            else:
+                # Show top 100 popular symbols by default for performance
+                popular_options = dict(list(sorted_options.items())[:100])
+                selected_display = st.selectbox(
+                    "🔍 Select Stock Symbol (Top 100)",
+                    options=list(popular_options.keys()),
+                    key="analyst_ratings_symbol_select",
+                    help="Select a stock symbol to view analyst ratings and grades. Use search above to find more symbols."
+                )
+                selected_symbol = popular_options.get(selected_display, "")
+                
+                # Show how many more symbols are available
+                if len(sorted_options) > 100:
+                    st.info(f"📊 Showing 100 of {len(sorted_options)} available symbols. Use search to find more.")
+        else:
+            # Fallback to text input if API fails
+            selected_symbol = st.text_input(
+                "🔍 Enter Symbol",
+                placeholder="e.g., AAPL, MSFT, GOOGL",
+                key="analyst_ratings_symbol_fallback",
+                help="Enter a stock symbol to view analyst ratings and grades"
+            ).upper()
+    
+    with col2:
+        # Load ratings button
+        if selected_symbol and st.button("🔄 Load Ratings", use_container_width=True, help="Load latest ratings for selected symbol"):
+            # Clear cache and load fresh data
+            clear_ratings_cache(selected_symbol)
+            load_ratings_for_symbol(selected_symbol)
+    
+    if selected_symbol:
+        st.markdown(f"### 📈 Analyst Ratings for **{selected_symbol}**")
+        
+        # Create tabs for different rating views
+        tab1, tab2, tab3 = st.tabs([
+            "📊 Latest Grades", 
+            "📈 Recent Changes", 
+            "🔄 Load New Data"
+        ])
+        
+        with tab1:
+            show_latest_grades_cached(selected_symbol)
+        
+        with tab2:
+            show_recent_grade_changes_cached(selected_symbol)
+        
+        with tab3:
+            show_ratings_data_loading(selected_symbol)
+
+def clear_ratings_cache(symbol: str):
+    """Clear cached ratings data for a symbol"""
+    cache_keys = [
+        f"grades_{symbol}",
+        f"recent_changes_{symbol}",
+        f"last_updated_{symbol}"
+    ]
+    for key in cache_keys:
+        if key in st.session_state:
+            del st.session_state[key]
+
+def get_cached_grades(symbol: str, cache_duration_minutes: int = 30):
+    """Get cached grades data if available and fresh"""
+    cache_key = f"grades_{symbol}"
+    last_updated_key = f"last_updated_{symbol}"
+    
+    if cache_key in st.session_state and last_updated_key in st.session_state:
+        last_updated = st.session_state[last_updated_key]
+        import datetime
+        if datetime.datetime.now() - last_updated < datetime.timedelta(minutes=cache_duration_minutes):
+            return st.session_state[cache_key]
+    return None
+
+def cache_grades(symbol: str, data):
+    """Cache grades data with timestamp"""
+    import datetime
+    st.session_state[f"grades_{symbol}"] = data
+    st.session_state[f"last_updated_{symbol}"] = datetime.datetime.now()
+
+def get_cached_recent_changes(symbol: str, cache_duration_minutes: int = 30):
+    """Get cached recent changes data if available and fresh"""
+    cache_key = f"recent_changes_{symbol}"
+    last_updated_key = f"last_updated_{symbol}"
+    
+    if cache_key in st.session_state and last_updated_key in st.session_state:
+        last_updated = st.session_state[last_updated_key]
+        import datetime
+        if datetime.datetime.now() - last_updated < datetime.timedelta(minutes=cache_duration_minutes):
+            return st.session_state[cache_key]
+    return None
+
+def cache_recent_changes(symbol: str, data):
+    """Cache recent changes data with timestamp"""
+    import datetime
+    st.session_state[f"recent_changes_{symbol}"] = data
+    st.session_state[f"last_updated_{symbol}"] = datetime.datetime.now()
+
+
+def get_cached_fundamentals_analysis(symbol: str, cache_duration_minutes: int = 60) -> Optional[Dict[str, Any]]:
+    cache_key = f"fundamentals_{symbol}"
+    last_updated_key = f"fundamentals_last_updated_{symbol}"
+
+    if cache_key in st.session_state and last_updated_key in st.session_state:
+        last_updated = st.session_state[last_updated_key]
+        import datetime
+
+        if datetime.datetime.now() - last_updated < datetime.timedelta(minutes=cache_duration_minutes):
+            v = st.session_state[cache_key]
+            return v if isinstance(v, dict) else None
+    return None
+
+
+def cache_fundamentals_analysis(symbol: str, data: Dict[str, Any]):
+    import datetime
+
+    st.session_state[f"fundamentals_{symbol}"] = data
+    st.session_state[f"fundamentals_last_updated_{symbol}"] = datetime.datetime.now()
+
+def show_latest_grades_cached(symbol: str):
+    """Show latest grades for a symbol using smart caching"""
+    # Check cache first
+    cached_data = get_cached_grades(symbol)
+    if cached_data:
+        grades = cached_data
+        # Show cache indicator
+        st.caption("📋 Showing cached data (refreshed recently)")
+    else:
+        # Fetch from API
+        try:
+            with st.spinner(f"Loading grades for {symbol}..."):
+                grades_response = go_client.get(f"api/v2/stock-grades/{symbol}/grades")
+                
+                if grades_response and isinstance(grades_response, list):
+                    grades = grades_response
+                    # Cache the data
+                    cache_grades(symbol, grades)
+                else:
+                    grades = []
+        except Exception as e:
+            st.error(f"❌ Error loading grades: {e}")
+            return
+    
+    if grades:
+        st.markdown(f"#### 📊 Analyst Ratings for {symbol}")
+        
+        # Industry Standard Summary (like Yahoo Finance)
+        col1, col2, col3, col4 = st.columns(4)
+        
+        # Count ratings by type
+        strong_buy = len([g for g in grades if g.get('new_grade', '').lower() in ['strong buy']])
+        buy = len([g for g in grades if g.get('new_grade', '').lower() in ['buy', 'outperform']])
+        hold = len([g for g in grades if g.get('new_grade', '').lower() in ['hold', 'maintain', 'neutral']])
+        sell = len([g for g in grades if g.get('new_grade', '').lower() in ['sell', 'underperform']])
+        strong_sell = len([g for g in grades if g.get('new_grade', '').lower() in ['strong sell']])
+        
+        with col1:
+            st.metric("🟢 Strong Buy", strong_buy, help="Analysts believe stock will perform exceptionally well")
+        with col2:
+            st.metric("📈 Buy/Outperform", buy, help="Analysts expect stock to outperform market")
+        with col3:
+            st.metric("⚪ Hold/Neutral", hold, help="Neutral recommendation")
+        with col4:
+            st.metric("🔴 Sell/Underperform", sell + strong_sell, help="Analysts expect underperformance")
+        
+        # Consensus Rating (like Yahoo Finance)
+        total_analysts = len(grades)
+        if total_analysts > 0:
+            # Calculate consensus score
+            buy_score = (strong_buy * 2) + (buy * 1) + (hold * 0) + (sell * -1) + (strong_sell * -2)
+            consensus_avg = buy_score / total_analysts
+            
+            if consensus_avg >= 1.5:
+                consensus_rating = "🟢 Strong Buy"
+                consensus_color = "green"
+            elif consensus_avg >= 0.5:
+                consensus_rating = "📈 Buy"
+                consensus_color = "lightgreen"
+            elif consensus_avg >= -0.5:
+                consensus_rating = "⚪ Hold"
+                consensus_color = "orange"
+            else:
+                consensus_rating = "🔴 Sell"
+                consensus_color = "red"
+            
+            st.markdown(f"#### Consensus: <span style='color:{consensus_color};font-size:24px;font-weight:bold'>{consensus_rating}</span>", unsafe_allow_html=True)
+            st.markdown(f"**{total_analysts} analysts** • Consensus Score: `{consensus_avg:.2f}`")
+        
+        # Detailed grades table
+        st.markdown("#### 📋 Detailed Analyst Ratings")
+        
+        # Convert to DataFrame for display
+        df_data = []
+        for grade in grades:
+            df_data.append({
+                'Date': grade.get('grade_date', ''),
+                'Firm': grade.get('grading_company', ''),
+                'Rating': grade.get('new_grade', ''),
+                'Action': grade.get('action', ''),
+                'Previous': grade.get('previous_grade', 'N/A')
+            })
+        
+        if df_data:
+            df = pd.DataFrame(df_data)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            # Refresh button
+            if st.button(f"🔄 Refresh {symbol} Ratings", key=f"refresh_{symbol}"):
+                with st.spinner(f"Refreshing ratings for {symbol}..."):
+                    refresh_response = go_client.post(f"api/v2/stock-grades/refresh/{symbol}")
+                    if refresh_response and refresh_response.get('success'):
+                        st.success(f"✅ Refreshed {refresh_response.get('results', {}).get('grades_loaded', 0)} grades")
+                        clear_ratings_cache(symbol)
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to refresh ratings")
+        else:
+            st.info(f"ℹ️ No grades found for {symbol}")
+            
+            # Offer to load ratings
+            if st.button(f"🔄 Load Ratings for {symbol}", key=f"load_{symbol}"):
+                load_ratings_for_symbol(symbol)
+
+def show_recent_grade_changes_cached(symbol: str):
+    """Show recent grade changes for a symbol using smart caching"""
+    # Check cache first
+    cached_data = get_cached_recent_changes(symbol)
+    if cached_data:
+        changes = cached_data
+        # Show cache indicator
+        st.caption("📋 Showing cached data (refreshed recently)")
+    else:
+        # Fetch from API
+        try:
+            with st.spinner(f"Loading recent changes for {symbol}..."):
+                changes_response = go_client.get(f"api/v2/stock-grades/{symbol}/recent-changes?days=30")
+                
+                if changes_response and isinstance(changes_response, dict):
+                    changes = changes_response.get('changes', [])
+                    # Cache the data
+                    cache_recent_changes(symbol, changes)
+                else:
+                    changes = []
+        except Exception as e:
+            st.error(f"❌ Error fetching recent changes: {e}")
+            return
+    
+    if changes:
+        st.markdown(f"#### 📈 Recent Grade Changes for {symbol} (Last 30 Days)")
+        
+        # Convert to DataFrame for display
+        df_data = []
+        for change in changes:
+            df_data.append({
+                'Date': change.get('grade_date', ''),
+                'Firm': change.get('grading_company', ''),
+                'Action': change.get('action', ''),
+                'Previous': change.get('previous_grade', 'N/A'),
+                'New': change.get('new_grade', ''),
+                'Price': f"${change.get('price_at_grade', 0):.2f}" if change.get('price_at_grade') else "N/A"
+            })
+        
+        if df_data:
+            df = pd.DataFrame(df_data)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            # Summary statistics
+            upgrades = len([c for c in changes if c.get('action') == 'upgrade'])
+            downgrades = len([c for c in changes if c.get('action') == 'downgrade'])
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("⬆️ Upgrades", upgrades)
+            with col2:
+                st.metric("⬇️ Downgrades", downgrades)
+            with col3:
+                st.metric("📊 Total Changes", len(changes))
+        else:
+            st.info(f"ℹ️ No recent grade changes found for {symbol} in the last 30 days")
+    else:
+        st.info(f"ℹ️ No recent grade changes found for {symbol} in the last 30 days")
+
+def show_ratings_data_loading(symbol: str):
+    """Show ratings data loading controls and status"""
+    st.markdown(f"#### 🔄 Data Loading for {symbol}")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Load Fresh Data**")
+        st.info("Click to load the latest analyst ratings from external sources")
+        
+        if st.button(f"📥 Load {symbol} Ratings", key=f"load_fresh_{symbol}", use_container_width=True):
+            load_ratings_for_symbol(symbol)
+    
+    with col2:
+        st.markdown("**Cache Status**")
+        # Check if we have cached data
+        cached_data = get_cached_grades(symbol)
+        if cached_data:
+            st.success("✅ Data cached")
+            st.caption(f"📊 {len(cached_data)} ratings cached")
+            
+            if st.button("🗑️ Clear Cache", key=f"clear_cache_{symbol}"):
+                clear_ratings_cache(symbol)
+                st.rerun()
+        else:
+            st.warning("⚠️ No cached data")
+            st.caption("Load data to cache for faster access")
+    
+    # Show data source info
+    st.markdown("---")
+    st.markdown("**📊 Data Sources**")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("🏢 Primary", "FMP", help="Financial Modeling Prep API")
+    
+    with col2:
+        st.metric("🔄 Refresh", "Manual", help="Data refreshed on demand")
+    
+    with col3:
+        st.metric("💾 Cache", "30 min", help="Data cached for 30 minutes")
+
+def load_ratings_for_symbol(symbol: str):
+    """Load latest ratings data for a symbol using the new stock grades API"""
+    with st.spinner(f"Loading ratings for {symbol}..."):
+        try:
+            # Use the new stock grades API to refresh data
+            refresh_response = go_client.post(f"api/v2/stock-grades/refresh/{symbol}?data_source=fmp&include_consensus=true")
+            
+            if refresh_response and refresh_response.get("success"):
+                results = refresh_response.get("results", {})
+                grades_loaded = results.get("grades_loaded", 0)
+                consensus_loaded = results.get("consensus_loaded", False)
+                
+                st.success(f"✅ Loaded {grades_loaded} grades for {symbol}")
+                if consensus_loaded:
+                    st.info("📊 Consensus data also loaded")
+                
+                # Show summary of what was loaded
+                if grades_loaded > 0:
+                    # Get the loaded grades to show summary
+                    grades_response = go_client.get(f"api/v2/stock-grades/{symbol}/grades")
+                    if grades_response and isinstance(grades_response, list):
+                        upgrades = len([g for g in grades_response if g.get('action') == 'upgrade'])
+                        downgrades = len([g for g in grades_response if g.get('action') == 'downgrade'])
+                        maintains = len([g for g in grades_response if g.get('action') == 'maintain'])
+                        
+                        if upgrades > 0 or downgrades > 0 or maintains > 0:
+                            st.markdown("**Summary:**")
+                            if upgrades > 0:
+                                st.success(f"⬆️ {upgrades} upgrades")
+                            if downgrades > 0:
+                                st.error(f"⬇️ {downgrades} downgrades")
+                            if maintains > 0:
+                                st.info(f"➡️ {maintains} maintains")
+                
+                # Refresh the page to show new data
+                st.rerun()
+            else:
+                error_msg = refresh_response.get("message", "Unknown error") if refresh_response else "No response"
+                st.error(f"❌ Failed to load ratings: {error_msg}")
+                
+        except Exception as e:
+            st.error(f"❌ Error loading ratings for {symbol}: {e}")
+            st.help("Try again in a few minutes or check if the symbol is correct")
+
+def show_latest_grades(symbol: str):
+    """Show latest grades for a symbol using the new stock grades API"""
+    try:
+        with st.spinner(f"Loading grades for {symbol}..."):
+            # Use the new stock grades API
+            grades_response = go_client.get(f"api/v2/stock-grades/{symbol}/grades")
+            
+            if grades_response and isinstance(grades_response, list):
+                grades = grades_response
+                
+                if grades:
+                    st.markdown(f"#### 📊 Analyst Ratings for {symbol}")
+                    
+                    # Industry Standard Summary (like Yahoo Finance)
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    # Count ratings by type
+                    strong_buy = len([g for g in grades if g.get('new_grade', '').lower() in ['strong buy']])
+                    buy = len([g for g in grades if g.get('new_grade', '').lower() in ['buy', 'outperform']])
+                    hold = len([g for g in grades if g.get('new_grade', '').lower() in ['hold', 'maintain', 'neutral']])
+                    sell = len([g for g in grades if g.get('new_grade', '').lower() in ['sell', 'underperform']])
+                    strong_sell = len([g for g in grades if g.get('new_grade', '').lower() in ['strong sell']])
+                    
+                    with col1:
+                        st.metric("🟢 Strong Buy", strong_buy, help="Analysts believe stock will perform exceptionally well")
+                    with col2:
+                        st.metric("📈 Buy/Outperform", buy, help="Analysts expect stock to outperform market")
+                    with col3:
+                        st.metric("⚪ Hold/Neutral", hold, help="Neutral recommendation")
+                    with col4:
+                        st.metric("🔴 Sell/Underperform", sell + strong_sell, help="Analysts expect underperformance")
+                    
+                    # Consensus Rating (like Yahoo Finance)
+                    total_analysts = len(grades)
+                    if total_analysts > 0:
+                        # Calculate consensus score
+                        buy_score = (strong_buy * 2) + (buy * 1) + (hold * 0) + (sell * -1) + (strong_sell * -2)
+                        consensus_avg = buy_score / total_analysts
+                        
+                        if consensus_avg >= 1.5:
+                            consensus_rating = "🟢 Strong Buy"
+                            consensus_color = "green"
+                        elif consensus_avg >= 0.5:
+                            consensus_rating = "📈 Buy"
+                            consensus_color = "lightgreen"
+                        elif consensus_avg >= -0.5:
+                            consensus_rating = "⚪ Hold"
+                            consensus_color = "orange"
+                        else:
+                            consensus_rating = "🔴 Sell"
+                            consensus_color = "red"
+                        
+                        st.markdown(f"#### Consensus: <span style='color:{consensus_color};font-size:24px;font-weight:bold'>{consensus_rating}</span>", unsafe_allow_html=True)
+                        st.markdown(f"**{total_analysts} analysts** • Consensus Score: `{consensus_avg:.2f}`")
+                    
+                    # Detailed grades table
+                    st.markdown("#### 📋 Detailed Analyst Ratings")
+                    
+                    # Convert to DataFrame for display
+                    df_data = []
+                    for grade in grades:
+                        df_data.append({
+                            'Date': grade.get('grade_date', ''),
+                            'Firm': grade.get('grading_company', ''),
+                            'Rating': grade.get('new_grade', ''),
+                            'Action': grade.get('action', ''),
+                            'Previous': grade.get('previous_grade', 'N/A')
+                        })
+                    
+                    if df_data:
+                        df = pd.DataFrame(df_data)
+                        st.dataframe(df, use_container_width=True, hide_index=True)
+                    
+                    # Refresh button
+                    if st.button(f"🔄 Refresh {symbol} Ratings", key=f"refresh_{symbol}"):
+                        with st.spinner(f"Refreshing ratings for {symbol}..."):
+                            refresh_response = go_client.post(f"api/v2/stock-grades/refresh/{symbol}?data_source=fmp&include_consensus=true")
+                            if refresh_response and refresh_response.get('success'):
+                                st.success(f"✅ Refreshed {refresh_response.get('results', {}).get('grades_loaded', 0)} grades")
+                                st.rerun()
+                            else:
+                                st.error("❌ Failed to refresh ratings")
+                else:
+                    st.info(f"ℹ️ No grades found for {symbol}")
+                    
+                    # Offer to load ratings
+                    if st.button(f"🔄 Load Ratings for {symbol}", key=f"load_{symbol}"):
+                        load_ratings_for_symbol(symbol)
+            else:
+                st.info(f"ℹ️ No grades data available for {symbol}")
+                
+                # Offer to load ratings
+                if st.button(f"🔄 Load Ratings for {symbol}", key=f"load_{symbol}_fallback"):
+                    load_ratings_for_symbol(symbol)
+                    
+    except Exception as e:
+        st.error(f"❌ Error loading grades for {symbol}: {e}")
+        st.help("Try refreshing the page or selecting a different symbol")
+
+def show_recent_grade_changes(symbol: str):
+    """Show recent grade changes for a symbol using the new stock grades API"""
+    try:
+        with st.spinner(f"Loading recent changes for {symbol}..."):
+            # Use the new stock grades API for recent changes
+            changes_response = go_client.get(f"api/v2/stock-grades/{symbol}/recent-changes?days=30")
+            
+            if changes_response and isinstance(changes_response, dict):
+                changes = changes_response.get('changes', [])
+                
+                if changes:
+                    st.markdown(f"#### 📈 Recent Grade Changes for {symbol} (Last 30 Days)")
+                    
+                    # Convert to DataFrame for display
+                    df_data = []
+                    for change in changes:
+                        df_data.append({
+                            'Date': change.get('grade_date', ''),
+                            'Firm': change.get('grading_company', ''),
+                            'Action': change.get('action', ''),
+                            'Previous': change.get('previous_grade', 'N/A'),
+                            'New': change.get('new_grade', ''),
+                            'Price': f"${change.get('price_at_grade', 0):.2f}" if change.get('price_at_grade') else "N/A"
+                        })
+                    
+                    if df_data:
+                        df = pd.DataFrame(df_data)
+                        st.dataframe(df, use_container_width=True, hide_index=True)
+                        
+                        # Summary statistics
+                        upgrades = len([c for c in changes if c.get('action') == 'upgrade'])
+                        downgrades = len([c for c in changes if c.get('action') == 'downgrade'])
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("⬆️ Upgrades", upgrades)
+                        with col2:
+                            st.metric("⬇️ Downgrades", downgrades)
+                        with col3:
+                            st.metric("📊 Total Changes", len(changes))
+                    else:
+                        st.info(f"ℹ️ No recent grade changes found for {symbol} in the last 30 days")
+                else:
+                    st.info(f"ℹ️ No recent grade changes found for {symbol} in the last 30 days")
+            else:
+                st.info(f"ℹ️ Unable to fetch recent changes for {symbol}")
+                
+    except Exception as e:
+        st.error(f"❌ Error fetching recent changes: {e}")
+        st.help("Try refreshing the page or selecting a different symbol")
+
+def get_scheduler_status():
+    """Get current scheduler status"""
+    try:
+        response = go_client.get("api/v1/scheduler/status")
+        
+        if response and isinstance(response, dict):
+            return response
+        else:
+            return {'is_running': False, 'error': 'Failed to get status'}
+            
+    except Exception as e:
+        st.error(f"❌ Error getting scheduler status: {str(e)}")
+        return {'is_running': False, 'error': str(e)}
+
+def start_scheduler():
+    """Start the data refresh scheduler"""
+    try:
+        response = go_client.post("api/v1/scheduler/start")
+        
+        if response and response.get("success"):
+            st.success("✅ Scheduler started successfully!")
+            st.rerun()
+        else:
+            error_msg = response.get("message", "Unknown error") if response else "No response"
+            st.error(f"❌ Failed to start scheduler: {error_msg}")
+            
+    except Exception as e:
+        st.error(f"❌ Error starting scheduler: {str(e)}")
+
+def stop_scheduler():
+    """Stop the data refresh scheduler"""
+    try:
+        response = go_client.post("api/v1/scheduler/stop")
+        
+        if response and response.get("success"):
+            st.success("✅ Scheduler stopped successfully!")
+            st.rerun()
+        else:
+            error_msg = response.get("message", "Unknown error") if response else "No response"
+            st.error(f"❌ Failed to stop scheduler: {error_msg}")
+            
+    except Exception as e:
+        st.error(f"❌ Error stopping scheduler: {str(e)}")
+
+def schedule_all_symbols():
+    """Schedule all symbols for automatic refresh"""
+    try:
+        response = go_client.post("api/v1/scheduler/schedule-all")
+        
+        if response and response.get("success"):
+            st.success(f"✅ {response.get('message')}")
+            st.rerun()
+        else:
+            error_msg = response.get("message", "Unknown error") if response else "No response"
+            st.error(f"❌ Failed to schedule symbols: {error_msg}")
+            
+    except Exception as e:
+        st.error(f"❌ Error scheduling symbols: {str(e)}")
+
+def get_upcoming_refreshes():
+    """Get upcoming scheduled refreshes"""
+    try:
+        response = go_client.get("api/v1/scheduler/upcoming?limit=10")
+        
+        if response and isinstance(response, dict):
+            return response
+        else:
+            return {'upcoming_refreshes': []}
+            
+    except Exception as e:
+        return {'upcoming_refreshes': []}
+
+def format_time(dt):
+    """Format datetime for display"""
+    if dt is None:
+        return "N/A"
+    
+    if isinstance(dt, str):
+        from datetime import datetime
+        try:
+            dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
+        except:
+            return dt
+    
+    return dt.strftime("%H:%M:%S")
+
+def load_all_stocks_data(quick_mode=False, auto_triggered=False):
+    """Load data for all stock symbols with proper rate limiting"""
+    try:
+        st.session_state.data_loading_config['loading_status'] = 'loading'
+        
+        # Get all symbols
+        symbols_data = get_all_stock_symbols()
+        
+        if not symbols_data:
+            st.error("❌ No symbols found to load data for")
+            st.session_state.data_loading_config['loading_status'] = 'idle'
+            return
+        
+        # Extract symbols
+        symbols = [symbol['symbol'] for symbol in symbols_data if symbol.get('is_active', True)]
+        
+        if not symbols:
+            st.error("❌ No active symbols found")
+            st.session_state.data_loading_config['loading_status'] = 'idle'
+            return
+        
+        # Determine data types based on mode
+        if quick_mode:
+            data_types = ["price_historical", "indicators"]
+            mode_text = "Quick Refresh"
+        else:
+            data_types = ["price_historical", "indicators", "fundamentals", "earnings"]
+            mode_text = "Full Data Load"
+        
+        # Show loading message
+        if auto_triggered:
+            st.info(f"🔄 Auto-refreshing {mode_text} for {len(symbols)} symbols...")
+        else:
+            st.info(f"🚀 {mode_text} for {len(symbols)} symbols...")
+        
+        # Create progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Load data in batches to respect API rate limits
+        batch_size = 5  # Process 5 symbols at a time
+        delay_between_batches = 15  # 15 seconds between batches (200 calls/min = ~3.3 calls/sec)
+        
+        successful_loads = []
+        failed_loads = []
+        
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i + batch_size]
+            
+            # Update progress
+            progress = (i / len(symbols))
+            progress_bar.progress(progress)
+            status_text.text(f"Loading batch {i//batch_size + 1}/{(len(symbols) + batch_size - 1)//batch_size}: {', '.join(batch)}")
+            
+            # Load data for this batch
+            try:
+                response = go_client.post("api/v1/admin/refresh", json_data={
+                    "symbols": batch,
+                    "data_types": data_types,
+                    "force": True
+                }, timeout=300)
+                
+                if response and response.get("success"):
+                    successful_loads.extend(batch)
+                else:
+                    failed_loads.extend(batch)
+                    error_msg = response.get("error", "Unknown error") if response else "No response"
+                    st.warning(f"⚠️ Batch {i//batch_size + 1} failed: {error_msg}")
+                
+            except Exception as e:
+                failed_loads.extend(batch)
+                st.error(f"❌ Batch {i//batch_size + 1} error: {str(e)}")
+            
+            # Add delay between batches (except for last batch)
+            if i + batch_size < len(symbols):
+                if not auto_triggered:  # Only show delay message for manual loads
+                    st.info(f"⏱️ Waiting {delay_between_batches}s to respect API rate limits...")
+                import time
+                time.sleep(delay_between_batches)
+        
+        # Complete progress
+        progress_bar.progress(1.0)
+        
+        # Update last refresh time
+        from datetime import datetime
+        st.session_state.data_loading_config['last_refresh'] = datetime.now()
+        st.session_state.data_loading_config['loading_status'] = 'idle'
+        
+        # Show results
+        if successful_loads:
+            st.success(f"✅ Successfully loaded data for {len(successful_loads)} symbols")
+        
+        if failed_loads:
+            st.error(f"❌ Failed to load data for {len(failed_loads)} symbols: {', '.join(failed_loads[:5])}{'...' if len(failed_loads) > 5 else ''}")
+        
+        # Auto-refresh for next cycle
+        if auto_triggered and st.session_state.data_loading_config['auto_refresh']:
+            st.rerun()
+        
+    except Exception as e:
+        st.session_state.data_loading_config['loading_status'] = 'error'
+        st.error(f"❌ Error loading data: {str(e)}")
 
 def show_add_symbol_form():
     """Show form to add a new stock symbol"""
@@ -2522,143 +3948,708 @@ def show_add_symbol_form():
                     st.error("❌ Stock Symbol is required")
 
 def get_all_stock_symbols():
-    """Fetch all stock symbols from the database"""
+    """Fetch all stock symbols from Go API with Redis caching"""
+    # Check cache first
+    if 'stock_symbols_cache' in st.session_state:
+        cache_time = st.session_state.get('stock_symbols_cache_time', 0)
+        if time.time() - cache_time < 3600:  # Cache for 1 hour
+            return st.session_state.stock_symbols_cache
+    
     try:
-        response = python_client.get("api/v1/stocks/available")
+        # Use Go API for tickers (Redis cached)
+        response = go_client.get("api/v1/tickers")
         
-        if response and isinstance(response, list):
-            return response
-        else:
-            st.error("❌ Failed to fetch stock symbols")
-            return []
+        if response and isinstance(response, dict) and 'tickers' in response:
+            tickers = response['tickers']
+            # Return only symbol and company_name for dropdown
+            symbols = [
+                {
+                    'symbol': ticker.get('symbol', ''),
+                    'company_name': ticker.get('company_name', '')
+                }
+                for ticker in tickers 
+                if ticker.get('symbol') and ticker.get('is_active') == True
+            ]
             
-    except Exception as e:
-        st.error(f"❌ Error fetching stock symbols: {str(e)}")
+            # Cache the results
+            st.session_state.stock_symbols_cache = symbols
+            st.session_state.stock_symbols_cache_time = time.time()
+            
+            return symbols
         return []
+        
+    except Exception as e:
+        st.error(f"❌ Error fetching stock symbols: {e}")
+        return []
+
+def show_alert_management_tab():
+    """Alert Management Tab - Create and manage rating alerts"""
+    st.markdown("## 🔔 Alert Management")
+    st.markdown("Create and manage alerts for rating changes, price targets, and earnings")
+    
+    # Get user ID (for demo, use a default UUID that exists in database)
+    user_id = st.session_state.get('user_id', '4f8b2cb1-4ed6-4fb5-bd44-48e5acc830a4')
+    
+    # Create tabs for different alert management functions
+    tab_options = [
+        "📝 Create Alerts", 
+        "📋 My Alerts", 
+        "📊 Subscriptions", 
+        "⚙️ Quick Setup"
+    ]
+    
+    # Get active tab from session state (default to 0)
+    active_tab = st.session_state.get('active_tab', 0)
+    
+    # Create tab selector
+    selected_tab = st.radio(
+        "Select Action:",
+        options=tab_options,
+        index=active_tab,
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    
+    # Update session state
+    active_tab = tab_options.index(selected_tab)
+    st.session_state.active_tab = active_tab
+    
+    # Show content based on active tab
+    if active_tab == 0:
+        show_create_alert_section(user_id)
+    elif active_tab == 1:
+        show_my_alerts_section(user_id)
+    elif active_tab == 2:
+        show_subscriptions_section(user_id)
+    elif active_tab == 3:
+        show_quick_setup_section(user_id)
+
+def show_create_alert_section(user_id: str):
+    """Show create alert interface"""
+    st.markdown("### 📝 Create New Alert")
+    
+    # Get available stock symbols
+    available_stocks = get_all_stock_symbols()
+    
+    # Alert creation form
+    with st.form("create_alert_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Stock symbol selection with type-ahead search
+            if available_stocks:
+                # Create a searchable dropdown with type-ahead
+                symbol_options = {f"{stock['symbol']} - {stock['company_name'][:40]}": stock['symbol'] 
+                               for stock in available_stocks}
+                
+                # Search box for filtering symbols
+                search_term = st.text_input(
+                    "🔍 Search Stock Symbol",
+                    placeholder="Type to search symbols...",
+                    help="Start typing to search for stocks"
+                )
+                
+                # Filter symbols based on search
+                if search_term:
+                    filtered_options = {k: v for k, v in symbol_options.items() 
+                                      if search_term.upper() in k.upper()}
+                else:
+                    filtered_options = symbol_options
+                
+                # Show filtered dropdown
+                if filtered_options:
+                    selected_display = st.selectbox(
+                        "📈 Select Stock Symbol",
+                        options=list(filtered_options.keys()),
+                        key="analyst_ratings_symbol_filtered",
+                        help="Choose a stock symbol to create an alert for"
+                    )
+                    selected_symbol = filtered_options.get(selected_display, "")
+                else:
+                    st.warning("No symbols found matching your search")
+                    selected_symbol = ""
+            else:
+                selected_symbol = st.text_input(
+                    "📈 Enter Stock Symbol",
+                    placeholder="e.g., AAPL, MSFT, GOOGL",
+                    key="analyst_ratings_symbol_fallback",
+                    help="Enter stock symbol manually"
+                ).upper()
+            
+            # Alert type selection
+            alert_types = {
+                "rating_change": "Rating Change",
+                "price_target_change": "Price Target Change", 
+                "consensus_alert": "Consensus Alert",
+                "earnings_alert": "Earnings Alert"
+            }
+            
+            selected_alert_type = st.selectbox(
+                "🔔 Alert Type",
+                options=list(alert_types.keys()),
+                format_func=lambda x: alert_types[x],
+                help="Choose the type of alert you want to create"
+            )
+        
+        with col2:
+            # Alert name
+            alert_name = st.text_input(
+                "📝 Alert Name",
+                placeholder=f"{selected_symbol} {alert_types[selected_alert_type]}",
+                help="Give your alert a descriptive name"
+            )
+            
+            # Notification channels
+            notification_channels = st.multiselect(
+                "📧 Notification Channels",
+                options=["email", "sms", "push", "webhook"],
+                default=["email"],
+                help="Choose how you want to be notified"
+            )
+        
+        # Alert configuration based on type
+        st.markdown("#### ⚙️ Alert Configuration")
+        
+        config = {}
+        
+        if selected_alert_type == "rating_change":
+            col1, col2 = st.columns(2)
+            with col1:
+                config["min_consensus_change"] = st.slider(
+                    "Min Consensus Change",
+                    min_value=0.1, max_value=1.0, value=0.3, step=0.1,
+                    help="Minimum consensus score change to trigger alert"
+                )
+                config["tier_1_firms_only"] = st.checkbox(
+                    "Tier 1 Firms Only",
+                    value=False,
+                    help="Only alert for top-tier analyst firms"
+                )
+            with col2:
+                config["include_upgrades"] = st.checkbox(
+                    "Include Upgrades",
+                    value=True,
+                    help="Alert when ratings are upgraded"
+                )
+                config["include_downgrades"] = st.checkbox(
+                    "Include Downgrades", 
+                    value=True,
+                    help="Alert when ratings are downgraded"
+                )
+        
+        elif selected_alert_type == "price_target_change":
+            col1, col2 = st.columns(2)
+            with col1:
+                config["min_price_change_percent"] = st.slider(
+                    "Min Price Change %",
+                    min_value=1.0, max_value=20.0, value=5.0, step=1.0,
+                    help="Minimum price target change percentage"
+                )
+                config["min_analyst_count"] = st.slider(
+                    "Min Analyst Count",
+                    min_value=1, max_value=10, value=3, step=1,
+                    help="Minimum number of analysts for consensus"
+                )
+            with col2:
+                config["include_increases"] = st.checkbox(
+                    "Include Increases",
+                    value=True,
+                    help="Alert when price targets increase"
+                )
+                config["include_decreases"] = st.checkbox(
+                    "Include Decreases",
+                    value=True,
+                    help="Alert when price targets decrease"
+                )
+        
+        elif selected_alert_type == "consensus_alert":
+            col1, col2 = st.columns(2)
+            with col1:
+                config["target_consensus"] = st.selectbox(
+                    "Target Consensus",
+                    options=["Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"],
+                    help="Consensus level to alert on"
+                )
+                config["direction"] = st.selectbox(
+                    "Direction",
+                    options=["above", "below", "exactly"],
+                    help="When to trigger the alert"
+                )
+            with col2:
+                config["min_analyst_count"] = st.slider(
+                    "Min Analyst Count",
+                    min_value=1, max_value=20, value=5, step=1,
+                    help="Minimum number of analysts"
+                )
+        
+        elif selected_alert_type == "earnings_alert":
+            col1, col2 = st.columns(2)
+            with col1:
+                config["include_pre_announcements"] = st.checkbox(
+                    "Include Pre-announcements",
+                    value=True,
+                    help="Alert before earnings announcements"
+                )
+                config["include_surprises_only"] = st.checkbox(
+                    "Surprises Only",
+                    value=False,
+                    help="Only alert on earnings surprises"
+                )
+            with col2:
+                config["min_surprise_percent"] = st.slider(
+                    "Min Surprise %",
+                    min_value=1.0, max_value=20.0, value=5.0, step=1.0,
+                    help="Minimum earnings surprise percentage"
+                )
+                config["days_before_earnings"] = st.slider(
+                    "Days Before Earnings",
+                    min_value=0, max_value=7, value=1, step=1,
+                    help="Alert this many days before earnings"
+                )
+        
+        # Notification delay (common for all types)
+        config["notification_delay_minutes"] = st.slider(
+            "Notification Delay (minutes)",
+            min_value=0, max_value=60, value=5, step=5,
+            help="Delay before sending notification"
+        )
+        
+        # Submit button
+        col_submit, col_cancel = st.columns([1, 1])
+        
+        with col_submit:
+            submitted = st.form_submit_button("🔔 Create Alert", type="primary", use_container_width=True)
+        
+        with col_cancel:
+            if st.form_submit_button("❌ Cancel", use_container_width=True):
+                st.rerun()
+        
+        # Debug: Check if form was submitted
+        st.write(f"Form submitted: {submitted}")
+        st.write(f"Selected symbol: {selected_symbol}")
+        st.write(f"Alert name: {alert_name}")
+        
+        if submitted:
+            st.write("✅ Form submission detected!")
+            if selected_symbol and alert_name:
+                st.write("✅ Validation passed!")
+                with st.spinner("Creating alert..."):
+                    try:
+                        # Debug: Show what we're sending
+                        st.write(f"Creating alert for: {selected_symbol}")
+                        st.write(f"Alert type: {selected_alert_type}")
+                        st.write(f"User ID: {user_id}")
+                        
+                        # Prepare the payload
+                        payload = {
+                            "stock_symbol": selected_symbol,
+                            "alert_type": selected_alert_type,
+                            "name": alert_name,
+                            "config": config,
+                            "notification_channels": notification_channels
+                        }
+                        
+                        st.write("Payload:", payload)
+                        
+                        # Call API to create alert
+                        response = go_client.post(
+                            "api/v1/admin/rating-alerts/alerts",
+                            json_data=payload,
+                            params={"user_id": user_id},
+                        )
+                        
+                        # Debug: Show response
+                        st.write("API Response:", response)
+                        
+                        if response and response.get("success"):
+                            st.success(f"✅ Alert '{alert_name}' created successfully for {selected_symbol}")
+                            st.balloons()
+                        else:
+                            st.error(f"❌ Failed to create alert: {response.get('message', 'Unknown error')}")
+                            if response:
+                                st.json(response)  # Show full response for debugging
+                    
+                    except Exception as e:
+                        st.error(f"❌ Error creating alert: {e}")
+                        st.exception(e)  # Show full exception for debugging
+            else:
+                st.error("❌ Please fill in all required fields")
+                if not selected_symbol:
+                    st.error("- Please select a stock symbol")
+                if not alert_name:
+                    st.error("- Please enter an alert name")
+
+
+def show_my_alerts_section(user_id: str):
+    """Show user's existing alerts"""
+    st.markdown("### 📋 My Alerts")
+    
+    # Add refresh button
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        if st.button("🔄 Refresh", key="refresh_alerts", use_container_width=True):
+            st.rerun()
+    with col2:
+        st.write("")  # Empty space for alignment
+    
+    # Load user's alerts
+    with st.spinner("Loading alerts..."):
+        try:
+            response = go_client.get("api/v1/admin/rating-alerts/alerts", params={"user_id": user_id})
+            
+            if response and response.get("success"):
+                alerts = response.get("alerts", [])
+                
+                if alerts:
+                    # Alert filters
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        alert_type_filter = st.selectbox(
+                            "Filter by Type",
+                            options=["All"] + list(set(alert["alert_type"] for alert in alerts)),
+                            key="alert_type_filter"
+                        )
+                    
+                    with col2:
+                        status_filter = st.selectbox(
+                            "Filter by Status",
+                            options=["All", "Enabled", "Disabled"],
+                            key="status_filter"
+                        )
+                    
+                    with col3:
+                        sort_by = st.selectbox(
+                            "Sort by",
+                            options=["Created Date", "Symbol", "Type"],
+                            key="sort_by"
+                        )
+                    
+                    # Apply filters
+                    filtered_alerts = alerts
+                    if alert_type_filter != "All":
+                        filtered_alerts = [a for a in filtered_alerts if a["alert_type"] == alert_type_filter]
+                    if status_filter != "All":
+                        enabled_status = status_filter == "Enabled"
+                        filtered_alerts = [a for a in filtered_alerts if a["enabled"] == enabled_status]
+                    
+                    # Sort alerts
+                    if sort_by == "Created Date":
+                        filtered_alerts.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                    elif sort_by == "Symbol":
+                        filtered_alerts.sort(key=lambda x: x.get("stock_symbol", ""))
+                    elif sort_by == "Type":
+                        filtered_alerts.sort(key=lambda x: x.get("alert_type", ""))
+                    
+                    # Display alerts
+                    for alert in filtered_alerts:
+                        with st.expander(f"🔔 {alert['name']} ({alert['stock_symbol']})"):
+                            col1, col2 = st.columns([2, 1])
+                            
+                            with col1:
+                                st.write(f"**Type:** {alert['alert_type']}")
+                                st.write(f"**Symbol:** {alert['stock_symbol']}")
+                                st.write(f"**Status:** {'✅ Active' if alert['enabled'] else '❌ Disabled'}")
+                                st.write(f"**Created:** {alert.get('created_at', 'Unknown')}")
+                                
+                                # Show notification channels
+                                channels = alert.get('notification_channels', [])
+                                if channels:
+                                    st.write(f"**Notifications:** {', '.join(channels)}")
+                            
+                            with col2:
+                                if st.button(f"✏️ Edit", key=f"edit_{alert['alert_id']}"):
+                                    st.session_state[f"edit_alert_{alert['alert_id']}"] = True
+                                    st.rerun()
+                                
+                                st.write("---")
+                                st.write("**Quick Actions:**")
+                                
+                                # Toggle enable/disable
+                                status_text = "Disable" if alert.get('enabled', True) else "Enable"
+                                if st.button(f"🔘 {status_text}", key=f"toggle_{alert['alert_id']}", use_container_width=True):
+                                    with st.spinner(f"{status_text} alert..."):
+                                        try:
+                                            response = go_client.put(
+                                                f"api/v1/admin/rating-alerts/alerts/{alert['alert_id']}",
+                                                params={"user_id": user_id},
+                                                json_data={"enabled": not alert.get('enabled', True)},
+                                            )
+                                            if response and response.get("success"):
+                                                st.rerun()
+                                            else:
+                                                st.error(f"Failed to {status_text.lower()} alert")
+                                        except Exception as e:
+                                            st.error(f"Error: {e}")
+                                
+                                # Delete button
+                                if st.button("🗑️ Delete", key=f"delete_quick_{alert['alert_id']}", type="secondary", use_container_width=True):
+                                    with st.spinner("Deleting alert..."):
+                                        try:
+                                            response = go_client.delete(
+                                                f"api/v1/admin/rating-alerts/alerts/{alert['alert_id']}",
+                                                params={"user_id": user_id},
+                                            )
+                                            if response and response.get("success"):
+                                                st.success("Alert deleted!")
+                                                st.rerun()
+                                            else:
+                                                st.error("Failed to delete alert")
+                                        except Exception as e:
+                                            st.error(f"Error: {e}")
+                            
+                            # Show edit section if expanded
+                            if st.session_state.get(f"edit_alert_{alert['alert_id']}", False):
+                                show_edit_alert_section(alert, user_id)
+                else:
+                    st.info("No alerts created yet. Create your first alert!")
+            
+            else:
+                st.error("Failed to load alerts")
+        
+        except Exception as e:
+            st.error(f"Error loading alerts: {e}")
+
+
+def show_subscriptions_section(user_id: str):
+    """Show rating subscriptions"""
+    st.markdown("### 📊 Subscriptions")
+    
+    # Load user subscriptions
+    with st.spinner("Loading subscriptions..."):
+        try:
+            response = go_client.get(
+                "api/v1/admin/rating-alerts/subscriptions",
+                params={"user_id": "4f8b2cb1-4ed6-4fb5-bd44-48e5acc830a4"},
+            )
+            
+            if response and response.get("success"):
+                subscriptions = response.get("subscriptions", [])
+                
+                if subscriptions:
+                    st.write(f"**Active subscriptions:** {len(subscriptions)}")
+                    
+                    for sub in subscriptions:
+                        with st.expander(f"📊 {sub['symbol']} - {sub['subscription_type']}"):
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.write(f"**Symbol:** {sub['symbol']}")
+                                st.write(f"**Type:** {sub['subscription_type']}")
+                                st.write(f"**Status:** {'✅ Active' if sub['enabled'] else '❌ Disabled'}")
+                            
+                            with col2:
+                                st.write(f"**Priority:** {sub.get('priority', 'medium')}")
+                                st.write(f"**Created:** {sub.get('created_at', 'N/A')}")
+                else:
+                    st.info("No subscriptions found")
+            else:
+                st.error("Failed to load subscriptions")
+        
+        except Exception as e:
+            st.error(f"Error loading subscriptions: {e}")
+
+
+def show_quick_setup_section(user_id: str):
+    """Quick setup for common alert configurations"""
+    st.markdown("### ⚙️ Quick Setup")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🏆 Top S&P 500 Stocks")
+        st.write("Set up alerts for the top S&P 500 companies")
+        
+        if st.button("🚀 Setup Top Stocks Alerts", type="primary", use_container_width=True):
+            with st.spinner("Setting up alerts..."):
+                try:
+                    response = go_client.post(
+                        "api/v1/admin/rating-alerts/setup/top-stocks",
+                        params={"user_id": "4f8b2cb1-4ed6-4fb5-bd44-48e5acc830a4"},
+                    )
+                    if response and response.get("success"):
+                        st.success("✅ Top stocks alerts set up successfully!")
+                        st.balloons()
+                    else:
+                        st.error("❌ Failed to set up alerts")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    
+    with col2:
+        st.markdown("#### ⭐ Custom Watchlist")
+        st.write("Set up alerts for your custom watchlist")
+        
+        symbols = st.text_area(
+            "Enter symbols (one per line)",
+            placeholder="AAPL\nMSFT\nGOOGL\nTSLA",
+            help="Enter stock symbols for watchlist alerts"
+        )
+        
+        if st.button("🚀 Setup Watchlist Alerts", type="primary", use_container_width=True):
+            if symbols:
+                symbol_list = [s.strip().upper() for s in symbols.split('\n') if s.strip()]
+                with st.spinner("Setting up alerts..."):
+                    try:
+                        response = go_client.post(
+                            "api/v1/admin/rating-alerts/setup/watchlist",
+                            params={"user_id": "4f8b2cb1-4ed6-4fb5-bd44-48e5acc830a4"},
+                            json_data={"symbols": symbol_list},
+                        )
+                        if response and response.get("success"):
+                            st.success(f"✅ Watchlist alerts set up for {len(symbol_list)} symbols!")
+                            st.balloons()
+                        else:
+                            st.error("❌ Failed to set up alerts")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+            else:
+                st.warning("Please enter at least one symbol")
+
+
+def show_edit_alert_section(alert: dict, user_id: str):
+    """Show edit alert section with symbol management"""
+    st.markdown("---")
+    st.markdown(f"### ✏️ Edit Alert: {alert['name']}")
+    
+    # Since each alert is for a single symbol, show that symbol
+    current_symbol = alert.get('stock_symbol', '')
+    st.info(f"📊 **Current Symbol:** {current_symbol}")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 📝 Alert Configuration")
+        
+        # Alert name
+        new_name = st.text_input(
+            "Alert Name",
+            value=alert.get('name', ''),
+            key=f"edit_name_{alert['alert_id']}"
+        )
+        
+        # Alert status
+        enabled = st.checkbox(
+            "Enable Alert",
+            value=alert.get('enabled', True),
+            key=f"edit_enabled_{alert['alert_id']}"
+        )
+        
+        # Notification channels
+        notification_channels = st.multiselect(
+            "Notification Channels",
+            options=['email', 'sms', 'webhook'],
+            default=alert.get('notification_channels', ['email']),
+            key=f"edit_channels_{alert['alert_id']}"
+        )
+        
+        if st.button("💾 Save Changes", key=f"save_{alert['alert_id']}", type="primary"):
+            with st.spinner("Updating alert..."):
+                try:
+                    response = go_client.put(
+                        f"api/v1/admin/rating-alerts/alerts/{alert['alert_id']}",
+                        params={"user_id": user_id},
+                        json_data={
+                            "name": new_name,
+                            "config": alert.get('config', {}),
+                            "notification_channels": notification_channels,
+                            "enabled": enabled
+                        }
+                    )
+                    
+                    if response and response.get("success"):
+                        st.success("✅ Alert updated successfully!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to update alert")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    
+    with col2:
+        st.markdown("#### ⚠️ Delete Alert")
+        st.warning("⚠️ This will permanently delete this alert.")
+        
+        if st.button("🗑️ Delete Alert", key=f"delete_{alert['alert_id']}", type="secondary"):
+            with st.spinner("Deleting alert..."):
+                try:
+                    response = go_client.delete(
+                        f"api/v1/admin/rating-alerts/alerts/{alert['alert_id']}",
+                        params={"user_id": user_id},
+                    )
+                    
+                    if response and response.get("success"):
+                        st.success("✅ Alert deleted successfully!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to delete alert")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    
+    # Add note about creating new alerts for other symbols
+    st.info("💡 **Note:** Each alert is created for a specific symbol. To create alerts for additional symbols, use the 'Create New Alert' tab.")
+    
+    # Close button
+    if st.button("❌ Close Edit", key=f"close_edit_{alert['alert_id']}"):
+        st.session_state[f"edit_alert_{alert['alert_id']}"] = False
+        st.rerun()
+
 
 def filter_symbols(symbols_data, search_term, filter_status):
     """Filter symbols based on search term and status"""
+    if not symbols_data:
+        return []
+    
     filtered = symbols_data.copy()
     
     # Filter by search term
     if search_term:
         search_term = search_term.lower()
-        filtered = [
-            symbol for symbol in filtered 
-            if search_term in symbol.get('symbol', '').lower() 
-            or (symbol.get('company_name') and search_term in symbol.get('company_name').lower())
-        ]
+        filtered = [s for s in filtered if 
+                   search_term in s.get('symbol', '').lower() or 
+                   search_term in s.get('company_name', '').lower()]
     
     # Filter by status
     if filter_status != "All":
         is_active = filter_status == "Active"
-        filtered = [
-            symbol for symbol in filtered 
-            if symbol.get('is_active', True) == is_active
-        ]
+        filtered = [s for s in filtered if s.get('is_active') == is_active]
     
     return filtered
 
+
 def display_symbols_table(symbols_data):
     """Display symbols in a formatted table"""
-    # Create display data
-    display_data = []
+    if not symbols_data:
+        st.info("No symbols found")
+        return
+    
+    # Create DataFrame for better display
+    import pandas as pd
+    
+    df_data = []
     for symbol in symbols_data:
-        display_data.append({
+        df_data.append({
             'Symbol': symbol.get('symbol', 'N/A'),
-            'Company Name': symbol.get('company_name') or 'N/A',
-            'Sector': symbol.get('sector') or 'N/A',
-            'Industry': symbol.get('industry') or 'N/A',
-            'Country': symbol.get('country') or 'N/A',
-            'Exchange': symbol.get('exchange') or 'N/A',
-            'Status': '🟢 Active' if symbol.get('is_active', True) else '🔴 Inactive'
+            'Company': symbol.get('company_name', 'N/A'),
+            'Sector': symbol.get('sector', 'N/A'),
+            'Status': '✅ Active' if symbol.get('is_active') else '❌ Inactive'
         })
     
-    # Convert to DataFrame for better display
-    if display_data:
-        import pandas as pd
-        df = pd.DataFrame(display_data)
-        
-        # Display with formatting
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Symbol": st.column_config.TextColumn("📈 Symbol", width="small"),
-                "Company Name": st.column_config.TextColumn("🏢 Company Name", width="large"),
-                "Sector": st.column_config.TextColumn("🏭 Sector", width="medium"),
-                "Industry": st.column_config.TextColumn("⚙️ Industry", width="medium"),
-                "Country": st.column_config.TextColumn("🌍 Country", width="small"),
-                "Exchange": st.column_config.TextColumn("📊 Exchange", width="small"),
-                "Status": st.column_config.TextColumn("📊 Status", width="small")
-            }
-        )
-        
-        # Show summary stats
-        st.markdown("### 📊 Summary Statistics")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            total_symbols = len(symbols_data)
-            st.metric("📈 Total Symbols", total_symbols)
-        
-        with col2:
-            active_symbols = len([s for s in symbols_data if s.get('is_active', True)])
-            st.metric("🟢 Active Symbols", active_symbols)
-        
-        with col3:
-            inactive_symbols = len([s for s in symbols_data if not s.get('is_active', True)])
-            st.metric("🔴 Inactive Symbols", inactive_symbols)
+    df = pd.DataFrame(df_data)
+    
+    # Display the table
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    
+    # Show summary
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Symbols", len(symbols_data))
+    with col2:
+        active_count = len([s for s in symbols_data if s.get('is_active')])
+        st.metric("Active", active_count)
+    with col3:
+        inactive_count = len([s for s in symbols_data if not s.get('is_active')])
+        st.metric("Inactive", inactive_count)
 
-def add_stock_symbol(symbol, company_name=None, sector=None, industry=None, description=None, is_active=True):
-    """Add a new stock symbol to the database"""
-    try:
-        # Prepare payload with manual company information if provided
-        payload = {
-            "symbol": symbol.upper()
-        }
-        
-        # Add optional fields if provided
-        if company_name:
-            payload["company_name"] = company_name
-        if sector:
-            payload["sector"] = sector
-        if industry:
-            payload["industry"] = industry
-        if description:
-            payload["description"] = description
-        
-        response = python_client.post("api/v1/stocks/add", json_data=payload)
-        
-        if response and isinstance(response, dict):
-            st.success(f"✅ Successfully added {symbol} to the system!")
-            
-            # Show what information was used
-            if company_name or sector or industry:
-                st.info(f"📝 Used manual company information")
-                if response.get('company_name'):
-                    st.info(f"🏢 Company: {response.get('company_name')}")
-                if response.get('sector'):
-                    st.info(f"🏭 Sector: {response.get('sector')}")
-                if response.get('industry'):
-                    st.info(f"⚙️ Industry: {response.get('industry')}")
-            else:
-                # Show the auto-populated company info
-                if response.get('company_name'):
-                    st.info(f"📝 Company info auto-populated: {response.get('company_name')}")
-            
-            return True
-        else:
-            error_msg = "Unknown error"
-            if isinstance(response, dict) and response.get('detail'):
-                error_msg = response.get('detail')
-            st.error(f"❌ Failed to add symbol: {error_msg}")
-            return False
-            
-    except Exception as e:
-        st.error(f"❌ Error adding symbol: {str(e)}")
-        return False
 
+# Main execution
 if __name__ == "__main__":
     main()

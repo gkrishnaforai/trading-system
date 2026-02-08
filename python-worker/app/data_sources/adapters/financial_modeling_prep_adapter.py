@@ -171,7 +171,7 @@ class FinancialModelingPrepAdapter(BaseDataSourceAdapter):
                     self.source.config = fmp_config
                     self._logger.info(f"✅ Updated source config")
                 else:
-                    self._logger.warning(f"⚠️  Source doesn't have config attribute")
+                    self._logger.debug(f"⚠️  Source doesn't have config attribute")
             except Exception as e:
                 raise AdapterInitializationError(f"Failed to update source config: {type(e).__name__}: {str(e)}") from e
             
@@ -318,17 +318,38 @@ class FinancialModelingPrepAdapter(BaseDataSourceAdapter):
     def fetch_actions(self, symbol: str) -> List[Dict[str, Any]]:
         return self.source.fetch_actions(symbol)
     
+    def fetch_corporate_actions(self, symbol: str) -> List[Dict[str, Any]]:
+        """Alias for fetch_actions for compatibility"""
+        return self.fetch_actions(symbol)
+    
     def fetch_dividends(self, symbol: str) -> List[Dict[str, Any]]:
         return self.source.fetch_dividends(symbol)
     
     def fetch_splits(self, symbol: str) -> List[Dict[str, Any]]:
         return self.source.fetch_splits(symbol)
     
-    def fetch_financial_statements(self, symbol: str, *, quarterly: bool = True) -> Dict[str, Any]:
-        return self.source.fetch_financial_statements(symbol, quarterly=quarterly)
+    def fetch_financial_statements(self, symbol: str, period: str = None) -> Dict[str, Any]:
+        return self.source.fetch_financial_statements(symbol, period=period)
     
     def fetch_quarterly_earnings_history(self, symbol: str) -> List[Dict[str, Any]]:
         return self.source.fetch_quarterly_earnings_history(symbol)
     
     def fetch_analyst_recommendations(self, symbol: str) -> List[Dict[str, Any]]:
         return self.source.fetch_analyst_recommendations(symbol)
+    
+    # Technical Indicators delegation
+    def fetch_technical_indicators(self, symbol: str, timeframe: str = "1day") -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch all technical indicators for a symbol - delegates to source"""
+        return self.source.fetch_technical_indicators(symbol, timeframe)
+    
+    def fetch_ema_data(self, symbol: str, period_length: int = 20, timeframe: str = "1day") -> List[Dict[str, Any]]:
+        """Fetch EMA data - delegates to source"""
+        return self.source.fetch_ema_data(symbol, period_length, timeframe)
+    
+    def fetch_sma_data(self, symbol: str, period_length: int = 20, timeframe: str = "1day") -> List[Dict[str, Any]]:
+        """Fetch SMA data - delegates to source"""
+        return self.source.fetch_sma_data(symbol, period_length, timeframe)
+    
+    def fetch_rsi_data(self, symbol: str, period_length: int = 14, timeframe: str = "1day") -> List[Dict[str, Any]]:
+        """Fetch RSI data - delegates to source"""
+        return self.source.fetch_rsi_data(symbol, period_length, timeframe)

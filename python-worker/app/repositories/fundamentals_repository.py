@@ -11,6 +11,8 @@ from datetime import datetime
 from app.repositories.base_repository import BaseRepository
 from app.database import db
 from app.observability.logging import get_logger
+from app.data_management.table_mapping import DATA_TYPE_TABLE_MAP, resolve_column
+from app.data_management.refresh_strategy import DataType
 
 logger = get_logger(__name__)
 
@@ -20,7 +22,11 @@ class FundamentalsRepository:
     
     def __init__(self):
         """Initialize fundamentals repository"""
-        self.table_name = "fundamentals_snapshots"
+        self.table_name = DATA_TYPE_TABLE_MAP[DataType.FUNDAMENTALS].table.value
+
+    def _resolve_symbol_column(self) -> str:
+        spec = DATA_TYPE_TABLE_MAP[DataType.FUNDAMENTALS]
+        return resolve_column(spec.table.value, spec.symbol_columns)
     
     def fetch_by_symbol(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
@@ -33,15 +39,19 @@ class FundamentalsRepository:
             Dictionary of fundamental data or None if not found
         """
         try:
+            symbol_col = self._resolve_symbol_column()
             query = """
                 SELECT *
-                FROM fundamentals_snapshots
-                WHERE symbol = :symbol
+                FROM {table}
+                WHERE {symbol_col} = :symbol
                 ORDER BY as_of_date DESC
                 LIMIT 1
             """
-            
-            result = db.execute_query(query, {"symbol": symbol})
+
+            result = db.execute_query(
+                query.format(table=self.table_name, symbol_col=symbol_col),
+                {"symbol": symbol},
+            )
             
             if result and len(result) > 0:
                 fundamentals = result[0]
@@ -94,34 +104,37 @@ class FundamentalsRepository:
         try:
             if snapshot_date is None:
                 snapshot_date = datetime.now()
-            
-            # Prepare data for insertion using JSONB payload structure
-            from app.utils.json_sanitize import json_dumps_sanitized
-            
+
+            symbol_col = self._resolve_symbol_column()
+
             data = {
-                "symbol": symbol,
+                symbol_col: symbol,
                 "as_of_date": snapshot_date.date(),
                 "source": "stock_insights_service",
-                "payload": json_dumps_sanitized(fundamentals),  # Serialize dict to JSON string for PostgreSQL
+                "payload": fundamentals,
                 "created_at": datetime.now(),
                 "updated_at": datetime.now()
             }
             
             # Use base repository upsert method
+            unique_cols = [symbol_col, "as_of_date"]
             success = BaseRepository.upsert_many(
-                table="fundamentals_snapshots",
-                unique_columns=["symbol", "as_of_date"],
+                table=self.table_name,
+                unique_columns=unique_cols,
                 rows=[data]
             )
             
             if success:
                 logger.info(f"Upserted fundamentals for {symbol}")
-            
-            return success
+
+            if not success:
+                raise RuntimeError(f"Failed to upsert fundamentals into {self.table_name} for {symbol}")
+
+            return True
             
         except Exception as e:
             logger.error(f"Error upserting fundamentals for {symbol}: {e}")
-            return False
+            raise
     
     def get_symbols_with_fundamentals(self, limit: int = 100) -> List[str]:
         """
@@ -134,14 +147,18 @@ class FundamentalsRepository:
             List of stock symbols
         """
         try:
+            symbol_col = self._resolve_symbol_column()
             query = """
-                SELECT DISTINCT symbol
-                FROM fundamentals_snapshots
+                SELECT DISTINCT {symbol_col} AS symbol
+                FROM {table}
                 ORDER BY as_of_date DESC
                 LIMIT :limit
             """
-            
-            result = db.execute_query(query, {"limit": limit})
+
+            result = db.execute_query(
+                query.format(table=self.table_name, symbol_col=symbol_col),
+                {"limit": limit},
+            )
             
             if result:
                 return [row["symbol"] for row in result]

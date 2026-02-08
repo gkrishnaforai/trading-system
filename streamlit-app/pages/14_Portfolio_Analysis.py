@@ -37,7 +37,7 @@ def show_detailed_analysis(symbol: str):
     if analysis_data:
         display_signal_analysis(symbol, analysis_data, show_header=True, show_debug=False)
     else:
-        display_no_data_message(symbol)
+        display_no_data_message(symbol, context="portfolio")
 
 def analyze_portfolio():
     """Analyze all symbols in portfolio"""

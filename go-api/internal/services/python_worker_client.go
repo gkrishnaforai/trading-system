@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -16,21 +18,71 @@ type PythonWorkerClient struct {
 	HTTPClient *http.Client
 }
 
+// RefreshGrades triggers python-worker stock grades refresh for a symbol.
+// This is used for analyst-related data types (analyst_ratings, price_targets, consensus_data, stock_grades).
+func (c *PythonWorkerClient) RefreshGrades(ctx context.Context, symbol string, dataSource string, includeConsensus bool, forceRefresh bool) error {
+	if symbol == "" {
+		return fmt.Errorf("symbol is required")
+	}
+	if dataSource == "" {
+		dataSource = "fmp"
+	}
+
+	q := url.Values{}
+	q.Set("data_source", dataSource)
+	q.Set("include_consensus", strconv.FormatBool(includeConsensus))
+	q.Set("force_refresh", strconv.FormatBool(forceRefresh))
+
+	url := fmt.Sprintf("%s/api/v1/grades/refresh/%s?%s", c.BaseURL, symbol, q.Encode())
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer([]byte("{}")))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 // NewPythonWorkerClient creates a new client for Python Worker
 func NewPythonWorkerClient(baseURL string) *PythonWorkerClient {
 	return &PythonWorkerClient{
 		BaseURL: baseURL,
 		HTTPClient: &http.Client{
-			Timeout: 30 * time.Second,
+			// Refresh operations can be long-running (full symbol backfills, indicators, etc.).
+			// Keep this comfortably above the handler-level refresh timeout.
+			Timeout: 45 * time.Minute,
 		},
 	}
 }
 
 // RefreshRequest represents a request to refresh data
 type RefreshRequest struct {
-	Symbols   []string `json:"symbols"`
-	DataTypes []string `json:"data_types"`
-	Force     bool     `json:"force"`
+	RunID       string   `json:"run_id,omitempty"`
+	PortfolioID string   `json:"portfolio_id,omitempty"`
+	Symbols     []string `json:"symbols"`
+	DataTypes   []string `json:"data_types"`
+	Force       bool     `json:"force"`
+}
+
+// AdminRefreshRequest is the Option B request shape used by Go API orchestration.
+type AdminRefreshRequest struct {
+	RunID       string   `json:"run_id"`
+	PortfolioID string   `json:"portfolio_id,omitempty"`
+	Symbols     []string `json:"symbols"`
+	DataTypes   []string `json:"data_types"`
+	Force       bool     `json:"force"`
 }
 
 // RefreshResponse represents the response from refresh endpoint
@@ -42,7 +94,42 @@ type RefreshResponse struct {
 
 // RefreshData triggers data refresh for symbols
 func (c *PythonWorkerClient) RefreshData(ctx context.Context, req RefreshRequest) (*RefreshResponse, error) {
-	url := fmt.Sprintf("%s/refresh", c.BaseURL)
+	url := fmt.Sprintf("%s/api/v1/refresh", c.BaseURL)
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var refreshResp RefreshResponse
+	if err := json.NewDecoder(resp.Body).Decode(&refreshResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &refreshResp, nil
+}
+
+// AdminRefreshData triggers admin refresh (python-worker /admin/refresh) with a caller-provided run_id.
+func (c *PythonWorkerClient) AdminRefreshData(ctx context.Context, req AdminRefreshRequest) (*RefreshResponse, error) {
+	url := fmt.Sprintf("%s/admin/refresh", c.BaseURL)
 
 	jsonData, err := json.Marshal(req)
 	if err != nil {

@@ -37,7 +37,15 @@ func (r *PortfolioRepository) ensureStockID(symbol string) (string, error) {
 
 func (r *PortfolioRepository) GetByID(portfolioID string) (*models.Portfolio, error) {
 	query := `
-		SELECT id, user_id, name, base_currency, is_default, is_archived, created_at, updated_at
+		SELECT
+			id,
+			user_id,
+			name,
+			NULL AS base_currency,
+			false AS is_default,
+			false AS is_archived,
+			NOW() AS created_at,
+			NOW() AS updated_at
 		FROM portfolios
 		WHERE id = $1
 	`
@@ -65,10 +73,18 @@ func (r *PortfolioRepository) GetByID(portfolioID string) (*models.Portfolio, er
 
 func (r *PortfolioRepository) GetByUserID(userID string) ([]models.Portfolio, error) {
 	query := `
-		SELECT id, user_id, name, base_currency, is_default, is_archived, created_at, updated_at
+		SELECT
+			id,
+			user_id,
+			name,
+			NULL AS base_currency,
+			false AS is_default,
+			false AS is_archived,
+			NOW() AS created_at,
+			NOW() AS updated_at
 		FROM portfolios
 		WHERE user_id = $1
-		ORDER BY is_default DESC, created_at DESC
+		ORDER BY name ASC
 	`
 
 	rows, err := r.db.Query(query, userID)
@@ -144,13 +160,13 @@ func (r *PortfolioRepository) GetSignals(portfolioID string) ([]models.Portfolio
 // CreatePortfolio creates a new portfolio
 func (r *PortfolioRepository) CreatePortfolio(portfolio *models.Portfolio) error {
 	query := `
-		INSERT INTO portfolios (user_id, name, base_currency, is_default, is_archived)
-		VALUES ($1, $2, COALESCE($3, 'USD'), $4, $5)
-		RETURNING id, created_at, updated_at
+		INSERT INTO portfolios (user_id, name)
+		VALUES ($1, $2)
+		RETURNING id, NOW() AS created_at, NOW() AS updated_at
 	`
 
 	log.Printf("INFO: Creating portfolio for user %s", portfolio.UserID)
-	err := r.db.QueryRow(query, portfolio.UserID, portfolio.Name, portfolio.BaseCurrency, portfolio.IsDefault, portfolio.IsArchived).
+	err := r.db.QueryRow(query, portfolio.UserID, portfolio.Name).
 		Scan(&portfolio.ID, &portfolio.CreatedAt, &portfolio.UpdatedAt)
 	if err != nil {
 		log.Printf("ERROR: Failed to create portfolio: %v", err)
@@ -175,8 +191,6 @@ func (r *PortfolioRepository) UpdatePortfolio(portfolioID string, portfolioName 
 	if len(updates) == 0 {
 		return nil
 	}
-
-	updates = append(updates, "updated_at = CURRENT_TIMESTAMP")
 	args = append(args, portfolioID)
 	query := fmt.Sprintf("UPDATE portfolios SET %s WHERE id = $%d", strings.Join(updates, ", "), len(args))
 
@@ -235,9 +249,55 @@ func (r *PortfolioRepository) AddPositionBySymbol(portfolioID string, symbol str
 
 // UpdateHolding updates an existing holding
 func (r *PortfolioRepository) UpdateHolding(holdingID string, updates map[string]interface{}) error {
-	_ = holdingID
-	_ = updates
-	return fmt.Errorf("UpdateHolding not implemented for normalized schema")
+	if holdingID == "" {
+		return fmt.Errorf("holding_id cannot be empty")
+	}
+	if updates == nil {
+		return fmt.Errorf("updates cannot be nil")
+	}
+
+	setClauses := []string{}
+	args := []interface{}{}
+
+	if v, ok := updates["quantity"]; ok {
+		q, ok := v.(float64)
+		if !ok {
+			return fmt.Errorf("quantity must be a number")
+		}
+		setClauses = append(setClauses, fmt.Sprintf("quantity = $%d", len(args)+1))
+		args = append(args, q)
+	}
+
+	if v, ok := updates["avg_price"]; ok {
+		p, ok := v.(float64)
+		if !ok {
+			return fmt.Errorf("avg_price must be a number")
+		}
+		setClauses = append(setClauses, fmt.Sprintf("avg_price = $%d", len(args)+1))
+		args = append(args, p)
+	}
+
+	if v, ok := updates["opened_at"]; ok {
+		openedAt, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("opened_at must be a string (YYYY-MM-DD)")
+		}
+		setClauses = append(setClauses, fmt.Sprintf("opened_at = $%d", len(args)+1))
+		args = append(args, openedAt)
+	}
+
+	if len(setClauses) == 0 {
+		return fmt.Errorf("no supported fields to update")
+	}
+
+	args = append(args, holdingID)
+	query := fmt.Sprintf("UPDATE portfolio_positions SET %s WHERE id = $%d", strings.Join(setClauses, ", "), len(args))
+	_, err := r.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update holding: %w", err)
+	}
+
+	return nil
 }
 
 // DeleteHolding deletes a holding

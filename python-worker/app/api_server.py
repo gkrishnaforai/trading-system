@@ -4,9 +4,15 @@ Provides endpoints for data fetching, indicators, signals, reports, and more
 
 Industry Standard: RESTful API for AI/ML operations
 SOLID: Single Responsibility - API endpoints only
+
+CANONICAL ENTRYPOINT (Docker/Runtime):
+- The python-worker Docker image starts *this* module: `python app/api_server.py`
+- Register ALL routers/endpoints in THIS FILE via `app.include_router(...)`
+- Do NOT add new routers only in `app/api_app.py` (that file is not used by Docker)
 """
 import logging
 import json
+import asyncio
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date
 from fastapi import FastAPI, HTTPException
@@ -22,6 +28,7 @@ from app.services.fundamental_scorer import FundamentalScorer
 from app.services.indicator_service import IndicatorService
 from app.services.strategy_service import StrategyService
 from app.services.swing_risk_manager import SwingRiskManager
+from app.services.universal_scheduler import UniversalScheduler
 from app.strategies import DEFAULT_STRATEGY
 from app.di import get_container
 
@@ -86,6 +93,13 @@ from app.api.tqqq_engine_api import router as tqqq_engine_router
 from app.api.unified_tqqq_api import router as unified_tqqq_router
 from app.api.symbol_enrichment import router as symbol_enrichment_router
 from app.api.market_endpoints import router as market_router
+from app.api.data_scheduler_api import router as data_scheduler_router
+from app.api.enhanced_fmp_api import router as enhanced_fmp_router
+from app.api.stock_grades_api import router as stock_grades_router
+# DEPRECATED: Rating Alerts API - Migrated to Universal Alerts
+# from app.api.rating_alert_api import router as rating_alert_router
+from app.api.universal_alert_api import router as universal_alert_router
+from app.api.audit_endpoints import audit_router
 
 # Include all routers with proper prefixes
 # ========================================
@@ -107,6 +121,71 @@ app.include_router(tqqq_engine_router, prefix="/api/v1/tqqq")
 app.include_router(unified_tqqq_router, prefix="/api/v1/unified-tqqq")
 app.include_router(symbol_enrichment_router, prefix="/api/v1/enrichment")
 app.include_router(market_router, prefix="/api/v1")
+app.include_router(data_scheduler_router, prefix="/api/v1/scheduler")
+app.include_router(enhanced_fmp_router, prefix="/api/v1")
+app.include_router(stock_grades_router, prefix="/api/v1")
+# DEPRECATED: Rating Alerts API - Migrated to Universal Alerts
+# app.include_router(rating_alert_router, prefix="/api/v1")
+app.include_router(universal_alert_router, prefix="/api/v1/universal-alerts")
+app.include_router(audit_router)
+
+# Add deprecation handler for rating-alerts endpoints
+@app.get("/api/v1/rating-alerts", tags=["deprecated"])
+@app.get("/api/v1/rating-alerts/", tags=["deprecated"])
+async def deprecated_rating_alerts():
+    """Rating Alerts API deprecation notice"""
+    return {
+        "detail": "Rating Alerts API has been deprecated",
+        "deprecated": True,
+        "successor": "/api/v1/universal-alerts",
+        "migration_guide": "Use the migration tools in the Trading Dashboard or run migrate_rating_to_universal_alerts.py",
+        "timeline": {
+            "phase_1": "Deprecated (current)",
+            "phase_2": "Migration helpers available", 
+            "phase_3": "Endpoints removed (future)"
+        },
+        "endpoint_mapping": {
+            "GET /api/v1/rating-alerts/alerts": "GET /api/v1/universal-alerts/alerts",
+            "POST /api/v1/rating-alerts/alerts": "POST /api/v1/universal-alerts/alerts",
+            "PUT /api/v1/rating-alerts/alerts/{id}": "PUT /api/v1/universal-alerts/alerts/{id}",
+            "DELETE /api/v1/rating-alerts/alerts/{id}": "DELETE /api/v1/universal-alerts/alerts/{id}"
+        },
+        "alternatives": {
+            "alert_management": "http://localhost:8502/Trading_Dashboard -> 🚨 Alert Management",
+            "migration_tools": "python migrate_rating_to_universal_alerts.py",
+            "documentation": "/Users/krishnag/tools/trading-system/RATING_ALERTS_DEPRECATION_PLAN.md"
+        }
+    }
+
+# Catch-all handler for all rating-alerts endpoints
+@app.api_route("/api/v1/rating-alerts/{path:path}", methods=["GET", "POST", "PUT", "DELETE"], tags=["deprecated"])
+async def deprecated_rating_alerts_catchall(path: str):
+    """Catch-all handler for all rating-alerts endpoints"""
+    return {
+        "detail": f"Rating Alerts API endpoint '{path}' has been deprecated",
+        "deprecated": True,
+        "successor": "/api/v1/universal-alerts",
+        "migration_guide": "Use the migration tools in the Trading Dashboard or run migrate_rating_to_universal_alerts.py",
+        "requested_endpoint": f"/api/v1/rating-alerts/{path}",
+        "timeline": {
+            "phase_1": "Deprecated (current)",
+            "phase_2": "Migration helpers available", 
+            "phase_3": "Endpoints removed (future)"
+        },
+        "endpoint_mapping": {
+            "GET /api/v1/rating-alerts/alerts": "GET /api/v1/universal-alerts/alerts",
+            "POST /api/v1/rating-alerts/alerts": "POST /api/v1/universal-alerts/alerts",
+            "PUT /api/v1/rating-alerts/alerts/{id}": "PUT /api/v1/universal-alerts/alerts/{id}",
+            "DELETE /api/v1/rating-alerts/alerts/{id}": "DELETE /api/v1/universal-alerts/alerts/{id}",
+            "GET /api/v1/rating-alerts/ratings/{symbol}": "Use data collection plugins in universal alerts",
+            "POST /api/v1/rating-alerts/subscriptions": "Create alerts with subscription filters in universal alerts"
+        },
+        "alternatives": {
+            "alert_management": "http://localhost:8502/Trading_Dashboard -> 🚨 Alert Management",
+            "migration_tools": "python migrate_rating_to_universal_alerts.py",
+            "documentation": "/Users/krishnag/tools/trading-system/RATING_ALERTS_DEPRECATION_PLAN.md"
+        }
+    }
 
 # CORS middleware
 app.add_middleware(
@@ -122,12 +201,14 @@ refresh_manager = DataRefreshManager()
 signal_readiness_validator = SignalReadinessValidator()
 stock_screener_service = StockScreenerService()
 fundamental_scorer = FundamentalScorer()
+universal_alert_scheduler = UniversalScheduler()
 
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
     """Initialize database on startup"""
     init_database()
+    asyncio.create_task(universal_alert_scheduler.start_scheduler())
     logger.info("✅ Python Worker API started")
 
 
@@ -141,7 +222,14 @@ async def health_check():
         return {
             "status": "healthy",
             "service": "python-worker",
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "universal_alert_scheduler": {
+                "running": bool(getattr(universal_alert_scheduler, "is_running", False)),
+                "started_at": getattr(universal_alert_scheduler, "started_at", None).isoformat() if getattr(universal_alert_scheduler, "started_at", None) else None,
+                "last_event_processing_at": getattr(universal_alert_scheduler, "last_event_processing_at", None).isoformat() if getattr(universal_alert_scheduler, "last_event_processing_at", None) else None,
+                "last_error": getattr(universal_alert_scheduler, "last_error", None),
+                "last_job_run": getattr(universal_alert_scheduler, "last_job_run", {}) or {},
+            },
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")

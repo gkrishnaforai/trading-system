@@ -1029,24 +1029,26 @@ class YahooFinanceClient:
 
         return records
 
-    def fetch_financial_statements(self, symbol: str, *, quarterly: bool = True) -> Dict[str, Any]:
+    def fetch_financial_statements(self, symbol: str, period: str = None) -> Dict[str, Any]:
         """Fetch income statement, balance sheet, and cash flow statements."""
         try:
             ticker = self._get_ticker(symbol)
             self.rate_limiter.acquire()
 
-            if quarterly:
+            # Default to annual data unless quarterly is specifically requested
+            if period == "quarterly":
                 income = getattr(ticker, "quarterly_financials", None)
                 balance = getattr(ticker, "quarterly_balance_sheet", None)
                 cash = getattr(ticker, "quarterly_cashflow", None)
             else:
+                # Default to annual data (latest available)
                 income = getattr(ticker, "financials", None)
                 balance = getattr(ticker, "balance_sheet", None)
                 cash = getattr(ticker, "cashflow", None)
 
             return {
                 "symbol": symbol,
-                "periodicity": "quarterly" if quarterly else "annual",
+                "periodicity": "quarterly" if period == "quarterly" else "annual",
                 "income_statement": self._normalize_statement_df(income),
                 "balance_sheet": self._normalize_statement_df(balance),
                 "cash_flow": self._normalize_statement_df(cash),
@@ -1055,7 +1057,7 @@ class YahooFinanceClient:
             logger.warning(f"Failed to fetch financial statements for {symbol}: {e}")
             return {
                 "symbol": symbol,
-                "periodicity": "quarterly" if quarterly else "annual",
+                "periodicity": "quarterly" if period == "quarterly" else "annual",
                 "income_statement": [],
                 "balance_sheet": [],
                 "cash_flow": [],
@@ -1304,7 +1306,7 @@ class YahooFinanceClient:
                     d_val = pd.to_datetime(d, errors="coerce").date() if d else None
                 else:
                     d_val = d
-                if d_val is None:
+                if d_val is None or pd.isna(d_val):
                     continue
                 if not (start_dt <= d_val <= end_dt):
                     continue

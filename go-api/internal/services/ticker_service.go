@@ -20,10 +20,29 @@ func NewTickerService(tickerRepo *repositories.TickerRepository, cache *CacheSer
 	}
 }
 
+// GetAllActiveTickers returns all active tickers; cached for 30 minutes
+func (s *TickerService) GetAllActiveTickers(ctx context.Context) ([]repositories.TickerBasic, error) {
+	cacheKey := "tickers:all_active"
+	var cached []repositories.TickerBasic
+	if err := s.cache.Get(cacheKey, &cached); err == nil {
+		return cached, nil
+	}
+
+	tickers, err := s.tickerRepo.GetAllActiveTickers()
+	if err != nil {
+		return nil, err
+	}
+	// Cache for 30 minutes
+	if s.cache != nil {
+		s.cache.Set(cacheKey, tickers, 30*time.Minute)
+	}
+	return tickers, nil
+}
+
 // SearchTickers searches tickers by query; cached for 10 minutes
-func (s *TickerService) SearchTickers(ctx context.Context, query string, limit int) ([]repositories.Ticker, error) {
+func (s *TickerService) SearchTickers(ctx context.Context, query string, limit int) ([]repositories.TickerSearchBasic, error) {
 	cacheKey := fmt.Sprintf("tickers:search:%s:%d", query, limit)
-	var cached []repositories.Ticker
+	var cached []repositories.TickerSearchBasic
 	if err := s.cache.Get(cacheKey, &cached); err == nil {
 		return cached, nil
 	}

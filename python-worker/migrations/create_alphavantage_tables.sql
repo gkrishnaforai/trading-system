@@ -341,12 +341,12 @@ COMMENT ON TABLE industry_peers IS 'Industry peer relationships for comparison';
 
 -- Create updated_at trigger function (if not exists)
 CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS
 BEGIN
     NEW.updated_at = CURRENT_TIMESTAMP;
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+language 'plpgsql';
 
 -- Create triggers for updated_at
 CREATE TRIGGER update_fundamentals_summary_updated_at 

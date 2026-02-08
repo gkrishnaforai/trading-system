@@ -100,6 +100,31 @@ Same as React, but it additionally uses admin endpoints:
   - writes to Postgres
   - updates refresh state
 
+### D) Portfolio data loading (Option B: Go-orchestrated runs)
+
+- **Rule (non-negotiable)**: UI clients (**Streamlit today, Next.js tomorrow**) call **Go API only**.
+  - UI must **not** call python-worker directly (except local debugging).
+- **Go API is the orchestrator**:
+  - creates a durable `run_id`
+  - writes an audit/run row (who/what/when/config)
+  - triggers python-worker to execute the work
+  - serves run status/history to the UI for polling + operator UX
+- **python-worker is the executor**:
+  - performs ingestion/refresh work
+  - logs run events (per symbol/provider)
+  - updates the audit tables with progress + completion status
+
+Recommended API shape (Go API):
+- `POST /api/v1/portfolios/:portfolio_id/data-load` (create run + start execution)
+- `GET /api/v1/portfolios/:portfolio_id/data-load/runs?limit=...` (run history)
+- `GET /api/v1/data-load/runs/:run_id` (run status + errors)
+- `POST /api/v1/data-load/runs/:run_id/rerun-failed` (rerun only failed symbols)
+
+Rationale:
+- Keeps auth/session/authorization in one place (Go API).
+- Makes auditability and operator tooling straightforward.
+- Allows python-worker to evolve independently without breaking UI contracts.
+
 ## Key API contracts (current)
 
 ### 1) Earnings calendar (admin)

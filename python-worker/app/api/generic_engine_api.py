@@ -55,27 +55,16 @@ async def generate_generic_signal(request: GenericSignalRequest):
         
         conn = psycopg2.connect(db_url)
         
-        # Build query
+        # Build query using helper function (pivot query for narrow format)
+        from app.utils.indicators_query_helper import get_indicators_with_price_query
+        
         if request.date:
-            query = """
-                SELECT i.date, r.close, i.rsi_14, i.sma_50, i.ema_20, i.macd, i.macd_signal, r.volume, r.low, r.high
-                FROM indicators_daily i
-                JOIN raw_market_data_daily r ON i.symbol = r.symbol AND i.date = r.date
-                WHERE i.symbol = %s AND i.date = %s
-                ORDER BY i.date
-            """
-            params = (request.symbol.upper(), request.date)
+            query = get_indicators_with_price_query(request.symbol.upper(), request.date, limit=10)
+            params = {"symbol": request.symbol.upper(), "date": request.date}
         else:
             # Get most recent data
-            query = """
-                SELECT i.date, r.close, i.rsi_14, i.sma_50, i.ema_20, i.macd, i.macd_signal, r.volume, r.low, r.high
-                FROM indicators_daily i
-                JOIN raw_market_data_daily r ON i.symbol = r.symbol AND i.date = r.date
-                WHERE i.symbol = %s
-                ORDER BY i.date DESC
-                LIMIT 1
-            """
-            params = (request.symbol.upper(),)
+            query = get_indicators_with_price_query(request.symbol.upper(), limit=1)
+            params = {"symbol": request.symbol.upper()}
         
         df = pd.read_sql(query, conn, params=params)
         conn.close()

@@ -55,22 +55,69 @@ type Ticker struct {
 	EarningsGrowth   *float64 `json:"earnings_growth"`
 }
 
-// SearchTickers searches for tickers by symbol or company name (ILIKE), returns up to limit rows (no price for performance)
-func (r *TickerRepository) SearchTickers(query string, limit int) ([]Ticker, error) {
+// TickerBasic represents a lightweight ticker for dropdowns
+type TickerBasic struct {
+	Symbol      string  `json:"symbol"`
+	CompanyName *string `json:"company_name"`
+	IsActive    *bool   `json:"is_active"`
+}
+
+// TickerSearchBasic represents a lightweight ticker for search results
+type TickerSearchBasic struct {
+	Symbol      string  `json:"symbol"`
+	CompanyName *string `json:"company_name"`
+	Exchange    *string `json:"exchange"`
+	Sector      *string `json:"sector"`
+	Industry    *string `json:"industry"`
+	Country     *string `json:"country"`
+	Currency    *string `json:"currency"`
+	MarketCap   *int64  `json:"market_cap"`
+	IsActive    *bool   `json:"is_active"`
+}
+
+// GetAllActiveTickers returns all active tickers (lightweight version for dropdown)
+func (r *TickerRepository) GetAllActiveTickers() ([]TickerBasic, error) {
+	sqlQuery := `
+		SELECT s.symbol, s.company_name, s.is_active
+		FROM stocks s
+		WHERE s.is_active = true
+		ORDER BY s.symbol ASC
+	`
+
+	rows, err := r.db.Query(sqlQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all active tickers: %w", err)
+	}
+	defer rows.Close()
+
+	var tickers []TickerBasic
+	for rows.Next() {
+		var t TickerBasic
+		err := rows.Scan(&t.Symbol, &t.CompanyName, &t.IsActive)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan ticker row: %w", err)
+		}
+		tickers = append(tickers, t)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating ticker rows: %w", err)
+	}
+	return tickers, nil
+}
+
+// SearchTickers searches for tickers by symbol or company name (ILIKE), returns up to limit rows
+func (r *TickerRepository) SearchTickers(query string, limit int) ([]TickerSearchBasic, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	// Normalize query: strip spaces and ensure we have something to search
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return []Ticker{}, nil
+		return []TickerSearchBasic{}, nil
 	}
 	// Use ILIKE on symbol and company_name; order by symbol match first
 	sqlQuery := `
-		SELECT 
-			s.symbol, s.company_name, s.exchange, s.sector, s.industry, s.country, s.currency, s.market_cap, s.is_active,
-			NULL, NULL, NULL,
-			NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+		SELECT s.symbol, s.company_name, s.exchange, s.sector, s.industry, s.country, s.currency, s.market_cap, s.is_active
 		FROM stocks s
 		WHERE (s.symbol ILIKE $1 OR s.company_name ILIKE $1)
 		ORDER BY 
@@ -88,16 +135,11 @@ func (r *TickerRepository) SearchTickers(query string, limit int) ([]Ticker, err
 	}
 	defer rows.Close()
 
-	var tickers []Ticker
+	var tickers []TickerSearchBasic
 	for rows.Next() {
-		var t Ticker
+		var t TickerSearchBasic
 		err := rows.Scan(
 			&t.Symbol, &t.CompanyName, &t.Exchange, &t.Sector, &t.Industry, &t.Country, &t.Currency, &t.MarketCap, &t.IsActive,
-			&t.CurrentPrice, &t.DayChange, &t.DayChangePct,
-			&t.PERatio, &t.PBRatio, &t.EPS, &t.DividendYield, &t.Beta, &t.Description,
-			&t.FiftyTwoWeekHigh, &t.FiftyTwoWeekLow, &t.AverageVolume, &t.EnterpriseValue,
-			&t.PriceToSales, &t.ForwardPE, &t.PEGRatio, &t.ProfitMargin, &t.CurrentRatio,
-			&t.DebtToEquity, &t.ROE, &t.ROA, &t.RevenueGrowth, &t.EarningsGrowth,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan ticker row: %w", err)

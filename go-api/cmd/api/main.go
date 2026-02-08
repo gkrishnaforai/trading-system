@@ -37,12 +37,34 @@ func main() {
 		log.Println("✅ Redis cache connected")
 	}
 
+	// Initialize Redis job queue (feature-flagged)
+	useJobQueue := os.Getenv("ENABLE_JOB_QUEUE") == "true"
+	var jobQueue *services.RedisStreamJobQueue
+	if useJobQueue {
+		log.Println("🧵 ENABLE_JOB_QUEUE=true; using Redis Streams job queue")
+		jq, err := services.NewRedisStreamJobQueue(redisURL)
+		if err != nil {
+			log.Printf("Warning: Failed to connect to Redis job queue: %v. Falling back to direct python-worker calls.", err)
+			useJobQueue = false
+		} else {
+			jobQueue = jq
+			defer jobQueue.Close()
+			log.Println("✅ Redis job queue connected")
+		}
+	} else {
+		log.Println("🧵 ENABLE_JOB_QUEUE!=true; using direct python-worker calls (no Redis job queue)")
+	}
+
 	// Initialize repositories
 	portfolioRepo := repositories.NewPortfolioRepository()
 	indicatorRepo := repositories.NewIndicatorRepository()
 	marketDataRepo := repositories.NewMarketDataRepository()
 	watchlistRepo := repositories.NewWatchlistRepository()
 	tickerRepo := repositories.NewTickerRepository()
+	userRepo := repositories.NewUserRepository()
+	ingestionAuditRepo := repositories.NewIngestionAuditRepository()
+	dataPreviewRepo := repositories.NewDataPreviewRepository()
+	notificationQueueRepo := repositories.NewNotificationQueueRepository()
 
 	// Initialize services
 	portfolioService := services.NewPortfolioService(portfolioRepo, indicatorRepo, cacheService)
@@ -57,7 +79,9 @@ func main() {
 	watchlistService := services.NewWatchlistService(watchlistRepo, portfolioRepo, cacheService)
 	tickerService := services.NewTickerService(tickerRepo, cacheService)
 	pythonWorkerClient := services.NewPythonWorkerClient(pythonWorkerURL)
+	dataPreviewService := services.NewDataPreviewService(dataPreviewRepo)
 	symbolScopeHandler := handlers.NewSymbolScopeHandler(watchlistService, portfolioService, cacheService)
+	meHandler := handlers.NewMeHandler(userRepo)
 
 	// Initialize handlers
 	portfolioHandler := handlers.NewPortfolioHandler(portfolioService)
@@ -67,6 +91,12 @@ func main() {
 	llmHandler := handlers.NewLLMHandler()
 	reportHandler := handlers.NewReportHandler()
 	adminProxyHandler := handlers.NewAdminProxyHandler(pythonWorkerClient)
+	dataLoadHandler := handlers.NewDataLoadHandler(pythonWorkerClient, ingestionAuditRepo, jobQueue, useJobQueue)
+	dataPreviewHandler := handlers.NewDataPreviewHandler(dataPreviewService)
+	notificationQueueHandler := handlers.NewNotificationQueueHandler(notificationQueueRepo)
+	jobQueueAdminHandler := handlers.NewJobQueueAdminHandler(jobQueue)
+	portfolioV2ProxyHandler := handlers.NewPortfolioV2ProxyHandler(pythonWorkerClient)
+	portfolioAnalysisRunHandler := handlers.NewPortfolioAnalysisRunHandler(ingestionAuditRepo, jobQueue, useJobQueue)
 
 	// Initialize HTTP router
 	r := gin.Default()
@@ -82,11 +112,37 @@ func main() {
 	// API routes
 	api := r.Group("/api/v1")
 	{
+		// Portfolio API v2 proxy (compat bridge: Streamlit -> Go API only)
+		api.Any("/portfolio-v2/*path", portfolioV2ProxyHandler.Proxy)
+
+		// Notification Queue (Operator UX)
+		api.GET("/notifications/queue/summary", notificationQueueHandler.Summary)
+		api.GET("/notifications/queue/recent", notificationQueueHandler.Recent)
+		api.GET("/notifications/queue/by-correlation/:correlation_id", notificationQueueHandler.ByCorrelationID)
+
+		// Current user profile (BFF)
+		api.GET("/me", meHandler.GetMe)
+		api.PATCH("/me", meHandler.UpdateMe)
+
+		// Users (UI helper)
+		api.GET("/users", func(c *gin.Context) {
+			users, err := userRepo.ListUsers(200)
+			if err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(200, gin.H{"count": len(users), "users": users})
+		})
+
 		// Admin proxy endpoints (Go API -> python-worker)
 		api.GET("/admin/health", adminProxyHandler.GetHealth)
 		api.GET("/admin/data-sources", adminProxyHandler.GetDataSources)
 		api.POST("/admin/refresh", adminProxyHandler.Refresh)
 		api.GET("/admin/refresh/status", adminProxyHandler.GetRefreshStatus)
+		api.GET("/admin/job-profiles", dataLoadHandler.GetJobProfiles)
+		api.GET("/admin/job-queue/status", jobQueueAdminHandler.GetStatus)
+		api.POST("/admin/job-queue/dlq/requeue", jobQueueAdminHandler.RequeueDLQ)
+		api.POST("/admin/job-queue/stream/delete", jobQueueAdminHandler.DeleteStreamEntries)
 		api.GET("/admin/data-summary/:table", adminProxyHandler.GetDataSummary)
 		api.GET("/admin/audit-logs", adminProxyHandler.GetAuditLogs)
 		api.POST("/admin/signals/generate", adminProxyHandler.GenerateSignals)
@@ -107,6 +163,22 @@ func main() {
 		// Swing endpoints (Go API -> python-worker)
 		api.POST("/admin/swing/signal", adminProxyHandler.SwingSignal)
 		api.POST("/admin/swing/risk/check", adminProxyHandler.SwingRiskCheck)
+		api.POST("/admin/universal/signal/universal", adminProxyHandler.UniversalSignal)
+		api.Any("/admin/growth-quality/*path", func(c *gin.Context) {
+			// Allow GET/POST passthrough for now
+			switch c.Request.Method {
+			case "GET":
+				adminProxyHandler.GrowthQualityGet(c)
+			case "POST":
+				adminProxyHandler.GrowthQualityPost(c)
+			default:
+				c.JSON(405, gin.H{"error": "method not allowed"})
+			}
+		})
+		api.GET("/admin/rating-alerts/*path", adminProxyHandler.RatingAlertsGet)
+		api.POST("/admin/rating-alerts/*path", adminProxyHandler.RatingAlertsPost)
+		api.PUT("/admin/rating-alerts/*path", adminProxyHandler.RatingAlertsPut)
+		api.DELETE("/admin/rating-alerts/*path", adminProxyHandler.RatingAlertsDelete)
 
 		// Portfolio endpoints
 		api.GET("/portfolios/user/:user_id", portfolioHandler.GetPortfolios)
@@ -119,6 +191,25 @@ func main() {
 		api.POST("/portfolio/:user_id/:portfolio_id/holdings", portfolioHandler.CreateHolding)
 		api.PUT("/holdings/:holding_id", portfolioHandler.UpdateHolding)
 		api.DELETE("/holdings/:holding_id", portfolioHandler.DeleteHolding)
+
+		// Portfolio data-load orchestration (Option B)
+		api.POST("/portfolios/:portfolio_id/data-load", dataLoadHandler.CreatePortfolioDataLoad)
+		api.GET("/portfolios/:portfolio_id/data-load/runs", dataLoadHandler.ListPortfolioRuns)
+		api.GET("/portfolios/:portfolio_id/alerts/summary", dataLoadHandler.GetPortfolioAlertsSummary)
+		api.GET("/data-load/runs/:run_id", dataLoadHandler.GetRun)
+		api.GET("/data-load/runs/:run_id/alert-events", dataLoadHandler.ListRunAlertEvents)
+		api.GET("/alerts/events", dataLoadHandler.ListAlertEventsForSymbol)
+		api.POST("/data-load/runs/:run_id/cancel", dataLoadHandler.CancelRun)
+		api.POST("/data-load/runs/:run_id/rerun-failed", dataLoadHandler.RerunFailed)
+
+		// Portfolio analysis run orchestration (Option B)
+		api.POST("/portfolios/:portfolio_id/analysis-run", portfolioAnalysisRunHandler.CreateRun)
+
+		// Generic, allowlisted data preview endpoint (Operator UX)
+		api.GET("/data-preview", dataPreviewHandler.GetPreview)
+
+		// Stock coverage proxy (UI helper)
+		api.GET("/stocks/:symbol/coverage", adminProxyHandler.GetStockCoverage)
 
 		// Watchlist endpoints
 		api.POST("/watchlists", watchlistHandler.CreateWatchlist)
@@ -135,6 +226,7 @@ func main() {
 		api.GET("/symbol-scope/resolve", symbolScopeHandler.Resolve)
 
 		// Ticker directory endpoints
+		api.GET("/tickers", tickerHandler.GetAllTickers)
 		api.GET("/tickers/search", tickerHandler.SearchTickers)
 		api.GET("/tickers/:symbol", tickerHandler.GetTicker)
 

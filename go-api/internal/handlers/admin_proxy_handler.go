@@ -75,9 +75,9 @@ func (h *AdminProxyHandler) proxy(c *gin.Context, method string, path string) {
 	c.Data(resp.StatusCode, contentType, respBody)
 }
 
-// GET /api/v1/admin/health -> python-worker GET /admin/health
+// GET /api/v1/admin/health -> python-worker GET /health
 func (h *AdminProxyHandler) GetHealth(c *gin.Context) {
-	h.proxy(c, http.MethodGet, "/admin/health")
+	h.proxy(c, http.MethodGet, "/health")
 }
 
 // GET /api/v1/admin/data-sources -> python-worker GET /admin/data-sources
@@ -87,7 +87,7 @@ func (h *AdminProxyHandler) GetDataSources(c *gin.Context) {
 
 // POST /api/v1/admin/refresh -> python-worker POST /refresh
 func (h *AdminProxyHandler) Refresh(c *gin.Context) {
-	h.proxy(c, http.MethodPost, "/refresh")
+	h.proxy(c, http.MethodPost, "/admin/refresh")
 }
 
 // GET /api/v1/admin/refresh/status -> python-worker GET /admin/refresh/status
@@ -166,4 +166,52 @@ func (h *AdminProxyHandler) SwingSignal(c *gin.Context) {
 // POST /api/v1/admin/swing/risk/check -> python-worker POST /api/v1/swing/risk/check
 func (h *AdminProxyHandler) SwingRiskCheck(c *gin.Context) {
 	h.proxy(c, http.MethodPost, "/api/v1/swing/risk/check")
+}
+
+// GET /api/v1/stocks/:symbol/coverage -> python-worker GET /api/v1/stocks/:symbol/coverage
+func (h *AdminProxyHandler) GetStockCoverage(c *gin.Context) {
+	symbol := c.Param("symbol")
+	h.proxy(c, http.MethodGet, "/api/v1/stocks/"+symbol+"/coverage")
+}
+
+// POST /api/v1/admin/universal/signal/universal -> python-worker POST /api/v1/universal/signal/universal
+func (h *AdminProxyHandler) UniversalSignal(c *gin.Context) {
+	h.proxy(c, http.MethodPost, "/api/v1/universal/signal/universal")
+}
+
+// GET /api/v1/admin/growth-quality/*path -> python-worker GET /api/v1/growth-quality/*path
+func (h *AdminProxyHandler) GrowthQualityGet(c *gin.Context) {
+	path := c.Param("path")
+	h.proxy(c, http.MethodGet, "/api/v1/growth-quality"+path)
+}
+
+// POST /api/v1/admin/growth-quality/*path -> python-worker POST /api/v1/growth-quality/*path
+func (h *AdminProxyHandler) GrowthQualityPost(c *gin.Context) {
+	path := c.Param("path")
+	h.proxy(c, http.MethodPost, "/api/v1/growth-quality"+path)
+}
+
+// Rating Alerts proxy
+// GET /api/v1/admin/rating-alerts/*path -> python-worker GET /api/v1/rating-alerts/*path
+func (h *AdminProxyHandler) RatingAlertsGet(c *gin.Context) {
+	path := c.Param("path")
+	h.proxy(c, http.MethodGet, "/api/v1/rating-alerts"+path)
+}
+
+// POST /api/v1/admin/rating-alerts/*path -> python-worker POST /api/v1/rating-alerts/*path
+func (h *AdminProxyHandler) RatingAlertsPost(c *gin.Context) {
+	path := c.Param("path")
+	h.proxy(c, http.MethodPost, "/api/v1/rating-alerts"+path)
+}
+
+// PUT /api/v1/admin/rating-alerts/*path -> python-worker PUT /api/v1/rating-alerts/*path
+func (h *AdminProxyHandler) RatingAlertsPut(c *gin.Context) {
+	path := c.Param("path")
+	h.proxy(c, http.MethodPut, "/api/v1/rating-alerts"+path)
+}
+
+// DELETE /api/v1/admin/rating-alerts/*path -> python-worker DELETE /api/v1/rating-alerts/*path
+func (h *AdminProxyHandler) RatingAlertsDelete(c *gin.Context) {
+	path := c.Param("path")
+	h.proxy(c, http.MethodDelete, "/api/v1/rating-alerts"+path)
 }

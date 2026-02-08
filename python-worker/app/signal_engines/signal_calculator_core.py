@@ -40,20 +40,47 @@ class MarketConditions:
         if df.empty:
             raise ValueError("Empty DataFrame provided")
         
+        if len(df) < 2:
+            raise ValueError(f"Insufficient data: need at least 2 points, got {len(df)}")
+        
         current_price = df['close'].iloc[-1]
         recent_data = df.tail(3)
         recent_change = (current_price - recent_data['close'].iloc[0]) / recent_data['close'].iloc[0]
         
+        # Helper function to safely get last non-NaN value
+        def safe_last_value(series, default_value):
+            if series.name not in df.columns:
+                return default_value
+            # Drop NaN values and get last valid value
+            valid_values = series.dropna()
+            return valid_values.iloc[-1] if len(valid_values) > 0 else default_value
+        
+        # Safely extract indicators with fallbacks
+        rsi_value = safe_last_value(df.get('rsi', pd.Series()), 50.0)
+        if pd.isna(rsi_value):  # Try rsi_14 if rsi is NaN
+            rsi_value = safe_last_value(df.get('rsi_14', pd.Series()), 50.0)
+        
+        sma_20_value = safe_last_value(df.get('sma_20', pd.Series()), current_price)
+        sma_50_value = safe_last_value(df.get('sma_50', pd.Series()), current_price)
+        ema_20_value = safe_last_value(df.get('ema_20', pd.Series()), current_price)
+        
+        # Calculate volatility safely
+        volatility_value = 2.0  # Default
+        if len(df) > 20:
+            pct_changes = df['close'].pct_change().tail(20).dropna()
+            if len(pct_changes) > 0:
+                volatility_value = pct_changes.std() * 100
+        
         return cls(
-            rsi=df['rsi'].iloc[-1] if 'rsi' in df.columns else df['rsi_14'].iloc[-1] if 'rsi_14' in df.columns else 50,
-            sma_20=df['sma_20'].iloc[-1] if 'sma_20' in df.columns else current_price,
-            sma_50=df['sma_50'].iloc[-1] if 'sma_50' in df.columns else current_price,
-            ema_20=df['ema_20'].iloc[-1] if 'ema_20' in df.columns else current_price,
+            rsi=rsi_value,
+            sma_20=sma_20_value,
+            sma_50=sma_50_value,
+            ema_20=ema_20_value,
             current_price=current_price,
             recent_change=recent_change,
-            macd=df['macd'].iloc[-1] if 'macd' in df.columns else 0,
-            macd_signal=df['macd_signal'].iloc[-1] if 'macd_signal' in df.columns else 0,
-            volatility=df['close'].pct_change().tail(20).std() * 100 if len(df) > 20 else 2.0
+            macd=safe_last_value(df.get('macd', pd.Series()), 0.0),
+            macd_signal=safe_last_value(df.get('macd_signal', pd.Series()), 0.0),
+            volatility=volatility_value
         )
 
 @dataclass

@@ -28,7 +28,7 @@ class PeriodicWorker:
         # Define periodic refresh intervals
         self.periodic_intervals = {
             DataType.PRICE_CURRENT: timedelta(minutes=15),  # Every 15 minutes
-            DataType.PRICE_INTRADAY_15M: timedelta(minutes=15),  # 15-minute candles
+            DataType.PRICE_INTRADAY_5M: timedelta(minutes=5),  # 15-minute candles
             DataType.NEWS: timedelta(hours=1),  # Every hour
             DataType.EARNINGS: timedelta(hours=6),  # Every 6 hours
             DataType.FUNDAMENTALS: timedelta(hours=12),  # Every 12 hours

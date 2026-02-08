@@ -107,7 +107,7 @@ def get_vix_level(target_date: str, db_url: str) -> float:
 
 def calculate_ema_slope(symbol: str, target_date: str, db_url: str) -> float:
     """
-    Calculate EMA20 slope (trend direction)
+    Calculate EMA20 slope (trend direction) with enhanced data sufficiency checks
     
     Returns:
         float: Slope value (positive = upward, negative = downward)
@@ -115,32 +115,36 @@ def calculate_ema_slope(symbol: str, target_date: str, db_url: str) -> float:
     try:
         engine = create_engine(db_url)
         
-        # Get unique EMA20 for last 5 days to calculate slope (handle duplicates)
-        slope_query = """
+        # Enhanced query to get more historical data and ensure valid EMA values
+        enhanced_query = """
             SELECT DISTINCT date, 
                    FIRST_VALUE(ema_20) OVER (PARTITION BY date ORDER BY created_at DESC) as ema_20
             FROM indicators_daily 
             WHERE symbol = %s 
             AND date <= %s::date
+            AND ema_20 IS NOT NULL
             ORDER BY date DESC
-            LIMIT 5
+            LIMIT 20  -- Get more days to find valid EMA data
         """
         
-        df = pd.read_sql(slope_query, engine, params=(symbol.upper(), target_date))
+        df = pd.read_sql(enhanced_query, engine, params=(symbol.upper(), target_date))
         
-        print(f"🔍 EMA Slope Debug for {symbol}: Found {len(df)} unique EMA data points")
-        if len(df) > 0:
-            print(f"📊 EMA Data:")
-            for i, row in df.iterrows():
-                print(f"   Day {i}: {row['date']} -> EMA20: {row['ema_20']}")
+        print(f"🔍 Enhanced EMA Analysis for {symbol}: Found {len(df)} total EMA records")
         
-        if len(df) >= 2:
-            # Calculate simple slope using most recent 2 unique dates
-            ema_recent = float(df.iloc[0]['ema_20'])
-            ema_previous = float(df.iloc[1]['ema_20'])
+        # Filter out invalid EMA values (NaN, zero, negative)
+        valid_ema_df = df[df['ema_20'].notna() & (df['ema_20'] > 0)]
+        
+        print(f"📊 Valid EMA records: {len(valid_ema_df)} out of {len(df)}")
+        
+        if len(valid_ema_df) >= 2:
+            # Calculate slope using most recent 2 valid EMA points
+            ema_recent = float(valid_ema_df.iloc[0]['ema_20'])
+            ema_previous = float(valid_ema_df.iloc[1]['ema_20'])
             slope = ema_recent - ema_previous
             
-            print(f"📈 EMA20 Slope for {symbol}: {slope:+.4f} (Recent: {ema_recent:.2f}, Previous: {ema_previous:.2f})")
+            print(f"📈 EMA20 Slope for {symbol}: {slope:+.4f}")
+            print(f"   Recent EMA: {ema_recent:.2f} ({valid_ema_df.iloc[0]['date']})")
+            print(f"   Previous EMA: {ema_previous:.2f} ({valid_ema_df.iloc[1]['date']})")
             
             # Additional debug for flat EMA
             if abs(slope) < 0.0001:
@@ -148,12 +152,264 @@ def calculate_ema_slope(symbol: str, target_date: str, db_url: str) -> float:
             
             return slope
         else:
-            print(f"❌ Insufficient EMA data for {symbol}: need at least 2 points, got {len(df)}")
-            return 0.0
+            print(f"❌ Insufficient valid EMA data for {symbol}: need at least 2 points, got {len(valid_ema_df)}")
+            
+            # Try to trigger EMA calculation if we have price data but missing EMA
+            if len(df) >= 2:
+                print(f"🔄 Attempting to calculate missing EMA values...")
+                return _trigger_ema_calculation(symbol, target_date, db_url)
+            else:
+                print(f"❌ Insufficient indicator data for EMA calculation")
+                return 0.0
         
     except Exception as e:
         print(f"❌ Error calculating EMA slope for {symbol}: {e}")
         return 0.0
+
+
+def _trigger_ema_calculation(symbol: str, target_date: str, db_url: str) -> float:
+    """
+    Trigger EMA calculation when insufficient data exists
+    """
+    try:
+        print(f"🔄 Triggering EMA calculation for {symbol}...")
+        
+        # Get more price history to calculate EMA
+        price_query = """
+            SELECT date, close, high, low, open, volume
+            FROM raw_market_data_daily 
+            WHERE symbol = %s 
+            AND date <= %s::date
+            ORDER BY date DESC
+            LIMIT 50  -- Get 50 days to ensure sufficient EMA calculation
+        """
+        
+        engine = create_engine(db_url)
+        price_df = pd.read_sql(price_query, engine, params=(symbol.upper(), target_date))
+        
+        if len(price_df) < 20:
+            print(f"❌ Insufficient price data: {len(price_df)} < 20 days")
+            return 0.0
+        
+        # Calculate EMA using the same logic as the indicator service
+        from app.indicators.moving_averages import calculate_ema20
+        
+        price_df = price_df.sort_values('date')  # Sort ascending for EMA calculation
+        price_df['ema_20'] = calculate_ema20(price_df['close'])
+        
+        # Get the most recent valid EMA values
+        valid_ema = price_df[price_df['ema_20'].notna() & (price_df['ema_20'] > 0)].tail(2)
+        
+        if len(valid_ema) < 2:
+            print(f"❌ Still insufficient EMA after calculation: {len(valid_ema)} < 2")
+            return 0.0
+        
+        # Store calculated EMA values
+        _store_ema_values(symbol, valid_ema, db_url)
+        
+        # Calculate slope
+        ema_recent = float(valid_ema.iloc[-1]['ema_20'])
+        ema_previous = float(valid_ema.iloc[-2]['ema_20'])
+        slope = ema_recent - ema_previous
+        
+        print(f"✅ Calculated and stored EMA slope: {slope:+.4f}")
+        return slope
+        
+    except Exception as e:
+        print(f"❌ Error in EMA calculation trigger: {e}")
+        return 0.0
+
+
+def _store_ema_values(symbol: str, ema_data: pd.DataFrame, db_url: str) -> None:
+    """
+    Store calculated EMA values in indicators_daily table
+    """
+    try:
+        from sqlalchemy import create_engine, text
+        
+        engine = create_engine(db_url)
+        
+        with engine.connect() as conn:
+            stored_count = 0
+            for _, row in ema_data.iterrows():
+                # Upsert EMA values
+                upsert_query = text("""
+                    INSERT INTO indicators_daily (
+                        symbol, date, ema_20, data_source, 
+                        created_at, updated_at
+                    ) VALUES (
+                        :symbol, :date, :ema_20, 'calculated',
+                        NOW(), NOW()
+                    )
+                    ON CONFLICT (symbol, date) 
+                    DO UPDATE SET 
+                        ema_20 = EXCLUDED.ema_20,
+                        updated_at = NOW()
+                """)
+                
+                result = conn.execute(upsert_query, {
+                    'symbol': symbol.upper(),
+                    'date': row['date'],
+                    'ema_20': float(row['ema_20'])
+                })
+                
+                if result.rowcount > 0 or result._proxyrowcount > 0:
+                    stored_count += 1
+            
+            conn.commit()
+            print(f"✅ Stored {stored_count} EMA values for {symbol}")
+            
+    except Exception as e:
+        print(f"❌ Error storing EMA values: {e}")
+
+
+def ensure_sufficient_ema_data(symbol: str, target_date: str, db_url: str) -> bool:
+    """
+    Ensure sufficient EMA data exists for reliable calculations
+    """
+    try:
+        engine = create_engine(db_url)
+        
+        # Check current EMA data coverage
+        coverage_query = """
+            SELECT 
+                COUNT(*) as total_records,
+                COUNT(ema_20) as ema_records,
+                COUNT(ema_20) FILTER (WHERE ema_20 IS NOT NULL AND ema_20 > 0) as valid_ema,
+                MIN(date) as earliest_date,
+                MAX(date) as latest_date
+            FROM indicators_daily 
+            WHERE symbol = %s 
+            AND date >= %s::date - INTERVAL '30 days'
+            AND date <= %s::date
+        """
+        
+        coverage_df = pd.read_sql(
+            coverage_query, 
+            engine, 
+            params=(symbol.upper(), target_date, target_date)
+        )
+        
+        if coverage_df.empty:
+            print(f"❌ No indicator data found for {symbol}")
+            return False
+        
+        coverage = coverage_df.iloc[0]
+        valid_ema_count = coverage['valid_ema']
+        
+        print(f"📊 EMA Data Coverage for {symbol}:")
+        print(f"   Total records: {coverage['total_records']}")
+        print(f"   EMA records: {coverage['ema_records']}")
+        print(f"   Valid EMA: {valid_ema_count}")
+        print(f"   Date range: {coverage['earliest_date']} to {coverage['latest_date']}")
+        
+        # Determine if we need to calculate more EMA data
+        if valid_ema_count < 10:  # Need at least 10 valid EMA points
+            print(f"⚠️ Insufficient EMA data ({valid_ema_count} < 10), triggering calculation...")
+            return _trigger_comprehensive_ema_calculation(symbol, target_date, db_url)
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error checking EMA coverage: {e}")
+        return False
+
+
+def _trigger_comprehensive_ema_calculation(symbol: str, target_date: str, db_url: str) -> bool:
+    """
+    Comprehensive EMA calculation for extended historical period
+    """
+    try:
+        print(f"🔄 Running comprehensive EMA calculation for {symbol}...")
+        
+        # Get extended price history
+        price_query = """
+            SELECT date, close, high, low, open, volume
+            FROM raw_market_data_daily 
+            WHERE symbol = %s 
+            AND date >= %s::date - INTERVAL '60 days'
+            AND date <= %s::date
+            ORDER BY date ASC
+        """
+        
+        engine = create_engine(db_url)
+        price_df = pd.read_sql(price_query, engine, params=(symbol.upper(), target_date, target_date))
+        
+        if len(price_df) < 50:
+            print(f"❌ Insufficient price history: {len(price_df)} < 50 days")
+            return False
+        
+        # Calculate all technical indicators
+        from app.utils.technical_indicators import TechnicalIndicators
+        
+        indicators = TechnicalIndicators()
+        price_df_with_indicators = indicators.add_all_indicators(price_df)
+        
+        # Store indicators in database
+        _store_comprehensive_indicators(symbol, price_df_with_indicators, db_url)
+        
+        print(f"✅ Calculated and stored indicators for {len(price_df)} days")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error in comprehensive EMA calculation: {e}")
+        return False
+
+
+def _store_comprehensive_indicators(symbol: str, indicators_df: pd.DataFrame, db_url: str) -> None:
+    """
+    Store comprehensive indicators in database
+    """
+    try:
+        from sqlalchemy import create_engine, text
+        
+        engine = create_engine(db_url)
+        
+        with engine.connect() as conn:
+            stored_count = 0
+            for _, row in indicators_df.iterrows():
+                if pd.notna(row.get('ema_20')) and row['ema_20'] > 0:
+                    # Store EMA values
+                    upsert_query = text("""
+                        INSERT INTO indicators_daily (
+                            symbol, date, ema_20, sma_20, sma_50, rsi_14, 
+                            macd, macd_signal, data_source, 
+                            created_at, updated_at
+                        ) VALUES (
+                            :symbol, :date, :ema_20, :sma_20, :sma_50, :rsi_14,
+                            :macd, :macd_signal, 'calculated_comprehensive',
+                            NOW(), NOW()
+                        )
+                        ON CONFLICT (symbol, date) 
+                        DO UPDATE SET 
+                            ema_20 = COALESCE(EXCLUDED.ema_20, indicators_daily.ema_20),
+                            sma_20 = COALESCE(EXCLUDED.sma_20, indicators_daily.sma_20),
+                            sma_50 = COALESCE(EXCLUDED.sma_50, indicators_daily.sma_50),
+                            rsi_14 = COALESCE(EXCLUDED.rsi_14, indicators_daily.rsi_14),
+                            macd = COALESCE(EXCLUDED.macd, indicators_daily.macd),
+                            macd_signal = COALESCE(EXCLUDED.macd_signal, indicators_daily.macd_signal),
+                            updated_at = NOW()
+                    """)
+                    
+                    result = conn.execute(upsert_query, {
+                        'symbol': symbol.upper(),
+                        'date': row['date'],
+                        'ema_20': float(row['ema_20']) if pd.notna(row.get('ema_20')) else None,
+                        'sma_20': float(row['sma_20']) if pd.notna(row.get('sma_20')) else None,
+                        'sma_50': float(row['sma_50']) if pd.notna(row.get('sma_50')) else None,
+                        'rsi_14': float(row['rsi_14']) if pd.notna(row.get('rsi_14')) else None,
+                        'macd': float(row['macd']) if pd.notna(row.get('macd')) else None,
+                        'macd_signal': float(row['macd_signal']) if pd.notna(row.get('macd_signal')) else None
+                    })
+                    
+                    if result.rowcount > 0 or result._proxyrowcount > 0:
+                        stored_count += 1
+            
+            conn.commit()
+            print(f"✅ Stored {stored_count} comprehensive indicator records for {symbol}")
+            
+    except Exception as e:
+        print(f"❌ Error storing comprehensive indicators: {e}")
 
 def calculate_relative_strength(symbol: str, target_date: str, db_url: str) -> float:
     """
@@ -282,13 +538,37 @@ def get_symbol_indicators_data(symbol: str, target_date: str, db_url: str) -> di
         
         engine = create_engine(db_url)
         
-        # Build the same query as TQQQ API but for any symbol
+        # Build a resilient query that works with BOTH indicators_daily schemas:
+        # - wide format: one row per (symbol, date) with columns like rsi_14, sma_50, ema_20
+        # - narrow format: multiple rows per (symbol, date) with (indicator_name, indicator_value)
         query = """
-            SELECT i.date, r.close, r.open, r.high, r.low, i.rsi_14, i.sma_50, i.ema_20, i.macd, i.macd_signal, r.volume
-            FROM indicators_daily i
-            JOIN raw_market_data_daily r ON i.symbol = r.symbol AND i.date = r.date
-            WHERE i.symbol = :symbol AND i.date = :target_date
-            ORDER BY i.date
+            SELECT
+                r.date,
+                r.close,
+                r.open,
+                r.high,
+                r.low,
+                COALESCE(w.rsi_14, n.rsi_14) AS rsi_14,
+                COALESCE(w.sma_50, n.sma_50) AS sma_50,
+                COALESCE(w.ema_20, n.ema_20) AS ema_20,
+                COALESCE(NULLIF(w.macd, 0), n.macd) AS macd,
+                COALESCE(NULLIF(w.macd_signal, 0), n.macd_signal) AS macd_signal,
+                r.volume
+            FROM raw_market_data_daily r
+            LEFT JOIN indicators_daily w
+                ON w.symbol = r.symbol AND w.date = r.date
+            LEFT JOIN LATERAL (
+                SELECT
+                    MAX(indicator_value) FILTER (WHERE indicator_name = 'rsi_14') AS rsi_14,
+                    MAX(indicator_value) FILTER (WHERE indicator_name = 'sma_50') AS sma_50,
+                    MAX(indicator_value) FILTER (WHERE indicator_name = 'ema_20') AS ema_20,
+                    MAX(indicator_value) FILTER (WHERE indicator_name = 'macd') AS macd,
+                    MAX(indicator_value) FILTER (WHERE indicator_name = 'macd_signal') AS macd_signal
+                FROM indicators_daily
+                WHERE symbol = r.symbol AND date = r.date
+            ) n ON TRUE
+            WHERE r.symbol = :symbol AND r.date = :target_date
+            ORDER BY r.date
         """
         
         with engine.connect() as conn:
@@ -298,11 +578,33 @@ def get_symbol_indicators_data(symbol: str, target_date: str, db_url: str) -> di
             if not rows:
                 # Try to get most recent data if specific date not found
                 query_latest = """
-                    SELECT i.date, r.close, r.open, r.high, r.low, i.rsi_14, i.sma_50, i.ema_20, i.macd, i.macd_signal, r.volume
-                    FROM indicators_daily i
-                    JOIN raw_market_data_daily r ON i.symbol = r.symbol AND i.date = r.date
-                    WHERE i.symbol = :symbol
-                    ORDER BY i.date DESC
+                    SELECT
+                        r.date,
+                        r.close,
+                        r.open,
+                        r.high,
+                        r.low,
+                        COALESCE(w.rsi_14, n.rsi_14) AS rsi_14,
+                        COALESCE(w.sma_50, n.sma_50) AS sma_50,
+                        COALESCE(w.ema_20, n.ema_20) AS ema_20,
+                        COALESCE(NULLIF(w.macd, 0), n.macd) AS macd,
+                        COALESCE(NULLIF(w.macd_signal, 0), n.macd_signal) AS macd_signal,
+                        r.volume
+                    FROM raw_market_data_daily r
+                    LEFT JOIN indicators_daily w
+                        ON w.symbol = r.symbol AND w.date = r.date
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            MAX(indicator_value) FILTER (WHERE indicator_name = 'rsi_14') AS rsi_14,
+                            MAX(indicator_value) FILTER (WHERE indicator_name = 'sma_50') AS sma_50,
+                            MAX(indicator_value) FILTER (WHERE indicator_name = 'ema_20') AS ema_20,
+                            MAX(indicator_value) FILTER (WHERE indicator_name = 'macd') AS macd,
+                            MAX(indicator_value) FILTER (WHERE indicator_name = 'macd_signal') AS macd_signal
+                        FROM indicators_daily
+                        WHERE symbol = r.symbol AND date = r.date
+                    ) n ON TRUE
+                    WHERE r.symbol = :symbol
+                    ORDER BY r.date DESC
                     LIMIT 1
                 """
                 result = conn.execute(text(query_latest), {"symbol": symbol.upper()})

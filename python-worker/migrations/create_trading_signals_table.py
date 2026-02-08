@@ -125,12 +125,12 @@ def create_trading_signals_table():
         # Create trigger for updated_at timestamp
         trigger_sql = """
         CREATE OR REPLACE FUNCTION update_trading_signals_updated_at()
-        RETURNS TRIGGER AS $$
+        RETURNS TRIGGER AS
         BEGIN
             NEW.updated_at = CURRENT_TIMESTAMP;
             RETURN NEW;
         END;
-        $$ language 'plpgsql';
+        language 'plpgsql';
         
         DROP TRIGGER IF EXISTS trading_signals_updated_at_trigger ON trading_signals;
         CREATE TRIGGER trading_signals_updated_at_trigger

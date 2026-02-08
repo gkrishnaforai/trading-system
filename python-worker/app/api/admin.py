@@ -7,9 +7,14 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
+import json
+import uuid
+import os
 
 from app.database import db
 from app.data_management.refresh_manager import DataRefreshManager, DataType
+from app.data_management.refresh_result import RefreshStatus
+from app.data_management.refresh_strategy import RefreshMode
 from app.services.indicator_service import IndicatorService
 from app.services.strategy_service import StrategyService
 from app.observability import audit
@@ -29,6 +34,8 @@ router = APIRouter(tags=["admin"])
 
 # Request/Response Models
 class RefreshRequest(BaseModel):
+    run_id: Optional[str] = None
+    portfolio_id: Optional[str] = None
     symbols: List[str]
     data_types: List[str]
     force: bool = False
@@ -57,11 +64,20 @@ class StockInsightsRequest(BaseModel):
 @router.post("/refresh", response_model=RefreshResponse)
 async def refresh_data(request: RefreshRequest, background_tasks: BackgroundTasks):
     """Trigger data refresh for specific symbols and data types"""
-    run_id = datetime.now().isoformat()
-    set_ingestion_run_id(run_id)
+    run_id_str = request.run_id or str(uuid.uuid4())
+    run_uuid = uuid.UUID(run_id_str)
+    set_ingestion_run_id(run_uuid)
     try:
         try:
-            audit.start_run(run_id, metadata={"operation": "refresh", "symbols": request.symbols, "data_types": request.data_types})
+            audit.start_run(
+                run_uuid,
+                metadata={
+                    "operation": "refresh",
+                    "symbols": request.symbols,
+                    "data_types": request.data_types,
+                    "portfolio_id": request.portfolio_id,
+                },
+            )
             audit.log_event(level="info", provider="system", operation="refresh.request_start")
         except Exception:
             pass
@@ -69,14 +85,10 @@ async def refresh_data(request: RefreshRequest, background_tasks: BackgroundTask
         refresh_manager = DataRefreshManager()
         
         # Convert string data types to DataType enum
-        data_type_mapping = {
-            "price_historical": DataType.PRICE_HISTORICAL,
-            "indicators": DataType.INDICATORS,
-            "fundamentals": DataType.FUNDAMENTALS,
-            "earnings": DataType.EARNINGS,
-            "market_news": DataType.MARKET_NEWS,
-            "economic_calendar": DataType.ECONOMIC_CALENDAR
-        }
+        # Support all DataType enum values by their `.value` strings.
+        data_type_mapping = {dt.value: dt for dt in DataType}
+        # Backward-compatible alias used by UIs
+        data_type_mapping["market_news"] = DataType.NEWS
         
         # Validate data types
         invalid_types = [dt for dt in request.data_types if dt not in data_type_mapping]
@@ -89,37 +101,47 @@ async def refresh_data(request: RefreshRequest, background_tasks: BackgroundTask
         results = {}
         for symbol in request.symbols:
             symbol_results = {}
-            for data_type in request.data_types:
-                try:
-                    # Refresh data for this symbol and type
-                    success = refresh_manager.refresh_symbol_data(
-                        symbol=symbol,
-                        data_type=data_type_mapping[data_type],
-                        force=request.force
+            try:
+                mapped_types = [data_type_mapping[dt] for dt in request.data_types]
+                refresh_result = refresh_manager.refresh_data(
+                    symbol=symbol,
+                    data_types=mapped_types,
+                    # Use PERIODIC to enable freshness-based skipping and self-healing backfills.
+                    # force=True will still override freshness checks.
+                    mode=RefreshMode.PERIODIC,
+                    force=request.force,
+                )
+
+                for dt in request.data_types:
+                    dt_key = str(dt)
+                    res = (refresh_result.results or {}).get(dt_key)
+                    success = bool(res and res.status == RefreshStatus.SUCCESS)
+                    msg = res.message if res and getattr(res, "message", None) else (
+                        f"Successfully refreshed {dt} for {symbol}" if success else f"Failed to refresh {dt} for {symbol}"
                     )
-                    
-                    symbol_results[data_type] = {
+
+                    symbol_results[dt] = {
                         "success": success,
-                        "message": f"Successfully refreshed {data_type} for {symbol}" if success else f"Failed to refresh {data_type} for {symbol}"
+                        "message": msg,
                     }
-                    
+
                     audit.log_event(
                         level="info",
                         provider="system",
                         operation="refresh.symbol_complete",
-                        metadata={"symbol": symbol, "data_type": data_type, "success": success}
+                        context={"symbol": symbol, "data_type": dt, "success": success}
                     )
-                    
-                except Exception as e:
-                    logger.error(f"Failed to refresh {data_type} for {symbol}: {e}")
-                    symbol_results[data_type] = {
+            except Exception as e:
+                logger.error(f"Failed to refresh data for {symbol}: {e}")
+                for dt in request.data_types:
+                    symbol_results[dt] = {
                         "success": False,
-                        "message": f"Error refreshing {data_type} for {symbol}: {str(e)}"
+                        "message": f"Error refreshing {dt} for {symbol}: {str(e)}",
                     }
             
             results[symbol] = symbol_results
         
-        audit.finish_run(run_id, status="completed", metadata={"results": results})
+        audit.finish_run(run_uuid, status="completed", metadata={"results": results})
         
         return RefreshResponse(
             success=True,
@@ -130,7 +152,7 @@ async def refresh_data(request: RefreshRequest, background_tasks: BackgroundTask
     except Exception as e:
         logger.error(f"Data refresh failed: {e}")
         try:
-            audit.finish_run(run_id, status="failed", metadata={"error": str(e)})
+            audit.finish_run(run_uuid, status="failed", metadata={"error": str(e)})
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=str(e))
@@ -187,12 +209,10 @@ async def generate_signals(request: SignalRequest):
                 try:
                     if request.backtest_date:
                         # For historical backtesting, get indicators as of the specified date
-                        query = """
-                            SELECT sma_50, sma_200, ema_20, rsi_14, macd, macd_signal 
-                            FROM indicators_daily 
-                            WHERE symbol = :symbol AND date <= :backtest_date 
-                            ORDER BY date DESC LIMIT 1
-                        """
+                        # Use helper function for backtesting indicators
+                        from app.utils.indicators_query_helper import get_backtest_indicators_query
+                        
+                        query = get_backtest_indicators_query(symbol)
                         indicators_data = db.execute_query(query, {
                             "symbol": symbol, 
                             "backtest_date": request.backtest_date
@@ -233,12 +253,10 @@ async def generate_signals(request: SignalRequest):
                             continue
                     else:
                         # Get latest indicators
-                        query = """
-                            SELECT sma_50, sma_200, ema_20, rsi_14, macd, macd_signal 
-                            FROM indicators_daily 
-                            WHERE symbol = :symbol 
-                            ORDER BY date DESC LIMIT 1
-                        """
+                        # Use helper function for latest indicators
+                        from app.utils.indicators_query_helper import get_latest_indicators_query
+                        
+                        query = get_latest_indicators_query(symbol)
                         indicators_data = db.execute_query(query, {"symbol": symbol})
                         
                         if indicators_data:
@@ -618,17 +636,62 @@ async def get_stock_insights(symbol: str):
 async def get_data_summary(table: str):
     """Get data summary for a specific table"""
     try:
+        def _table_exists(table_name: str) -> bool:
+            try:
+                rows = db.execute_query(
+                    "SELECT to_regclass(:tbl) as regclass",
+                    {"tbl": f"public.{table_name}"},
+                )
+                if not rows:
+                    return False
+                return rows[0].get("regclass") is not None
+            except Exception:
+                return False
+
+        def _pick_existing_column(table_name: str, candidates: list[str]) -> str | None:
+            if not candidates:
+                return None
+            in_list = ",".join([f"'{c}'" for c in candidates])
+            rows = db.execute_query(
+                f"""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = '{table_name}'
+                  AND column_name IN ({in_list})
+                """
+            )
+            if not rows:
+                return None
+            present = {r.get("column_name") for r in rows}
+            for c in candidates:
+                if c in present:
+                    return c
+            return None
+
         # Validate table name
         valid_tables = [
             "raw_market_data_daily", "raw_market_data_intraday", "indicators_daily",
             "fundamentals_snapshots", "industry_peers", "market_news", "earnings_data",
-            "macro_market_data", "stocks", "data_ingestion_runs", "data_ingestion_events"
+            "macro_market_data", "stocks", "data_ingestion_runs", "data_ingestion_events",
+            "stock_grades", "stock_consensus_history", "analyst_firm_rankings", 
+            "grade_changes", "grade_change_events", "rating_change_log",
+            "financial_ratios", "financial_statements", "income_statements", 
+            "balance_sheets", "cash_flow_statements", "corporate_actions",
+            "fmp_company_profiles", "fmp_market_news", "fmp_real_time_prices",
+            "earnings_transcripts", "short_interest", "short_volume", "share_float", "risk_factors",
+            "key_metrics_ttm", "financial_scores",
         ]
         
         if table not in valid_tables:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid table: {table}. Valid tables: {valid_tables}"
+            )
+
+        if not _table_exists(table):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Table not found in database: {table}. This usually means your DB schema is older and does not include this data source.",
             )
         
         # Get summary from database - handle different column structures
@@ -665,13 +728,13 @@ async def get_data_summary(table: str):
                 FROM {table}
             """
         elif table == "earnings_data":
-            # Use report_date instead of created_at for earnings_data
+            # Use earnings_date instead of created_at for earnings_data
             query = f"""
                 SELECT 
                     '{table}' as table_name,
                     COUNT(*) as total_records,
-                    COUNT(*) FILTER (WHERE DATE(report_date) = CURRENT_DATE) as today_records,
-                    MAX(report_date) as last_updated,
+                    COUNT(*) FILTER (WHERE DATE(earnings_date) = CURRENT_DATE) as today_records,
+                    MAX(earnings_date) as last_updated,
                     pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
                     (
                         SELECT COUNT(*) 
@@ -704,6 +767,356 @@ async def get_data_summary(table: str):
                     COUNT(*) as total_records,
                     COUNT(*) FILTER (WHERE DATE(as_of_date) = CURRENT_DATE) as today_records,
                     MAX(as_of_date) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "stock_grades":
+            # Use grade_date instead of created_at for stock_grades
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(grade_date) = CURRENT_DATE) as today_records,
+                    MAX(grade_date) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "stock_consensus_history":
+            date_column = _pick_existing_column(table, ["consensus_date", "recorded_at", "created_at"])
+            if not date_column:
+                date_column = _pick_existing_column(table, ["updated_at"])
+
+            if not date_column:
+                query = f"""
+                    SELECT 
+                        '{table}' as table_name,
+                        COUNT(*) as total_records,
+                        0 as today_records,
+                        NULL as last_updated,
+                        pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                        (
+                            SELECT COUNT(*) 
+                            FROM information_schema.columns 
+                            WHERE table_name = '{table}'
+                        ) as column_count
+                    FROM {table}
+                """
+            else:
+                query = f"""
+                    SELECT 
+                        '{table}' as table_name,
+                        COUNT(*) as total_records,
+                        COUNT(*) FILTER (WHERE DATE({date_column}) = CURRENT_DATE) as today_records,
+                        MAX({date_column}) as last_updated,
+                        pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                        (
+                            SELECT COUNT(*) 
+                            FROM information_schema.columns 
+                            WHERE table_name = '{table}'
+                        ) as column_count
+                    FROM {table}
+                """
+        elif table in ["key_metrics_ttm", "financial_scores"]:
+            date_column = _pick_existing_column(table, ["date", "as_of_date", "created_at", "updated_at"])
+            if not date_column:
+                query = f"""
+                    SELECT 
+                        '{table}' as table_name,
+                        COUNT(*) as total_records,
+                        0 as today_records,
+                        NULL as last_updated,
+                        pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                        (
+                            SELECT COUNT(*) 
+                            FROM information_schema.columns 
+                            WHERE table_name = '{table}'
+                        ) as column_count
+                    FROM {table}
+                """
+            else:
+                query = f"""
+                    SELECT 
+                        '{table}' as table_name,
+                        COUNT(*) as total_records,
+                        COUNT(*) FILTER (WHERE DATE({date_column}) = CURRENT_DATE) as today_records,
+                        MAX({date_column}) as last_updated,
+                        pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                        (
+                            SELECT COUNT(*) 
+                            FROM information_schema.columns 
+                            WHERE table_name = '{table}'
+                        ) as column_count
+                    FROM {table}
+                """
+        elif table in ["income_statements", "balance_sheets", "cash_flow_statements"]:
+            date_column = _pick_existing_column(
+                table,
+                [
+                    "fiscal_date_or_period",
+                    "fiscal_date_ending",
+                    "date",
+                    "period",
+                    "report_date",
+                    "created_at",
+                ],
+            )
+
+            if not date_column:
+                query = f"""
+                    SELECT 
+                        '{table}' as table_name,
+                        COUNT(*) as total_records,
+                        0 as today_records,
+                        NULL as last_updated,
+                        pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                        (
+                            SELECT COUNT(*) 
+                            FROM information_schema.columns 
+                            WHERE table_name = '{table}'
+                        ) as column_count
+                    FROM {table}
+                """
+            else:
+                query = f"""
+                    SELECT 
+                        '{table}' as table_name,
+                        COUNT(*) as total_records,
+                        COUNT(*) FILTER (WHERE DATE({date_column}) = CURRENT_DATE) as today_records,
+                        MAX({date_column}) as last_updated,
+                        pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                        (
+                            SELECT COUNT(*) 
+                            FROM information_schema.columns 
+                            WHERE table_name = '{table}'
+                        ) as column_count
+                    FROM {table}
+                """
+        elif table == "corporate_actions":
+            # Use action_date instead of created_at for corporate_actions
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(action_date) = CURRENT_DATE) as today_records,
+                    MAX(action_date) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "financial_ratios":
+            # Use fiscal_date_ending instead of created_at for financial_ratios
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(fiscal_date_ending) = CURRENT_DATE) as today_records,
+                    MAX(fiscal_date_ending) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "fmp_market_news":
+            # Use published_date instead of created_at for fmp_market_news
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(published_date) = CURRENT_DATE) as today_records,
+                    MAX(published_date) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "stocks":
+            # Use updated_at for stocks table (master reference table)
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE is_active = true) as today_records,
+                    MAX(updated_at) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "data_ingestion_events":
+            # Use created_at for data_ingestion_events (no date column)
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(created_at) = CURRENT_DATE) as today_records,
+                    MAX(created_at) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "share_float":
+            # Use float_date for share_float table
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(float_date) = CURRENT_DATE) as today_records,
+                    MAX(float_date) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "risk_factors":
+            # Use created_at for risk_factors table (no specific date column)
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(created_at) = CURRENT_DATE) as today_records,
+                    MAX(created_at) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "short_interest":
+            # Use short_interest_date for short_interest table
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(short_interest_date) = CURRENT_DATE) as today_records,
+                    MAX(short_interest_date) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "short_volume":
+            # Use short_volume_date for short_volume table
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(short_volume_date) = CURRENT_DATE) as today_records,
+                    MAX(short_volume_date) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "corporate_actions":
+            # Use action_date for corporate_actions table
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(action_date) = CURRENT_DATE) as today_records,
+                    MAX(action_date) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "stock_grades":
+            # Use grade_date for stock_grades table
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(grade_date) = CURRENT_DATE) as today_records,
+                    MAX(grade_date) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "stock_consensus_history":
+            # Use recorded_at for stock_consensus_history table (no date column)
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(recorded_at) = CURRENT_DATE) as today_records,
+                    MAX(recorded_at) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table in ["income_statements", "balance_sheets", "cash_flow_statements", "financial_ratios"]:
+            # Use fiscal_date_ending for financial statement tables
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(fiscal_date_ending) = CURRENT_DATE) as today_records,
+                    MAX(fiscal_date_ending) as last_updated,
+                    pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
+                    (
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table}'
+                    ) as column_count
+                FROM {table}
+            """
+        elif table == "earnings_transcripts":
+            # Use transcript_date for earnings_transcripts table
+            query = f"""
+                SELECT 
+                    '{table}' as table_name,
+                    COUNT(*) as total_records,
+                    COUNT(*) FILTER (WHERE DATE(transcript_date) = CURRENT_DATE) as today_records,
+                    MAX(transcript_date) as last_updated,
                     pg_size_pretty(pg_total_relation_size('{table}')) as size_gb,
                     (
                         SELECT COUNT(*) 
@@ -837,22 +1250,243 @@ async def get_data_summary(table: str):
                     END as duplicate_rate
                 FROM {table}
             """
-        else:
-            # Use symbol and date for standard tables (raw_market_data_daily, indicators_daily)
+        elif table == "stocks":
+            # Use symbol only for stocks table (master reference table, no date column)
             quality_query = f"""
                 SELECT 
                     COUNT(*) as total,
-                    COUNT(*) FILTER (WHERE symbol IS NOT NULL AND date IS NOT NULL) as non_null_rows,
+                    COUNT(*) FILTER (WHERE symbol IS NOT NULL) as non_null_rows,
                     CASE 
-                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL AND date IS NOT NULL) * 100.0 / COUNT(*)
+                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as null_rate,
+                    0.0 as duplicate_rate
+                FROM {table}
+            """
+        elif table == "data_ingestion_events":
+            # Use symbol only for data_ingestion_events (no date column for quality)
+            quality_query = f"""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE symbol IS NOT NULL) as non_null_rows,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as null_rate,
+                    0.0 as duplicate_rate
+                FROM {table}
+            """
+        elif table == "share_float":
+            # Use symbol and float_date for share_float table
+            quality_query = f"""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE symbol IS NOT NULL AND float_date IS NOT NULL) as non_null_rows,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL AND float_date IS NOT NULL) * 100.0 / COUNT(*)
                         ELSE 0.0 
                     END as null_rate,
                     CASE 
-                        WHEN COUNT(*) > 0 THEN COUNT(DISTINCT symbol || date) * 100.0 / COUNT(*)
+                        WHEN COUNT(*) > 0 THEN COUNT(DISTINCT symbol || float_date) * 100.0 / COUNT(*)
                         ELSE 0.0 
                     END as duplicate_rate
                 FROM {table}
             """
+        elif table == "risk_factors":
+            # Use symbol and risk_date for risk_factors table
+            quality_query = f"""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE symbol IS NOT NULL AND risk_date IS NOT NULL) as non_null_rows,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL AND risk_date IS NOT NULL) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as null_rate,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(DISTINCT symbol || risk_date) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as duplicate_rate
+                FROM {table}
+            """
+        elif table == "short_interest":
+            # Use symbol and short_interest_date for short_interest table
+            quality_query = f"""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE symbol IS NOT NULL AND short_interest_date IS NOT NULL) as non_null_rows,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL AND short_interest_date IS NOT NULL) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as null_rate,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(DISTINCT symbol || short_interest_date) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as duplicate_rate
+                FROM {table}
+            """
+        elif table == "short_volume":
+            # Use symbol and short_volume_date for short_volume table
+            quality_query = f"""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE symbol IS NOT NULL AND short_volume_date IS NOT NULL) as non_null_rows,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL AND short_volume_date IS NOT NULL) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as null_rate,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(DISTINCT symbol || short_volume_date) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as duplicate_rate
+                FROM {table}
+            """
+        elif table == "corporate_actions":
+            # Use stock_symbol and action_date for corporate_actions table
+            quality_query = f"""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE stock_symbol IS NOT NULL AND action_date IS NOT NULL) as non_null_rows,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE stock_symbol IS NOT NULL AND action_date IS NOT NULL) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as null_rate,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(DISTINCT stock_symbol || action_date) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as duplicate_rate
+                FROM {table}
+            """
+        elif table == "stock_grades":
+            # Use symbol and grade_date for stock_grades table
+            quality_query = f"""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE symbol IS NOT NULL AND grade_date IS NOT NULL) as non_null_rows,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL AND grade_date IS NOT NULL) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as null_rate,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(DISTINCT symbol || grade_date) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as duplicate_rate
+                FROM {table}
+            """
+        elif table == "stock_consensus_history":
+            # Use symbol only for stock_consensus_history (no date column for quality)
+            quality_query = f"""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE symbol IS NOT NULL) as non_null_rows,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as null_rate,
+                    0.0 as duplicate_rate
+                FROM {table}
+            """
+        elif table in ["income_statements", "balance_sheets", "cash_flow_statements", "financial_ratios"]:
+            # Use symbol and fiscal_date_ending for financial statement tables
+            quality_query = f"""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE symbol IS NOT NULL AND fiscal_date_ending IS NOT NULL) as non_null_rows,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL AND fiscal_date_ending IS NOT NULL) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as null_rate,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(DISTINCT symbol || fiscal_date_ending) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as duplicate_rate
+                FROM {table}
+            """
+        elif table == "earnings_transcripts":
+            # Use symbol and transcript_date for earnings_transcripts table
+            quality_query = f"""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE symbol IS NOT NULL AND transcript_date IS NOT NULL) as non_null_rows,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL AND transcript_date IS NOT NULL) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as null_rate,
+                    CASE 
+                        WHEN COUNT(*) > 0 THEN COUNT(DISTINCT symbol || transcript_date) * 100.0 / COUNT(*)
+                        ELSE 0.0 
+                    END as duplicate_rate
+                FROM {table}
+            """
+        elif table == "rating_change_log":
+            date_column = _pick_existing_column(
+                table,
+                [
+                    "event_date",
+                    "change_date",
+                    "rating_date",
+                    "date",
+                    "created_at",
+                    "updated_at",
+                ],
+            )
+
+            if not date_column:
+                quality_query = f"""
+                    SELECT 
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE symbol IS NOT NULL) as non_null_rows,
+                        CASE 
+                            WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL) * 100.0 / COUNT(*)
+                            ELSE 0.0 
+                        END as null_rate,
+                        0.0 as duplicate_rate
+                    FROM {table}
+                """
+            else:
+                quality_query = f"""
+                    SELECT 
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE symbol IS NOT NULL AND {date_column} IS NOT NULL) as non_null_rows,
+                        CASE 
+                            WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL AND {date_column} IS NOT NULL) * 100.0 / COUNT(*)
+                            ELSE 0.0 
+                        END as null_rate,
+                        CASE 
+                            WHEN COUNT(*) > 0 THEN COUNT(DISTINCT symbol || {date_column}) * 100.0 / COUNT(*)
+                            ELSE 0.0 
+                        END as duplicate_rate
+                    FROM {table}
+                """
+        else:
+            # Use symbol and date for standard tables (raw_market_data_daily, indicators_daily)
+            date_column = _pick_existing_column(table, ["date", "created_at", "updated_at", "ts"]) 
+            if not date_column:
+                quality_query = f"""
+                    SELECT 
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE symbol IS NOT NULL) as non_null_rows,
+                        CASE 
+                            WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL) * 100.0 / COUNT(*)
+                            ELSE 0.0 
+                        END as null_rate,
+                        0.0 as duplicate_rate
+                    FROM {table}
+                """
+            else:
+                quality_query = f"""
+                    SELECT 
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE symbol IS NOT NULL AND {date_column} IS NOT NULL) as non_null_rows,
+                        CASE 
+                            WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE symbol IS NOT NULL AND {date_column} IS NOT NULL) * 100.0 / COUNT(*)
+                            ELSE 0.0 
+                        END as null_rate,
+                        CASE 
+                            WHEN COUNT(*) > 0 THEN COUNT(DISTINCT symbol || {date_column}) * 100.0 / COUNT(*)
+                            ELSE 0.0 
+                        END as duplicate_rate
+                    FROM {table}
+                """
         
         quality_result = db.execute_query(quality_query)
         quality = quality_result[0] if quality_result else {}
@@ -873,6 +1507,8 @@ async def get_data_summary(table: str):
             }
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get data summary for {table}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -894,7 +1530,8 @@ async def get_earnings_calendar(start_date: str = None, end_date: str = None):
         if end_date:
             end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
         else:
-            end_dt = start_dt.replace(day=start_dt.day + 30) if start_dt.day <= 28 else start_dt.replace(month=start_dt.month + 1, day=1)
+            from datetime import timedelta
+            end_dt = start_dt + timedelta(days=30)
         
         # Get earnings data
         earnings_data = EarningsCalendarRepository.fetch_earnings_by_date_range(start_dt, end_dt)
@@ -978,6 +1615,488 @@ async def get_audit_logs(start_date: str = None, end_date: str = None, level: st
         
     except Exception as e:
         logger.error(f"Failed to get audit logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/data-ingestion-runs")
+async def get_data_ingestion_runs(limit: int = 50, status: str = None):
+    """Get data ingestion runs with detailed information"""
+    try:
+        # Build query with optional status filter
+        status_filter = ""
+        params = {"limit": limit}
+        
+        if status and status != "ALL":
+            status_filter = "WHERE status = :status"
+            params["status"] = status
+        
+        query = f"""
+            SELECT 
+                run_id,
+                started_at,
+                finished_at,
+                status,
+                environment,
+                git_sha,
+                metadata,
+                EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000 as duration_ms,
+                CASE 
+                    WHEN finished_at IS NULL THEN 'running'
+                    WHEN status = 'completed' THEN 'success'
+                    WHEN status = 'failed' THEN 'error'
+                    ELSE status
+                END as result_status
+            FROM data_ingestion_runs
+            {status_filter}
+            ORDER BY started_at DESC
+            LIMIT :limit
+        """
+        
+        result = db.execute_query(query, params)
+        
+        # Get event counts for each run
+        runs_with_stats = []
+        for run in result or []:
+            run_id = run['run_id']
+            
+            # Count events by level for this run
+            event_stats_query = """
+                SELECT 
+                    level,
+                    COUNT(*) as count,
+                    COUNT(*) FILTER (WHERE error_message IS NOT NULL) as error_count,
+                    COUNT(*) FILTER (WHERE records_saved > 0) as success_count,
+                    SUM(records_saved) FILTER (WHERE records_saved > 0) as total_records_saved
+                FROM data_ingestion_events
+                WHERE run_id = :run_id
+                GROUP BY level
+            """
+            
+            try:
+                event_stats = db.execute_query(event_stats_query, {"run_id": run_id})
+                
+                # Parse metadata for additional info
+                metadata = run.get('metadata', {})
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except:
+                        metadata = {}
+                
+                # Calculate totals
+                total_events = sum(stat['count'] for stat in event_stats) if event_stats else 0
+                total_errors = sum(stat['error_count'] for stat in event_stats) if event_stats else 0
+                total_saved = sum(stat['total_records_saved'] for stat in event_stats) if event_stats else 0
+                
+                run_info = {
+                    **run,
+                    'total_events': total_events,
+                    'total_errors': total_errors,
+                    'total_records_saved': total_saved,
+                    'event_stats': event_stats or [],
+                    'symbols_count': len(metadata.get('symbols', [])) if metadata.get('symbols') else 0,
+                    'data_types_count': len(metadata.get('data_types', [])) if metadata.get('data_types') else 0,
+                    'operation': metadata.get('operation', 'unknown')
+                }
+                
+                runs_with_stats.append(run_info)
+                
+            except Exception as e:
+                logger.warning(f"Failed to get event stats for run {run_id}: {e}")
+                runs_with_stats.append({
+                    **run,
+                    'total_events': 0,
+                    'total_errors': 0,
+                    'total_records_saved': 0,
+                    'event_stats': [],
+                    'symbols_count': 0,
+                    'data_types_count': 0,
+                    'operation': 'unknown'
+                })
+        
+        return {
+            "success": True,
+            "runs": runs_with_stats,
+            "count": len(runs_with_stats),
+            "status_filter": status or "ALL"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get data ingestion runs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/data-ingestion-events/{run_id}")
+async def get_data_ingestion_events(run_id: str, level: str = None):
+    """Get detailed events for a specific data ingestion run"""
+    try:
+        # Build query with optional level filter
+        level_filter = ""
+        params = {"run_id": run_id}
+        
+        if level and level != "ALL":
+            level_filter = "AND level = :level"
+            params["level"] = level
+        
+        query = f"""
+            SELECT 
+                id,
+                event_ts,
+                level,
+                provider,
+                operation,
+                symbol,
+                duration_ms,
+                records_in,
+                records_saved,
+                message,
+                error_type,
+                error_message,
+                root_cause_type,
+                root_cause_message,
+                context
+            FROM data_ingestion_events
+            WHERE run_id = CAST(:run_id AS uuid)
+            {level_filter}
+            ORDER BY event_ts DESC
+        """
+        
+        result = db.execute_query(query, params)
+        
+        # Parse context for each event
+        events = []
+        for event in result or []:
+            context = event.get('context', {})
+            if isinstance(context, str):
+                try:
+                    context = json.loads(context)
+                except:
+                    context = {}
+            
+            event_info = {
+                **event,
+                'context': context,
+                'has_error': event.get('error_message') is not None,
+                'success': event.get('records_saved', 0) > 0 and event.get('error_message') is None
+            }
+            events.append(event_info)
+        
+        return {
+            "success": True,
+            "run_id": run_id,
+            "events": events,
+            "count": len(events),
+            "level_filter": level or "ALL"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get data ingestion events for {run_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/data-ingestion-rerun/{run_id}")
+async def rerun_data_ingestion(run_id: str):
+    """Re-run a data ingestion run with the same parameters"""
+    try:
+        # Get original run details
+        run_query = """
+            SELECT metadata, status
+            FROM data_ingestion_runs
+            WHERE run_id = CAST(:run_id AS uuid)
+        """
+        
+        run_result = db.execute_query(run_query, {"run_id": run_id})
+        
+        if not run_result:
+            raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        
+        original_run = run_result[0]
+        metadata = original_run.get('metadata', {})
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except:
+                metadata = {}
+        
+        # Extract original parameters
+        symbols = metadata.get('symbols', [])
+        data_types = metadata.get('data_types', [])
+        operation = metadata.get('operation', 'refresh')
+        
+        if not symbols or not data_types:
+            raise HTTPException(status_code=400, detail="Original run has incomplete metadata for rerun")
+        
+        # Create new run ID
+        new_run_id = str(uuid.uuid4())
+        set_ingestion_run_id(new_run_id)
+        
+        # Start new run
+        audit.start_run(new_run_id, metadata={
+            "operation": operation,
+            "symbols": symbols,
+            "data_types": data_types,
+            "rerun_of": run_id,
+            "rerun_reason": "manual_rerun"
+        })
+        
+        audit.log_event(level="info", provider="system", operation="rerun.start", 
+                       message=f"Starting rerun of {run_id}")
+        
+        # Execute the same operation
+        refresh_manager = DataRefreshManager()
+        
+        # Convert string data types to DataType enum
+        # Support all DataType enum values by their `.value` strings.
+        data_type_mapping = {dt.value: dt for dt in DataType}
+        # Backward-compatible alias used by UIs
+        data_type_mapping["market_news"] = DataType.NEWS
+        
+        results = {}
+        for symbol in symbols:
+            symbol_results = {}
+            try:
+                mapped_types = [data_type_mapping[dt] for dt in data_types]
+                refresh_result = refresh_manager.refresh_data(
+                    symbol=symbol,
+                    data_types=mapped_types,
+                    # Use PERIODIC to enable freshness-based skipping and self-healing backfills.
+                    # force=True will still override freshness checks.
+                    mode=RefreshMode.PERIODIC,
+                    force=True,
+                )
+
+                for dt in data_types:
+                    dt_key = str(dt)
+                    res = (refresh_result.results or {}).get(dt_key)
+                    success = bool(res and res.status == RefreshStatus.SUCCESS)
+                    msg = res.message if res and getattr(res, "message", None) else (
+                        f"Successfully refreshed {dt} for {symbol}" if success else f"Failed to refresh {dt} for {symbol}"
+                    )
+
+                    symbol_results[dt] = {
+                        "success": success,
+                        "message": msg,
+                    }
+
+                    audit.log_event(
+                        level="info",
+                        provider="system",
+                        operation="rerun.symbol_complete",
+                        symbol=symbol,
+                        context={"data_type": dt, "success": success}
+                    )
+            except Exception as e:
+                logger.error(f"Failed to refresh data for {symbol}: {e}")
+                for dt in data_types:
+                    symbol_results[dt] = {
+                        "success": False,
+                        "message": f"Error refreshing {dt} for {symbol}: {str(e)}",
+                    }
+            
+            results[symbol] = symbol_results
+        
+        audit.finish_run(new_run_id, status="completed", metadata={"results": results})
+        
+        return {
+            "success": True,
+            "message": f"Rerun completed for {len(symbols)} symbols",
+            "new_run_id": new_run_id,
+            "original_run_id": run_id,
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to rerun {run_id}: {e}")
+        try:
+            audit.finish_run(new_run_id, status="failed", metadata={"error": str(e)})
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/data-loading-summary")
+async def get_data_loading_summary(hours: int = 24):
+    """Get comprehensive data loading summary for the last N hours"""
+    try:
+        from datetime import datetime, timedelta
+        
+        start_time = datetime.now() - timedelta(hours=hours)
+        
+        # Get runs summary
+        runs_query = """
+            SELECT 
+                status,
+                COUNT(*) as count,
+                AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000) as avg_duration_ms,
+                MIN(started_at) as earliest,
+                MAX(started_at) as latest
+            FROM data_ingestion_runs
+            WHERE started_at >= :start_time
+            GROUP BY status
+        """
+        
+        runs_summary = db.execute_query(runs_query, {"start_time": start_time})
+        
+        # Get events summary
+        events_query = """
+            SELECT 
+                level,
+                provider,
+                operation,
+                COUNT(*) as count,
+                SUM(records_saved) as total_records_saved,
+                SUM(records_in) as total_records_processed,
+                AVG(duration_ms) as avg_duration_ms,
+                COUNT(*) FILTER (WHERE error_message IS NOT NULL) as error_count
+            FROM data_ingestion_events
+            WHERE event_ts >= :start_time
+            GROUP BY level, provider, operation
+            ORDER BY count DESC
+        """
+        
+        events_summary = db.execute_query(events_query, {"start_time": start_time})
+        
+        # Get error summary
+        errors_query = """
+            SELECT 
+                error_type,
+                error_message,
+                COUNT(*) as count,
+                MAX(event_ts) as last_occurrence
+            FROM data_ingestion_events
+            WHERE event_ts >= :start_time
+            AND error_message IS NOT NULL
+            GROUP BY error_type, error_message
+            ORDER BY count DESC
+            LIMIT 20
+        """
+        
+        errors_summary = db.execute_query(errors_query, {"start_time": start_time})
+        
+        # Get symbol performance
+        symbols_query = """
+            SELECT 
+                symbol,
+                COUNT(*) as operations,
+                COUNT(*) FILTER (WHERE records_saved > 0) as successful_operations,
+                SUM(records_saved) as total_records_saved,
+                COUNT(*) FILTER (WHERE error_message IS NOT NULL) as error_count
+            FROM data_ingestion_events
+            WHERE event_ts >= :start_time
+            AND symbol IS NOT NULL
+            GROUP BY symbol
+            ORDER BY operations DESC
+            LIMIT 20
+        """
+        
+        symbols_summary = db.execute_query(symbols_query, {"start_time": start_time})
+        
+        return {
+            "success": True,
+            "summary_period_hours": hours,
+            "runs_summary": runs_summary or [],
+            "events_summary": events_summary or [],
+            "errors_summary": errors_summary or [],
+            "symbols_summary": symbols_summary or [],
+            "generated_at": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get data loading summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ensure-ema-data/{symbol}")
+async def ensure_ema_data_for_symbol(symbol: str):
+    """Ensure sufficient EMA data exists for reliable calculations"""
+    try:
+        from app.utils.market_data_utils import ensure_sufficient_ema_data
+        from datetime import datetime
+        
+        target_date = datetime.now().date()
+        db_url = os.getenv("DATABASE_URL")
+        
+        if not db_url:
+            raise HTTPException(status_code=500, detail="DATABASE_URL not configured")
+        
+        success = ensure_sufficient_ema_data(symbol, target_date, db_url)
+        
+        if success:
+            return {
+                "success": True,
+                "message": f"✅ EMA data ensured for {symbol}",
+                "symbol": symbol,
+                "target_date": str(target_date)
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"❌ Failed to ensure EMA data for {symbol}",
+                "symbol": symbol,
+                "target_date": str(target_date)
+            }
+        
+    except Exception as e:
+        logger.error(f"Failed to ensure EMA data for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ema-data-health/{symbol}")
+async def get_ema_data_health(symbol: str):
+    """Get comprehensive EMA data health assessment for a symbol"""
+    try:
+        from app.utils.market_data_utils import check_ema_data_health
+        import os
+        
+        db_url = os.getenv("DATABASE_URL")
+        
+        if not db_url:
+            raise HTTPException(status_code=500, detail="DATABASE_URL not configured")
+        
+        health = check_ema_data_health(symbol, db_url)
+        
+        return {
+            "success": True,
+            "symbol": symbol,
+            "health_assessment": health,
+            "generated_at": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get EMA data health for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/enrich-ema-data/{symbol}")
+async def enrich_ema_data_for_symbol(symbol: str):
+    """Trigger comprehensive EMA data enrichment for a symbol"""
+    try:
+        from app.utils.market_data_utils import enrich_ema_data_for_symbol
+        from datetime import datetime
+        import os
+        
+        db_url = os.getenv("DATABASE_URL")
+        
+        if not db_url:
+            raise HTTPException(status_code=500, detail="DATABASE_URL not configured")
+        
+        success = enrich_ema_data_for_symbol(symbol, db_url)
+        
+        if success:
+            return {
+                "success": True,
+                "message": f"✅ EMA data enrichment completed for {symbol}",
+                "symbol": symbol
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"❌ EMA data enrichment failed for {symbol}",
+                "symbol": symbol
+            }
+        
+    except Exception as e:
+        logger.error(f"Failed to enrich EMA data for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

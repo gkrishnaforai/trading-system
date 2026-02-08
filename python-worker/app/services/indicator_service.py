@@ -1,9 +1,10 @@
 """
 Indicator calculation service
 Computes all indicators and saves to database
+Enhanced to use FMP technical indicators API when available
 """
 from datetime import datetime, date
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import json
 
 import pandas as pd
@@ -12,6 +13,7 @@ from app.database import db
 from app.services.base import BaseService
 from app.exceptions import IndicatorCalculationError, DatabaseError, ValidationError
 from app.utils.validation import validate_symbol
+from app.data_sources import get_data_source
 from app.indicators import (
     calculate_ma7, calculate_ma21, calculate_sma50, calculate_ema20,
     calculate_ema50, calculate_sma200,
@@ -35,6 +37,274 @@ class IndicatorService(BaseService):
     def __init__(self):
         """Initialize indicator service"""
         super().__init__()
+        self.data_source = get_data_source()
+    
+    def calculate_indicators_with_fmp(self, symbol: str) -> bool:
+        """
+        Calculate indicators using FMP technical indicators API
+        This is the preferred method when FMP is available as the data source
+        
+        Args:
+            symbol: Stock symbol
+            
+        Returns:
+            True if successful
+        """
+        try:
+            self.logger.info(f"🔄 Calculating indicators for {symbol} using FMP API")
+            
+            # Check if data source supports technical indicators
+            if not hasattr(self.data_source, 'fetch_technical_indicators'):
+                self.logger.warning(f"Data source {self.data_source.name} doesn't support technical indicators, falling back to local calculation")
+                return self.calculate_indicators(symbol)
+            
+            # Fetch all technical indicators from FMP
+            indicators_data = self.data_source.fetch_technical_indicators(symbol)
+            
+            if not indicators_data:
+                self.logger.warning(f"No technical indicators data received for {symbol} from FMP")
+                return self.calculate_indicators(symbol)  # Fallback to local calculation
+            
+            # Check if fallback was used
+            fallback_used = indicators_data.pop('_fallback_used', False)
+            fallback_source = indicators_data.pop('_fallback_source', None)
+            primary_source = indicators_data.pop('_primary_source', None)
+            
+            if fallback_used:
+                self.logger.warning(f"🔄 FALLBACK DETECTED: Used {fallback_source} instead of {primary_source} for {symbol}")
+                # Log fallback usage to audit table
+                self._log_fallback_usage(symbol, primary_source, fallback_source, "technical_indicators")
+            
+            # Store indicators in database
+            success = self._store_fmp_indicators(symbol, indicators_data)
+
+            # FMP may not provide MACD endpoints in the current client/source implementation.
+            # Backfill missing MACD fields locally (derived from close prices) to avoid incorrect analysis.
+            try:
+                macd_missing = (
+                    not indicators_data.get('macd')
+                    or not indicators_data.get('macd_signal')
+                    or not indicators_data.get('macd_hist')
+                )
+            except Exception:
+                macd_missing = True
+
+            if macd_missing:
+                self.logger.warning(
+                    f"⚠️ FMP did not return full MACD series for {symbol}; backfilling MACD locally from price history"
+                )
+                try:
+                    _local_ok = self.calculate_indicators(symbol)
+                    success = bool(success) and bool(_local_ok)
+                except Exception as e:
+                    self.logger.error(f"❌ Failed local MACD backfill for {symbol}: {e}")
+                    success = False
+
+            if success:
+                source_used = fallback_source if fallback_used else "fmp_api"
+                self.logger.info(f"✅ Successfully calculated and stored indicators for {symbol} using {source_used}")
+                return True
+
+            self.logger.error(f"❌ Failed to store indicators for {symbol}")
+            return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error calculating FMP indicators for {symbol}: {e}")
+            # Fallback to local calculation
+            self.logger.info(f"Falling back to local indicator calculation for {symbol}")
+            return self.calculate_indicators(symbol)
+    
+    def _log_fallback_usage(self, symbol: str, primary_source: str, fallback_source: str, operation: str):
+        """Log fallback usage to audit table for monitoring"""
+        try:
+            from app.database import db
+            from datetime import datetime
+            
+            # Insert audit event for fallback usage
+            audit_query = """
+                INSERT INTO data_ingestion_events (
+                    run_id, symbol, operation, provider, level, 
+                    message, created_at, context
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, NOW(), %s
+                )
+            """
+            
+            context = {
+                "primary_source": primary_source,
+                "fallback_source": fallback_source,
+                "operation_type": operation,
+                "fallback_reason": "primary_source_failed"
+            }
+            
+            # Use a generic run_id for fallback tracking
+            run_id = f"fallback_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{symbol[:4]}"
+            
+            db.execute_query(audit_query, (
+                run_id,
+                symbol,
+                f"fallback_{operation}",
+                fallback_source,
+                "WARNING",
+                f"Fallback activated: {fallback_source} used instead of {primary_source}",
+                json.dumps(context)
+            ))
+            
+            self.logger.info(f"📊 Fallback usage logged to audit table for {symbol}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to log fallback usage for {symbol}: {e}")
+            # Don't fail the operation if audit logging fails
+    
+    def _store_fmp_indicators(self, symbol: str, indicators_data: Dict[str, List[Dict[str, Any]]]) -> bool:
+        """
+        Store FMP technical indicators data in the database
+        
+        Args:
+            symbol: Stock symbol
+            indicators_data: Dictionary of indicator data from FMP
+            
+        Returns:
+            True if successful
+        """
+        try:
+            stored_count = 0
+            
+            for indicator_name, data_points in indicators_data.items():
+                if not data_points:
+                    continue
+                
+                # Map FMP indicator names to database columns
+                db_column = self._map_indicator_to_column(indicator_name)
+                if not db_column:
+                    self.logger.warning(f"Unknown indicator: {indicator_name}")
+                    continue
+                
+                # Store each data point
+                for point in data_points:
+                    if not isinstance(point, dict):
+                        continue
+                    
+                    # Extract date and value - FMP uses different field names
+                    point_date = point.get('date')
+                    
+                    # FMP API uses indicator-specific field names (ema, sma, rsi, etc.)
+                    # not a generic 'value' field
+                    point_value = None
+                    if indicator_name.startswith('ema_'):
+                        point_value = point.get('ema')
+                    elif indicator_name.startswith('sma_'):
+                        point_value = point.get('sma')
+                    elif indicator_name.startswith('wma_'):
+                        point_value = point.get('wma')
+                    elif indicator_name.startswith('dema_'):
+                        point_value = point.get('dema')
+                    elif indicator_name.startswith('tema_'):
+                        point_value = point.get('tema')
+                    elif indicator_name.startswith('rsi_'):
+                        point_value = point.get('rsi')
+                    elif indicator_name.startswith('stddev_'):
+                        point_value = point.get('standardDeviation')
+                    elif indicator_name.startswith('williams_'):
+                        point_value = point.get('williams')
+                    elif indicator_name.startswith('adx_'):
+                        point_value = point.get('adx')
+                    elif indicator_name in ('macd', 'macd_signal', 'macd_hist'):
+                        # If MACD endpoints are supported/returned by the data source,
+                        # prefer explicit keys but fall back to 'value'.
+                        point_value = (
+                            point.get('macd')
+                            if indicator_name == 'macd' and point.get('macd') is not None
+                            else point.get('signal')
+                            if indicator_name == 'macd_signal' and point.get('signal') is not None
+                            else point.get('histogram')
+                            if indicator_name == 'macd_hist' and point.get('histogram') is not None
+                            else point.get('value')
+                        )
+                    else:
+                        # Generic fallback
+                        point_value = point.get('value')
+                    
+                    if not point_date or point_value is None:
+                        self.logger.debug(f"Skipping point - missing date or value: {point}")
+                        continue
+                    
+                    # Convert date string to date object
+                    if isinstance(point_date, str):
+                        # Handle both "2026-01-21" and "2026-01-21 00:00:00" formats
+                        if 'T' in point_date:
+                            # ISO format: "2026-01-21T00:00:00"
+                            point_date = datetime.strptime(point_date.split('T')[0], '%Y-%m-%d').date()
+                        elif ' ' in point_date:
+                            # Space format: "2026-01-21 00:00:00"
+                            point_date = datetime.strptime(point_date.split(' ')[0], '%Y-%m-%d').date()
+                        else:
+                            # Simple format: "2026-01-21"
+                            point_date = datetime.strptime(point_date, '%Y-%m-%d').date()
+                    
+                    # Delete existing records and insert new ones (to update data_source)
+                    delete_query = """
+                        DELETE FROM indicators_daily 
+                        WHERE symbol = $1 AND date = $2 AND indicator_name = $3
+                    """
+                    db.execute_update_positional(delete_query, [symbol.upper(), point_date, indicator_name])
+                    
+                    # Insert new record
+                    insert_query = """
+                        INSERT INTO indicators_daily (
+                            symbol, date, indicator_name, indicator_value, data_source, 
+                            created_at, updated_at
+                        ) VALUES (
+                            $1, $2, $3, $4, 'fmp_api',
+                            NOW(), NOW()
+                        )
+                    """
+                    
+                    # Use positional parameters for INSERT
+                    result = db.execute_update_positional(insert_query, [
+                        symbol.upper(), 
+                        point_date, 
+                        indicator_name,  # Use the indicator name directly
+                        float(point_value)
+                    ])
+                    stored_count += 1
+            
+            self.logger.info(f"✅ Stored {stored_count} FMP indicator data points for {symbol}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error storing FMP indicators for {symbol}: {e}")
+            return False
+    
+    def _map_indicator_to_column(self, indicator_name: str) -> Optional[str]:
+        """
+        Map FMP indicator names to database column names
+        
+        Args:
+            indicator_name: FMP indicator name
+            
+        Returns:
+            Database column name or None if not found
+        """
+        mapping = {
+            'ema_20': 'ema_20',
+            'ema_50': 'ema_50',
+            'sma_20': 'sma_20',
+            'sma_50': 'sma_50',
+            'sma_200': 'sma_200',
+            'wma_20': 'wma_20',
+            'dema_20': 'dema_20',
+            'tema_20': 'tema_20',
+            'rsi_14': 'rsi_14',
+            'macd': 'macd',
+            'macd_signal': 'macd_signal',
+            'macd_hist': 'macd_hist',
+            'stddev_20': 'stddev_20',
+            'williams_14': 'williams_r',
+            'adx_14': 'adx'
+        }
+        
+        return mapping.get(indicator_name.lower())
     
     def calculate_indicators(self, symbol: str, data: Optional[pd.DataFrame] = None) -> bool:
         """
@@ -231,39 +501,58 @@ class IndicatorService(BaseService):
             latest_idx = df.index[-1]
             trade_date = latest_idx.date() if hasattr(latest_idx, 'date') else pd.Timestamp(latest_idx).date()
 
-            # Insert indicators using the existing schema
-            query = """
-                INSERT INTO indicators_daily
-                (symbol, date, sma_50, sma_200, ema_20, rsi_14, macd, macd_signal, macd_hist, atr, bb_width, signal, confidence_score, data_source, created_at)
-                VALUES (:symbol, :date, :sma_50, :sma_200, :ema_20, :rsi_14, :macd, :macd_signal, :macd_hist, :atr, :bb_width, :signal, :confidence_score, :data_source, NOW())
-            """
-
-            params = {
-                "symbol": symbol,
-                "date": trade_date,
-                "sma_50": float(safe_get(sma50, latest_idx)) if safe_get(sma50, latest_idx) is not None else None,
-                "sma_200": float(safe_get(sma200, latest_idx)) if safe_get(sma200, latest_idx) is not None else None,
-                "ema_20": float(safe_get(ema20, latest_idx)) if safe_get(ema20, latest_idx) is not None else None,
-                "rsi_14": float(safe_get(rsi, latest_idx)) if safe_get(rsi, latest_idx) is not None else None,
-                "macd": float(safe_get(macd_line, latest_idx)) if safe_get(macd_line, latest_idx) is not None else None,
-                "macd_signal": float(safe_get(macd_signal, latest_idx)) if safe_get(macd_signal, latest_idx) is not None else None,
-                "macd_hist": float(safe_get(macd_histogram, latest_idx)) if safe_get(macd_histogram, latest_idx) is not None else None,
-                "atr": float(safe_get(atr, latest_idx)) if safe_get(atr, latest_idx) is not None else None,
-                "bb_width": (
+            # Store each indicator as a separate row to match existing table structure
+            indicators_data = [
+                ("sma_50", safe_get(sma50, latest_idx)),
+                ("sma_200", safe_get(sma200, latest_idx)),
+                ("ema_20", safe_get(ema20, latest_idx)),
+                ("rsi_14", safe_get(rsi, latest_idx)),
+                ("macd", safe_get(macd_line, latest_idx)),
+                ("macd_signal", safe_get(macd_signal, latest_idx)),
+                ("macd_hist", safe_get(macd_histogram, latest_idx)),
+                ("atr", safe_get(atr, latest_idx)),
+                ("bb_width", (
                     (float(safe_get(bb_upper, latest_idx)) - float(safe_get(bb_lower, latest_idx))) / float(safe_get(bb_middle, latest_idx))
                     if safe_get(bb_lower, latest_idx) is not None and safe_get(bb_upper, latest_idx) is not None and safe_get(bb_middle, latest_idx) not in (None, 0)
                     else None
-                ),
-                "signal": strategy_result.signal,
-                "confidence_score": float(strategy_result.confidence) if strategy_result and strategy_result.confidence is not None else None,
-                "data_source": "calculated"
-            }
-
-            db.execute_update(query, params)
+                )),
+                ("signal", strategy_result.signal),
+                ("confidence_score", float(strategy_result.confidence) if strategy_result and strategy_result.confidence is not None else None),
+            ]
+            
+            # Insert all indicators in a single batch
+            query = """
+                INSERT INTO indicators_daily 
+                (symbol, date, indicator_name, indicator_value, data_source, created_at)
+                VALUES (:symbol, :date, :indicator_name, :indicator_value, :data_source, NOW())
+                ON CONFLICT (symbol, date, indicator_name, data_source)
+                DO UPDATE SET
+                    indicator_value = EXCLUDED.indicator_value,
+                    created_at = NOW()
+            """
+            
+            # Batch insert all indicators
+            rows_inserted = 0
+            for indicator_name, value in indicators_data:
+                if value is not None:
+                    params = {
+                        "symbol": symbol,
+                        "date": trade_date,
+                        "indicator_name": indicator_name,
+                        "indicator_value": float(value) if isinstance(value, (int, float)) and not pd.isna(value) else None,
+                        "data_source": "calculated"
+                    }
+                    
+                    try:
+                        db.execute_update(query, params)
+                        rows_inserted += 1
+                    except Exception as e:
+                        self.logger.warning(f"Failed to save indicator {indicator_name} for {symbol}: {e}")
+                        continue
 
             self.log_info(
-                f"✅ Calculated and saved daily indicators for {symbol}",
-                context={"symbol": symbol, "trade_date": str(trade_date)},
+                f"✅ Calculated and saved {rows_inserted} daily indicators for {symbol}",
+                context={"symbol": symbol, "trade_date": str(trade_date), "rows_inserted": rows_inserted},
             )
             return True
             

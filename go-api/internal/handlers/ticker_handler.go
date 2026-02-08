@@ -18,6 +18,16 @@ func NewTickerHandler(tickerService *services.TickerService) *TickerHandler {
 	}
 }
 
+// GetAllTickers handles GET /api/v1/tickers (returns all active tickers for dropdown)
+func (h *TickerHandler) GetAllTickers(c *gin.Context) {
+	tickers, err := h.tickerService.GetAllActiveTickers(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"tickers": tickers})
+}
+
 // SearchTickers handles GET /api/v1/tickers/search?q=...&limit=20
 func (h *TickerHandler) SearchTickers(c *gin.Context) {
 	query := c.Query("q")

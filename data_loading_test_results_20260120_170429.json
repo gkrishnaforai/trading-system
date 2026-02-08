@@ -1,0 +1,2004 @@
+{
+  "success": true,
+  "data": {
+    "AAPL": {
+      "price_historical": {
+        "status": "success",
+        "message": "Refreshed price_historical for AAPL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "price_historical": {
+                  "status": "success",
+                  "message": "Successfully fetched 251 rows of historical price data"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:12.569053"
+      },
+      "price_current": {
+        "status": "success",
+        "message": "Refreshed price_current for AAPL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "price_current": {
+                  "status": "success",
+                  "message": "Current price updated"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:15.278660"
+      },
+      "price_intraday_5m": {
+        "status": "success",
+        "message": "Refreshed price_intraday_5m for AAPL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "price_intraday_5m": {
+                  "status": "success",
+                  "message": "Saved 390 5m candles"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:17.854688"
+      },
+      "fundamentals": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "fundamentals": {
+                  "status": "failed",
+                  "message": "Failed to fetch fundamentals"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:29.019682"
+      },
+      "income_statements": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "income_statements": {
+                  "status": "failed",
+                  "message": "No income statements found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:31.290711"
+      },
+      "balance_sheets": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "balance_sheets": {
+                  "status": "failed",
+                  "message": "No balance sheets found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:33.157142"
+      },
+      "cash_flow_statements": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "cash_flow_statements": {
+                  "status": "failed",
+                  "message": "No cash flow statements found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:35.143287"
+      },
+      "indicators": {
+        "status": "success",
+        "message": "Refreshed indicators for AAPL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "indicators": {
+                  "status": "success",
+                  "message": "Indicators calculated successfully"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:37.180077"
+      },
+      "financial_ratios": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "financial_ratios": {
+                  "status": "failed",
+                  "message": "No financial ratios found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:39.582628"
+      },
+      "key_metrics_ttm": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "key_metrics_ttm": {
+                  "status": "skipped",
+                  "message": "No key metrics (TTM) data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:41.554728"
+      },
+      "financial_scores": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "financial_scores": {
+                  "status": "skipped",
+                  "message": "No financial scores data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:43.581384"
+      },
+      "income_statement_growth": {
+        "status": "skipped",
+        "message": "Data type 'income_statement_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:01:43.923619"
+      },
+      "balance_sheet_growth": {
+        "status": "skipped",
+        "message": "Data type 'balance_sheet_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:01:44.264085"
+      },
+      "cash_flow_growth": {
+        "status": "skipped",
+        "message": "Data type 'cash_flow_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:01:44.608684"
+      },
+      "financial_growth": {
+        "status": "skipped",
+        "message": "Data type 'financial_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:01:44.950738"
+      },
+      "stock_grades": {
+        "status": "success",
+        "message": "Loaded 3 items for AAPL",
+        "response": {
+          "success": true,
+          "message": "Grades loaded: 3, Consensus loaded: True",
+          "results": {
+            "symbol": "AAPL",
+            "data_source": "fmp",
+            "timestamp": "2026-01-21T01:01:45.311480",
+            "grades_loaded": 3,
+            "consensus_loaded": true,
+            "errors": []
+          }
+        },
+        "timestamp": "2026-01-20T17:01:46.034073"
+      },
+      "consensus_data": {
+        "status": "success",
+        "message": "Loaded 0 items for AAPL",
+        "response": {
+          "symbol": "AAPL",
+          "success": true,
+          "result": {
+            "symbol": "AAPL",
+            "strong_buy": 1,
+            "buy": 67,
+            "hold": 34,
+            "sell": 7,
+            "strong_sell": 0,
+            "consensus_rating": "Buy",
+            "consensus_score": 0.57,
+            "total_analysts": 109,
+            "data_source": "fmp",
+            "fetched_at": "2026-01-21T01:01:46.546820"
+          },
+          "message": "Consensus updated for AAPL"
+        },
+        "timestamp": "2026-01-20T17:01:46.574271"
+      },
+      "price_targets": {
+        "status": "success",
+        "message": "Loaded 3 items for AAPL",
+        "response": {
+          "success": true,
+          "message": "Grades loaded: 3, Consensus loaded: True",
+          "results": {
+            "symbol": "AAPL",
+            "data_source": "fmp",
+            "timestamp": "2026-01-21T01:01:46.929579",
+            "grades_loaded": 3,
+            "consensus_loaded": true,
+            "errors": []
+          }
+        },
+        "timestamp": "2026-01-20T17:01:47.442449"
+      },
+      "analyst_ratings": {
+        "status": "success",
+        "message": "Loaded 3 items for AAPL",
+        "response": {
+          "success": true,
+          "message": "Grades loaded: 3, Consensus loaded: True",
+          "results": {
+            "symbol": "AAPL",
+            "data_source": "fmp",
+            "timestamp": "2026-01-21T01:01:47.793390",
+            "grades_loaded": 3,
+            "consensus_loaded": true,
+            "errors": []
+          }
+        },
+        "timestamp": "2026-01-20T17:01:48.204097"
+      },
+      "earnings": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "earnings": {
+                  "status": "failed",
+                  "message": "No earnings data found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:50.264816"
+      },
+      "earnings_transcripts": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "earnings_transcripts": {
+                  "status": "skipped",
+                  "message": "No earnings transcripts data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:52.195649"
+      },
+      "news": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "news": {
+                  "status": "skipped",
+                  "message": "No news data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:54.227812"
+      },
+      "corporate_actions": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "corporate_actions": {
+                  "status": "skipped",
+                  "message": "No corporate actions data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:57.112979"
+      },
+      "industry_peers": {
+        "status": "success",
+        "message": "Refreshed industry_peers for AAPL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "industry_peers": {
+                  "status": "success",
+                  "message": "Industry peers updated"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:01:59.888875"
+      },
+      "macro_market_data": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "macro_market_data": {
+                  "status": "failed",
+                  "message": "Unknown data type: macro_market_data"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:01.784720"
+      },
+      "short_interest": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "short_interest": {
+                  "status": "skipped",
+                  "message": "No short interest data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:03.748520"
+      },
+      "short_volume": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "short_volume": {
+                  "status": "skipped",
+                  "message": "No short volume data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:06.540838"
+      },
+      "share_float": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "share_float": {
+                  "status": "skipped",
+                  "message": "No share float data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:08.533618"
+      },
+      "risk_factors": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "risk_factors": {
+                  "status": "skipped",
+                  "message": "No risk factors data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:10.762692"
+      },
+      "institutional_buying": {
+        "status": "skipped",
+        "message": "Data type 'institutional_buying' not yet implemented",
+        "timestamp": "2026-01-20T17:02:11.108227"
+      },
+      "signals": {
+        "status": "success",
+        "message": "Refreshed signals for AAPL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "AAPL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "signals": {
+                  "status": "success",
+                  "message": "Signals are generated from indicators"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:13.084018"
+      }
+    },
+    "MSFT": {
+      "price_historical": {
+        "status": "success",
+        "message": "Refreshed price_historical for MSFT",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "price_historical": {
+                  "status": "success",
+                  "message": "Successfully fetched 251 rows of historical price data"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:15.715979"
+      },
+      "price_current": {
+        "status": "success",
+        "message": "Refreshed price_current for MSFT",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "price_current": {
+                  "status": "success",
+                  "message": "Current price updated"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:18.190674"
+      },
+      "price_intraday_5m": {
+        "status": "success",
+        "message": "Refreshed price_intraday_5m for MSFT",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "price_intraday_5m": {
+                  "status": "success",
+                  "message": "Saved 390 5m candles"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:20.681307"
+      },
+      "fundamentals": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "fundamentals": {
+                  "status": "failed",
+                  "message": "Failed to fetch fundamentals"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:32.913573"
+      },
+      "income_statements": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "income_statements": {
+                  "status": "failed",
+                  "message": "No income statements found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:35.040979"
+      },
+      "balance_sheets": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "balance_sheets": {
+                  "status": "failed",
+                  "message": "No balance sheets found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:37.317242"
+      },
+      "cash_flow_statements": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "cash_flow_statements": {
+                  "status": "failed",
+                  "message": "No cash flow statements found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:39.948898"
+      },
+      "indicators": {
+        "status": "success",
+        "message": "Refreshed indicators for MSFT",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "indicators": {
+                  "status": "success",
+                  "message": "Indicators calculated successfully"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:42.224541"
+      },
+      "financial_ratios": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "financial_ratios": {
+                  "status": "failed",
+                  "message": "No financial ratios found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:46.057954"
+      },
+      "key_metrics_ttm": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "key_metrics_ttm": {
+                  "status": "skipped",
+                  "message": "No key metrics (TTM) data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:48.280345"
+      },
+      "financial_scores": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "financial_scores": {
+                  "status": "skipped",
+                  "message": "No financial scores data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:51.165165"
+      },
+      "income_statement_growth": {
+        "status": "skipped",
+        "message": "Data type 'income_statement_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:02:51.510420"
+      },
+      "balance_sheet_growth": {
+        "status": "skipped",
+        "message": "Data type 'balance_sheet_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:02:51.855670"
+      },
+      "cash_flow_growth": {
+        "status": "skipped",
+        "message": "Data type 'cash_flow_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:02:52.201264"
+      },
+      "financial_growth": {
+        "status": "skipped",
+        "message": "Data type 'financial_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:02:52.542015"
+      },
+      "stock_grades": {
+        "status": "success",
+        "message": "Loaded 2 items for MSFT",
+        "response": {
+          "success": true,
+          "message": "Grades loaded: 2, Consensus loaded: True",
+          "results": {
+            "symbol": "MSFT",
+            "data_source": "fmp",
+            "timestamp": "2026-01-21T01:02:52.905195",
+            "grades_loaded": 2,
+            "consensus_loaded": true,
+            "errors": []
+          }
+        },
+        "timestamp": "2026-01-20T17:02:53.548356"
+      },
+      "consensus_data": {
+        "status": "success",
+        "message": "Loaded 0 items for MSFT",
+        "response": {
+          "symbol": "MSFT",
+          "success": true,
+          "result": {
+            "symbol": "MSFT",
+            "strong_buy": 0,
+            "buy": 63,
+            "hold": 15,
+            "sell": 0,
+            "strong_sell": 0,
+            "consensus_rating": "Buy",
+            "consensus_score": 0.81,
+            "total_analysts": 78,
+            "data_source": "fmp",
+            "fetched_at": "2026-01-21T01:02:53.992952"
+          },
+          "message": "Consensus updated for MSFT"
+        },
+        "timestamp": "2026-01-20T17:02:54.005240"
+      },
+      "price_targets": {
+        "status": "success",
+        "message": "Loaded 2 items for MSFT",
+        "response": {
+          "success": true,
+          "message": "Grades loaded: 2, Consensus loaded: True",
+          "results": {
+            "symbol": "MSFT",
+            "data_source": "fmp",
+            "timestamp": "2026-01-21T01:02:54.361019",
+            "grades_loaded": 2,
+            "consensus_loaded": true,
+            "errors": []
+          }
+        },
+        "timestamp": "2026-01-20T17:02:54.696417"
+      },
+      "analyst_ratings": {
+        "status": "success",
+        "message": "Loaded 2 items for MSFT",
+        "response": {
+          "success": true,
+          "message": "Grades loaded: 2, Consensus loaded: True",
+          "results": {
+            "symbol": "MSFT",
+            "data_source": "fmp",
+            "timestamp": "2026-01-21T01:02:55.102173",
+            "grades_loaded": 2,
+            "consensus_loaded": true,
+            "errors": []
+          }
+        },
+        "timestamp": "2026-01-20T17:02:55.656169"
+      },
+      "earnings": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "earnings": {
+                  "status": "failed",
+                  "message": "No earnings data found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:57.714831"
+      },
+      "earnings_transcripts": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "earnings_transcripts": {
+                  "status": "skipped",
+                  "message": "No earnings transcripts data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:02:59.800182"
+      },
+      "news": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "news": {
+                  "status": "skipped",
+                  "message": "No news data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:01.925284"
+      },
+      "corporate_actions": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "corporate_actions": {
+                  "status": "skipped",
+                  "message": "No corporate actions data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:04.135528"
+      },
+      "industry_peers": {
+        "status": "success",
+        "message": "Refreshed industry_peers for MSFT",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "industry_peers": {
+                  "status": "success",
+                  "message": "Industry peers updated"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:07.420416"
+      },
+      "macro_market_data": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "macro_market_data": {
+                  "status": "failed",
+                  "message": "Unknown data type: macro_market_data"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:09.422488"
+      },
+      "short_interest": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "short_interest": {
+                  "status": "skipped",
+                  "message": "No short interest data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:11.647434"
+      },
+      "short_volume": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "short_volume": {
+                  "status": "skipped",
+                  "message": "No short volume data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:13.747011"
+      },
+      "share_float": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "share_float": {
+                  "status": "skipped",
+                  "message": "No share float data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:17.084349"
+      },
+      "risk_factors": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "risk_factors": {
+                  "status": "skipped",
+                  "message": "No risk factors data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:19.524767"
+      },
+      "institutional_buying": {
+        "status": "skipped",
+        "message": "Data type 'institutional_buying' not yet implemented",
+        "timestamp": "2026-01-20T17:03:19.870452"
+      },
+      "signals": {
+        "status": "success",
+        "message": "Refreshed signals for MSFT",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "MSFT": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "signals": {
+                  "status": "success",
+                  "message": "Signals are generated from indicators"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:21.815906"
+      }
+    },
+    "GOOGL": {
+      "price_historical": {
+        "status": "success",
+        "message": "Refreshed price_historical for GOOGL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "price_historical": {
+                  "status": "success",
+                  "message": "Successfully fetched 251 rows of historical price data"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:24.525579"
+      },
+      "price_current": {
+        "status": "success",
+        "message": "Refreshed price_current for GOOGL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "price_current": {
+                  "status": "success",
+                  "message": "Current price updated"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:27.189088"
+      },
+      "price_intraday_5m": {
+        "status": "success",
+        "message": "Refreshed price_intraday_5m for GOOGL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "price_intraday_5m": {
+                  "status": "success",
+                  "message": "Saved 390 5m candles"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:29.714190"
+      },
+      "fundamentals": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "fundamentals": {
+                  "status": "failed",
+                  "message": "Failed to fetch fundamentals"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:41.030879"
+      },
+      "income_statements": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "income_statements": {
+                  "status": "failed",
+                  "message": "No income statements found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:43.148743"
+      },
+      "balance_sheets": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "balance_sheets": {
+                  "status": "failed",
+                  "message": "No balance sheets found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:44.999775"
+      },
+      "cash_flow_statements": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "cash_flow_statements": {
+                  "status": "failed",
+                  "message": "No cash flow statements found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:47.286370"
+      },
+      "indicators": {
+        "status": "success",
+        "message": "Refreshed indicators for GOOGL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "indicators": {
+                  "status": "success",
+                  "message": "Indicators calculated successfully"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:49.298984"
+      },
+      "financial_ratios": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "financial_ratios": {
+                  "status": "failed",
+                  "message": "No financial ratios found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:51.570224"
+      },
+      "key_metrics_ttm": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "key_metrics_ttm": {
+                  "status": "skipped",
+                  "message": "No key metrics (TTM) data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:54.730292"
+      },
+      "financial_scores": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "financial_scores": {
+                  "status": "skipped",
+                  "message": "No financial scores data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:03:57.635511"
+      },
+      "income_statement_growth": {
+        "status": "skipped",
+        "message": "Data type 'income_statement_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:03:57.978193"
+      },
+      "balance_sheet_growth": {
+        "status": "skipped",
+        "message": "Data type 'balance_sheet_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:03:58.323375"
+      },
+      "cash_flow_growth": {
+        "status": "skipped",
+        "message": "Data type 'cash_flow_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:03:58.664156"
+      },
+      "financial_growth": {
+        "status": "skipped",
+        "message": "Data type 'financial_growth' not yet implemented",
+        "timestamp": "2026-01-20T17:03:59.006843"
+      },
+      "stock_grades": {
+        "status": "success",
+        "message": "Loaded 8 items for GOOGL",
+        "response": {
+          "success": true,
+          "message": "Grades loaded: 8, Consensus loaded: True",
+          "results": {
+            "symbol": "GOOGL",
+            "data_source": "fmp",
+            "timestamp": "2026-01-21T01:03:59.378728",
+            "grades_loaded": 8,
+            "consensus_loaded": true,
+            "errors": []
+          }
+        },
+        "timestamp": "2026-01-20T17:03:59.980991"
+      },
+      "consensus_data": {
+        "status": "success",
+        "message": "Loaded 0 items for GOOGL",
+        "response": {
+          "symbol": "GOOGL",
+          "success": true,
+          "result": {
+            "symbol": "GOOGL",
+            "strong_buy": 2,
+            "buy": 67,
+            "hold": 11,
+            "sell": 1,
+            "strong_sell": 0,
+            "consensus_rating": "Buy",
+            "consensus_score": 0.86,
+            "total_analysts": 81,
+            "data_source": "fmp",
+            "fetched_at": "2026-01-21T01:04:00.423182"
+          },
+          "message": "Consensus updated for GOOGL"
+        },
+        "timestamp": "2026-01-20T17:04:00.437119"
+      },
+      "price_targets": {
+        "status": "success",
+        "message": "Loaded 8 items for GOOGL",
+        "response": {
+          "success": true,
+          "message": "Grades loaded: 8, Consensus loaded: True",
+          "results": {
+            "symbol": "GOOGL",
+            "data_source": "fmp",
+            "timestamp": "2026-01-21T01:04:00.789661",
+            "grades_loaded": 8,
+            "consensus_loaded": true,
+            "errors": []
+          }
+        },
+        "timestamp": "2026-01-20T17:04:01.522944"
+      },
+      "analyst_ratings": {
+        "status": "success",
+        "message": "Loaded 8 items for GOOGL",
+        "response": {
+          "success": true,
+          "message": "Grades loaded: 8, Consensus loaded: True",
+          "results": {
+            "symbol": "GOOGL",
+            "data_source": "fmp",
+            "timestamp": "2026-01-21T01:04:01.870831",
+            "grades_loaded": 8,
+            "consensus_loaded": true,
+            "errors": []
+          }
+        },
+        "timestamp": "2026-01-20T17:04:02.208353"
+      },
+      "earnings": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "earnings": {
+                  "status": "failed",
+                  "message": "No earnings data found"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:04:04.239134"
+      },
+      "earnings_transcripts": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "earnings_transcripts": {
+                  "status": "skipped",
+                  "message": "No earnings transcripts data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:04:06.366630"
+      },
+      "news": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "news": {
+                  "status": "skipped",
+                  "message": "No news data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:04:08.396795"
+      },
+      "corporate_actions": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "corporate_actions": {
+                  "status": "skipped",
+                  "message": "No corporate actions data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:04:11.818850"
+      },
+      "industry_peers": {
+        "status": "success",
+        "message": "Refreshed industry_peers for GOOGL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "industry_peers": {
+                  "status": "success",
+                  "message": "Industry peers updated"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:04:17.383228"
+      },
+      "macro_market_data": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "macro_market_data": {
+                  "status": "failed",
+                  "message": "Unknown data type: macro_market_data"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:04:19.542908"
+      },
+      "short_interest": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "short_interest": {
+                  "status": "skipped",
+                  "message": "No short interest data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:04:21.555336"
+      },
+      "short_volume": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "short_volume": {
+                  "status": "skipped",
+                  "message": "No short volume data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:04:23.449707"
+      },
+      "share_float": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "share_float": {
+                  "status": "skipped",
+                  "message": "No share float data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:04:25.322897"
+      },
+      "risk_factors": {
+        "status": "error",
+        "message": "Refreshed 0/1 symbols successfully",
+        "response": {
+          "success": false,
+          "message": "Refreshed 0/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": false,
+              "total_requested": 1,
+              "total_successful": 0,
+              "total_failed": 1,
+              "results": {
+                "risk_factors": {
+                  "status": "skipped",
+                  "message": "No risk factors data available (normal for many symbols)"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:04:27.182596"
+      },
+      "institutional_buying": {
+        "status": "skipped",
+        "message": "Data type 'institutional_buying' not yet implemented",
+        "timestamp": "2026-01-20T17:04:27.524319"
+      },
+      "signals": {
+        "status": "success",
+        "message": "Refreshed signals for GOOGL",
+        "response": {
+          "success": true,
+          "message": "Refreshed 1/1 symbols successfully",
+          "results": {
+            "GOOGL": {
+              "success": true,
+              "total_requested": 1,
+              "total_successful": 1,
+              "total_failed": 0,
+              "results": {
+                "signals": {
+                  "status": "success",
+                  "message": "Signals are generated from indicators"
+                }
+              }
+            }
+          }
+        },
+        "timestamp": "2026-01-20T17:04:29.369341"
+      }
+    }
+  },
+  "symbols_loaded": 3,
+  "data_types": [
+    "price_historical",
+    "price_current",
+    "price_intraday_5m",
+    "fundamentals",
+    "income_statements",
+    "balance_sheets",
+    "cash_flow_statements",
+    "indicators",
+    "financial_ratios",
+    "key_metrics_ttm",
+    "financial_scores",
+    "income_statement_growth",
+    "balance_sheet_growth",
+    "cash_flow_growth",
+    "financial_growth",
+    "stock_grades",
+    "consensus_data",
+    "price_targets",
+    "analyst_ratings",
+    "earnings",
+    "earnings_transcripts",
+    "news",
+    "corporate_actions",
+    "industry_peers",
+    "macro_market_data",
+    "short_interest",
+    "short_volume",
+    "share_float",
+    "risk_factors",
+    "institutional_buying",
+    "signals"
+  ],
+  "errors": [
+    "Error with fundamentals for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with income_statements for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with balance_sheets for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with cash_flow_statements for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with financial_ratios for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with key_metrics_ttm for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with financial_scores for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with earnings for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with earnings_transcripts for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with news for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with corporate_actions for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with macro_market_data for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with short_interest for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with short_volume for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with share_float for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with risk_factors for AAPL: Refreshed 0/1 symbols successfully",
+    "Error with fundamentals for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with income_statements for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with balance_sheets for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with cash_flow_statements for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with financial_ratios for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with key_metrics_ttm for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with financial_scores for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with earnings for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with earnings_transcripts for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with news for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with corporate_actions for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with macro_market_data for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with short_interest for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with short_volume for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with share_float for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with risk_factors for MSFT: Refreshed 0/1 symbols successfully",
+    "Error with fundamentals for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with income_statements for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with balance_sheets for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with cash_flow_statements for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with financial_ratios for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with key_metrics_ttm for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with financial_scores for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with earnings for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with earnings_transcripts for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with news for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with corporate_actions for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with macro_market_data for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with short_interest for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with short_volume for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with share_float for GOOGL: Refreshed 0/1 symbols successfully",
+    "Error with risk_factors for GOOGL: Refreshed 0/1 symbols successfully"
+  ],
+  "api_calls_made": [
+    "POST /api/v1/refresh for AAPL - price_historical (call #1)",
+    "POST /api/v1/refresh for AAPL - price_current (call #2)",
+    "POST /api/v1/refresh for AAPL - price_intraday_5m (call #3)",
+    "POST /api/v1/refresh for AAPL - fundamentals (call #4)",
+    "POST /api/v1/refresh for AAPL - income_statements (call #5)",
+    "POST /api/v1/refresh for AAPL - balance_sheets (call #6)",
+    "POST /api/v1/refresh for AAPL - cash_flow_statements (call #7)",
+    "POST /api/v1/refresh for AAPL - indicators (call #8)",
+    "POST /api/v1/refresh for AAPL - financial_ratios (call #9)",
+    "POST /api/v1/refresh for AAPL - key_metrics_ttm (call #10)",
+    "POST /api/v1/refresh for AAPL - financial_scores (call #11)",
+    "POST /api/v1/grades/refresh/AAPL for AAPL - stock_grades (call #16)",
+    "POST /api/v1/grades/refresh/AAPL for AAPL - consensus_data (call #17)",
+    "POST /api/v1/grades/refresh/AAPL for AAPL - price_targets (call #18)",
+    "POST /api/v1/grades/refresh/AAPL for AAPL - analyst_ratings (call #19)",
+    "POST /api/v1/refresh for AAPL - earnings (call #20)",
+    "POST /api/v1/refresh for AAPL - earnings_transcripts (call #21)",
+    "POST /api/v1/refresh for AAPL - news (call #22)",
+    "POST /api/v1/refresh for AAPL - corporate_actions (call #23)",
+    "POST /api/v1/refresh for AAPL - industry_peers (call #24)",
+    "POST /api/v1/refresh for AAPL - macro_market_data (call #25)",
+    "POST /api/v1/refresh for AAPL - short_interest (call #26)",
+    "POST /api/v1/refresh for AAPL - short_volume (call #27)",
+    "POST /api/v1/refresh for AAPL - share_float (call #28)",
+    "POST /api/v1/refresh for AAPL - risk_factors (call #29)",
+    "POST /api/v1/refresh for AAPL - signals (call #31)",
+    "POST /api/v1/refresh for MSFT - price_historical (call #32)",
+    "POST /api/v1/refresh for MSFT - price_current (call #33)",
+    "POST /api/v1/refresh for MSFT - price_intraday_5m (call #34)",
+    "POST /api/v1/refresh for MSFT - fundamentals (call #35)",
+    "POST /api/v1/refresh for MSFT - income_statements (call #36)",
+    "POST /api/v1/refresh for MSFT - balance_sheets (call #37)",
+    "POST /api/v1/refresh for MSFT - cash_flow_statements (call #38)",
+    "POST /api/v1/refresh for MSFT - indicators (call #39)",
+    "POST /api/v1/refresh for MSFT - financial_ratios (call #40)",
+    "POST /api/v1/refresh for MSFT - key_metrics_ttm (call #41)",
+    "POST /api/v1/refresh for MSFT - financial_scores (call #42)",
+    "POST /api/v1/grades/refresh/MSFT for MSFT - stock_grades (call #47)",
+    "POST /api/v1/grades/refresh/MSFT for MSFT - consensus_data (call #48)",
+    "POST /api/v1/grades/refresh/MSFT for MSFT - price_targets (call #49)",
+    "POST /api/v1/grades/refresh/MSFT for MSFT - analyst_ratings (call #50)",
+    "POST /api/v1/refresh for MSFT - earnings (call #51)",
+    "POST /api/v1/refresh for MSFT - earnings_transcripts (call #52)",
+    "POST /api/v1/refresh for MSFT - news (call #53)",
+    "POST /api/v1/refresh for MSFT - corporate_actions (call #54)",
+    "POST /api/v1/refresh for MSFT - industry_peers (call #55)",
+    "POST /api/v1/refresh for MSFT - macro_market_data (call #56)",
+    "POST /api/v1/refresh for MSFT - short_interest (call #57)",
+    "POST /api/v1/refresh for MSFT - short_volume (call #58)",
+    "POST /api/v1/refresh for MSFT - share_float (call #59)",
+    "POST /api/v1/refresh for MSFT - risk_factors (call #60)",
+    "POST /api/v1/refresh for MSFT - signals (call #62)",
+    "POST /api/v1/refresh for GOOGL - price_historical (call #63)",
+    "POST /api/v1/refresh for GOOGL - price_current (call #64)",
+    "POST /api/v1/refresh for GOOGL - price_intraday_5m (call #65)",
+    "POST /api/v1/refresh for GOOGL - fundamentals (call #66)",
+    "POST /api/v1/refresh for GOOGL - income_statements (call #67)",
+    "POST /api/v1/refresh for GOOGL - balance_sheets (call #68)",
+    "POST /api/v1/refresh for GOOGL - cash_flow_statements (call #69)",
+    "POST /api/v1/refresh for GOOGL - indicators (call #70)",
+    "POST /api/v1/refresh for GOOGL - financial_ratios (call #71)",
+    "POST /api/v1/refresh for GOOGL - key_metrics_ttm (call #72)",
+    "POST /api/v1/refresh for GOOGL - financial_scores (call #73)",
+    "POST /api/v1/grades/refresh/GOOGL for GOOGL - stock_grades (call #78)",
+    "POST /api/v1/grades/refresh/GOOGL for GOOGL - consensus_data (call #79)",
+    "POST /api/v1/grades/refresh/GOOGL for GOOGL - price_targets (call #80)",
+    "POST /api/v1/grades/refresh/GOOGL for GOOGL - analyst_ratings (call #81)",
+    "POST /api/v1/refresh for GOOGL - earnings (call #82)",
+    "POST /api/v1/refresh for GOOGL - earnings_transcripts (call #83)",
+    "POST /api/v1/refresh for GOOGL - news (call #84)",
+    "POST /api/v1/refresh for GOOGL - corporate_actions (call #85)",
+    "POST /api/v1/refresh for GOOGL - industry_peers (call #86)",
+    "POST /api/v1/refresh for GOOGL - macro_market_data (call #87)",
+    "POST /api/v1/refresh for GOOGL - short_interest (call #88)",
+    "POST /api/v1/refresh for GOOGL - short_volume (call #89)",
+    "POST /api/v1/refresh for GOOGL - share_float (call #90)",
+    "POST /api/v1/refresh for GOOGL - risk_factors (call #91)",
+    "POST /api/v1/refresh for GOOGL - signals (call #93)"
+  ],
+  "rate_limit_info": {
+    "calls_per_minute_limit": 200,
+    "total_calls_planned": 93,
+    "estimated_time_minutes": 1
+  },
+  "test_summary": {
+    "total_api_calls": 93,
+    "successful_calls": 30,
+    "failed_calls": 48,
+    "skipped_calls": 15,
+    "start_time": "2026-01-20 17:01:09.881403",
+    "end_time": "2026-01-20 17:04:29.369396",
+    "duration_seconds": 199.487993
+  }
+}

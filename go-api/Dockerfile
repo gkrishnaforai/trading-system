@@ -10,7 +10,12 @@ WORKDIR /build
 COPY go-api/go.mod ./
 
 # Download dependencies
-RUN go mod download
+ENV GOPROXY=https://proxy.golang.org,direct
+RUN for i in 1 2 3 4 5; do \
+        go mod download && break; \
+        echo "go mod download failed (attempt $i), retrying..."; \
+        sleep $((i * 2)); \
+    done
 
 # Copy source code
 COPY go-api/ ./

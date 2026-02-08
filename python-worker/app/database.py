@@ -1,7 +1,7 @@
 """Database connection and utilities (Postgres-only)."""
 import logging
 from contextlib import contextmanager
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union, Tuple
 from pathlib import Path
 import os
 import re
@@ -49,15 +49,20 @@ class Database:
             session.commit()
         except Exception as e:
             session.rollback()
-            logger.error(f"Database session error: {e}")
+            pgcode = getattr(getattr(e, "orig", None), "pgcode", None)
+            if pgcode == "42P01":
+                logger.warning(f"Database session warning (undefined table): {e}")
+            else:
+                logger.exception(f"Database session error: {e}")
             raise
         finally:
             session.close()
     
-    def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def execute_query(self, query: str, params: Optional[Union[Dict[str, Any], List[Any], Tuple[Any, ...]]] = None) -> List[Dict[str, Any]]:
         """Execute a SELECT query and return results"""
         with self.get_session() as session:
-            result = session.execute(text(query), params or {})
+            sql, named = self._normalize_params(query, params)
+            result = session.execute(text(sql), named)
             rows = result.fetchall()
             # Convert to list of dicts
             if rows:
@@ -70,10 +75,11 @@ class Database:
         sql, named = self._convert_positional_sql(query, params)
         return self.execute_query(sql, named)
     
-    def execute_update(self, query: str, params: Optional[Dict[str, Any]] = None) -> int:
+    def execute_update(self, query: str, params: Optional[Union[Dict[str, Any], List[Any], Tuple[Any, ...]]] = None) -> int:
         """Execute an INSERT/UPDATE/DELETE query"""
         with self.get_session() as session:
-            result = session.execute(text(query), params or {})
+            sql, named = self._normalize_params(query, params)
+            result = session.execute(text(sql), named)
             session.commit()
             return result.rowcount
 
@@ -113,6 +119,37 @@ class Database:
             named_params[f"param_{i}"] = param
             query = re.sub(rf"\${i}", f":param_{i}", query)
         return query, named_params
+
+    def _convert_percent_sql(self, query: str, params: List[Any]) -> (str, Dict[str, Any]):
+        named_params: Dict[str, Any] = {}
+        sql = query
+        for i, param in enumerate(params, start=1):
+            key = f"param_{i}"
+            if "%s" not in sql:
+                raise ValueError("Not enough %s placeholders for positional params")
+            named_params[key] = param
+            sql = sql.replace("%s", f":{key}", 1)
+        if "%s" in sql:
+            raise ValueError("Too many %s placeholders for positional params")
+        return sql, named_params
+
+    def _normalize_params(
+        self,
+        query: str,
+        params: Optional[Union[Dict[str, Any], List[Any], Tuple[Any, ...]]],
+    ) -> (str, Dict[str, Any]):
+        if params is None:
+            return query, {}
+        if isinstance(params, dict):
+            return query, params
+        if isinstance(params, (list, tuple)):
+            params_list = list(params)
+            if re.search(r"\$\d+", query):
+                return self._convert_positional_sql(query, params_list)
+            if "%s" in query:
+                return self._convert_percent_sql(query, params_list)
+            raise ValueError("Positional params provided but query has no $1/$2 or %s placeholders")
+        raise ValueError(f"Invalid params type: {type(params)}")
 
 
 # Global database instance

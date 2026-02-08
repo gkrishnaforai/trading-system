@@ -10,6 +10,7 @@ from datetime import datetime
 from app.repositories.base_repository import BaseRepository
 from app.database import db
 from app.observability.logging import get_logger
+from app.utils.json_sanitize import json_dumps_sanitized
 
 logger = get_logger(__name__)
 
@@ -39,7 +40,7 @@ class StockInsightsRepository:
                 "insights_date": datetime.now().date(),
                 "generated_at": datetime.now(),
                 "source": "stock_insights_service",
-                "payload": json.dumps(insights),  # Store as JSONB
+                "payload": json_dumps_sanitized(insights),  # Store as JSONB
                 "created_at": datetime.now(),
                 "updated_at": datetime.now()
             }

@@ -4,7 +4,7 @@ SOLID: Single responsibility for Yahoo Finance integration
 DRY: Inherits common functionality from base adapter
 Performance: Connection pooling, caching, optimized requests
 """
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from app.data_sources.base import BaseDataSource
@@ -149,3 +149,53 @@ class YahooFinanceAdapter(BaseDataSourceAdapter):
         except Exception as e:
             self._logger.warning(f"Yahoo Finance availability check failed: {str(e)}")
             return False
+    
+    # Delegate all other methods to the source
+    def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
+        return self.source.fetch_current_price(symbol)
+    
+    def fetch_symbol_details(self, symbol: str) -> Dict[str, Any]:
+        return self.source.fetch_symbol_details(symbol)
+    
+    def fetch_fundamentals(self, symbol: str) -> Dict[str, Any]:
+        return self.source.fetch_fundamentals(symbol)
+    
+    def fetch_enhanced_fundamentals(self, symbol: str) -> Dict[str, Any]:
+        return self.source.fetch_enhanced_fundamentals(symbol)
+    
+    def fetch_news(self, symbol: str, limit: int = 10) -> List[Dict[str, Any]]:
+        return self.source.fetch_news(symbol, limit)
+    
+    def fetch_earnings(self, symbol: str) -> List[Dict[str, Any]]:
+        return self.source.fetch_earnings(symbol)
+    
+    def fetch_earnings_calendar(self, symbols: List[str] = None, start_date: str = None, end_date: str = None) -> List[Dict[str, Any]]:
+        return self.source.fetch_earnings_calendar(symbols, start_date, end_date)
+    
+    def fetch_earnings_for_date(self, earnings_date: str, symbols: List[str] = None) -> List[Dict[str, Any]]:
+        return self.source.fetch_earnings_for_date(earnings_date, symbols)
+    
+    def fetch_industry_peers(self, symbol: str) -> Dict[str, Any]:
+        return self.source.fetch_industry_peers(symbol)
+    
+    def fetch_actions(self, symbol: str) -> List[Dict[str, Any]]:
+        return self.source.fetch_actions(symbol)
+    
+    def fetch_corporate_actions(self, symbol: str) -> List[Dict[str, Any]]:
+        """Alias for fetch_actions for compatibility"""
+        return self.fetch_actions(symbol)
+    
+    def fetch_dividends(self, symbol: str) -> List[Dict[str, Any]]:
+        return self.source.fetch_dividends(symbol)
+    
+    def fetch_splits(self, symbol: str) -> List[Dict[str, Any]]:
+        return self.source.fetch_splits(symbol)
+    
+    def fetch_financial_statements(self, symbol: str, period: str = None) -> Dict[str, Any]:
+        return self.source.fetch_financial_statements(symbol, period=period)
+    
+    def fetch_quarterly_earnings_history(self, symbol: str) -> List[Dict[str, Any]]:
+        return self.source.fetch_quarterly_earnings_history(symbol)
+    
+    def fetch_analyst_recommendations(self, symbol: str) -> List[Dict[str, Any]]:
+        return self.source.fetch_analyst_recommendations(symbol)

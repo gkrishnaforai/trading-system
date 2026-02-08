@@ -282,16 +282,28 @@ async def get_universal_signal(request: SignalRequest):
             # Create market conditions using same indicators data as TQQQ methodology
             # Debug: Log available keys in symbol_data
             logger.info(f"Available keys in symbol_data: {list(symbol_data.keys())}")
-            
+
+            # Capture raw indicator values (do not coerce missing to 0 for payload correctness)
+            macd_raw = symbol_data.get('macd')
+            macd_signal_raw = symbol_data.get('macd_signal')
+            rsi_raw = symbol_data.get('rsi_14')
+            sma50_raw = symbol_data.get('sma_50')
+            ema20_raw = symbol_data.get('ema_20')
+            sma20_raw = symbol_data.get('sma_20', None)
+
+            # Engine requires numerics; use 0.0 when missing for internal calc, but keep payload values as None
+            macd_engine = float(macd_raw) if macd_raw is not None else 0.0
+            macd_signal_engine = float(macd_signal_raw) if macd_signal_raw is not None else 0.0
+
             conditions = MarketConditions(
-                rsi=symbol_data['rsi_14'],        # From indicators table (same as TQQQ)
-                sma_20=symbol_data.get('sma_20', symbol_data.get('ema_20', 0)),     # ✅ Use SMA20 if available, fallback to EMA20
-                sma_50=symbol_data['sma_50'],     # From indicators table (same as TQQQ)
-                ema_20=symbol_data['ema_20'],     # From indicators table (same as TQQQ)
+                rsi=rsi_raw,        # From indicators table (same as TQQQ)
+                sma_20=sma20_raw if sma20_raw is not None else symbol_data.get('ema_20', 0),     # ✅ Use SMA20 if available, fallback to EMA20
+                sma_50=sma50_raw,     # From indicators table (same as TQQQ)
+                ema_20=ema20_raw,     # From indicators table (same as TQQQ)
                 current_price=symbol_data['close'], # From raw data (same as TQQQ)
                 recent_change=market_context['recent_change'] / 100,
-                macd=float(symbol_data['macd']) if symbol_data['macd'] is not None else 0.0,         # From indicators table (same as TQQQ)
-                macd_signal=float(symbol_data['macd_signal']) if symbol_data['macd_signal'] is not None else 0.0, # From indicators table (same as TQQQ)
+                macd=macd_engine,         # Internal calc only
+                macd_signal=macd_signal_engine, # Internal calc only
                 volatility=market_context['volatility'],
                 vix_level=market_context['vix_level'],
                 volatility_trend='stable',
@@ -333,6 +345,36 @@ async def get_universal_signal(request: SignalRequest):
         signal_result = engine.generate_signal(conditions)
         
         # Adapt response for requested symbol
+        macd_payload = None
+        macd_signal_payload = None
+        try:
+            if request.symbol.upper() == 'TQQQ':
+                macd_payload = float(row[5]) if row[5] is not None else None
+                macd_signal_payload = float(row[6]) if row[6] is not None else None
+            else:
+                macd_payload = float(symbol_data.get('macd')) if symbol_data.get('macd') is not None else None
+                macd_signal_payload = float(symbol_data.get('macd_signal')) if symbol_data.get('macd_signal') is not None else None
+        except Exception:
+            macd_payload = None
+            macd_signal_payload = None
+
+        data_completeness = {
+            "indicators_present": {
+                "rsi_14": (conditions.rsi is not None),
+                "sma_20": (conditions.sma_20 is not None),
+                "sma_50": (conditions.sma_50 is not None),
+                "ema_20": (conditions.ema_20 is not None),
+                "macd": (macd_payload is not None),
+                "macd_signal": (macd_signal_payload is not None),
+                "volume": (conditions.volume is not None and conditions.volume != 0),
+                "avg_volume_20d": (conditions.avg_volume_20d is not None and conditions.avg_volume_20d != 0),
+            },
+            "missing": [],
+        }
+        for k, v in data_completeness["indicators_present"].items():
+            if not v:
+                data_completeness["missing"].append(k)
+
         response_data = {
             "engine": {
                 "name": f"Universal {request.asset_type.replace('_', ' ').title()} Engine",
@@ -348,14 +390,15 @@ async def get_universal_signal(request: SignalRequest):
                 "sma_20": conditions.sma_20,
                 "sma_50": conditions.sma_50,
                 "ema_20": conditions.ema_20,
-                "macd": conditions.macd,
-                "macd_signal": conditions.macd_signal,
+                "macd": macd_payload,
+                "macd_signal": macd_signal_payload,
                 "high": market_context.get('high', conditions.current_price),
                 "low": market_context.get('low', conditions.current_price),
                 "volume": conditions.volume,  # ✅ Add current volume
                 "avg_volume_20d": conditions.avg_volume_20d,  # ✅ Add average volume
                 "data_source": "python_worker"  # ✅ Add data source
             },
+            "data_completeness": data_completeness,
             "signal": {
                 "signal": signal_result.signal.value,
                 "confidence": signal_result.confidence,

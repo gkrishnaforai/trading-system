@@ -158,7 +158,7 @@ class AlphaVantageAdapter(BaseDataSourceAdapter):
                     self.source.config = av_config
                     self._logger.info(f"✅ Updated source config")
                 else:
-                    self._logger.warning(f"⚠️  Source doesn't have config attribute")
+                    self._logger.debug(f"⚠️  Source doesn't have config attribute")
             except Exception as e:
                 raise AdapterInitializationError(f"Failed to update source config: {type(e).__name__}: {str(e)}") from e
             

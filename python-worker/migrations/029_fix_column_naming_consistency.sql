@@ -2,7 +2,7 @@
 -- This migration ensures all tables use standard naming: symbol, date (not stock_symbol, trade_date)
 
 -- Fix raw_market_data_daily table
-DO $$
+DO
 BEGIN
     -- Add standard columns if they don't exist
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'raw_market_data_daily' AND column_name = 'symbol') THEN
@@ -37,10 +37,10 @@ BEGIN
     -- Update constraint - drop if exists, then add
     ALTER TABLE raw_market_data_daily DROP CONSTRAINT IF EXISTS raw_market_daily_unique;
     ALTER TABLE raw_market_data_daily ADD CONSTRAINT raw_market_daily_unique UNIQUE (symbol, date, data_source);
-END $$;
+END;
 
 -- Fix indicators_daily table
-DO $$
+DO
 BEGIN
     -- Add standard columns if they don't exist
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'indicators_daily' AND column_name = 'symbol') THEN
@@ -75,10 +75,10 @@ BEGIN
     -- Update constraint
     ALTER TABLE indicators_daily DROP CONSTRAINT IF EXISTS indicators_daily_symbol_date_indicator_name_data_source_key;
     ALTER TABLE indicators_daily ADD CONSTRAINT indicators_daily_symbol_date_indicator_name_data_source_key UNIQUE (symbol, date, indicator_name, data_source);
-END $$;
+END;
 
 -- Fix industry_peers table
-DO $$
+DO
 BEGIN
     -- Add standard column if it doesn't exist
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'industry_peers' AND column_name = 'symbol') THEN
@@ -94,10 +94,10 @@ BEGIN
     -- Update constraint
     ALTER TABLE industry_peers DROP CONSTRAINT IF EXISTS industry_peers_unique;
     ALTER TABLE industry_peers ADD CONSTRAINT industry_peers_unique UNIQUE (symbol, peer_symbol, data_source);
-END $$;
+END;
 
 -- Fix fundamentals_snapshots table
-DO $$
+DO
 BEGIN
     -- Add standard columns if they don't exist
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fundamentals_snapshots' AND column_name = 'symbol') THEN
@@ -111,10 +111,10 @@ BEGIN
     END IF;
     
     -- Note: Keep as_of_date as is since it's specific to fundamentals snapshots
-END $$;
+END;
 
 -- Fix data_ingestion_state table
-DO $$
+DO
 BEGIN
     -- Add standard column if it doesn't exist
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'data_ingestion_state' AND column_name = 'symbol') THEN
@@ -151,7 +151,7 @@ BEGIN
     ALTER TABLE data_ingestion_state DROP CONSTRAINT IF EXISTS data_ingestion_state_symbol_data_source_table_name_key;
     ALTER TABLE data_ingestion_state DROP CONSTRAINT IF EXISTS data_ingestion_state_symbol_dataset_interval_key;
     ALTER TABLE data_ingestion_state ADD CONSTRAINT data_ingestion_state_symbol_dataset_interval_key UNIQUE (symbol, dataset, interval);
-END $$;
+END;
 
 -- Update indexes to use standard column names
 DROP INDEX IF EXISTS idx_raw_market_daily_symbol;

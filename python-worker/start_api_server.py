@@ -5,7 +5,7 @@ Starts the FastAPI server for REST API endpoints
 """
 import uvicorn
 import os
-from app.api_app import app
+from app.api_server import app
 
 if __name__ == "__main__":
     # Get configuration from environment

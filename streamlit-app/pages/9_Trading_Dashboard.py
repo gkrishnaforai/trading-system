@@ -1094,20 +1094,21 @@ if load_data or load_indicators or load_fundamentals:
                 st.error(f"❌ Refresh failed: {e}")
 
 # Tabs (keep same look/feel)
-tab_search, tab_validation, tab_insights, tab_availability, tab_fund_ind, tab_signals, tab_audit, tab_earnings_news, tab_watchlist, tab_portfolio, tab_screeners, tab_tqqq_backtest, tab_universal_backtest = st.tabs([
+tab_search, tab_validation, tab_insights, tab_availability, tab_fund_ind, tab_signals, tab_alert_management, tab_audit, tab_earnings_news, tab_watchlist, tab_portfolio, tab_screeners, tab_tqqq_backtest, tab_universal_backtest = st.tabs([
     "🔎 Stock Search + Overview",
-    "🔍 Data Validation",
+    "🔍 Data Validation", 
     "📊 Stock Insights",
     "📈 Data Availability",
-    "📚 Fundamentals & Indicators",
-    "🧠 Signal Engines",
-    "🧾 Audit",
+    "💰 Fundamentals & Indicators",
+    "🚦 Signals",
+    "🚨 Alert Management",
+    "📋 Audit Logs",
     "📅 Earnings & News",
     "📋 Watchlist",
     "💼 Portfolio",
-    "🔎 Screeners",
-    "📊 TQQQ Backtest",
-    "🚀 Universal Backtest",
+    "🔍 Screeners",
+    "🧪 TQQQ Backtest",
+    "🔄 Universal Backtest"
 ])
 
 with tab_search:
@@ -1336,7 +1337,7 @@ with tab_availability:
         all_data_types = [
             "price_historical",
             "price_current",
-            "price_intraday_15m",
+            "price_intraday_5m",
             "fundamentals",
             "indicators",
             "news",
@@ -1781,86 +1782,1172 @@ with tab_signals:
         except Exception as e:
             st.warning(f"Could not load recent signals: {e}")
 
-with tab_audit:
-    st.subheader("📋 Audit Logs")
-    st.caption("Uses /api/v1/admin/audit-logs which queries data_ingestion_events with full error details")
+with tab_alert_management:
+    st.subheader("🚨 Universal Alert Management")
+    st.caption("Professional CRUD Interface for Alert Management")
     
-    # Migration status quick check
-    col_mig1, col_mig2 = st.columns(2)
-    with col_mig1:
-        if st.button("Check Migration Status", key="td_migration_status"):
-            with st.spinner("Checking table existence..."):
-                try:
-                    mig_resp = client.get("api/v1/admin/migration-status")
-                    st.json(mig_resp)
-                    if mig_resp.get("all_present"):
-                        st.success("All expected tables are present.")
-                    else:
-                        st.warning(f"{len(mig_resp.get('missing', []))} tables are missing. See details above.")
-                except Exception as e:
-                    st.error(f"Failed to check migration status: {e}")
-    with col_mig2:
-        if st.button("Run Migrations", key="td_run_migrations", type="secondary"):
-            with st.spinner("Running migrations..."):
-                try:
-                    mig_resp = client.post("api/v1/admin/run-migrations")
-                    if mig_resp.get("status") == "completed":
-                        succeeded = sum(1 for r in mig_resp.get("results", []) if r.get("status") == "success")
-                        failed = sum(1 for r in mig_resp.get("results", []) if r.get("status") == "error")
-                        st.success(f"Migrations completed: {succeeded} succeeded, {failed} failed.")
-                        with st.expander("View per-file results"):
-                            st.json(mig_resp.get("results", []))
-                    elif mig_resp.get("status") == "no_files":
-                        st.warning("No migration files found.")
-                    else:
-                        st.error("Unexpected migration response.")
-                        st.json(mig_resp)
-                except Exception as e:
-                    st.error(f"Migration failed: {e}")
+    # Deprecation Notice for Rating Alerts
+    with st.expander("⚠️ API Deprecation Notice", expanded=False):
+        st.markdown("""
+        ### 📢 Rating Alerts API Deprecation
+        
+        The `/api/v1/rating-alerts/*` endpoints are **deprecated** in favor of the unified `/api/v1/universal-alerts/*` API.
+        
+        **Migration Benefits:**
+        - ✅ Unified alert management interface
+        - ✅ Enhanced analytics and bulk operations  
+        - ✅ Plugin-based data collection
+        - ✅ Better performance and scalability
+        
+        **Timeline:**
+        - 🔄 **Phase 1**: Rating alerts marked as deprecated (now)
+        - 🔄 **Phase 2**: Migration helpers available (2 weeks)
+        - 🔄 **Phase 3**: Rating alerts removed (1 month)
+        
+        **Current Status**: Using Universal Alerts API ✅
+        """)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📋 View Migration Plan", key="view_migration_plan"):
+                st.info("📄 Migration plan saved to: `RATING_ALERTS_DEPRECATION_PLAN.md`")
+        
+        with col2:
+            if st.button("🔍 Compare APIs", key="compare_apis"):
+                st.markdown("""
+                **Rating Alerts** → **Universal Alerts**
+                - `/rating-alerts/alerts` → `/universal-alerts/alerts`
+                - Rating-specific → All alert types supported
+                - Limited features → Enhanced analytics & bulk ops
+                """)
+        
+        col3, col4 = st.columns(2)
+        with col3:
+            if st.button("🔄 Run Migration", key="run_migration", type="secondary"):
+                with st.spinner("Running migration from Rating Alerts to Universal Alerts..."):
+                    try:
+                        # Import migration helper
+                        import sys
+                        import os
+                        sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+                        
+                        from migrate_rating_to_universal_alerts import RatingToUniversalAlertMigrator
+                        
+                        migrator = RatingToUniversalAlertMigrator(api_config.python_worker_url)
+                        result = migrator.migrate_all_alerts(get_user_id(), dry_run=False)
+                        
+                        if result["success"]:
+                            st.success(f"✅ Migration completed! Migrated {result['migrated_count']} alerts")
+                        else:
+                            st.warning(f"⚠️ Migration completed with {result['failed_count']} failures")
+                            st.info(f"Successfully migrated {result['migrated_count']} out of {result['total_count']} alerts")
+                        
+                        # Show details
+                        with st.expander("📊 Migration Details"):
+                            st.json(result)
+                    
+                    except Exception as e:
+                        st.error(f"❌ Migration failed: {e}")
+        
+        with col4:
+            if st.button("🔍 Validate Migration", key="validate_migration"):
+                with st.spinner("Validating migration..."):
+                    try:
+                        import sys
+                        import os
+                        sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+                        
+                        from migrate_rating_to_universal_alerts import RatingToUniversalAlertMigrator
+                        
+                        migrator = RatingToUniversalAlertMigrator(api_config.python_worker_url)
+                        result = migrator.validate_migration(get_user_id())
+                        
+                        st.markdown("#### 📊 Validation Results")
+                        col_val1, col_val2, col_val3 = st.columns(3)
+                        
+                        with col_val1:
+                            st.metric("Original Rating Alerts", result["original_count"])
+                        
+                        with col_val2:
+                            st.metric("Migrated Universal Alerts", result["migrated_count"])
+                        
+                        with col_val3:
+                            st.metric("Coverage", f"{result['coverage_percentage']:.1f}%")
+                        
+                        if result["validation_passed"]:
+                            st.success("✅ Migration validation passed!")
+                        else:
+                            st.warning("⚠️ Migration validation incomplete")
+                    
+                    except Exception as e:
+                        st.error(f"❌ Validation failed: {e}")
     
     st.markdown("---")
     
-    # Date range and level filters
-    default_end = datetime.now().strftime("%Y-%m-%d")
-    default_start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        default_start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-        start_date = st.date_input("Start Date", value=datetime.strptime(default_start, "%Y-%m-%d"), key="td_audit_start")
-    with col2:
-        end_date = st.date_input("End Date", value=datetime.strptime(default_end, "%Y-%m-%d"), key="td_audit_end")
-    with col3:
-        level = st.selectbox("Level", ["ALL", "ERROR", "WARNING", "INFO"], key="td_audit_level")
+    # Helper functions for alert management
+    def get_user_id():
+        return st.session_state.get('user_id', '4f8b2cb1-4ed6-4fb5-bd44-48e5acc830a4')
     
-    if st.button("Fetch Audit Logs", key="td_fetch_audit", type="primary"):
-        with st.spinner("Fetching audit logs..."):
-            try:
-                logs_resp = client.get("api/v1/admin/audit-logs", params={
-                    "start_date": start_date.strftime("%Y-%m-%d"),
-                    "end_date": end_date.strftime("%Y-%m-%d"),
-                    "level": level,
-                    "limit": 100
-                })
-                st.session_state["td_audit_logs"] = logs_resp
-            except Exception as e:
-                st.error(f"Failed to fetch audit logs: {e}")
-
-    logs_data = st.session_state.get("td_audit_logs")
-    if logs_data:
-        logs = logs_data.get("logs", [])
-        if logs:
-            df_logs = pd.DataFrame(logs)
-            # Show key columns; include details/error_message for failures
-            display_cols = ["timestamp", "level", "source", "operation", "symbol", "message"]
-            if "details" in df_logs.columns:
-                display_cols.append("details")
-            if "error_message" in df_logs.columns:
-                display_cols.append("error_message")
-            st.dataframe(df_logs[display_cols], width='stretch')
+    def alert_api_call(method: str, endpoint: str, data: dict = None, params: dict = None):
+        """Make API call to alert system using python-worker"""
+        try:
+            python_api_url = api_config.python_worker_url
+            python_client = APIClient(python_api_url, timeout=30)
+            full_endpoint = f"api/v1/universal-alerts/{endpoint.lstrip('/')}"
+            
+            # Debug info for DELETE requests
+            if method == "DELETE":
+                st.write(f"🔍 DELETE Request Debug:")
+                st.write(f"   - Full URL: {python_api_url}/{full_endpoint}")
+                st.write(f"   - Params: {params}")
+            
+            if method == "GET":
+                response = python_client.get(full_endpoint, params=params)
+            elif method == "POST":
+                response = python_client.post(full_endpoint, json_data=data, params=params)
+            elif method == "PUT":
+                response = python_client.put(full_endpoint, json_data=data, params=params)
+            elif method == "DELETE":
+                response = python_client.delete(full_endpoint, params=params)
+                st.write(f"🔍 DELETE Response: {response}")
+            else:
+                raise ValueError(f"Unsupported method: {method}")
+            
+            return response
+        except Exception as e:
+            st.error(f"API call failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    # Alert Management Navigation
+    alert_nav_col1, alert_nav_col2, alert_nav_col3, alert_nav4 = st.columns(4)
+    
+    with alert_nav_col1:
+        if st.button("📋 My Alerts", key="alert_nav_my_alerts", use_container_width=True, type="primary"):
+            st.session_state["alert_page"] = "my_alerts"
+    
+    with alert_nav_col2:
+        if st.button("➕ Create Alert", key="alert_nav_create", use_container_width=True):
+            st.session_state["alert_page"] = "create_alert"
+    
+    with alert_nav_col3:
+        if st.button("📊 Analytics", key="alert_nav_analytics", use_container_width=True):
+            st.session_state["alert_page"] = "analytics"
+    
+    with alert_nav4:
+        if st.button("🔧 System Admin", key="alert_nav_admin", use_container_width=True):
+            st.session_state["alert_page"] = "system_admin"
+    
+    # Initialize page state
+    if "alert_page" not in st.session_state:
+        st.session_state["alert_page"] = "my_alerts"
+    
+    st.markdown("---")
+    
+    # Render selected alert page
+    if st.session_state["alert_page"] == "my_alerts":
+        # My Alerts Page
+        st.markdown("### 📋 My Alerts")
+        
+        user_id = get_user_id()
+        
+        # Load alerts
+        with st.spinner("🔄 Loading your alerts..."):
+            alerts_response = alert_api_call("GET", "/alerts", params={"user_id": user_id})
+        
+        if alerts_response.get("success"):
+            alerts = alerts_response.get("alerts", [])
+            st.success(f"✅ Successfully loaded {len(alerts)} alert(s)")
+            
+            # Create/Edit/Delete buttons
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.markdown("#### Alert Operations")
+            with col2:
+                if st.button("➕ Create New Alert", type="primary", use_container_width=True):
+                    st.session_state["alert_page"] = "create_alert"
+                    st.rerun()
+            with col3:
+                if st.button("🔄 Refresh", use_container_width=True):
+                    st.rerun()
+            
+            st.markdown("---")
+            
+            if alerts:
+                # Statistics
+                stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+                with stat_col1:
+                    st.metric("📊 Total", len(alerts))
+                with stat_col2:
+                    active_count = len([a for a in alerts if a.get('is_active', True)])
+                    st.metric("✅ Active", active_count)
+                with stat_col3:
+                    inactive_count = len([a for a in alerts if not a.get('is_active', True)])
+                    st.metric("⏸️ Inactive", inactive_count)
+                with stat_col4:
+                    test_count = len([a for a in alerts if a.get('is_test', False)])
+                    st.metric("🧪 Test", test_count)
+                
+                st.markdown("---")
+                
+                # Filters
+                filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
+                with filter_col1:
+                    alert_types = ["All"] + sorted(set(alert['alert_type'] for alert in alerts))
+                    alert_type_filter = st.selectbox("📝 Type", alert_types, key="alert_type_filter")
+                with filter_col2:
+                    status_options = ["All", "Active", "Inactive"]
+                    status_filter = st.selectbox("📊 Status", status_options, key="alert_status_filter")
+                with filter_col3:
+                    priority_options = ["All", "High (4-5)", "Medium (3)", "Low (1-2)"]
+                    priority_filter = st.selectbox("⭐ Priority", priority_options, key="alert_priority_filter")
+                with filter_col4:
+                    search_term = st.text_input("🔍 Search", placeholder="Search alerts...", key="alert_search")
+                
+                # Apply filters
+                filtered_alerts = alerts.copy()
+                if alert_type_filter != "All":
+                    filtered_alerts = [a for a in filtered_alerts if a['alert_type'] == alert_type_filter]
+                if status_filter != "All":
+                    is_active = status_filter == "Active"
+                    filtered_alerts = [a for a in filtered_alerts if a.get('is_active', True) == is_active]
+                if priority_filter != "All":
+                    if priority_filter == "High (4-5)":
+                        filtered_alerts = [a for a in filtered_alerts if a.get('priority_level', 0) >= 4]
+                    elif priority_filter == "Medium (3)":
+                        filtered_alerts = [a for a in filtered_alerts if a.get('priority_level', 0) == 3]
+                    elif priority_filter == "Low (1-2)":
+                        filtered_alerts = [a for a in filtered_alerts if a.get('priority_level', 0) <= 2]
+                if search_term:
+                    search_term = search_term.lower()
+                    filtered_alerts = [
+                        a for a in filtered_alerts 
+                        if search_term in a.get('alert_name', '').lower() or 
+                           search_term in a.get('alert_type', '').lower()
+                    ]
+                
+                st.markdown("---")
+                
+                # Display alerts
+                if filtered_alerts:
+                    st.markdown(f"#### 📊 Showing {len(filtered_alerts)} alert(s)")
+                    
+                    for alert in filtered_alerts:
+                        with st.expander(f"📋 {alert['alert_name']} ({alert['alert_type'].title()})"):
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.write(f"**Type:** {alert['alert_type'].title()}")
+                                st.write(f"**Priority:** {alert['priority_level']}")
+                                st.write(f"**Status:** {'🟢 Active' if alert.get('is_active', True) else '🔴 Inactive'}")
+                                st.write(f"**Created:** {alert.get('created_at', 'N/A')[:19] if alert.get('created_at') != 'N/A' else 'N/A'}")
+                            
+                            with col2:
+                                st.write(f"**Trigger Count:** {alert.get('trigger_count', 0)}")
+                                st.write(f"**Last Triggered:** {alert.get('last_triggered_at', 'Never')[:19] if alert.get('last_triggered_at') and alert.get('last_triggered_at') != 'Never' else 'Never'}")
+                                st.write(f"**Test Alert:** {'🧪 Yes' if alert.get('is_test', False) else '🚨 No'}")
+                            
+                            # Action buttons
+                            action_col1, action_col2, action_col3 = st.columns(3)
+                            
+                            with action_col1:
+                                if st.button("✏️ Edit", key=f"edit_alert_{alert['alert_id']}", use_container_width=True):
+                                    st.session_state["edit_alert"] = alert
+                                    st.session_state["alert_page"] = "create_alert"
+                                    st.rerun()
+                            
+                            with action_col2:
+                                current_status = alert.get('is_active', True)
+                                toggle_text = "⏸️ Pause" if current_status else "▶️ Resume"
+                                if st.button(toggle_text, key=f"toggle_alert_{alert['alert_id']}", use_container_width=True):
+                                    toggle_data = {"is_active": not current_status}
+                                    result = alert_api_call("PUT", f"/alerts/{alert['alert_id']}", data=toggle_data, params={"user_id": user_id})
+                                    if result.get("success"):
+                                        st.success(f"✅ Alert {toggle_text.lower()[2:]}d successfully!")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Failed to {toggle_text.lower()[2:]} alert!")
+                            
+                            with action_col3:
+                                if st.button("🗑️ Delete", key=f"delete_alert_{alert['alert_id']}", use_container_width=True):
+                                    if st.session_state.get(f'confirm_delete_{alert["alert_id"]}', False):
+                                        # Debug information
+                                        st.info(f"🔍 Attempting to delete alert ID: {alert['alert_id']} for user: {user_id}")
+                                        
+                                        result = alert_api_call("DELETE", f"/alerts/{alert['alert_id']}", params={"user_id": user_id})
+                                        
+                                        # Debug response
+                                        st.write("🔍 API Response:")
+                                        st.json(result)
+                                        
+                                        if result.get("success"):
+                                            st.success("✅ Alert deleted successfully!")
+                                            st.session_state.pop(f'confirm_delete_{alert["alert_id"]}', None)
+                                            st.rerun()
+                                        else:
+                                            st.error("❌ Failed to delete alert!")
+                                            st.error(f"🔍 Error: {result.get('error', 'Unknown error')}")
+                                    else:
+                                        st.session_state[f'confirm_delete_{alert["alert_id"]}'] = True
+                                        st.warning("⚠️ Click 🗑️ again to confirm deletion")
+                                        st.error("🚨 This action cannot be undone!")
+                else:
+                    st.info("🔍 No alerts match your current filters.")
+            else:
+                st.markdown("### 📭 No Alerts Yet")
+                st.markdown("You haven't created any alerts yet. Get started by creating your first alert!")
+                if st.button("🚀 Create Your First Alert", type="primary", use_container_width=True):
+                    st.session_state["alert_page"] = "create_alert"
+                    st.rerun()
         else:
-            st.info("No audit logs found for the selected filters.")
-    else:
-        st.info("Select date range and click 'Fetch Audit Logs' to view audit logs.")
+            st.error("❌ Failed to load alerts!")
+            st.error(f"🔍 Error: {alerts_response.get('error', 'Unknown error')}")
+    
+    elif st.session_state["alert_page"] == "create_alert":
+        # Create Alert Page
+        edit_alert = st.session_state.get('edit_alert')
+        
+        if edit_alert:
+            st.markdown("### ✏️ Edit Universal Alert")
+            alert_id = edit_alert.get('alert_id')
+        else:
+            st.markdown("### 📝 Create Universal Alert")
+            alert_id = None
+        
+        with st.form("create_alert_form"):
+            st.markdown("#### Alert Configuration")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                default_name = edit_alert.get('alert_name', '') if edit_alert else ''
+                alert_name = st.text_input("Alert Name*", value=default_name, placeholder="My Earnings Alert")
+                
+                default_type = edit_alert.get('alert_type', 'earnings') if edit_alert else 'earnings'
+                alert_type = st.selectbox("Alert Type*", ["earnings", "grade_change", "price_movement", "news_event", "custom"], index=["earnings", "grade_change", "price_movement", "news_event", "custom"].index(default_type))
+                
+                default_priority = edit_alert.get('priority_level', 3) if edit_alert else 3
+                priority_level = st.slider("Priority Level", 1, 5, value=default_priority)
+            
+            with col2:
+                default_test = edit_alert.get('is_test', False) if edit_alert else False
+                is_test = st.checkbox("Test Alert", value=default_test)
+                
+                st.markdown("**Notification Channels**")
+                notification_config = edit_alert.get('notification_config', {}) if edit_alert else {}
+                channels = notification_config.get('channels', [])
+                email_enabled = st.checkbox("Email", value='email' in channels)
+                sms_enabled = st.checkbox("SMS", value='sms' in channels)
+                push_enabled = st.checkbox("Push Notification", value='push' in channels)
+            
+            st.markdown("#### Entity Filters")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Symbols**")
+                entity_filters = edit_alert.get('entity_filters', {}) if edit_alert else {}
+                symbols = entity_filters.get('symbols', [])
+                
+                if symbols:
+                    symbols_text = st.text_area("Enter symbols (one per line)", value='\n'.join(symbols))
+                    symbols = [s.strip().upper() for s in symbols_text.split('\n') if s.strip()]
+                else:
+                    symbols_text = st.text_area("Enter symbols (one per line)", "AAPL\nMSFT\nGOOGL")
+                    symbols = [s.strip().upper() for s in symbols_text.split('\n') if s.strip()]
+            
+            with col2:
+                st.markdown("**Additional Filters**")
+                event_filters = edit_alert.get('event_filters', {}) if edit_alert else {}
+                min_confidence = st.slider("Min Confidence", 0.0, 1.0, value=event_filters.get('min_confidence', 0.5), step=0.1)
+                min_priority = st.slider("Min Priority", 1, 5, value=event_filters.get('min_priority', 1))
+            
+            st.markdown("#### Event Filters")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if alert_type == "earnings":
+                    st.markdown("**Earnings Filters**")
+                    min_days_ahead = st.slider("Days Before Earnings", 1, 30, value=event_filters.get('min_days_ahead', 7))
+                    max_days_ahead = st.slider("Days After Earnings", 1, 30, value=event_filters.get('max_days_ahead', 1))
+                    include_surprises = st.checkbox("Include Earnings Surprises", value=event_filters.get('include_surprises', False))
+                
+                elif alert_type == "grade_change":
+                    st.markdown("**Grade Change Filters**")
+                    include_upgrades = st.checkbox("Include Upgrades", value=event_filters.get('include_upgrades', True))
+                    include_downgrades = st.checkbox("Include Downgrades", value=event_filters.get('include_downgrades', True))
+                    tier_1_firms = st.checkbox("Tier-1 Firms Only", value=event_filters.get('tier_1_firms_only', False))
+                
+                elif alert_type == "price_movement":
+                    st.markdown("**Price Movement Filters**")
+                    min_change_percent = st.slider("Min Price Change %", 1.0, 20.0, value=event_filters.get('min_change_percent', 5.0))
+                    volume_spike = st.checkbox("Include Volume Spikes", value=event_filters.get('include_volume_spikes', False))
+            
+            with col2:
+                st.markdown("**Data Sources**")
+                data_sources = st.multiselect(
+                    "Select Data Sources",
+                    ["fmp", "alpha_vantage", "newsapi", "custom"],
+                    default=event_filters.get('data_sources', ['fmp'])
+                )
+            
+            st.markdown("#### Advanced Configuration")
+            
+            with st.expander("Advanced Options"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    trigger_conditions = edit_alert.get('trigger_conditions', {}) if edit_alert else {}
+                    cooldown_minutes = st.slider("Cooldown (minutes)", 0, 1440, value=trigger_conditions.get('cooldown_minutes', 60))
+                    max_alerts_per_day = st.number_input("Max Alerts Per Day", 1, 100, value=trigger_conditions.get('max_alerts_per_day', 10))
+                
+                with col2:
+                    suppression_rules = edit_alert.get('suppression_rules', {}) if edit_alert else {}
+                    st.markdown("**Suppression Rules**")
+                    suppress_duplicates = st.checkbox("Suppress Duplicates", value=suppression_rules.get('suppress_duplicates', False))
+                    suppress_weekends = st.checkbox("Suppress Weekends", value=suppression_rules.get('suppress_weekends', False))
+            
+            # Submit button
+            submit_text = "🔄 Update Alert" if edit_alert else "🚀 Create Alert"
+            submitted = st.form_submit_button(submit_text, type="primary")
+            
+            if submitted:
+                if not alert_name:
+                    st.error("Alert name is required")
+                else:
+                    # Build alert configuration
+                    entity_filters = {}
+                    if symbols:
+                        entity_filters["symbols"] = symbols
+                    
+                    event_filters = {
+                        "min_confidence": min_confidence,
+                        "min_priority": min_priority,
+                        "data_sources": data_sources
+                    }
+                    
+                    if alert_type == "earnings":
+                        event_filters.update({
+                            "min_days_ahead": min_days_ahead,
+                            "max_days_ahead": max_days_ahead,
+                            "include_surprises": include_surprises
+                        })
+                    elif alert_type == "grade_change":
+                        event_filters.update({
+                            "include_upgrades": include_upgrades,
+                            "include_downgrades": include_downgrades,
+                            "tier_1_firms_only": tier_1_firms
+                        })
+                    elif alert_type == "price_movement":
+                        event_filters.update({
+                            "min_change_percent": min_change_percent,
+                            "include_volume_spikes": volume_spike
+                        })
+                    
+                    notification_config = {
+                        "channels": []
+                    }
+                    if email_enabled:
+                        notification_config["channels"].append("email")
+                    if sms_enabled:
+                        notification_config["channels"].append("sms")
+                    if push_enabled:
+                        notification_config["channels"].append("push")
+                    
+                    trigger_conditions = {
+                        "cooldown_minutes": cooldown_minutes,
+                        "max_alerts_per_day": max_alerts_per_day
+                    }
+                    
+                    suppression_rules = {
+                        "suppress_duplicates": suppress_duplicates,
+                        "suppress_weekends": suppress_weekends
+                    }
+                    
+                    alert_request = {
+                        "alert_name": alert_name,
+                        "alert_type": alert_type,
+                        "alert_category": "custom",
+                        "entity_filters": entity_filters,
+                        "event_filters": event_filters,
+                        "trigger_conditions": trigger_conditions,
+                        "suppression_rules": suppression_rules,
+                        "notification_config": notification_config,
+                        "priority_level": priority_level,
+                        "is_test": is_test
+                    }
+                    
+                    user_id = get_user_id()
+                    
+                    if edit_alert:
+                        # Update existing alert
+                        result = alert_api_call("PUT", f"/alerts/{alert_id}", data=alert_request, params={"user_id": user_id})
+                        if result.get("success"):
+                            st.success(f"✅ Alert '{alert_name}' updated successfully!")
+                            st.session_state.pop('edit_alert', None)
+                            st.session_state["alert_page"] = "my_alerts"
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to update alert: {result.get('error', 'Unknown error')}")
+                    else:
+                        # Create new alert
+                        result = alert_api_call("POST", "/alerts", data=alert_request, params={"user_id": user_id})
+                        if result.get("success"):
+                            st.success(f"✅ Alert '{alert_name}' created successfully!")
+                            st.info(f"🆔 Alert ID: {result.get('alert_id', 'N/A')}")
+                            st.session_state["alert_page"] = "my_alerts"
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to create alert: {result.get('error', 'Unknown error')}")
+        
+        # Cancel button if editing
+        if edit_alert:
+            if st.button("❌ Cancel Edit"):
+                st.session_state.pop('edit_alert', None)
+                st.session_state["alert_page"] = "my_alerts"
+                st.rerun()
+    
+    elif st.session_state["alert_page"] == "analytics":
+        # Analytics Page
+        st.markdown("### 📊 Alert Analytics")
+        
+        user_id = get_user_id()
+        
+        # Load alerts for analytics
+        with st.spinner("🔄 Loading analytics data..."):
+            alerts_response = alert_api_call("GET", "/alerts", params={"user_id": user_id})
+        
+        if alerts_response.get("success"):
+            alerts = alerts_response.get("alerts", [])
+            
+            if alerts:
+                # Overview metrics
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Alerts", len(alerts))
+                with col2:
+                    active_count = len([a for a in alerts if a.get('is_active', True)])
+                    st.metric("Active Alerts", active_count)
+                with col3:
+                    total_triggers = sum(a.get('trigger_count', 0) for a in alerts)
+                    st.metric("Total Triggers", total_triggers)
+                with col4:
+                    avg_priority = sum(a.get('priority_level', 0) for a in alerts) / len(alerts)
+                    st.metric("Avg Priority", f"{avg_priority:.1f}")
+                
+                st.markdown("---")
+                
+                # Alert type distribution
+                alert_types = {}
+                for alert in alerts:
+                    alert_type = alert.get('alert_type', 'unknown')
+                    alert_types[alert_type] = alert_types.get(alert_type, 0) + 1
+                
+                st.markdown("#### 📈 Alert Type Distribution")
+                type_df = pd.DataFrame(list(alert_types.items()), columns=['Alert Type', 'Count'])
+                st.bar_chart(type_df.set_index('Alert Type'))
+                
+                st.markdown("---")
+                
+                # Priority distribution
+                priority_dist = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+                for alert in alerts:
+                    priority_dist[alert.get('priority_level', 3)] += 1
+                
+                st.markdown("#### ⭐ Priority Distribution")
+                priority_df = pd.DataFrame(list(priority_dist.items()), columns=['Priority', 'Count'])
+                st.bar_chart(priority_df.set_index('Priority'))
+                
+                st.markdown("---")
+                
+                # Recent activity
+                st.markdown("#### 🕒 Recent Activity")
+                recent_alerts = sorted(alerts, key=lambda x: x.get('created_at', ''), reverse=True)[:5]
+                for alert in recent_alerts:
+                    st.write(f"• **{alert['alert_name']}** - Created {alert.get('created_at', 'N/A')[:19] if alert.get('created_at') != 'N/A' else 'N/A'}")
+            else:
+                st.info("No alerts found for analytics.")
+        else:
+            st.error("Failed to load analytics data.")
+    
+    elif st.session_state["alert_page"] == "system_admin":
+        # System Admin Page
+        st.markdown("### 🔧 System Admin")
+        
+        # System health
+        with st.spinner("🔄 Checking system health..."):
+            health_response = alert_api_call("GET", "/health")
+        
+        if health_response.get("success"):
+            health_data = health_response.get("health", {})
+            
+            st.markdown("#### 📊 System Health")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                status_color = "🟢" if health_data.get("status") == "healthy" else "🟡"
+                st.metric("System Status", f"{status_color} {health_data.get('status', 'Unknown').title()}")
+            
+            with col2:
+                st.metric("Pending Events", health_data.get("pending_events", 0))
+            
+            with col3:
+                plugins = health_data.get("plugins", {})
+                total_plugins = sum(len(plugin_list) for plugin_list in plugins.values())
+                st.metric("Active Plugins", total_plugins)
+            
+            with col4:
+                metrics = health_data.get("metrics", {})
+                counters = metrics.get("counters", {})
+                total_events = counters.get("universal_events_processed_total", 0)
+                st.metric("Events Processed", f"{total_events:,}")
+            
+            st.markdown("---")
+            
+            # Plugin information
+            if plugins:
+                st.markdown("#### 🔌 Available Plugins")
+                for plugin_type, plugin_list in plugins.items():
+                    st.write(f"**{plugin_type.title()}:** {', '.join(plugin_list)}")
+            
+            st.markdown("---")
+            
+            # Data collection
+            st.markdown("#### 🔄 Manual Data Collection")
+            
+            if st.button("🚀 Collect Earnings Data", type="primary"):
+                with st.spinner("Collecting earnings data..."):
+                    plugin_configs = {
+                        "earnings_calendar": {
+                            "sources": ["fmp"],
+                            "fmp_api_key": "demo"
+                        }
+                    }
+                    result = alert_api_call("POST", "/data-collection/collect", data=plugin_configs)
+                    if result.get("success"):
+                        st.success(f"✅ Collected {result.get('total_events_collected', 0)} events")
+                    else:
+                        st.error(f"❌ Failed to collect data: {result.get('error', 'Unknown error')}")
+            
+            st.markdown("---")
+            
+            # System statistics
+            st.markdown("#### 📈 System Statistics")
+            
+            # Get all alerts for system stats
+            all_alerts_response = alert_api_call("GET", "/alerts")
+            if all_alerts_response.get("success"):
+                all_alerts = all_alerts_response.get("alerts", [])
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total System Alerts", len(all_alerts))
+                with col2:
+                    system_active = len([a for a in all_alerts if a.get('is_active', True)])
+                    st.metric("Active System Alerts", system_active)
+                with col3:
+                    system_triggers = sum(a.get('trigger_count', 0) for a in all_alerts)
+                    st.metric("Total System Triggers", system_triggers)
+        else:
+            st.error("❌ Failed to get system health")
+            st.error(f"🔍 Error: {health_response.get('error', 'Unknown error')}")
+
+with tab_audit:
+    st.subheader("🔍 Comprehensive Audit Trail")
+    st.caption("View detailed audit logs and system operations")
+    
+    # Helper function for status emojis
+    def get_status_emoji(status):
+        """Get emoji for status"""
+        status_emojis = {
+            "completed": "✅",
+            "failed": "❌", 
+            "started": "🔄",
+            "cancelled": "⏹️",
+            "pending": "⏳",
+            "running": "🔄",
+            "success": "✅",
+            "error": "❌"
+        }
+        return status_emojis.get(status.lower(), "📋")
+    
+    # Navigation within audit tab
+    audit_nav_col1, audit_nav_col2, audit_nav_col3 = st.columns(3)
+    
+    with audit_nav_col1:
+        if st.button("📋 Audit Trail", key="audit_nav_trail", use_container_width=True, type="primary"):
+            st.session_state["audit_page"] = "trail"
+    
+    with audit_nav_col2:
+        if st.button("🔧 System Logs", key="audit_nav_system", use_container_width=True):
+            st.session_state["audit_page"] = "system"
+    
+    with audit_nav_col3:
+        if st.button("📊 Analytics", key="audit_nav_analytics", use_container_width=True):
+            st.session_state["audit_page"] = "analytics"
+    
+    # Initialize audit page state
+    if "audit_page" not in st.session_state:
+        st.session_state["audit_page"] = "trail"
+    
+    st.markdown("---")
+    
+    if st.session_state["audit_page"] == "trail":
+        # Comprehensive Audit Trail from Universal Alert System
+        st.markdown("### 🔍 Audit Trail")
+        
+        # Get audit records from universal alert system (using available endpoints)
+        with st.spinner("🔄 Loading audit trail..."):
+            # Use the alerts endpoint as audit trail since it shows alert activity
+            try:
+                audit_response = alert_api_call("GET", "/alerts", params={"user_id": get_user_id()})
+                # Transform alerts to audit-like format for display
+                if audit_response.get("success") and audit_response.get("alerts"):
+                    alerts = audit_response.get("alerts", [])
+                    # Convert alerts to audit records format
+                    audit_records = []
+                    for alert in alerts:
+                        audit_record = {
+                            "entity_type": "alert",
+                            "entity_name": alert.get("alert_name", ""),
+                            "entity_id": alert.get("alert_id", ""),
+                            "operation_type": "alert_created",
+                            "status": "active" if alert.get("is_active", True) else "inactive",
+                            "started_at": alert.get("created_at", ""),
+                            "user_id": alert.get("user_id", ""),
+                            "operation_data": alert,
+                            "message": f"Alert '{alert.get('alert_name', '')}' of type '{alert.get('alert_type', '')}'"
+                        }
+                        audit_records.append(audit_record)
+                    
+                    audit_response = {
+                        "success": True,
+                        "audit_records": audit_records
+                    }
+                else:
+                    audit_response = {"success": False, "error": "No alerts found"}
+            except Exception as e:
+                audit_response = {"success": False, "error": str(e)}
+        
+        if not audit_response.get("success"):
+            st.error("❌ Failed to load audit trail from universal alert system")
+            st.error(f"🔍 Error: {audit_response.get('error', 'Unknown error')}")
+            
+            # Fallback to Go API audit logs
+            st.markdown("#### 📋 Fallback: System Audit Logs")
+            st.caption("Using Go API audit endpoints")
+            
+            # Date range and level filters (existing functionality)
+            default_end = datetime.now().strftime("%Y-%m-%d")
+            default_start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                start_date = st.date_input("Start Date", value=datetime.strptime(default_start, "%Y-%m-%d"), key="td_audit_start")
+            with col2:
+                end_date = st.date_input("End Date", value=datetime.strptime(default_end, "%Y-%m-%d"), key="td_audit_end")
+            with col3:
+                level = st.selectbox("Level", ["ALL", "ERROR", "WARNING", "INFO"], key="td_audit_level")
+            
+            if st.button("Fetch Audit Logs", key="td_fetch_audit", type="primary"):
+                with st.spinner("Fetching audit logs..."):
+                    try:
+                        logs_resp = client.get("api/v1/admin/audit-logs", params={
+                            "start_date": start_date.strftime("%Y-%m-%d"),
+                            "end_date": end_date.strftime("%Y-%m-%d"),
+                            "level": level,
+                            "limit": 100
+                        })
+                        st.session_state["td_audit_logs"] = logs_resp
+                    except Exception as e:
+                        st.error(f"Failed to fetch audit logs: {e}")
+            
+            logs_data = st.session_state.get("td_audit_logs")
+            if logs_data:
+                logs = logs_data.get("logs", [])
+                if logs:
+                    df_logs = pd.DataFrame(logs)
+                    display_cols = ["timestamp", "level", "source", "operation", "symbol", "message"]
+                    if "details" in df_logs.columns:
+                        display_cols.append("details")
+                    if "error_message" in df_logs.columns:
+                        display_cols.append("error_message")
+                    st.dataframe(df_logs[display_cols], width='stretch')
+                else:
+                    st.info("No audit logs found for the selected filters.")
+            else:
+                st.info("Select date range and click 'Fetch Audit Logs' to view audit logs.")
+        else:
+            audit_records = audit_response.get("audit_records", [])
+            
+            if not audit_records:
+                st.info("📭 No audit records found")
+            else:
+                # Filters from Universal Alert System
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    entity_types = list(set(record.get('entity_type', '') for record in audit_records))
+                    entity_type_filter = st.selectbox("Entity Type", ["All"] + entity_types)
+                
+                with col2:
+                    operation_types = list(set(record.get('operation_type', '') for record in audit_records))
+                    operation_type_filter = st.selectbox("Operation Type", ["All"] + operation_types)
+                
+                with col3:
+                    status_types = list(set(record.get('status', '') for record in audit_records))
+                    status_filter = st.selectbox("Status", ["All"] + status_types)
+                
+                with col4:
+                    date_range = st.date_input("Date Range", [datetime.now() - timedelta(days=7), datetime.now()], key="td_audit_date_range")
+                
+                # Initialize filtered_records
+                filtered_records = audit_records
+                
+                # Time range filter
+                if len(date_range) == 2:
+                    start_date, end_date = date_range
+                    filtered_records = [
+                        record for record in audit_records
+                        if start_date <= datetime.fromisoformat(record.get('started_at', '').replace('Z', '+00:00')).date() <= end_date
+                    ]
+                
+                # Apply filters
+                if entity_type_filter != "All":
+                    filtered_records = [r for r in filtered_records if r.get('entity_type') == entity_type_filter]
+                
+                if operation_type_filter != "All":
+                    filtered_records = [r for r in filtered_records if r.get('operation_type') == operation_type_filter]
+                
+                if status_filter != "All":
+                    filtered_records = [r for r in filtered_records if r.get('status') == status_filter]
+                
+                st.markdown(f"#### 📊 {len(filtered_records)} Audit Records Found")
+                
+                # Search
+                search_term = st.text_input("🔍 Search by entity name, ID, or error message", placeholder="Enter search term...")
+                
+                if search_term:
+                    search_term = search_term.lower()
+                    filtered_records = [
+                        r for r in filtered_records
+                        if search_term in r.get('entity_name', '').lower() 
+                        or search_term in r.get('entity_id', '').lower()
+                        or search_term in r.get('error_message', '').lower()
+                    ]
+                
+                # Display audit records (comprehensive view from Universal Alert System)
+                for record in filtered_records[:50]:  # Limit to 50 for performance
+                    with st.expander(f"📋 {record.get('entity_type', 'Unknown').title()} - {record.get('operation_type', 'Unknown').title()} ({record.get('started_at', '')})"):
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.write(f"**Entity:** {record.get('entity_name', record.get('entity_id', 'Unknown'))}")
+                            st.write(f"**Operation:** {record.get('operation_type', 'Unknown')}")
+                            st.write(f"**Status:** {get_status_emoji(record.get('status', ''))} {record.get('status', '').title()}")
+                            
+                            if record.get('duration_ms'):
+                                st.write(f"**Duration:** {record['duration_ms']}ms")
+                            
+                            if record.get('impact_level'):
+                                st.write(f"**Impact:** {record.get('impact_level', '').title()}")
+                        
+                        with col2:
+                            started_at = record.get('started_at', '')
+                            if started_at:
+                                dt = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+                                st.write(f"**Started:** {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                            
+                            completed_at = record.get('completed_at', '')
+                            if completed_at:
+                                dt = datetime.fromisoformat(completed_at.replace('Z', '+00:00'))
+                                st.write(f"**Completed:** {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+                            
+                            if record.get('user_id'):
+                                st.write(f"**User ID:** {record['user_id']}")
+                            
+                            if record.get('correlation_id'):
+                                st.write(f"**Correlation ID:** {record['correlation_id']}")
+                        
+                        # Error details
+                        if record.get('error_message'):
+                            st.markdown("**Error Details:**")
+                            st.error(record['error_message'])
+                            
+                            if record.get('error_stack'):
+                                with st.expander("View Error Stack"):
+                                    st.code(record['error_stack'], language='text')
+                        
+                        # Operation details
+                        if record.get('operation_data'):
+                            with st.expander("View Operation Data"):
+                                st.json(record['operation_data'])
+                        
+                        # State changes
+                        if record.get('previous_state') or record.get('new_state'):
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                if record.get('previous_state'):
+                                    st.markdown("**Previous State:**")
+                                    st.json(record['previous_state'])
+                            
+                            with col2:
+                                if record.get('new_state'):
+                                    st.markdown("**New State:**")
+                                    st.json(record['new_state'])
+                
+                st.markdown("---")
+                
+                # Universal Alert System Health & Metrics
+                st.markdown("#### 🏥 Universal Alert System Health")
+                
+                health_col1, health_col2, health_col3 = st.columns(3)
+                
+                with health_col1:
+                    if st.button("🔍 Check UAS Health", key="uas_health_check"):
+                        with st.spinner("Checking Universal Alert System health..."):
+                            health_resp = alert_api_call("GET", "/health")
+                            if health_resp.get("success"):
+                                st.success("✅ Universal Alert System Healthy")
+                                st.json(health_resp)
+                            else:
+                                st.error("❌ Universal Alert System Unhealthy")
+                                st.error(health_resp.get('error', 'Unknown error'))
+                
+                with health_col2:
+                    if st.button("📊 Get UAS Metrics", key="uas_metrics"):
+                        with st.spinner("Getting Universal Alert System metrics..."):
+                            metrics_resp = alert_api_call("GET", "/metrics")
+                            if metrics_resp.get("success"):
+                                st.success("✅ Metrics Retrieved")
+                                st.json(metrics_resp)
+                            else:
+                                st.error("❌ Failed to get metrics")
+                                st.error(metrics_resp.get('error', 'Unknown error'))
+                
+                with health_col3:
+                    if st.button("🔌 Get UAS Plugins", key="uas_plugins"):
+                        with st.spinner("Getting Universal Alert System plugins..."):
+                            plugins_resp = alert_api_call("GET", "/plugins")
+                            if plugins_resp.get("success"):
+                                st.success("✅ Plugins Retrieved")
+                                st.json(plugins_resp)
+                            else:
+                                st.error("❌ Failed to get plugins")
+                                st.error(plugins_resp.get('error', 'Unknown error'))
+                
+                st.markdown("---")
+                
+                # Export functionality
+                if st.button("📥 Export Audit Records"):
+                    # Convert to DataFrame and download
+                    df = pd.DataFrame(filtered_records)
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label="Download CSV",
+                        data=csv,
+                        file_name=f"audit_trail_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )
+    
+    elif st.session_state["audit_page"] == "system":
+        # System Logs Page
+        st.markdown("### 🔧 System Logs")
+        
+        # Migration status quick check (existing functionality)
+        col_mig1, col_mig2 = st.columns(2)
+        with col_mig1:
+            if st.button("Check Migration Status", key="td_migration_status"):
+                with st.spinner("Checking table existence..."):
+                    try:
+                        mig_resp = client.get("api/v1/admin/migration-status")
+                        st.json(mig_resp)
+                        if mig_resp.get("all_present"):
+                            st.success("All expected tables are present.")
+                        else:
+                            st.warning(f"{len(mig_resp.get('missing', []))} tables are missing. See details above.")
+                    except Exception as e:
+                        st.error(f"Failed to check migration status: {e}")
+        with col_mig2:
+            if st.button("Run Migrations", key="td_run_migrations", type="secondary"):
+                with st.spinner("Running migrations..."):
+                    try:
+                        mig_resp = client.post("api/v1/admin/run-migrations")
+                        if mig_resp.get("status") == "completed":
+                            succeeded = sum(1 for r in mig_resp.get("results", []) if r.get("status") == "success")
+                            failed = sum(1 for r in mig_resp.get("results", []) if r.get("status") == "error")
+                            st.success(f"Migrations completed: {succeeded} succeeded, {failed} failed.")
+                            with st.expander("View per-file results"):
+                                st.json(mig_resp.get("results", []))
+                        elif mig_resp.get("status") == "no_files":
+                            st.warning("No migration files found.")
+                        else:
+                            st.error("Unexpected migration response.")
+                            st.json(mig_resp)
+                    except Exception as e:
+                        st.error(f"Migration failed: {e}")
+        
+        st.markdown("---")
+        
+        # System health check
+        st.markdown("#### 🏥 System Health")
+        
+        health_col1, health_col2 = st.columns(2)
+        
+        with health_col1:
+            if st.button("🔍 Check Go API Health", key="td_go_api_health"):
+                try:
+                    health_resp = client.get("health")
+                    st.success("✅ Go API Health Check")
+                    st.json(health_resp)
+                except Exception as e:
+                    st.error(f"❌ Go API health check failed: {e}")
+        
+        with health_col2:
+            if st.button("🔍 Check Python Worker Health", key="td_python_health"):
+                try:
+                    python_api_url = api_config.python_worker_url
+                    python_client = APIClient(python_api_url, timeout=30)
+                    health_resp = python_client.get("health")
+                    st.success("✅ Python Worker Health Check")
+                    st.json(health_resp)
+                except Exception as e:
+                    st.error(f"❌ Python Worker health check failed: {e}")
+        
+        st.markdown("---")
+        
+        # Database connection test
+        st.markdown("#### 🗄️ Database Connectivity")
+        
+        if st.button("🔗 Test Database Connection", key="td_db_test"):
+            with st.spinner("Testing database connection..."):
+                try:
+                    db_test_resp = client.get("api/v1/admin/db-test")
+                    if db_test_resp.get("success"):
+                        st.success("✅ Database connection successful")
+                        st.json(db_test_resp)
+                    else:
+                        st.error("❌ Database connection failed")
+                        st.error(db_test_resp.get("error", "Unknown error"))
+                except Exception as e:
+                    st.error(f"❌ Database test failed: {e}")
+    
+    elif st.session_state["audit_page"] == "analytics":
+        # Audit Analytics Page
+        st.markdown("### 📊 Audit Analytics")
+        
+        # Get audit records for analytics (using Universal Alert System endpoints)
+        with st.spinner("🔄 Loading audit analytics..."):
+            # Use alerts endpoint for analytics since there's no specific audit-trail endpoint
+            try:
+                audit_response = alert_api_call("GET", "/alerts", params={"user_id": get_user_id()})
+                # Transform alerts to audit-like format for analytics
+                if audit_response.get("success") and audit_response.get("alerts"):
+                    alerts = audit_response.get("alerts", [])
+                    # Convert alerts to audit records format
+                    audit_records = []
+                    for alert in alerts:
+                        audit_record = {
+                            "entity_type": "alert",
+                            "entity_name": alert.get("alert_name", ""),
+                            "entity_id": alert.get("alert_id", ""),
+                            "operation_type": "alert_created",
+                            "status": "active" if alert.get("is_active", True) else "inactive",
+                            "started_at": alert.get("created_at", ""),
+                            "user_id": alert.get("user_id", ""),
+                            "operation_data": alert,
+                            "message": f"Alert '{alert.get('alert_name', '')}' of type '{alert.get('alert_type', '')}'"
+                        }
+                        audit_records.append(audit_record)
+                    
+                    audit_response = {
+                        "success": True,
+                        "audit_records": audit_records
+                    }
+                else:
+                    audit_response = {"success": False, "error": "No alerts found"}
+            except Exception as e:
+                audit_response = {"success": False, "error": str(e)}
+        
+        if audit_response.get("success"):
+            audit_records = audit_response.get("audit_records", [])
+            
+            if audit_records:
+                # Overview metrics
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Total Records", len(audit_records))
+                
+                with col2:
+                    failed_count = len([r for r in audit_records if r.get('status') == 'failed'])
+                    st.metric("Failed Operations", failed_count)
+                
+                with col3:
+                    completed_count = len([r for r in audit_records if r.get('status') == 'completed'])
+                    st.metric("Completed Operations", completed_count)
+                
+                with col4:
+                    avg_duration = sum(r.get('duration_ms', 0) for r in audit_records) / len(audit_records)
+                    st.metric("Avg Duration", f"{avg_duration:.0f}ms")
+                
+                st.markdown("---")
+                
+                # Entity type distribution
+                entity_types = {}
+                for record in audit_records:
+                    entity_type = record.get('entity_type', 'unknown')
+                    entity_types[entity_type] = entity_types.get(entity_type, 0) + 1
+                
+                st.markdown("#### 📈 Entity Type Distribution")
+                entity_df = pd.DataFrame(list(entity_types.items()), columns=['Entity Type', 'Count'])
+                st.bar_chart(entity_df.set_index('Entity Type'))
+                
+                st.markdown("---")
+                
+                # Operation type distribution
+                operation_types = {}
+                for record in audit_records:
+                    op_type = record.get('operation_type', 'unknown')
+                    operation_types[op_type] = operation_types.get(op_type, 0) + 1
+                
+                st.markdown("#### ⚙️ Operation Type Distribution")
+                op_df = pd.DataFrame(list(operation_types.items()), columns=['Operation Type', 'Count'])
+                st.bar_chart(op_df.set_index('Operation Type'))
+                
+                st.markdown("---")
+                
+                # Status distribution
+                status_dist = {}
+                for record in audit_records:
+                    status = record.get('status', 'unknown')
+                    status_dist[status] = status_dist.get(status, 0) + 1
+                
+                st.markdown("#### 📊 Status Distribution")
+                status_df = pd.DataFrame(list(status_dist.items()), columns=['Status', 'Count'])
+                st.bar_chart(status_df.set_index('Status'))
+                
+                st.markdown("---")
+                
+                # Recent activity timeline
+                st.markdown("#### 🕒 Recent Activity Timeline")
+                recent_records = sorted(audit_records, key=lambda x: x.get('started_at', ''), reverse=True)[:10]
+                
+                for record in recent_records:
+                    status_emoji = get_status_emoji(record.get('status', ''))
+                    started_at = record.get('started_at', '')
+                    if started_at:
+                        dt = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+                        time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        time_str = 'Unknown'
+                    
+                    st.write(f"{status_emoji} **{record.get('entity_type', 'Unknown').title()}** - {record.get('operation_type', 'Unknown').title()} - {time_str}")
+            else:
+                st.info("No audit records available for analytics.")
+        else:
+            st.error("Failed to load audit records for analytics.")
+            st.error(f"🔍 Error: {audit_response.get('error', 'Unknown error')}")
 
 with tab_earnings_news:
     st.subheader("📅 Earnings & News")
@@ -1976,9 +3063,80 @@ with tab_portfolio:
                 holdings = (port or {}).get("holdings") or []
                 signals = (port or {}).get("signals") or []
 
+                alert_window_hours = st.number_input(
+                    "Alert lookback (hours)",
+                    min_value=1,
+                    max_value=24 * 30,
+                    value=24,
+                    step=1,
+                    key="td_port_alert_window_hours",
+                )
+
+                alerts_by_symbol = {}
+                try:
+                    summary = client.get(
+                        f"api/v1/portfolios/{portfolio_id}/alerts/summary",
+                        params={"window_hours": int(alert_window_hours)},
+                    )
+                    if (summary or {}).get("success"):
+                        alerts_by_symbol = (summary or {}).get("by_symbol") or {}
+                except Exception:
+                    alerts_by_symbol = {}
+
                 st.markdown("#### Holdings")
+
+                selected_alert_symbol = st.session_state.get("td_port_selected_alert_symbol")
                 if holdings:
-                    st.dataframe(pd.DataFrame(holdings), width='stretch')
+                    for h in holdings:
+                        sym = (h or {}).get("symbol")
+                        if not sym:
+                            continue
+
+                        row = alerts_by_symbol.get(sym) or {}
+                        count = int(row.get("alert_count") or 0)
+                        latest_at = row.get("latest_alert_at")
+
+                        col1, col2, col3, col4 = st.columns([1, 2, 2, 2])
+                        with col1:
+                            if count > 0:
+                                if st.button(f"🚨 {count}", key=f"td_port_alert_{portfolio_id}_{sym}"):
+                                    st.session_state["td_port_selected_alert_symbol"] = sym
+                                    st.rerun()
+                            else:
+                                st.write("")
+                        with col2:
+                            st.write(f"**{sym}**")
+                        with col3:
+                            st.write(f"Qty: {(h or {}).get('quantity', '')}")
+                        with col4:
+                            st.write(f"Latest: {latest_at or ''}")
+
+                    if selected_alert_symbol:
+                        st.markdown("---")
+                        st.markdown(f"#### 🚨 Alerts for {selected_alert_symbol}")
+                        colx, coly = st.columns([1, 5])
+                        with colx:
+                            if st.button("Clear", key="td_port_alert_clear"):
+                                st.session_state.pop("td_port_selected_alert_symbol", None)
+                                st.rerun()
+                        with coly:
+                            try:
+                                detail = client.get(
+                                    "api/v1/alerts/events",
+                                    params={
+                                        "symbol": selected_alert_symbol,
+                                        "window_hours": int(alert_window_hours),
+                                        "limit": 200,
+                                    },
+                                )
+                                events = (detail or {}).get("alert_events") or []
+                                st.write(f"**Events:** {len(events)}")
+                                if events:
+                                    st.dataframe(pd.DataFrame(events), width='stretch')
+                                else:
+                                    st.info("No alerts for this symbol in the selected window")
+                            except Exception as e:
+                                st.error(f"Failed to load alert events: {e}")
                 else:
                     st.info("No holdings")
 

@@ -43,18 +43,43 @@ class GrowthCalculationService(BaseService):
             Dict with growth metrics
         """
         try:
-            # Fetch income statements ordered by period_end (most recent first)
-            income_statements = db.execute_query(
+            income_statements: List[Dict[str, Any]] = []
+
+            # Fetch income statements ordered by most-recent period.
+            # Some environments may have schema drift; try a small set of known period column names.
+            period_cols = ["period_end", "date", "report_date"]
+            cols = db.execute_query(
                 """
-                SELECT period_end, fiscal_year, fiscal_quarter, timeframe,
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'income_statements'
+                """,
+                {},
+            )
+            colset = {str(r.get("column_name") or "") for r in cols}
+            period_col = next((c for c in period_cols if c in colset), None)
+
+            if not period_col:
+                logger.warning(f"Income statements schema is not compatible for growth calc ({symbol}): no known period column")
+                return {
+                    'success': False,
+                    'symbol': symbol,
+                    'error': 'Income statements schema not compatible',
+                    'metrics': {},
+                }
+
+            income_statements = db.execute_query(
+                f"""
+                SELECT {period_col} as period_end, fiscal_year, fiscal_quarter, timeframe,
                        revenues, total_revenue, net_income, net_income_per_share,
                        weighted_average_shares_outstanding
                 FROM income_statements
                 WHERE stock_symbol = :stock_symbol
-                ORDER BY period_end DESC, fiscal_year DESC, fiscal_quarter DESC
+                ORDER BY {period_col} DESC, fiscal_year DESC NULLS LAST, fiscal_quarter DESC NULLS LAST
                 LIMIT 20
                 """,
-                {'stock_symbol': symbol}
+                {"stock_symbol": symbol},
             )
             
             if not income_statements or len(income_statements) < 2:

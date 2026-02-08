@@ -49,6 +49,21 @@ class APIConfig:
         return f"{self.python_worker_url}/api/v1/data"
     
     @property
+    def go_api_base(self) -> str:
+        """Base URL for Go API endpoints"""
+        return f"{self.go_api_url}/api/v1"
+    
+    @property
+    def go_tickers_url(self) -> str:
+        """URL for Go API tickers endpoint"""
+        return f"{self.go_api_base}/tickers"
+    
+    @property
+    def go_ticker_search_url(self) -> str:
+        """URL for Go API ticker search endpoint"""
+        return f"{self.go_api_base}/tickers/search"
+    
+    @property
     def refresh_api_base(self) -> str:
         """Base URL for Refresh API endpoints"""
         return f"{self.python_worker_url}/api/v1/refresh"

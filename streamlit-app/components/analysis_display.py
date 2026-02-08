@@ -22,6 +22,36 @@ def safe_float(value, default=0):
             return default
     return default
 
+
+def _extract_macd_fields(market_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize MACD fields across different payload shapes."""
+    out: Dict[str, Any] = {"macd": None, "macd_signal": None, "macd_histogram": None}
+
+    if not isinstance(market_data, dict):
+        return out
+
+    macd_block = market_data.get("macd")
+    if isinstance(macd_block, dict):
+        out["macd"] = macd_block.get("macd_line")
+        out["macd_signal"] = macd_block.get("macd_signal")
+        out["macd_histogram"] = macd_block.get("macd_histogram")
+        return out
+
+    out["macd"] = market_data.get("macd") if market_data.get("macd") is not None else market_data.get("macd_line")
+    out["macd_signal"] = market_data.get("macd_signal")
+    out["macd_histogram"] = market_data.get("macd_histogram")
+
+    indicators = market_data.get("indicators")
+    if isinstance(indicators, dict):
+        if out["macd"] is None:
+            out["macd"] = indicators.get("macd") if indicators.get("macd") is not None else indicators.get("macd_line")
+        if out["macd_signal"] is None:
+            out["macd_signal"] = indicators.get("macd_signal")
+        if out["macd_histogram"] is None:
+            out["macd_histogram"] = indicators.get("macd_histogram")
+
+    return out
+
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
@@ -59,6 +89,19 @@ def display_signal_analysis(symbol: str, signal_data: Dict[str, Any], show_heade
     market_data = signal_data.get("market_data", {})
     analysis = signal_data.get("analysis", {})
     engine = signal_data.get("engine", {})
+
+    macd_fields = _extract_macd_fields(market_data if isinstance(market_data, dict) else {})
+    macd_raw = macd_fields.get("macd")
+    macd_signal_raw = macd_fields.get("macd_signal")
+    macd_value = safe_float(macd_raw, default=0)
+    macd_signal_value = safe_float(macd_signal_raw, default=0)
+
+    data_completeness = signal_data.get("data_completeness") if isinstance(signal_data, dict) else None
+    indicators_present = {}
+    if isinstance(data_completeness, dict):
+        ip = data_completeness.get("indicators_present")
+        if isinstance(ip, dict):
+            indicators_present = ip
     
     # 🎨 Enhanced Signal Display with Direction - FIXED
     signal_value = signal.get("signal", "hold").upper()
@@ -275,61 +318,72 @@ def display_signal_analysis(symbol: str, signal_data: Dict[str, Any], show_heade
         tech_data = {
             'Indicator': ['RSI', 'MACD', 'MACD Signal', 'MACD Crossover', 'SMA 20', 'SMA 50', 'EMA 20', 'Volume', 'Liquidity'],
             'Value': [
-                f"{market_data.get('rsi', 0):.2f}",
-                f"{market_data.get('macd', 0):.4f}",
-                f"{market_data.get('macd_signal', 0):.4f}",
-                f"{'Accelerating 🚀' if safe_float(market_data.get('macd', 0)) > safe_float(market_data.get('macd_signal', 0)) else 'Decelerating 📉'}",
-                f"${market_data.get('sma_20', 0):.2f}",
-                f"${market_data.get('sma_50', 0):.2f}",
-                f"${market_data.get('ema_20', 0):.2f}",
-                f"{market_data.get('volume', 0):,}",
+                f"{safe_float(market_data.get('rsi'), default=0):.2f}",
+                ("N/A" if macd_raw is None else f"{macd_value:.4f}"),
+                ("N/A" if macd_signal_raw is None else f"{macd_signal_value:.4f}"),
+                (
+                    "N/A"
+                    if macd_raw is None or macd_signal_raw is None
+                    else ("Accelerating 🚀" if macd_value > macd_signal_value else "Decelerating 📉")
+                ),
+                f"${safe_float(market_data.get('sma_20'), default=0):.2f}",
+                f"${safe_float(market_data.get('sma_50'), default=0):.2f}",
+                f"${safe_float(market_data.get('ema_20'), default=0):.2f}",
+                f"{safe_float(market_data.get('volume'), default=0):,.0f}",
                 f"{liquidity_emoji} {liquidity_state} ({volume_ratio:.1f}x)"
             ],
             'Status': [
-                "🔴 Overbought" if safe_float(market_data.get('rsi', 0)) > 70 else "🟢 Oversold" if safe_float(market_data.get('rsi', 0)) < 30 else "🟡 Neutral",
-                "🟢 Bullish" if safe_float(market_data.get('macd', 0)) > 0 else "🔴 Bearish",  
-                "🟢 Bullish" if safe_float(market_data.get('macd_signal', 0)) > 0 else "🔴 Bearish",  
-                "🟢 Bullish" if safe_float(market_data.get('macd', 0)) > safe_float(market_data.get('macd_signal', 0)) else "🔴 Bearish",
-                "🟢 Above" if safe_float(market_data.get('price', 0)) > safe_float(market_data.get('sma_20', 0)) else "🔴 Below",
-                "🟢 Above" if safe_float(market_data.get('price', 0)) > safe_float(market_data.get('sma_50', 0)) else "🔴 Below",
-                "🟢 Above" if safe_float(market_data.get('price', 0)) > safe_float(market_data.get('ema_20', 0)) else "🔴 Below",
-                "🟢 High" if safe_float(market_data.get('volume', 0)) > 1000000 else "🟡 Normal",
+                "🔴 Overbought" if safe_float(market_data.get('rsi'), default=0) > 70 else "🟢 Oversold" if safe_float(market_data.get('rsi'), default=0) < 30 else "🟡 Neutral",
+                ("⚪ Missing" if macd_raw is None else ("🟢 Bullish" if macd_value > 0 else "🔴 Bearish")),
+                ("⚪ Missing" if macd_signal_raw is None else ("🟢 Bullish" if macd_signal_value > 0 else "🔴 Bearish")),
+                (
+                    "⚪ Missing"
+                    if macd_raw is None or macd_signal_raw is None
+                    else ("🟢 Bullish" if macd_value > macd_signal_value else "🔴 Bearish")
+                ),
+                "🟢 Above" if safe_float(market_data.get('price'), default=0) > safe_float(market_data.get('sma_20'), default=0) else "🔴 Below",
+                "🟢 Above" if safe_float(market_data.get('price'), default=0) > safe_float(market_data.get('sma_50'), default=0) else "🔴 Below",
+                "🟢 Above" if safe_float(market_data.get('price'), default=0) > safe_float(market_data.get('ema_20'), default=0) else "🔴 Below",
+                "🟢 High" if safe_float(market_data.get('volume'), default=0) > 1000000 else "🟡 Normal",
                 f"{liquidity_emoji} {liquidity_state}"
             ],
             'Meaning': [
                 # RSI interpretation
-                ("profit-taking signal" if safe_float(market_data.get('rsi', 0)) > 70 else 
-                 "buying opportunity" if safe_float(market_data.get('rsi', 0)) < 30 else 
+                ("profit-taking signal" if safe_float(market_data.get('rsi'), default=0) > 70 else
+                 "buying opportunity" if safe_float(market_data.get('rsi'), default=0) < 30 else
                  "neutral momentum"),
-                
+
                 # MACD interpretation
-                "positive momentum" if safe_float(market_data.get('macd', 0)) > 0 else "negative momentum",
-                
+                "missing" if macd_raw is None else ("positive momentum" if macd_value > 0 else "negative momentum"),
+
                 # MACD Signal interpretation
-                "positive momentum" if safe_float(market_data.get('macd_signal', 0)) > 0 else "negative momentum",
-                
+                "missing" if macd_signal_raw is None else ("positive momentum" if macd_signal_value > 0 else "negative momentum"),
+
                 # MACD Crossover interpretation
-                ("momentum strengthening 🚀" if safe_float(market_data.get('macd', 0)) > safe_float(market_data.get('macd_signal', 0)) else 
-                 "momentum weakening 📉"),
-                
+                (
+                    "missing"
+                    if macd_raw is None or macd_signal_raw is None
+                    else ("momentum strengthening 🚀" if macd_value > macd_signal_value else "momentum weakening 📉")
+                ),
+
                 # SMA 20 interpretation
-                (f"above SMA20 (${market_data.get('sma_20', 0):.2f})" if safe_float(market_data.get('price', 0)) > safe_float(market_data.get('sma_20', 0)) else 
-                 f"below SMA20 (${market_data.get('sma_20', 0):.2f})"),
-                
+                (f"above SMA20 (${safe_float(market_data.get('sma_20'), default=0):.2f})" if safe_float(market_data.get('price'), default=0) > safe_float(market_data.get('sma_20'), default=0) else
+                 f"below SMA20 (${safe_float(market_data.get('sma_20'), default=0):.2f})"),
+
                 # SMA 50 interpretation
-                (f"above SMA50 (${market_data.get('sma_50', 0):.2f})" if safe_float(market_data.get('price', 0)) > safe_float(market_data.get('sma_50', 0)) else 
-                 f"below SMA50 (${market_data.get('sma_50', 0):.2f})"),
-                
+                (f"above SMA50 (${safe_float(market_data.get('sma_50'), default=0):.2f})" if safe_float(market_data.get('price'), default=0) > safe_float(market_data.get('sma_50'), default=0) else
+                 f"below SMA50 (${safe_float(market_data.get('sma_50'), default=0):.2f})"),
+
                 # EMA 20 interpretation
-                (f"above EMA20 (${market_data.get('ema_20', 0):.2f})" if safe_float(market_data.get('price', 0)) > safe_float(market_data.get('ema_20', 0)) else 
-                 f"below EMA20 (${market_data.get('ema_20', 0):.2f})"),
-                
+                (f"above EMA20 (${safe_float(market_data.get('ema_20'), default=0):.2f})" if safe_float(market_data.get('price'), default=0) > safe_float(market_data.get('ema_20'), default=0) else
+                 f"below EMA20 (${safe_float(market_data.get('ema_20'), default=0):.2f})"),
+
                 # Volume interpretation
-                ("high conviction" if safe_float(market_data.get('volume', 0)) > 1000000 else "normal volume"),
-                
+                ("high conviction" if safe_float(market_data.get('volume'), default=0) > 1000000 else "normal volume"),
+
                 # Liquidity interpretation
-                (f"high conviction trading" if liquidity_state == "STRONG" else 
-                 f"normal liquidity" if liquidity_state == "NORMAL" else 
+                (f"high conviction trading" if liquidity_state == "STRONG" else
+                 f"normal liquidity" if liquidity_state == "NORMAL" else
                  f"low liquidity - avoid noise")
             ]
         }
@@ -346,8 +400,8 @@ def display_signal_analysis(symbol: str, signal_data: Dict[str, Any], show_heade
         sma50 = safe_float(market_data.get('sma_50', 0))
         ema20 = safe_float(market_data.get('ema_20', 0))
         rsi = safe_float(market_data.get('rsi', 0))
-        macd = safe_float(market_data.get('macd', 0))
-        macd_signal = safe_float(market_data.get('macd_signal', 0))
+        macd = macd_value
+        macd_signal = macd_signal_value
         volume = safe_float(market_data.get('volume', 0))
         
         # Trend components
@@ -569,13 +623,14 @@ def display_signal_analysis(symbol: str, signal_data: Dict[str, Any], show_heade
         if st.button("⚙️ Settings", use_container_width=True):
             st.session_state.show_settings = True
 
-def display_no_data_message(symbol: str, error_message: Optional[str] = None):
+def display_no_data_message(symbol: str, error_message: Optional[str] = None, context: str = "main"):
     """
     Display a standardized 'no data' message
     
     Args:
         symbol: Stock symbol
         error_message: Optional error message to display
+        context: Context identifier to avoid duplicate keys (e.g., 'main', 'tab1', 'tab2')
     """
     
     st.error(f"No analysis data available for {symbol}")
@@ -590,11 +645,15 @@ def display_no_data_message(symbol: str, error_message: Optional[str] = None):
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("🔄 Run Analysis", type="primary", use_container_width=True, key=f"run_analysis_{symbol}_{st.session_state.get('page_id', 'default')}"):
+        # Generate unique key using symbol, context, and page_id
+        page_id = st.session_state.get('page_id', 'default')
+        if st.button("🔄 Run Analysis", type="primary", use_container_width=True, key=f"run_analysis_{symbol}_{context}_{page_id}"):
             st.session_state.run_analysis = True
     
     with col2:
-        if st.button("📊 Load Data", use_container_width=True, key=f"load_data_{symbol}_{st.session_state.get('page_id', 'default')}"):
+        # Generate unique key for load data button
+        page_id = st.session_state.get('page_id', 'default')
+        if st.button("📊 Load Data", use_container_width=True, key=f"load_data_{symbol}_{context}_{page_id}"):
             st.session_state.load_data = True
 
 def display_analysis_chart(symbol: str, signal_data: Dict[str, Any]):

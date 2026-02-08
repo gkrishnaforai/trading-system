@@ -74,6 +74,7 @@ services:
     build:
       context: .
       dockerfile: python-worker/Dockerfile
+    image: trading-system-python-worker
     container_name: trading-system-python-worker
     env_file:
       - .env
@@ -82,6 +83,11 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ENVIRONMENT=${ENVIRONMENT:-development}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - ENABLE_JOB_QUEUE=${ENABLE_JOB_QUEUE:-false}
       - PYTHON_GRPC_URL=go-api:50051
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@postgres:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
@@ -127,7 +133,6 @@ services:
     build:
       context: .
       dockerfile: python-worker/Dockerfile
-    container_name: trading-system-python-worker-2
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ENVIRONMENT=${ENVIRONMENT:-development}
@@ -158,6 +163,46 @@ services:
         limits:
           cpus: '0.5'
           memory: 1.0G
+
+  # Job worker (Redis Streams consumer) - scalable parallel executor for data-load jobs
+  python-worker-job-worker:
+    image: trading-system-python-worker
+    env_file:
+      - .env
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - PYTHON_GRPC_URL=go-api:50051
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@postgres:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - PYTHONPATH=/app
+      - JOB_DISABLE_POSTPROCESSING=${JOB_DISABLE_POSTPROCESSING:-true}
+      - JOB_STREAM_KEY=ts:jobs
+      - JOB_STREAM_GROUP=python-workers
+      - JOB_STREAM_MAXLEN=${JOB_STREAM_MAXLEN:-10000}
+      - JOB_DLQ_STREAM_KEY=${JOB_DLQ_STREAM_KEY:-ts:jobs:dlq}
+      - JOB_DLQ_MAXLEN=${JOB_DLQ_MAXLEN:-2000}
+      - JOB_PENDING_MIN_IDLE_MS=${JOB_PENDING_MIN_IDLE_MS:-60000}
+      - JOB_PENDING_CLAIM_BATCH=${JOB_PENDING_CLAIM_BATCH:-10}
+      - JOB_PENDING_CLAIM_INTERVAL_SECONDS=${JOB_PENDING_CLAIM_INTERVAL_SECONDS:-5}
+      - JOB_RATE_LIMIT_FMP_CALLS=${JOB_RATE_LIMIT_FMP_CALLS:-0}
+      - JOB_RATE_LIMIT_FMP_WINDOW_SECONDS=${JOB_RATE_LIMIT_FMP_WINDOW_SECONDS:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - trading-network
+    restart: unless-stopped
+    profiles:
+      - workers
+    command: [ "python", "app/workers/redis_stream_job_worker.py" ]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 1.5G
 
   # Redis - Queue and cache
   redis:

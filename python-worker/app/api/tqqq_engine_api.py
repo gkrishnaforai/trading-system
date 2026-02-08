@@ -13,8 +13,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import psycopg2
 import pandas as pd
-from datetime import datetime
 from sqlalchemy import create_engine
+from app.utils.indicators_query_helper import get_indicators_with_price_query
+from datetime import datetime
 
 # Import TQQQ engine
 from app.signal_engines.unified_tqqq_swing_engine import UnifiedTQQQSwingEngine
@@ -58,27 +59,14 @@ async def generate_tqqq_signal(request: TQQQSignalRequest):
         # Use SQLAlchemy engine to avoid pandas warnings
         engine = create_engine(db_url)
         
-        # Build query
+        # Build query using helper function (pivot query for narrow format)
         if request.date:
-            query = """
-                SELECT i.date, r.close, i.rsi_14, i.sma_50, i.ema_20, i.macd, i.macd_signal, r.volume, r.low, r.high
-                FROM indicators_daily i
-                JOIN raw_market_data_daily r ON i.symbol = r.symbol AND i.date = r.date
-                WHERE i.symbol = 'TQQQ' AND i.date = %s
-                ORDER BY i.date
-            """
-            params = (request.date,)
+            query = get_indicators_with_price_query('TQQQ', request.date, limit=10)
+            params = {"symbol": "TQQQ", "date": request.date}
         else:
             # Get most recent data
-            query = """
-                SELECT i.date, r.close, i.rsi_14, i.sma_50, i.ema_20, i.macd, i.macd_signal, r.volume, r.low, r.high
-                FROM indicators_daily i
-                JOIN raw_market_data_daily r ON i.symbol = r.symbol AND i.date = r.date
-                WHERE i.symbol = 'TQQQ'
-                ORDER BY i.date DESC
-                LIMIT 1
-            """
-            params = ()
+            query = get_indicators_with_price_query('TQQQ', limit=1)
+            params = {"symbol": "TQQQ"}
         
         df = pd.read_sql(query, engine, params=params)
         

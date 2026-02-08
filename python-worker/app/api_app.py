@@ -1,6 +1,10 @@
 """
 FastAPI Application for Trading System Python Worker
 Provides REST API endpoints for data management, signals, and admin operations
+
+LEGACY APP (Not Docker entrypoint):
+- The python-worker Docker image starts `python app/api_server.py`, not this file.
+- Avoid registering new routers/endpoints here unless you also add them to `app/api_server.py`.
 """
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -111,13 +115,22 @@ from app.api.bulk_operations_api import router as bulk_router
 app.include_router(bulk_router, prefix="/api/v1", tags=["Bulk Operations"])
 # Add portfolio management router
 from app.api.portfolio_api import router as portfolio_router
-app.include_router(portfolio_router, tags=["Portfolio Management"])
+app.include_router(portfolio_router, prefix="/api/v1/portfolio", tags=["Portfolio Management"])
 # Add portfolio management v2 router (industry standard)
 from app.api.portfolio_api_v2 import router as portfolio_v2_router
 app.include_router(portfolio_v2_router, tags=["Portfolio Management v2"])
 # Add growth quality analysis router
 from app.api.growth_quality_endpoints import router as growth_quality_router
 app.include_router(growth_quality_router, tags=["Growth Quality Analysis"])
+# Add rating alert management router
+from app.api.rating_alert_api import router as rating_alert_router
+app.include_router(rating_alert_router, prefix="/api/v1")
+# Add universal alert system router
+from app.api.universal_alert_api import router as universal_alert_router
+app.include_router(universal_alert_router, prefix="/api/v1/universal-alerts", tags=["Universal Alerts"])
+# Add audit endpoints router
+from app.api.audit_endpoints import audit_router
+app.include_router(audit_router, tags=["Audit"])
 
 # Register screener endpoints
 register_screener_endpoints(app)

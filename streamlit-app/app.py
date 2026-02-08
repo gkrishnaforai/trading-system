@@ -20,8 +20,8 @@ from api_client import (
 logger = logging.getLogger(__name__)
 
 # Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "http://go-api:8000")
-PYTHON_API_URL = os.getenv("PYTHON_API_URL", "http://python-worker:8001")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+PYTHON_API_URL = os.getenv("PYTHON_API_URL", "http://localhost:8001")
 SUBSCRIPTION_LEVELS = ["basic", "pro", "elite"]
 
 # Page configuration
@@ -34,7 +34,10 @@ st.set_page_config(
 
 # Multipage entrypoint: route to the Home page.
 # Streamlit navigation works most reliably when the main script is outside `pages/`.
-st.switch_page("pages/9_Trading_Dashboard.py")
+# st.switch_page("pages/9_Trading_Dashboard.py")  # Commented out to allow navigation
+
+# Direct redirect to Enhanced Portfolio Analysis for now
+st.switch_page("pages/15_Enhanced_Portfolio_Analysis.py")
 st.stop()
 
 # Add testbed navigation link

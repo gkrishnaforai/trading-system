@@ -45,6 +45,8 @@ func (h *SymbolScopeHandler) Resolve(c *gin.Context) {
 	watchlistID := c.Query("watchlist_id")
 	portfolioID := c.Query("portfolio_id")
 	userID := c.Query("user_id")
+	refresh := c.Query("refresh")
+	noCache := c.Query("no_cache")
 
 	if watchlistID == "" && portfolioID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "watchlist_id or portfolio_id is required"})
@@ -62,12 +64,17 @@ func (h *SymbolScopeHandler) Resolve(c *gin.Context) {
 	}
 
 	cacheKey := "symbol_scope:v1:sub:" + subscriptionLevel + ":u:" + userID + ":w:" + watchlistID + ":p:" + portfolioID
-	if h.cache != nil {
+	cacheBypassed := (refresh == "1" || strings.EqualFold(refresh, "true") || noCache == "1" || strings.EqualFold(noCache, "true"))
+	if h.cache != nil && !cacheBypassed {
 		var cached SymbolScopeResolveResponse
 		if err := h.cache.Get(cacheKey, &cached); err == nil {
 			c.JSON(http.StatusOK, cached)
 			return
 		}
+	}
+	if h.cache != nil && cacheBypassed {
+		// best-effort eviction to avoid immediately re-serving stale symbol scopes
+		h.cache.Delete(cacheKey)
 	}
 
 	set := map[string]struct{}{}

@@ -253,7 +253,7 @@ class SmartRefreshStrategy:
         # Default based on data type
         intervals = {
             DataType.PRICE_CURRENT: timedelta(minutes=1),
-            DataType.PRICE_INTRADAY_15M: timedelta(minutes=15),
+            DataType.PRICE_INTRADAY_5M: timedelta(minutes=5),
             DataType.NEWS: timedelta(minutes=5),
             DataType.INDICATORS: timedelta(hours=1),
         }

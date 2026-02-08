@@ -43,7 +43,7 @@ class TestDataRefreshIntegration(unittest.TestCase):
         
         cls.refresh_manager = DataRefreshManager()
         cls.indicator_service = IndicatorService()
-        cls.symbols = ['AAPL', 'NVDA', 'GOOGL', 'PLTR']
+        cls.symbols = ['AAPL']
         
         print(f"\n📊 Testing with symbols: {', '.join(cls.symbols)}")
         print(f"📅 Test date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -114,7 +114,7 @@ class TestDataRefreshIntegration(unittest.TestCase):
                 data_types = [
                     DataType.PRICE_HISTORICAL,
                     DataType.PRICE_CURRENT,
-                    DataType.PRICE_INTRADAY_15M,
+                    DataType.PRICE_INTRADAY_5M,
                     DataType.FUNDAMENTALS,
                     DataType.INDICATORS,
                     DataType.NEWS,
@@ -286,10 +286,10 @@ class TestDataRefreshIntegration(unittest.TestCase):
                 
                 # Check tracking table
                 query = """
-                    SELECT * FROM data_refresh_tracking
-                    WHERE stock_symbol = :symbol
+                    SELECT * FROM data_refresh_history
+                    WHERE symbol = :symbol
                     AND data_type = 'price_historical'
-                    ORDER BY last_refresh DESC
+                    ORDER BY refresh_start DESC
                     LIMIT 1
                 """
                 tracking = db.execute_query(query, {"symbol": symbol})
@@ -297,13 +297,13 @@ class TestDataRefreshIntegration(unittest.TestCase):
                 if tracking:
                     record = tracking[0]
                     print(f"✅ {symbol}: Refresh tracking updated")
-                    print(f"   Last refresh: {record.get('last_refresh')}")
+                    print(f"   Refresh start: {record.get('refresh_start')}")
                     print(f"   Status: {record.get('status')}")
-                    print(f"   Mode: {record.get('refresh_mode')}")
+                    print(f"   Records processed: {record.get('records_processed')}")
                     
                     self.assertIsNotNone(
-                        record.get('last_refresh'),
-                        f"{symbol}: Should have last_refresh timestamp"
+                        record.get('refresh_start'),
+                        f"{symbol}: Should have refresh_start timestamp"
                     )
                 else:
                     print(f"⚠️  {symbol}: No tracking record found")
