@@ -63,6 +63,7 @@ func main() {
 	tickerRepo := repositories.NewTickerRepository()
 	userRepo := repositories.NewUserRepository()
 	ingestionAuditRepo := repositories.NewIngestionAuditRepository()
+	scheduleRepo := repositories.NewScheduleRepository()
 	dataPreviewRepo := repositories.NewDataPreviewRepository()
 	notificationQueueRepo := repositories.NewNotificationQueueRepository()
 
@@ -90,13 +91,19 @@ func main() {
 	tickerHandler := handlers.NewTickerHandler(tickerService)
 	llmHandler := handlers.NewLLMHandler()
 	reportHandler := handlers.NewReportHandler()
-	adminProxyHandler := handlers.NewAdminProxyHandler(pythonWorkerClient)
+	adminProxyHandler := handlers.NewAdminProxyHandler(pythonWorkerClient, cacheService)
 	dataLoadHandler := handlers.NewDataLoadHandler(pythonWorkerClient, ingestionAuditRepo, jobQueue, useJobQueue)
 	dataPreviewHandler := handlers.NewDataPreviewHandler(dataPreviewService)
 	notificationQueueHandler := handlers.NewNotificationQueueHandler(notificationQueueRepo)
 	jobQueueAdminHandler := handlers.NewJobQueueAdminHandler(jobQueue)
 	portfolioV2ProxyHandler := handlers.NewPortfolioV2ProxyHandler(pythonWorkerClient)
 	portfolioAnalysisRunHandler := handlers.NewPortfolioAnalysisRunHandler(ingestionAuditRepo, jobQueue, useJobQueue)
+	analysisProfilesHandler := handlers.NewAnalysisProfilesHandler()
+	portfolioRebalanceRunHandler := handlers.NewPortfolioRebalanceRunHandler(ingestionAuditRepo, jobQueue, useJobQueue)
+
+	schedulerService := services.NewSchedulerService(scheduleRepo, ingestionAuditRepo, jobQueue, useJobQueue)
+	scheduleHandler := handlers.NewScheduleHandler(scheduleRepo, schedulerService)
+	schedulerTickHandler := handlers.NewSchedulerTickHandler(schedulerService)
 
 	// Initialize HTTP router
 	r := gin.Default()
@@ -140,6 +147,7 @@ func main() {
 		api.POST("/admin/refresh", adminProxyHandler.Refresh)
 		api.GET("/admin/refresh/status", adminProxyHandler.GetRefreshStatus)
 		api.GET("/admin/job-profiles", dataLoadHandler.GetJobProfiles)
+		api.GET("/admin/analysis-profiles", analysisProfilesHandler.GetProfiles)
 		api.GET("/admin/job-queue/status", jobQueueAdminHandler.GetStatus)
 		api.POST("/admin/job-queue/dlq/requeue", jobQueueAdminHandler.RequeueDLQ)
 		api.POST("/admin/job-queue/stream/delete", jobQueueAdminHandler.DeleteStreamEntries)
@@ -154,6 +162,16 @@ func main() {
 		api.POST("/admin/insights/generate", adminProxyHandler.GenerateStockInsights)
 		api.GET("/admin/insights/strategies", adminProxyHandler.GetAvailableStrategies)
 		api.POST("/admin/insights/strategy/:strategyName", adminProxyHandler.RunSingleStrategy)
+
+		// Scheduler CRUD + tick (Go API is orchestrator)
+		api.GET("/schedules", scheduleHandler.List)
+		api.POST("/schedules", scheduleHandler.Create)
+		api.GET("/schedules/:schedule_id", scheduleHandler.Get)
+		api.PATCH("/schedules/:schedule_id", scheduleHandler.Update)
+		api.DELETE("/schedules/:schedule_id", scheduleHandler.Delete)
+		api.POST("/schedules/:schedule_id/run-now", scheduleHandler.RunNow)
+		api.POST("/schedules/:schedule_id/make-due-now", scheduleHandler.MakeDueNow)
+		api.POST("/scheduler/tick", schedulerTickHandler.Tick)
 
 		// Earnings calendar endpoints (Go API -> python-worker admin)
 		api.GET("/admin/earnings-calendar", adminProxyHandler.GetEarningsCalendar)
@@ -204,6 +222,7 @@ func main() {
 
 		// Portfolio analysis run orchestration (Option B)
 		api.POST("/portfolios/:portfolio_id/analysis-run", portfolioAnalysisRunHandler.CreateRun)
+		api.POST("/portfolios/:portfolio_id/rebalance-run", portfolioRebalanceRunHandler.CreateRun)
 
 		// Generic, allowlisted data preview endpoint (Operator UX)
 		api.GET("/data-preview", dataPreviewHandler.GetPreview)

@@ -23,8 +23,10 @@ func NewPortfolioAnalysisRunHandler(auditRepo *repositories.IngestionAuditReposi
 }
 
 type CreatePortfolioAnalysisRunRequest struct {
-	TargetDate string `json:"target_date"`
-	AssetType  string `json:"asset_type"`
+	Symbols    []string `json:"symbols"`
+	Profile    string   `json:"profile"`
+	TargetDate string   `json:"target_date"`
+	AssetType  string   `json:"asset_type"`
 }
 
 // POST /api/v1/portfolios/:portfolio_id/analysis-run
@@ -47,18 +49,35 @@ func (h *PortfolioAnalysisRunHandler) CreateRun(c *gin.Context) {
 	}
 	assetType = strings.ToLower(assetType)
 
+	profile := strings.TrimSpace(req.Profile)
+	if profile == "" {
+		profile = string(services.AnalysisProfileDailySignals)
+	}
+	resolvedProfile, err := services.ResolveAnalysisProfile(profile)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	targetDate := strings.TrimSpace(req.TargetDate)
 	if targetDate == "" {
 		targetDate = time.Now().UTC().Format("2006-01-02")
 	}
 
-	symbols, err := h.auditRepo.SymbolsForPortfolio(portfolioID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	symbols := []string{}
+	if len(req.Symbols) > 0 {
+		valid, _ := sanitizeSymbols(req.Symbols)
+		symbols = valid
+	} else {
+		s, err := h.auditRepo.SymbolsForPortfolio(portfolioID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		symbols = s
 	}
 	if len(symbols) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no holdings found in portfolio"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no symbols resolved"})
 		return
 	}
 
@@ -67,6 +86,7 @@ func (h *PortfolioAnalysisRunHandler) CreateRun(c *gin.Context) {
 		"operation":    "portfolio_analysis",
 		"portfolio_id": portfolioID,
 		"symbols":      symbols,
+		"profile":      string(resolvedProfile),
 		"asset_type":   assetType,
 		"target_date":  targetDate,
 		"requested_at": time.Now().UTC().Format(time.RFC3339),
@@ -99,6 +119,7 @@ func (h *PortfolioAnalysisRunHandler) CreateRun(c *gin.Context) {
 				Symbol:      symCopy,
 				AssetType:   assetType,
 				TargetDate:  targetDate,
+				Profile:     string(resolvedProfile),
 				Attempt:     1,
 				MaxAttempts: 3,
 			})
@@ -111,7 +132,7 @@ func (h *PortfolioAnalysisRunHandler) CreateRun(c *gin.Context) {
 			continue
 		}
 		m := "job enqueued"
-		_ = h.auditRepo.CreateEvent(runID, "info", "queue_job_enqueued", &symCopy, nil, &m, nil, map[string]any{"asset_type": assetType, "target_date": targetDate}, nil)
+		_ = h.auditRepo.CreateEvent(runID, "info", "queue_job_enqueued", &symCopy, nil, &m, nil, map[string]any{"asset_type": assetType, "target_date": targetDate, "profile": string(resolvedProfile)}, nil)
 	}
 
 	if enqueueFailed > 0 {
@@ -130,6 +151,7 @@ func (h *PortfolioAnalysisRunHandler) CreateRun(c *gin.Context) {
 		"run_id":       runID,
 		"portfolio_id": portfolioID,
 		"status":       "running",
+		"profile":      string(resolvedProfile),
 		"asset_type":   assetType,
 		"target_date":  targetDate,
 	})

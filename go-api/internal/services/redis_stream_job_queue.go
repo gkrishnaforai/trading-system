@@ -14,8 +14,9 @@ import (
 type JobType string
 
 const (
-	JobTypePortfolioDataLoad JobType = "portfolio_data_load"
-	JobTypePortfolioAnalysis JobType = "portfolio_analysis"
+	JobTypePortfolioDataLoad  JobType = "portfolio_data_load"
+	JobTypePortfolioAnalysis  JobType = "portfolio_analysis"
+	JobTypePortfolioRebalance JobType = "portfolio_rebalance"
 )
 
 type DataLoadJobPayload struct {
@@ -34,6 +35,16 @@ type PortfolioAnalysisJobPayload struct {
 	Symbol      string `json:"symbol"`
 	AssetType   string `json:"asset_type"`
 	TargetDate  string `json:"target_date"`
+	Profile     string `json:"profile"`
+	Attempt     int    `json:"attempt"`
+	MaxAttempts int    `json:"max_attempts"`
+}
+
+type PortfolioRebalanceJobPayload struct {
+	RunID       string `json:"run_id"`
+	PortfolioID string `json:"portfolio_id"`
+	TargetDate  string `json:"target_date"`
+	Profile     string `json:"profile"`
 	Attempt     int    `json:"attempt"`
 	MaxAttempts int    `json:"max_attempts"`
 }
@@ -231,6 +242,36 @@ func (q *RedisStreamJobQueue) EnqueuePortfolioAnalysisJob(ctx context.Context, p
 		Values: map[string]any{
 			"job_id":      jobID,
 			"job_type":    string(JobTypePortfolioAnalysis),
+			"payload":     string(b),
+			"enqueued_at": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}).Result()
+	if err != nil {
+		return "", fmt.Errorf("failed to enqueue job: %w", err)
+	}
+	return id, nil
+}
+
+func (q *RedisStreamJobQueue) EnqueuePortfolioRebalanceJob(ctx context.Context, payload PortfolioRebalanceJobPayload) (string, error) {
+	if payload.Attempt <= 0 {
+		payload.Attempt = 1
+	}
+	if payload.MaxAttempts <= 0 {
+		payload.MaxAttempts = 3
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal job payload: %w", err)
+	}
+
+	jobID := uuid.New().String()
+	id, err := q.client.XAdd(ctx, &redis.XAddArgs{
+		Stream: q.streamKey,
+		MaxLen: 10000,
+		Approx: true,
+		Values: map[string]any{
+			"job_id":      jobID,
+			"job_type":    string(JobTypePortfolioRebalance),
 			"payload":     string(b),
 			"enqueued_at": time.Now().UTC().Format(time.RFC3339Nano),
 		},

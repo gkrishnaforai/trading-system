@@ -13,6 +13,7 @@ CANONICAL ENTRYPOINT (Docker/Runtime):
 import logging
 import json
 import asyncio
+import os
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date
 from fastapi import FastAPI, HTTPException
@@ -208,7 +209,11 @@ universal_alert_scheduler = UniversalScheduler()
 async def startup_event():
     """Initialize database on startup"""
     init_database()
-    asyncio.create_task(universal_alert_scheduler.start_scheduler())
+    enable_universal_scheduler = os.getenv("ENABLE_UNIVERSAL_ALERT_SCHEDULER", "true").strip().lower() == "true"
+    if enable_universal_scheduler:
+        asyncio.create_task(universal_alert_scheduler.start_scheduler())
+    else:
+        logger.info("⏭️ Universal alert scheduler disabled via ENABLE_UNIVERSAL_ALERT_SCHEDULER")
     logger.info("✅ Python Worker API started")
 
 

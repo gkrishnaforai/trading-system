@@ -121,13 +121,20 @@ class TechnicalIndicators:
             # MACD
             macd_data = calculate_macd(df['close'])
             if isinstance(macd_data, dict):
-                df['macd'] = macd_data.get('macd', pd.Series([0] * len(df), index=df.index))
-                df['macd_signal'] = macd_data.get('signal', pd.Series([0] * len(df), index=df.index))
-                df['macd_hist'] = macd_data.get('histogram', pd.Series([0] * len(df), index=df.index))
+                # Support any alternate MACD implementation that returns a dict
+                df['macd'] = macd_data.get('macd', pd.Series(np.nan, index=df.index))
+                df['macd_signal'] = macd_data.get('signal', pd.Series(np.nan, index=df.index))
+                df['macd_hist'] = macd_data.get('histogram', pd.Series(np.nan, index=df.index))
+            elif isinstance(macd_data, (tuple, list)) and len(macd_data) == 3:
+                macd_line, signal_line, histogram = macd_data
+                df['macd'] = macd_line
+                df['macd_signal'] = signal_line
+                df['macd_hist'] = histogram
             else:
-                df['macd'] = macd_data
-                df['macd_signal'] = pd.Series([0] * len(df), index=df.index)
-                df['macd_hist'] = pd.Series([0] * len(df), index=df.index)
+                # Unknown shape; preserve missing values (do NOT fill with 0 placeholders)
+                df['macd'] = pd.Series(np.nan, index=df.index)
+                df['macd_signal'] = pd.Series(np.nan, index=df.index)
+                df['macd_hist'] = pd.Series(np.nan, index=df.index)
             
             # Momentum Score
             df['momentum_score'] = calculate_momentum_score(df)

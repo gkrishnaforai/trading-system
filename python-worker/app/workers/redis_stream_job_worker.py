@@ -38,6 +38,17 @@ class PortfolioAnalysisJobPayload:
     symbol: str
     asset_type: str
     target_date: str
+    profile: str = ""
+    attempt: int = 1
+    max_attempts: int = 3
+
+
+@dataclass
+class PortfolioRebalanceJobPayload:
+    run_id: str
+    portfolio_id: Optional[str]
+    target_date: str
+    profile: str
     attempt: int = 1
     max_attempts: int = 3
 
@@ -202,6 +213,18 @@ class RedisStreamWorker:
             symbol=d["symbol"],
             asset_type=str(d.get("asset_type") or "stock"),
             target_date=str(d.get("target_date") or ""),
+            profile=str(d.get("profile") or ""),
+            attempt=int(d.get("attempt") or 1),
+            max_attempts=int(d.get("max_attempts") or 3),
+        )
+
+    def _parse_rebalance_payload(self, raw: str) -> PortfolioRebalanceJobPayload:
+        d = json.loads(raw)
+        return PortfolioRebalanceJobPayload(
+            run_id=d["run_id"],
+            portfolio_id=d.get("portfolio_id"),
+            target_date=str(d.get("target_date") or ""),
+            profile=str(d.get("profile") or ""),
             attempt=int(d.get("attempt") or 1),
             max_attempts=int(d.get("max_attempts") or 3),
         )
@@ -362,8 +385,38 @@ class RedisStreamWorker:
             "symbol": sym,
             "asset_type": asset_type,
             "target_date": target_date,
+            "profile": getattr(payload, "profile", ""),
             "signal": signal_value,
             "confidence": confidence,
+        }
+
+    def _run_portfolio_rebalance(self, payload: PortfolioRebalanceJobPayload) -> Dict[str, Any]:
+        # Forward-compatible stub.
+        # Future: compute rebalance proposal, persist it, emit a rebalance_recommended event.
+        target_date = (payload.target_date or "").strip()
+        if not target_date:
+            target_date = time.strftime("%Y-%m-%d", time.gmtime())
+
+        try:
+            audit.log_event(
+                level="info",
+                provider="worker",
+                operation="portfolio_rebalance_executed",
+                symbol=None,
+                context={
+                    "portfolio_id": payload.portfolio_id,
+                    "target_date": target_date,
+                    "profile": payload.profile,
+                },
+            )
+        except Exception:
+            pass
+
+        return {
+            "portfolio_id": payload.portfolio_id,
+            "target_date": target_date,
+            "profile": payload.profile,
+            "status": "ok",
         }
 
     def _maybe_reclaim_pending(self):
@@ -490,6 +543,20 @@ class RedisStreamWorker:
             self.dlq_maxlen,
         )
 
+    def _send_rebalance_to_dlq(self, payload: PortfolioRebalanceJobPayload, job_id: Optional[str], error: str, msg_id: str):
+        self._xadd_trim(
+            self.dlq_stream_key,
+            {
+                "job_id": job_id or "",
+                "source_msg_id": msg_id,
+                "job_type": "portfolio_rebalance",
+                "payload": json.dumps(payload.__dict__),
+                "error": (error or "")[:500],
+                "failed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            },
+            self.dlq_maxlen,
+        )
+
     def _send_analysis_to_dlq(self, payload: PortfolioAnalysisJobPayload, job_id: Optional[str], error: str, msg_id: str):
         self._xadd_trim(
             self.dlq_stream_key,
@@ -507,13 +574,16 @@ class RedisStreamWorker:
     def _process_message(self, msg_id: str, fields: Dict[str, Any], reclaimed: bool = False):
         job_type = fields.get("job_type")
         raw_payload = fields.get("payload")
-        if job_type not in {"portfolio_data_load", "portfolio_analysis"} or not raw_payload:
+        if job_type not in {"portfolio_data_load", "portfolio_analysis", "portfolio_rebalance"} or not raw_payload:
             self.r.xack(self.stream_key, self.group, msg_id)
             return
 
         is_analysis = job_type == "portfolio_analysis"
+        is_rebalance = job_type == "portfolio_rebalance"
         if is_analysis:
             payload: Any = self._parse_analysis_payload(raw_payload)
+        elif is_rebalance:
+            payload = self._parse_rebalance_payload(raw_payload)
         else:
             payload = self._parse_payload(raw_payload)
 
@@ -555,7 +625,7 @@ class RedisStreamWorker:
                 level="info",
                 provider="worker",
                 operation="job_canceled",
-                symbol=payload.symbol,
+                symbol=getattr(payload, "symbol", None),
                 context={"job_id": fields.get("job_id"), "reclaimed": reclaimed},
             )
             self.r.xack(self.stream_key, self.group, msg_id)
@@ -567,7 +637,7 @@ class RedisStreamWorker:
             level="info",
             provider="worker",
             operation="job_started",
-            symbol=payload.symbol,
+            symbol=getattr(payload, "symbol", None),
             context={
                 "job_type": job_type,
                 "data_types": getattr(payload, "data_types", None),
@@ -583,6 +653,8 @@ class RedisStreamWorker:
         try:
             if is_analysis:
                 result = self._run_portfolio_analysis(payload)
+            elif is_rebalance:
+                result = self._run_portfolio_rebalance(payload)
             else:
                 result = self._run_refresh(payload)
             dur_ms = int((time.time() - start) * 1000)
@@ -590,7 +662,7 @@ class RedisStreamWorker:
                 level="info",
                 provider="worker",
                 operation="job_finished",
-                symbol=payload.symbol,
+                symbol=getattr(payload, "symbol", None),
                 duration_ms=dur_ms,
                 context=self._to_jsonable({"job_type": job_type, "data_types": getattr(payload, "data_types", None), "job_id": fields.get("job_id"), "reclaimed": reclaimed, "result": result}),
             )
@@ -609,7 +681,7 @@ class RedisStreamWorker:
                 level="error",
                 provider="worker",
                 operation="job_failed",
-                symbol=payload.symbol,
+                symbol=getattr(payload, "symbol", None),
                 duration_ms=dur_ms,
                 exception=e,
                 context={
@@ -634,6 +706,8 @@ class RedisStreamWorker:
                 try:
                     if is_analysis:
                         self._send_analysis_to_dlq(payload, fields.get("job_id"), str(e), msg_id)
+                    elif is_rebalance:
+                        self._send_rebalance_to_dlq(payload, fields.get("job_id"), str(e), msg_id)
                     else:
                         self._send_to_dlq(payload, fields.get("job_id"), str(e), msg_id)
                     self._metric_dlq += 1
@@ -642,6 +716,8 @@ class RedisStreamWorker:
             else:
                 if is_analysis:
                     self._requeue_analysis_with_backoff(payload, job_id or str(uuid.uuid4()), str(e))
+                elif is_rebalance:
+                    self._requeue_rebalance_with_backoff(payload, job_id or str(uuid.uuid4()), str(e))
                 else:
                     self._requeue_with_backoff(payload, job_id or str(uuid.uuid4()), str(e))
 
@@ -735,6 +811,25 @@ class RedisStreamWorker:
             {
                 "job_id": job_id,
                 "job_type": "portfolio_data_load",
+                "payload": raw,
+                "enqueued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "requeued_from_error": last_error[:500],
+            },
+            self.stream_maxlen,
+        )
+
+    def _requeue_rebalance_with_backoff(self, payload: PortfolioRebalanceJobPayload, job_id: str, last_error: str):
+        if payload.attempt >= payload.max_attempts:
+            return
+        payload.attempt += 1
+        raw = json.dumps(payload.__dict__)
+        backoff = min(60, 2 ** (payload.attempt - 1))
+        time.sleep(backoff)
+        self._xadd_trim(
+            self.stream_key,
+            {
+                "job_id": job_id,
+                "job_type": "portfolio_rebalance",
                 "payload": raw,
                 "enqueued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "requeued_from_error": last_error[:500],

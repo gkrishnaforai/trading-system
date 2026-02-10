@@ -31,9 +31,26 @@ class Database:
         if db_url.startswith("sqlite") or db_url.startswith("file:"):
             raise ValueError("SQLite is no longer supported. Configure DATABASE_URL for PostgreSQL.")
 
-        self.engine = create_engine(db_url, echo=False)
+        pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
+        max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "5"))
+        pool_timeout = int(os.getenv("DB_POOL_TIMEOUT_SECONDS", "30"))
+        self.engine = create_engine(
+            db_url,
+            echo=False,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_timeout=pool_timeout,
+            pool_pre_ping=True,
+        )
         async_url = db_url.replace("postgresql://", "postgresql+asyncpg://")
-        self.async_engine = create_async_engine(async_url, echo=False)
+        self.async_engine = create_async_engine(
+            async_url,
+            echo=False,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_timeout=pool_timeout,
+            pool_pre_ping=True,
+        )
         logger.info("✅ Connected to PostgreSQL database")
         
         self.session_factory = sessionmaker(bind=self.engine)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	_ "github.com/lib/pq"
@@ -53,8 +54,20 @@ func InitDB() error {
 	}
 
 	// Set connection pool settings
-	DB.SetMaxOpenConns(25)
-	DB.SetMaxIdleConns(5)
+	maxOpen := 10
+	if v := strings.TrimSpace(os.Getenv("DB_MAX_OPEN_CONNS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxOpen = n
+		}
+	}
+	maxIdle := 5
+	if v := strings.TrimSpace(os.Getenv("DB_MAX_IDLE_CONNS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxIdle = n
+		}
+	}
+	DB.SetMaxOpenConns(maxOpen)
+	DB.SetMaxIdleConns(maxIdle)
 
 	log.Println("✅ Database connection established")
 

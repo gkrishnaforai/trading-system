@@ -108,8 +108,25 @@ def create_holdings_table(holdings: List[Dict[str, Any]], show_actions: bool = T
     holdings_data = []
     
     for holding in holdings:
+        if not isinstance(holding, dict):
+            continue
+
+        symbol = (
+            holding.get('symbol')
+            or holding.get('stock_symbol')
+            or holding.get('ticker')
+            or holding.get('code')
+        )
+        symbol = str(symbol).strip().upper() if symbol else ""
+
+        shares_val = (
+            holding.get('shares_held')
+            if holding.get('shares_held') is not None
+            else holding.get('quantity')
+        )
+
         # Get signal with color formatting
-        signal = get_stock_signal(holding['symbol'])
+        signal = get_stock_signal(symbol)
         signal_colors = {'BUY': '🟢', 'SELL': '🔴', 'HOLD': '🟡'}
         color = signal_colors.get(signal, '⚪')
         formatted_signal = f"{color} {signal}"
@@ -121,8 +138,8 @@ def create_holdings_table(holdings: List[Dict[str, Any]], show_actions: bool = T
         pnl_pct = holding.get('unrealized_pnl_pct')
         
         holdings_data.append({
-            'Symbol': holding['symbol'],
-            'Shares': format_shares(holding['shares_held']),
+            'Symbol': symbol or 'N/A',
+            'Shares': format_shares(shares_val),
             'Avg Cost': format_currency(avg_cost),
             'Current Price': format_currency(current_price),
             'Market Value': format_currency(market_value),
@@ -294,6 +311,42 @@ def analyze_portfolio(portfolio_id: str, target_date: Optional[date] = None) -> 
         return {"success": False, "error": str(e)}
 
 
+def fetch_analysis_profiles() -> Dict[str, Any]:
+    try:
+        resp = go_client.get("api/v1/admin/analysis-profiles")
+        return resp if isinstance(resp, dict) else {}
+    except Exception:
+        return {}
+
+
+def analyze_portfolio_with_profile(
+    portfolio_id: str,
+    profile: str,
+    target_date: Optional[date] = None,
+    symbols: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    try:
+        payload: Dict[str, Any] = {"profile": (profile or "").strip()}
+        if target_date:
+            payload["target_date"] = target_date.strftime("%Y-%m-%d")
+        else:
+            payload["target_date"] = date.today().strftime("%Y-%m-%d")
+        if symbols:
+            payload["symbols"] = symbols
+
+        resp = go_client.post(
+            f"api/v1/portfolios/{portfolio_id}/analysis-run",
+            json_data=payload,
+            timeout=30,
+        )
+        if isinstance(resp, dict) and resp.get("run_id"):
+            st.session_state["epa_last_analysis_run_id"] = str(resp.get("run_id"))
+        return resp if isinstance(resp, dict) else {"success": False, "error": "invalid response"}
+    except Exception as e:
+        st.error(f"❌ Failed to start portfolio analysis run: {e}")
+        return {"success": False, "error": str(e)}
+
+
 def _format_ts(v: Any) -> str:
     if not v:
         return ""
@@ -323,6 +376,8 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 def fetch_run(run_id: str) -> Dict[str, Any]:
     if not run_id:
         return {}
+    # Note: analysis runs and data-load runs both persist into the same audit tables
+    # and can be fetched via this unified endpoint.
     resp = go_client.get(f"api/v1/data-load/runs/{run_id}")
     return resp if isinstance(resp, dict) else {}
 
@@ -332,6 +387,219 @@ def fetch_run_notifications(run_id: str) -> Dict[str, Any]:
         return {}
     resp = go_client.get(f"api/v1/notifications/queue/by-correlation/{run_id}")
     return resp if isinstance(resp, dict) else {}
+
+
+def fetch_schedules() -> Dict[str, Any]:
+    resp = go_client.get("api/v1/schedules")
+    return resp if isinstance(resp, dict) else {}
+
+
+def create_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
+    resp = go_client.post("api/v1/schedules", json_data=payload)
+    return resp if isinstance(resp, dict) else {}
+
+
+def update_schedule(schedule_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    resp = go_client.patch(f"api/v1/schedules/{schedule_id}", json_data=payload)
+    return resp if isinstance(resp, dict) else {}
+
+
+def delete_schedule(schedule_id: str) -> Dict[str, Any]:
+    resp = go_client.delete(f"api/v1/schedules/{schedule_id}")
+    return resp if isinstance(resp, dict) else {}
+
+
+def run_now_schedule(schedule_id: str) -> Dict[str, Any]:
+    resp = go_client.post(f"api/v1/schedules/{schedule_id}/run-now")
+    return resp if isinstance(resp, dict) else {}
+
+
+def show_schedules_tab(portfolios: List[Dict[str, Any]]):
+    st.markdown("## ⏰ Schedules (Admin)")
+    st.caption("Backed by Go API: /api/v1/schedules and /api/v1/scheduler/tick")
+
+    profiles_job_resp: Dict[str, Any] = {}
+    profiles_job_map: Dict[str, Any] = {}
+    try:
+        profiles_job_resp = go_client.get("api/v1/admin/job-profiles")
+        profiles_job_map = (profiles_job_resp or {}).get("profiles") or {}
+    except Exception:
+        profiles_job_map = {}
+    job_profile_names = sorted([str(k) for k in profiles_job_map.keys()])
+    if not job_profile_names:
+        job_profile_names = ["intraday_alerts", "intraday_alerts_with_intraday_prices", "daily_analysis", "bootstrap"]
+
+    profiles_analysis_resp: Dict[str, Any] = fetch_analysis_profiles()
+    profiles_analysis_map = (profiles_analysis_resp or {}).get("profiles") or {}
+    analysis_profile_names = sorted([str(k) for k in profiles_analysis_map.keys()])
+    if not analysis_profile_names:
+        analysis_profile_names = ["daily_signals", "intraday_signals", "weekly_rebalance"]
+
+    with st.expander("➕ Create Schedule", expanded=False):
+        kind = st.selectbox(
+            "Kind",
+            options=["data_load", "analysis_run", "rebalance_run"],
+            index=0,
+            key="epa_sched_kind",
+        )
+
+        if portfolios:
+            portfolio_options = {f"{p.get('name')} ({p.get('portfolio_type', '').title()})": p for p in portfolios}
+            selected_portfolio_label = st.selectbox(
+                "Portfolio",
+                options=list(portfolio_options.keys()),
+                key="epa_sched_portfolio",
+            )
+            portfolio_id = str((portfolio_options.get(selected_portfolio_label) or {}).get("id") or "")
+        else:
+            portfolio_id = st.text_input("Portfolio ID (UUID)", key="epa_sched_portfolio_id")
+
+        if kind == "data_load":
+            profile = st.selectbox("Profile", options=job_profile_names, index=0, key="epa_sched_profile_job")
+        elif kind == "analysis_run":
+            profile = st.selectbox("Profile", options=analysis_profile_names, index=0, key="epa_sched_profile_analysis")
+        else:
+            profile = st.selectbox("Profile", options=["weekly_rebalance"], index=0, key="epa_sched_profile_rebalance")
+
+        cron_expression = st.text_input(
+            "Cron (5-field)",
+            value="0 9 * * 1-5",
+            help="minute hour day-of-month month day-of-week",
+            key="epa_sched_cron",
+        )
+        timezone = st.text_input("Timezone", value="America/New_York", key="epa_sched_tz")
+        enabled = st.checkbox("Enabled", value=True, key="epa_sched_enabled")
+
+        symbols_csv = st.text_input(
+            "Symbols (optional, CSV)",
+            value="",
+            help="Leave empty to use all symbols in portfolio",
+            key="epa_sched_symbols",
+        )
+
+        config: Dict[str, Any] = {}
+        symbols = [s.strip().upper() for s in (symbols_csv or "").split(",") if s.strip()]
+        if symbols:
+            config["symbols"] = symbols
+
+        if kind == "data_load":
+            force = st.checkbox("Force", value=False, key="epa_sched_force")
+            config["force"] = force
+        if kind in {"analysis_run", "rebalance_run"}:
+            target_date = st.text_input("Target date (YYYY-MM-DD, optional)", value="", key="epa_sched_target_date")
+            if target_date.strip():
+                config["target_date"] = target_date.strip()
+        if kind == "analysis_run":
+            asset_type = st.selectbox("Asset type", options=["stock", "etf"], index=0, key="epa_sched_asset_type")
+            config["asset_type"] = asset_type
+
+        create_clicked = st.button("Create", type="primary", use_container_width=True, key="epa_sched_create")
+        if create_clicked:
+            payload = {
+                "kind": kind,
+                "portfolio_id": portfolio_id,
+                "profile": profile,
+                "cron_expression": cron_expression,
+                "timezone": timezone,
+                "enabled": enabled,
+                "config": config,
+            }
+            with st.spinner("Creating schedule..."):
+                try:
+                    resp = create_schedule(payload)
+                    if resp and resp.get("schedule"):
+                        st.success("✅ Schedule created")
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to create schedule")
+                        st.json(resp)
+                except Exception as e:
+                    st.error(f"Create failed: {e}")
+
+    st.markdown("### 📋 Existing Schedules")
+    schedules_resp: Dict[str, Any] = {}
+    try:
+        schedules_resp = fetch_schedules()
+    except Exception as e:
+        st.error(f"Failed to fetch schedules: {e}")
+        schedules_resp = {}
+
+    schedules = (schedules_resp or {}).get("schedules") or []
+    if not isinstance(schedules, list):
+        schedules = []
+
+    if schedules:
+        rows = []
+        for s in schedules:
+            if not isinstance(s, dict):
+                continue
+            rows.append({
+                "schedule_id": s.get("schedule_id"),
+                "kind": s.get("kind"),
+                "portfolio_id": s.get("portfolio_id"),
+                "profile": s.get("profile"),
+                "cron_expression": s.get("cron_expression"),
+                "timezone": s.get("timezone"),
+                "enabled": s.get("enabled"),
+                "next_run_at": _format_ts(s.get("next_run_at")),
+                "last_run_at": _format_ts(s.get("last_run_at")),
+                "last_run_id": s.get("last_run_id"),
+            })
+        df = pd.DataFrame(rows)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+        st.markdown("### ⚙️ Manage")
+        sched_ids = [str(s.get("schedule_id")) for s in schedules if isinstance(s, dict) and s.get("schedule_id")]
+        selected_id = st.selectbox("Schedule", options=sched_ids, key="epa_sched_manage_select")
+        selected_obj = next((x for x in schedules if isinstance(x, dict) and str(x.get("schedule_id")) == str(selected_id)), {})
+        manage_col1, manage_col2, manage_col3, manage_col4 = st.columns([1, 1, 1, 1])
+
+        with manage_col1:
+            if st.button("▶️ Run now", use_container_width=True, key="epa_sched_run_now"):
+                with st.spinner("Triggering run..."):
+                    resp = run_now_schedule(selected_id)
+                    run_id = (resp or {}).get("run_id")
+                    if run_id:
+                        st.session_state["epa_last_analysis_run_id"] = str(run_id)
+                        st.success(f"✅ Run started: {run_id}")
+                    else:
+                        st.error("❌ Failed to trigger run")
+                        st.json(resp)
+
+        with manage_col2:
+            new_enabled = st.checkbox(
+                "Enabled",
+                value=bool(selected_obj.get("enabled", True)),
+                key="epa_sched_manage_enabled",
+            )
+            if st.button("💾 Save", use_container_width=True, key="epa_sched_save"):
+                with st.spinner("Updating..."):
+                    resp = update_schedule(selected_id, {"enabled": new_enabled})
+                    if resp and resp.get("schedule"):
+                        st.success("✅ Updated")
+                        st.rerun()
+                    else:
+                        st.error("❌ Update failed")
+                        st.json(resp)
+
+        with manage_col3:
+            if st.button("🗑️ Delete", use_container_width=True, key="epa_sched_delete"):
+                with st.spinner("Deleting..."):
+                    resp = delete_schedule(selected_id)
+                    if resp and resp.get("success"):
+                        st.success("✅ Deleted")
+                        st.rerun()
+                    else:
+                        st.error("❌ Delete failed")
+                        st.json(resp)
+
+        with manage_col4:
+            if st.button("🔄 Tick now", use_container_width=True, key="epa_sched_tick"):
+                with st.spinner("Calling scheduler tick..."):
+                    resp = go_client.post("api/v1/scheduler/tick", json_data={})
+                    st.json(resp)
+    else:
+        st.caption("No schedules found.")
 
 def get_symbol_signal_history(symbol: str, limit: int = 50) -> List[Dict[str, Any]]:
     """Get signal history for a symbol with timeout handling"""
@@ -677,7 +945,8 @@ def show_stock_analysis_tab(portfolios):
                 st.write(f"**{holding['symbol']}**")
             
             with col2:
-                st.write(f"Shares: {format_shares(holding['shares_held'])}")
+                shares_value = holding.get('shares_held', holding.get('shares', holding.get('quantity', 0)))
+                st.write(f"Shares: {format_shares(shares_value)}")
             
             with col3:
                 st.write(f"Cost: {format_currency(holding.get('average_cost', 0))}")
@@ -1252,6 +1521,29 @@ def show_portfolio_overview():
                         st.success(f"✅ Analysis run started: {result.get('run_id')}")
                     else:
                         st.error("❌ Failed to start analysis run")
+
+        profiles_resp: Dict[str, Any] = fetch_analysis_profiles()
+        profiles_map = (profiles_resp or {}).get("profiles") or {}
+        profile_names = sorted([str(k) for k in profiles_map.keys()])
+        if not profile_names:
+            profile_names = ["daily_signals", "intraday_signals", "weekly_rebalance"]
+
+        st.markdown("#### 📌 Analysis Profiles")
+        prof_col1, prof_col2, prof_col3 = st.columns([2, 1, 2])
+        with prof_col1:
+            selected_profile = st.selectbox("Profile", options=profile_names, index=0, key="epa_analysis_profile_select")
+        with prof_col2:
+            run_profile_clicked = st.button("▶️ Run", use_container_width=True, key="epa_run_analysis_profile")
+        with prof_col3:
+            st.caption("Starts: POST /api/v1/portfolios/:portfolio_id/analysis-run")
+
+        if run_profile_clicked:
+            with st.spinner(f"Starting analysis run ({selected_profile})..."):
+                result = analyze_portfolio_with_profile(selected_portfolio['id'], selected_profile)
+                if result and result.get("run_id"):
+                    st.success(f"✅ Analysis run started: {result.get('run_id')}")
+                else:
+                    st.error("❌ Failed to start analysis run")
         
         with col2:
             if st.button("🔄 Refresh Data", use_container_width=True, key="overview_refresh"):
@@ -1280,7 +1572,7 @@ def show_portfolio_overview():
         if 'last_analysis_result' in st.session_state:
             show_institutional_analysis_results(st.session_state.last_analysis_result)
 
-        st.markdown("### 🧵 Analysis Run Inspector")
+        st.markdown("### 🧵 Run Inspector (Data Load + Analysis)")
 
         run_id_input = st.text_input(
             "Run ID",
@@ -2913,14 +3205,15 @@ def main():
         show_create_portfolio_form("first_portfolio")
     else:
         # Tabbed interface for portfolio management
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
             "📊 Portfolio Overview", 
             "📋 Portfolio Management", 
             "📈 Stock Analysis", 
             "🏢 Stock Symbols",
             "📊 Analyst Ratings",
             "🔔 Alert Management",
-            "⚙️ Settings"
+            "⚙️ Settings",
+            "⏰ Schedules"
         ])
         
         # Check if symbol analysis is requested and show it instead of tabs
@@ -2959,6 +3252,9 @@ def main():
             
             with tab7:
                 show_settings_tab()
+
+            with tab8:
+                show_schedules_tab(portfolios)
 
 def show_stock_symbols_tab():
     """Stock Symbols Management Tab - Add and view stock symbols"""
@@ -4039,8 +4335,11 @@ def show_create_alert_section(user_id: str):
             # Stock symbol selection with type-ahead search
             if available_stocks:
                 # Create a searchable dropdown with type-ahead
-                symbol_options = {f"{stock['symbol']} - {stock['company_name'][:40]}": stock['symbol'] 
-                               for stock in available_stocks}
+                symbol_options = {
+                    f"{stock.get('symbol', '')} - {(stock.get('company_name') or '')[:40]}": stock.get('symbol', '')
+                    for stock in available_stocks
+                    if isinstance(stock, dict) and stock.get('symbol')
+                }
                 
                 # Search box for filtering symbols
                 search_term = st.text_input(

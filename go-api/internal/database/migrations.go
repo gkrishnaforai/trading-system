@@ -261,33 +261,84 @@ func applyMigration(migration Migration) error {
 	return nil
 }
 
-// splitSQLStatements splits SQL by semicolons, handling semicolons inside strings
+// splitSQLStatements splits SQL by semicolons.
+//
+// It must *not* split inside:
+// - single-quoted strings: '...'
+// - dollar-quoted blocks: $$ ... $$ or $tag$ ... $tag$ (used by PL/pgSQL)
 func splitSQLStatements(sql string) []string {
 	var statements []string
 	var current strings.Builder
-	inString := false
-	escapeNext := false
 
-	for _, char := range sql {
-		if escapeNext {
-			current.WriteRune(char)
-			escapeNext = false
+	inSingleQuote := false
+	dollarTag := "" // e.g. "$$" or "$func$"; empty means not inside a dollar-quoted block
+
+	bytes := []byte(sql)
+	for i := 0; i < len(bytes); i++ {
+		c := bytes[i]
+
+		// Inside dollar-quoted block: only look for the closing tag.
+		if dollarTag != "" {
+			if i+len(dollarTag) <= len(bytes) && string(bytes[i:i+len(dollarTag)]) == dollarTag {
+				current.WriteString(dollarTag)
+				i += len(dollarTag) - 1
+				dollarTag = ""
+				continue
+			}
+			current.WriteByte(c)
 			continue
 		}
 
-		if char == '\\' {
-			escapeNext = true
-			current.WriteRune(char)
+		// Inside single-quoted string: handle doubled quotes '' (SQL escaping).
+		if inSingleQuote {
+			if c == '\'' {
+				// If next char is also a single quote, it's an escaped quote.
+				if i+1 < len(bytes) && bytes[i+1] == '\'' {
+					current.WriteByte(c)
+					current.WriteByte(bytes[i+1])
+					i++
+					continue
+				}
+				inSingleQuote = false
+				current.WriteByte(c)
+				continue
+			}
+			current.WriteByte(c)
 			continue
 		}
 
-		if char == '\'' {
-			inString = !inString
-			current.WriteRune(char)
+		// Not inside any quoted context.
+		if c == '\'' {
+			inSingleQuote = true
+			current.WriteByte(c)
 			continue
 		}
 
-		if !inString && char == ';' {
+		// Start of a dollar-quoted tag: $$ or $tag$
+		if c == '$' {
+			// Find the next '$' to determine the tag.
+			j := i + 1
+			for j < len(bytes) {
+				if bytes[j] == '$' {
+					dollarTag = string(bytes[i : j+1])
+					current.WriteString(dollarTag)
+					i = j
+					break
+				}
+				// Dollar tags cannot contain whitespace/newlines; bail early.
+				if bytes[j] == '\n' || bytes[j] == '\r' || bytes[j] == '\t' || bytes[j] == ' ' {
+					break
+				}
+				j++
+			}
+			if dollarTag != "" {
+				continue
+			}
+			current.WriteByte(c)
+			continue
+		}
+
+		if c == ';' {
 			stmt := strings.TrimSpace(current.String())
 			if stmt != "" {
 				statements = append(statements, stmt)
@@ -296,10 +347,9 @@ func splitSQLStatements(sql string) []string {
 			continue
 		}
 
-		current.WriteRune(char)
+		current.WriteByte(c)
 	}
 
-	// Add remaining statement
 	stmt := strings.TrimSpace(current.String())
 	if stmt != "" {
 		statements = append(statements, stmt)

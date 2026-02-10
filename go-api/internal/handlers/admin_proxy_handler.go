@@ -2,9 +2,12 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/trading-system/go-api/internal/services"
@@ -16,10 +19,11 @@ import (
 // Endpoints are exposed under /api/v1/admin/*.
 type AdminProxyHandler struct {
 	pythonWorker *services.PythonWorkerClient
+	cache        *services.CacheService
 }
 
-func NewAdminProxyHandler(pythonWorker *services.PythonWorkerClient) *AdminProxyHandler {
-	return &AdminProxyHandler{pythonWorker: pythonWorker}
+func NewAdminProxyHandler(pythonWorker *services.PythonWorkerClient, cache *services.CacheService) *AdminProxyHandler {
+	return &AdminProxyHandler{pythonWorker: pythonWorker, cache: cache}
 }
 
 func (h *AdminProxyHandler) proxy(c *gin.Context, method string, path string) {
@@ -87,7 +91,35 @@ func (h *AdminProxyHandler) GetDataSources(c *gin.Context) {
 
 // POST /api/v1/admin/refresh -> python-worker POST /refresh
 func (h *AdminProxyHandler) Refresh(c *gin.Context) {
+	// Read request body once so we can both proxy it and invalidate cache afterwards.
+	b, _ := io.ReadAll(c.Request.Body)
+	c.Request.Body = io.NopCloser(bytes.NewReader(b))
+
+	// Best-effort symbol extraction for cache invalidation.
+	symbols := []string{}
+	if len(b) > 0 {
+		var payload struct {
+			Symbols []string `json:"symbols"`
+		}
+		if err := json.Unmarshal(b, &payload); err == nil {
+			symbols = payload.Symbols
+		}
+	}
+
+	// Proxy to python-worker.
 	h.proxy(c, http.MethodPost, "/admin/refresh")
+
+	// Invalidate cached stock indicator responses so Streamlit sees fresh MACD immediately.
+	if h.cache == nil {
+		return
+	}
+	for _, sym := range symbols {
+		s := strings.TrimSpace(strings.ToUpper(sym))
+		if s == "" {
+			continue
+		}
+		_ = h.cache.Delete(fmt.Sprintf("stock:%s", s))
+	}
 }
 
 // GET /api/v1/admin/refresh/status -> python-worker GET /admin/refresh/status
