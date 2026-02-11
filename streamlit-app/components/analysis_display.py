@@ -90,6 +90,25 @@ def display_signal_analysis(symbol: str, signal_data: Dict[str, Any], show_heade
     analysis = signal_data.get("analysis", {})
     engine = signal_data.get("engine", {})
 
+    status = signal.get("status") if isinstance(signal, dict) else None
+    if status == "data_missing":
+        missing = []
+        md = signal.get("metadata") if isinstance(signal, dict) else None
+        if isinstance(md, dict) and isinstance(md.get("missing"), list):
+            missing = md.get("missing")
+        if not missing:
+            dc = signal_data.get("data_completeness") if isinstance(signal_data, dict) else None
+            if isinstance(dc, dict) and isinstance(dc.get("missing"), list):
+                missing = dc.get("missing")
+
+        st.error(f"DATA MISSING for {symbol}")
+        if missing:
+            st.write("Missing inputs:")
+            st.write(", ".join([str(x) for x in missing]))
+        if show_debug:
+            st.json(signal_data)
+        return
+
     macd_fields = _extract_macd_fields(market_data if isinstance(market_data, dict) else {})
     macd_raw = macd_fields.get("macd")
     macd_signal_raw = macd_fields.get("macd_signal")

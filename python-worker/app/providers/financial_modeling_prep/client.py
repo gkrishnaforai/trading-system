@@ -1398,11 +1398,40 @@ class EnhancedFMPClient:
     
     def get_comprehensive_financial_data(self, symbol: str, period: str = None) -> Dict[str, Any]:
         """Get comprehensive financial data for a symbol"""
+        income_growth = self.get_income_statement_growth(symbol, period)
+        balance_growth = self.get_balance_sheet_growth(symbol, period)
+        cash_flow_growth = self.get_cash_flow_growth(symbol, period)
+
+        income_statement = self.get_income_statement(symbol, period)
+        balance_sheet = self.get_balance_sheet_statement(symbol, period)
+        cash_flow = self.get_cash_flow_statement(symbol, period)
+
+        as_of_date = None
+        for rows in (income_growth, balance_growth, cash_flow_growth, income_statement, balance_sheet, cash_flow):
+            if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+                as_of_date = rows[0].get("date") or rows[0].get("fiscalDateEnding") or rows[0].get("fiscal_date_ending")
+                if as_of_date:
+                    as_of_date = str(as_of_date)
+                    break
         return {
             "profile": self.get_company_profile(symbol),
-            "income_statement": self.get_income_statement(symbol, period),
-            "balance_sheet": self.get_balance_sheet_statement(symbol, period),
-            "cash_flow": self.get_cash_flow_statement(symbol, period),
+            "meta": {"provider": "fmp", "as_of_date": as_of_date},
+            "statements": {
+                "income": income_statement,
+                "balance": balance_sheet,
+                "cash_flow": cash_flow,
+            },
+            "income_statement": income_statement,
+            "balance_sheet": balance_sheet,
+            "cash_flow": cash_flow,
+            "income_statement_growth": income_growth,
+            "balance_sheet_growth": balance_growth,
+            "cash_flow_growth": cash_flow_growth,
+            "statement_growth": {
+                "income_statement": income_growth,
+                "balance_sheet": balance_growth,
+                "cash_flow": cash_flow_growth,
+            },
             "key_metrics": self.get_key_metrics(symbol, period),
             "financial_ratios": self.get_financial_ratios(symbol, period),
             "financial_scores": self.get_financial_scores(symbol),

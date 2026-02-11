@@ -2492,7 +2492,11 @@ def get_symbol_analysis(symbol: str, asset_type: str = "stock"):
             "asset_type": asset_type
         }
         
-        response = go_client.post("api/v1/admin/universal/signal/universal", json_data=payload)
+        response = go_client.post(
+            "api/v1/admin/universal/signal/universal",
+            json_data=payload,
+            timeout=180,
+        )
         
         if response and response.get("success"):
             return response["data"]
@@ -2551,8 +2555,16 @@ def show_symbol_analysis(symbol: str):
     
     # Cache the analysis for potential reuse within this session
     cache_key = f"analysis_{symbol}"
-    if analysis_data and not analysis_data.get('error'):
+    status = None
+    if isinstance(analysis_data, dict):
+        sig = analysis_data.get("signal")
+        if isinstance(sig, dict):
+            status = sig.get("status")
+
+    if analysis_data and not analysis_data.get('error') and status != "data_missing":
         st.session_state[cache_key] = analysis_data
+    elif cache_key in st.session_state:
+        del st.session_state[cache_key]
     
     # Display analysis using shared component
     if analysis_data and not analysis_data.get('error'):

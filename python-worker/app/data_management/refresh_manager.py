@@ -1636,7 +1636,21 @@ class DataRefreshManager(BaseService):
             from datetime import datetime
 
             repo = FundamentalsRepository()
-            repo.upsert_fundamentals(symbol=symbol, fundamentals=fundamentals, snapshot_date=datetime.now())
+            as_of_date_str = None
+            if isinstance(fundamentals, dict):
+                meta = fundamentals.get("meta")
+                if isinstance(meta, dict):
+                    as_of_date_str = meta.get("as_of_date")
+
+            snapshot_dt = datetime.now()
+            if as_of_date_str:
+                try:
+                    snapshot_dt = datetime.strptime(str(as_of_date_str), "%Y-%m-%d")
+                except Exception:
+                    # Fall back to refresh time if provider doesn't supply a parsable as_of_date
+                    snapshot_dt = datetime.now()
+
+            repo.upsert_fundamentals(symbol=symbol, fundamentals=fundamentals, snapshot_date=snapshot_dt)
             
             # Save to stock_insights_snapshots table
             saved = 0

@@ -17,6 +17,19 @@ from app.services.data_sources.base import (
 logger = logging.getLogger(__name__)
 
 
+def _row_list_as_of_date(rows: Any) -> Optional[date]:
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        return None
+    for k in ("date", "fiscalDateEnding", "fiscal_date_ending"):
+        v = rows[0].get(k)
+        if v:
+            try:
+                return datetime.strptime(str(v), "%Y-%m-%d").date()
+            except Exception:
+                pass
+    return None
+
+
 class FMPDataSource(BaseDataSource):
     """Financial Modeling Prep data source implementation
     
@@ -272,11 +285,40 @@ class FMPDataSource(BaseDataSource):
             
             # Add some key metrics
             metrics = self.client.get_key_metrics_ttm(symbol)
+
+            # Fetch statements for canonical payload + stable as_of_date extraction
+            income_statements = self.client.get_income_statement(symbol)
+            balance_sheets = self.client.get_balance_sheet_statement(symbol)
+            cash_flow_statements = self.client.get_cash_flow_statement(symbol)
+
+            # Add growth series (statement growth endpoints)
+            income_growth = self.client.get_income_statement_growth(symbol)
+            balance_growth = self.client.get_balance_sheet_growth(symbol)
+            cash_flow_growth = self.client.get_cash_flow_growth(symbol)
+
+            as_of_date = _row_list_as_of_date(income_growth) or _row_list_as_of_date(income_statements)
             
             # Combine profile and metrics
             fundamentals = profile.copy()
             if metrics and len(metrics) > 0:
                 fundamentals["key_metrics"] = metrics[0]  # Take latest metrics
+
+            fundamentals["statement_growth"] = {
+                "income_statement": income_growth,
+                "balance_sheet": balance_growth,
+                "cash_flow": cash_flow_growth,
+            }
+
+            fundamentals["meta"] = {
+                "provider": "fmp",
+                "as_of_date": as_of_date.isoformat() if as_of_date else None,
+            }
+
+            fundamentals["statements"] = {
+                "income": income_statements,
+                "balance": balance_sheets,
+                "cash_flow": cash_flow_statements,
+            }
             
             return fundamentals
             

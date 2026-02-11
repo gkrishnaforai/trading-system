@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd
 from datetime import datetime, date, timedelta
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 # Import existing DRY functions (no changes to TQQQ API)
 from app.utils.database_helper import DatabaseQueryHelper
@@ -153,16 +153,99 @@ async def get_universal_signal(request: SignalRequest):
                 'asset_type': request.asset_type
             }
         })
+
+        sym = (request.symbol or "").strip().upper()
+        requested_date = (request.date or "").strip()
+        resolved_date = requested_date
+
+        try:
+            engine = create_engine(settings.database_url)
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text(
+                        """
+                        SELECT MAX(date) AS as_of_date
+                        FROM raw_market_data_daily
+                        WHERE symbol = :symbol
+                          AND date <= CAST(:req_date AS date)
+                        """
+                    ),
+                    {"symbol": sym, "req_date": requested_date},
+                ).fetchone()
+
+                as_of = row[0] if row else None
+                if not as_of:
+                    row2 = conn.execute(
+                        text(
+                            """
+                            SELECT MAX(date) AS as_of_date
+                            FROM raw_market_data_daily
+                            WHERE symbol = :symbol
+                            """
+                        ),
+                        {"symbol": sym},
+                    ).fetchone()
+                    as_of = row2[0] if row2 else None
+
+                if as_of:
+                    resolved_date = str(as_of)
+
+                if resolved_date != requested_date:
+                    logger.info(
+                        f"📅 Resolved as-of date for {sym}: requested={requested_date} as_of={resolved_date}"
+                    )
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to resolve as-of date for {sym} req={requested_date}: {e}")
+            resolved_date = requested_date
         
         # Get asset configuration
         asset_config = ASSET_CONFIGS.get(request.asset_type, ASSET_CONFIGS["3x_etf"])
+
+        from app.services.signal_prerequisites_service import SignalPrerequisitesService
+        # Required inputs should be defined by the engine (DRY / avoids false signals).
+        required_indicators = UnifiedTQQQSwingEngine.required_indicators()
+        require_fundamentals = UnifiedTQQQSwingEngine.requires_fundamentals()
+        prereq = SignalPrerequisitesService().ensure_ready(
+            sym,
+            resolved_date,
+            required_indicators=required_indicators,
+            require_fundamentals=require_fundamentals,
+        )
+        if not prereq.ok:
+            return {
+                "success": True,
+                "data": {
+                    "engine": {"type": request.asset_type},
+                    "market_data": {
+                        "symbol": sym,
+                        "requested_date": requested_date,
+                        "as_of_date": resolved_date,
+                        "date": resolved_date,
+                    },
+                    "data_completeness": {
+                        "indicators_present": prereq.indicators_present,
+                        "fundamentals_present": prereq.fundamentals_present,
+                        "missing": prereq.missing,
+                        "backfilled": prereq.backfilled,
+                    },
+                    "signal": {
+                        "status": "data_missing",
+                        "signal": "hold",
+                        "confidence": 0.0,
+                        "reasoning": [f"Insufficient data: missing {', '.join(prereq.missing)}"],
+                        "metadata": {"error": "insufficient_data", "missing": prereq.missing},
+                    },
+                    "timestamp": datetime.now().isoformat(),
+                    "asset_type": request.asset_type,
+                },
+            }
         
         # Check if data exists for the symbol using existing DatabaseQueryHelper
         try:
             # Use the existing DatabaseQueryHelper method that TQQQ API uses
             # This checks the raw_market_data_daily table properly
             data = DatabaseQueryHelper.get_historical_data(
-                symbol=request.symbol,
+                symbol=sym,
                 start_date=None,
                 end_date=None,
                 limit=1  # Just check if any data exists
@@ -171,26 +254,24 @@ async def get_universal_signal(request: SignalRequest):
             if not data or len(data) == 0:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Symbol '{request.symbol}' not found in database. Please verify the symbol is correct and data has been loaded."
+                    detail=f"Symbol '{sym}' not found in database. Please verify the symbol is correct and data has been loaded."
                 )
                 
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error checking data availability for '{request.symbol}': {str(e)}")
+            logger.error(f"Error checking data availability for '{sym}': {str(e)}")
             raise HTTPException(
                 status_code=400,
-                detail=f"Error checking data availability for '{request.symbol}': {str(e)}"
+                detail=f"Error checking data availability for '{sym}': {str(e)}"
             )
         
         # Load market data using same method as TQQQ API for consistency
-        target_date = datetime.strptime(request.date, "%Y-%m-%d").date()
+        target_date = datetime.strptime(resolved_date, "%Y-%m-%d").date()
         
         # For TQQQ, use the exact same method as TQQQ API for consistency
-        if request.symbol.upper() == 'TQQQ':
+        if sym == 'TQQQ':
             # Use the same query and logic as TQQQ Engine API (unchanged)
-            from sqlalchemy import create_engine, text
-            
             engine = create_engine(settings.database_url)
             
             # Build the same query as TQQQ API
@@ -254,7 +335,7 @@ async def get_universal_signal(request: SignalRequest):
             
             # Get symbol data using same indicators methodology as TQQQ
             symbol_data = get_symbol_indicators_data(
-                symbol=request.symbol,
+                symbol=sym,
                 target_date=target_date.strftime("%Y-%m-%d"),
                 db_url=settings.database_url
             )
@@ -262,12 +343,12 @@ async def get_universal_signal(request: SignalRequest):
             if not symbol_data:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"No {request.symbol} data available for {request.date}"
+                    detail=f"No {sym} data available for {resolved_date}"
                 )
             
             # Use enhanced market context calculation with asset-type-specific thresholds
             market_context = calculate_market_regime_context(
-                symbol=request.symbol,
+                symbol=sym,
                 target_date=target_date.strftime("%Y-%m-%d"),
                 db_url=settings.database_url,
                 asset_type=request.asset_type  # Pass asset type for specific calculations
@@ -276,7 +357,7 @@ async def get_universal_signal(request: SignalRequest):
             if not market_context:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"No market data available for {request.symbol} on {request.date}"
+                    detail=f"No market data available for {sym} on {resolved_date}"
                 )
             
             # Create market conditions using same indicators data as TQQQ methodology
@@ -313,9 +394,9 @@ async def get_universal_signal(request: SignalRequest):
         
         # Calculate EMA slope for trend analysis
         try:
-            ema_slope = calculate_ema_slope(request.symbol, request.date, settings.database_url)
+            ema_slope = calculate_ema_slope(sym, resolved_date, settings.database_url)
         except Exception as e:
-            logger.warning(f"Failed to calculate EMA slope for {request.symbol}: {e}")
+            logger.warning(f"Failed to calculate EMA slope for {sym}: {e}")
             ema_slope = 0.0
         
         # Use TQQQ engine for all (will extend later)
@@ -348,7 +429,7 @@ async def get_universal_signal(request: SignalRequest):
         macd_payload = None
         macd_signal_payload = None
         try:
-            if request.symbol.upper() == 'TQQQ':
+            if sym == 'TQQQ':
                 macd_payload = float(row[5]) if row[5] is not None else None
                 macd_signal_payload = float(row[6]) if row[6] is not None else None
             else:
@@ -383,8 +464,10 @@ async def get_universal_signal(request: SignalRequest):
                 "config": asset_config
             },
             "market_data": {
-                "symbol": request.symbol,
-                "date": request.date,
+                "symbol": sym,
+                "requested_date": requested_date,
+                "as_of_date": resolved_date,
+                "date": resolved_date,
                 "price": conditions.current_price,
                 "rsi": conditions.rsi,
                 "sma_20": conditions.sma_20,
@@ -427,7 +510,7 @@ async def get_universal_signal(request: SignalRequest):
             "asset_type": request.asset_type
         }
         
-        logger.info(f"✅ Generated {request.asset_type} signal for {request.symbol}: {signal_result.signal.value}")
+        logger.info(f"✅ Generated {request.asset_type} signal for {sym}: {signal_result.signal.value}")
         
         return {
             "success": True,
@@ -437,8 +520,8 @@ async def get_universal_signal(request: SignalRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error generating signal for {request.symbol}: {str(e)}")
-        log_exception(logger, e, f"Universal signal generation for {request.symbol}")
+        logger.error(f"❌ Error generating signal for {sym}: {str(e)}")
+        log_exception(logger, e, f"Universal signal generation for {sym}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/backtest/universal")

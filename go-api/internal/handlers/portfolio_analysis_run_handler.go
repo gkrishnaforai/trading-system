@@ -65,6 +65,7 @@ func (h *PortfolioAnalysisRunHandler) CreateRun(c *gin.Context) {
 	}
 
 	symbols := []string{}
+	droppedSymbols := []string{}
 	if len(req.Symbols) > 0 {
 		valid, _ := sanitizeSymbols(req.Symbols)
 		symbols = valid
@@ -74,7 +75,9 @@ func (h *PortfolioAnalysisRunHandler) CreateRun(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		symbols = s
+		valid, dropped := sanitizeSymbols(s)
+		symbols = valid
+		droppedSymbols = dropped
 	}
 	if len(symbols) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no symbols resolved"})
@@ -91,6 +94,10 @@ func (h *PortfolioAnalysisRunHandler) CreateRun(c *gin.Context) {
 		"target_date":  targetDate,
 		"requested_at": time.Now().UTC().Format(time.RFC3339),
 	})
+	if len(droppedSymbols) > 0 {
+		msg := "dropped invalid symbols"
+		_ = h.auditRepo.CreateEvent(runID, "info", "symbols_sanitized", nil, nil, &msg, nil, map[string]any{"dropped": droppedSymbols, "dropped_count": len(droppedSymbols)}, nil)
+	}
 
 	if !h.useJobQueue || h.jobQueue == nil {
 		msg := "job queue not enabled"

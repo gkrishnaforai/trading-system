@@ -71,6 +71,14 @@ class UnifiedTQQQSwingEngine:
         # Initialize logger
         self.logger = get_logger(__name__)
         self.logger.info("🚀 Unified TQQQ Swing Engine initialized with Fear/Greed integration")
+
+    @staticmethod
+    def required_indicators() -> List[str]:
+        return ["rsi_14", "sma_50", "ema_20", "macd", "macd_signal"]
+
+    @staticmethod
+    def requires_fundamentals() -> bool:
+        return True
     
     @staticmethod
     def map_confidence_to_position(confidence: float, signal: SignalType) -> Dict:
