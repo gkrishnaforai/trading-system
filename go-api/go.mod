@@ -2,9 +2,12 @@ module github.com/trading-system/go-api
 
 go 1.22
 
+replace github.com/rogpeppe/go-internal => github.com/rogpeppe/go-internal v1.13.1
+
 require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/uuid v1.6.0
+	github.com/jackc/pgx/v5 v5.5.5
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/redis/go-redis/v9 v9.5.1
 	github.com/robfig/cron/v3 v3.0.1

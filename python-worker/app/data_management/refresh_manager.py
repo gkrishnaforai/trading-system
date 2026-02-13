@@ -1651,6 +1651,21 @@ class DataRefreshManager(BaseService):
                     snapshot_dt = datetime.now()
 
             repo.upsert_fundamentals(symbol=symbol, fundamentals=fundamentals, snapshot_date=snapshot_dt)
+
+            # Emit fundamentals change events (deduped by as_of_date).
+            try:
+                from app.repositories.fundamentals_change_events_repository import FundamentalsChangeEventsRepository
+                from app.services.fundamentals_change_event_generator import generate_events_from_fundamentals_snapshot
+
+                events_repo = FundamentalsChangeEventsRepository()
+                as_of, events = generate_events_from_fundamentals_snapshot(symbol, fundamentals)
+                if as_of and events:
+                    latest_as_of = events_repo.fetch_latest_as_of_date(symbol)
+                    if latest_as_of != as_of:
+                        events_repo.insert_events(events)
+            except Exception as e:
+                # Non-critical: fundamentals refresh should still succeed even if events fail.
+                self.logger.warning(f"Failed to generate fundamentals change events for {symbol} (non-critical): {e}")
             
             # Save to stock_insights_snapshots table
             saved = 0

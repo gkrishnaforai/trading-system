@@ -191,6 +191,42 @@ func (r *IngestionAuditRepository) ListRunsByPortfolio(portfolioID string, limit
 	return runs, nil
 }
 
+func (r *IngestionAuditRepository) ListRunsByScheduleID(scheduleID string, limit int) ([]models.DataIngestionRun, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	query := `
+		SELECT run_id, started_at, finished_at, status, environment, git_sha, metadata
+		FROM data_ingestion_runs
+		WHERE COALESCE(metadata->>'schedule_id','') = $1
+		ORDER BY started_at DESC
+		LIMIT $2
+	`
+	rows, err := r.db.Query(query, scheduleID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []models.DataIngestionRun
+	for rows.Next() {
+		var run models.DataIngestionRun
+		if err := rows.Scan(
+			&run.RunID,
+			&run.StartedAt,
+			&run.FinishedAt,
+			&run.Status,
+			&run.Environment,
+			&run.GitSHA,
+			&run.Metadata,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan run: %w", err)
+		}
+		runs = append(runs, run)
+	}
+	return runs, nil
+}
+
 func (r *IngestionAuditRepository) ListEvents(runID string, limit int) ([]models.DataIngestionEvent, error) {
 	if limit <= 0 {
 		limit = 200

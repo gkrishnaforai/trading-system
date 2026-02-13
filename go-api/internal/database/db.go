@@ -8,7 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	_ "github.com/lib/pq"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -26,7 +27,7 @@ func InitDB() error {
 
 	// Detect driver from URL
 	if strings.HasPrefix(dbURL, "postgresql://") || strings.HasPrefix(dbURL, "postgres://") {
-		driver = "postgres"
+		driver = "pgx"
 	} else {
 		driver = "sqlite3"
 		// Handle SQLite file path
@@ -43,9 +44,19 @@ func InitDB() error {
 		}
 	}
 
-	DB, err = sql.Open(driver, dbURL)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
+	if driver == "pgx" {
+		config, err := pgx.ParseConfig(dbURL)
+		if err != nil {
+			return fmt.Errorf("failed to parse database url: %w", err)
+		}
+		// Avoid prepared statement issues with PgBouncer/transaction pooling.
+		config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+		DB = stdlib.OpenDB(*config)
+	} else {
+		DB, err = sql.Open(driver, dbURL)
+		if err != nil {
+			return fmt.Errorf("failed to open database: %w", err)
+		}
 	}
 
 	// Test connection

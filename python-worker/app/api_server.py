@@ -97,6 +97,7 @@ from app.api.market_endpoints import router as market_router
 from app.api.data_scheduler_api import router as data_scheduler_router
 from app.api.enhanced_fmp_api import router as enhanced_fmp_router
 from app.api.stock_grades_api import router as stock_grades_router
+from app.api.fundamentals_events_api import router as fundamentals_events_router
 # DEPRECATED: Rating Alerts API - Migrated to Universal Alerts
 # from app.api.rating_alert_api import router as rating_alert_router
 from app.api.universal_alert_api import router as universal_alert_router
@@ -125,6 +126,7 @@ app.include_router(market_router, prefix="/api/v1")
 app.include_router(data_scheduler_router, prefix="/api/v1/scheduler")
 app.include_router(enhanced_fmp_router, prefix="/api/v1")
 app.include_router(stock_grades_router, prefix="/api/v1")
+app.include_router(fundamentals_events_router, prefix="/api/v1/fundamentals")
 # DEPRECATED: Rating Alerts API - Migrated to Universal Alerts
 # app.include_router(rating_alert_router, prefix="/api/v1")
 app.include_router(universal_alert_router, prefix="/api/v1/universal-alerts")

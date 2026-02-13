@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	_ "time/tzdata"
 
 	"github.com/gin-gonic/gin"
 	"github.com/trading-system/go-api/internal/database"
@@ -102,7 +103,7 @@ func main() {
 	portfolioRebalanceRunHandler := handlers.NewPortfolioRebalanceRunHandler(ingestionAuditRepo, jobQueue, useJobQueue)
 
 	schedulerService := services.NewSchedulerService(scheduleRepo, ingestionAuditRepo, jobQueue, useJobQueue)
-	scheduleHandler := handlers.NewScheduleHandler(scheduleRepo, schedulerService)
+	scheduleHandler := handlers.NewScheduleHandler(scheduleRepo, schedulerService, ingestionAuditRepo)
 	schedulerTickHandler := handlers.NewSchedulerTickHandler(schedulerService)
 
 	// Initialize HTTP router
@@ -167,6 +168,7 @@ func main() {
 		api.GET("/schedules", scheduleHandler.List)
 		api.POST("/schedules", scheduleHandler.Create)
 		api.GET("/schedules/:schedule_id", scheduleHandler.Get)
+		api.GET("/schedules/:schedule_id/runs", scheduleHandler.ListRuns)
 		api.PATCH("/schedules/:schedule_id", scheduleHandler.Update)
 		api.DELETE("/schedules/:schedule_id", scheduleHandler.Delete)
 		api.POST("/schedules/:schedule_id/run-now", scheduleHandler.RunNow)
@@ -182,6 +184,14 @@ func main() {
 		api.POST("/admin/swing/signal", adminProxyHandler.SwingSignal)
 		api.POST("/admin/swing/risk/check", adminProxyHandler.SwingRiskCheck)
 		api.POST("/admin/universal/signal/universal", adminProxyHandler.UniversalSignal)
+		api.Any("/admin/fundamentals/*path", func(c *gin.Context) {
+			switch c.Request.Method {
+			case "GET":
+				adminProxyHandler.FundamentalsGet(c)
+			default:
+				c.JSON(405, gin.H{"error": "method not allowed"})
+			}
+		})
 		api.Any("/admin/growth-quality/*path", func(c *gin.Context) {
 			// Allow GET/POST passthrough for now
 			switch c.Request.Method {

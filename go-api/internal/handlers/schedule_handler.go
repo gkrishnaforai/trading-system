@@ -16,10 +16,11 @@ import (
 type ScheduleHandler struct {
 	repo      *repositories.ScheduleRepository
 	scheduler *services.SchedulerService
+	auditRepo *repositories.IngestionAuditRepository
 }
 
-func NewScheduleHandler(repo *repositories.ScheduleRepository, scheduler *services.SchedulerService) *ScheduleHandler {
-	return &ScheduleHandler{repo: repo, scheduler: scheduler}
+func NewScheduleHandler(repo *repositories.ScheduleRepository, scheduler *services.SchedulerService, auditRepo *repositories.IngestionAuditRepository) *ScheduleHandler {
+	return &ScheduleHandler{repo: repo, scheduler: scheduler, auditRepo: auditRepo}
 }
 
 func (h *ScheduleHandler) List(c *gin.Context) {
@@ -242,6 +243,30 @@ func (h *ScheduleHandler) MakeDueNow(c *gin.Context) {
 	}
 	item, _ := h.repo.Get(id)
 	c.JSON(http.StatusOK, gin.H{"success": true, "schedule": item})
+}
+
+func (h *ScheduleHandler) ListRuns(c *gin.Context) {
+	id := c.Param("schedule_id")
+	if _, err := uuid.Parse(id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "schedule_id must be a valid UUID"})
+		return
+	}
+	if h.auditRepo == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "audit repository not configured"})
+		return
+	}
+	limit := 50
+	if v := c.Query("limit"); v != "" {
+		if parsed, err := parseInt(v); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	runs, err := h.auditRepo.ListRunsByScheduleID(id, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "schedule_id": id, "runs": runs, "count": len(runs)})
 }
 
 func jsonMarshal(v any) ([]byte, error) {

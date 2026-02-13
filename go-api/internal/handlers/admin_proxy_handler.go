@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -208,7 +209,187 @@ func (h *AdminProxyHandler) GetStockCoverage(c *gin.Context) {
 
 // POST /api/v1/admin/universal/signal/universal -> python-worker POST /api/v1/universal/signal/universal
 func (h *AdminProxyHandler) UniversalSignal(c *gin.Context) {
-	h.proxy(c, http.MethodPost, "/api/v1/universal/signal/universal")
+	// Read request body once so we can both proxy it and extract the symbol for fundamentals overlay.
+	b, _ := io.ReadAll(c.Request.Body)
+	c.Request.Body = io.NopCloser(bytes.NewReader(b))
+
+	symbol := ""
+	if len(b) > 0 {
+		var payload struct {
+			Symbol string `json:"symbol"`
+		}
+		if err := json.Unmarshal(b, &payload); err == nil {
+			symbol = strings.TrimSpace(strings.ToUpper(payload.Symbol))
+		}
+	}
+
+	base, err := url.Parse(h.pythonWorker.BaseURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid python worker base url"})
+		return
+	}
+
+	reqURL, err := base.Parse("/api/v1/universal/signal/universal")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build python worker url"})
+		return
+	}
+
+	// Preserve query string
+	if raw := c.Request.URL.RawQuery; raw != "" {
+		reqURL.RawQuery = raw
+	}
+
+	proxyReq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, reqURL.String(), bytes.NewReader(b))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
+		return
+	}
+	if ct := c.GetHeader("Content-Type"); ct != "" {
+		proxyReq.Header.Set("Content-Type", ct)
+	}
+
+	proxyResp, err := h.pythonWorker.HTTPClient.Do(proxyReq)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	defer proxyResp.Body.Close()
+
+	proxyBody, _ := io.ReadAll(proxyResp.Body)
+	contentType := proxyResp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/json"
+	}
+
+	// Only attempt enrichment for JSON 200 responses.
+	if proxyResp.StatusCode != http.StatusOK || !strings.Contains(strings.ToLower(contentType), "application/json") {
+		c.Data(proxyResp.StatusCode, contentType, proxyBody)
+		return
+	}
+
+	var respObj map[string]any
+	if err := json.Unmarshal(proxyBody, &respObj); err != nil {
+		c.Data(proxyResp.StatusCode, contentType, proxyBody)
+		return
+	}
+
+	dataObj, _ := respObj["data"].(map[string]any)
+	if dataObj == nil {
+		c.Data(proxyResp.StatusCode, contentType, proxyBody)
+		return
+	}
+
+	overlay := map[string]any{
+		"risk_state":                "UNKNOWN",
+		"position_size_multiplier":  1.0,
+		"confidence_cap":            1.0,
+		"active_fundamental_alerts": []any{},
+	}
+
+	// Best-effort fundamentals overlay from fundamentals change events.
+	if symbol != "" {
+		evURL, err := base.Parse("/api/v1/fundamentals/events/" + symbol + "?limit=20")
+		if err == nil {
+			evReq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, evURL.String(), nil)
+			if err == nil {
+				evResp, err := h.pythonWorker.HTTPClient.Do(evReq)
+				if err == nil {
+					defer evResp.Body.Close()
+					if evResp.StatusCode == http.StatusOK {
+						evBody, _ := io.ReadAll(evResp.Body)
+						var evObj map[string]any
+						if err := json.Unmarshal(evBody, &evObj); err == nil {
+							// Determine risk state from event severities.
+							risk := "GREEN"
+							maxSeverity := ""
+							alerts := []any{}
+							if events, ok := evObj["events"].([]any); ok {
+								for i := 0; i < len(events); i++ {
+									e, ok := events[i].(map[string]any)
+									if !ok {
+										continue
+									}
+									sev, _ := e["severity"].(string)
+									header, _ := e["headline"].(string)
+									sev = strings.ToUpper(strings.TrimSpace(sev))
+									if maxSeverity == "" {
+										maxSeverity = sev
+									}
+									switch sev {
+									case "CRITICAL", "HIGH":
+										maxSeverity = "HIGH"
+									case "MEDIUM":
+										if maxSeverity != "HIGH" {
+											maxSeverity = "MEDIUM"
+										}
+									case "LOW":
+										if maxSeverity == "" {
+											maxSeverity = "LOW"
+										}
+									}
+									if strings.TrimSpace(header) != "" && len(alerts) < 3 {
+										alerts = append(alerts, header)
+									}
+								}
+							}
+
+							switch maxSeverity {
+							case "HIGH":
+								risk = "RED"
+							case "MEDIUM":
+								risk = "YELLOW"
+							case "LOW", "":
+								risk = "GREEN"
+							}
+
+							overlay["risk_state"] = risk
+							switch risk {
+							case "GREEN":
+								overlay["position_size_multiplier"] = 1.0
+								overlay["confidence_cap"] = 1.0
+							case "YELLOW":
+								overlay["position_size_multiplier"] = 0.5
+								overlay["confidence_cap"] = 0.65
+							case "RED":
+								overlay["position_size_multiplier"] = 0.2
+								overlay["confidence_cap"] = 0.45
+							default:
+								// keep defaults
+							}
+
+							overlay["active_fundamental_alerts"] = alerts
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Optional hard gate: prevent BUY when fundamentals risk is RED.
+	// Enable via env var FUNDAMENTALS_BUY_HARD_GATE=true
+	if v := strings.TrimSpace(strings.ToLower(os.Getenv("FUNDAMENTALS_BUY_HARD_GATE"))); v == "true" {
+		if rs, ok := overlay["risk_state"].(string); ok && rs == "RED" {
+			// Best-effort: look for a top-level action/signal field and override BUY -> HOLD.
+			if act, ok := dataObj["action"].(string); ok && strings.EqualFold(act, "BUY") {
+				dataObj["action"] = "HOLD"
+			}
+			if sig, ok := dataObj["signal"].(string); ok && strings.EqualFold(sig, "BUY") {
+				dataObj["signal"] = "HOLD"
+			}
+		}
+	}
+
+	dataObj["fundamentals_overlay"] = overlay
+	respObj["data"] = dataObj
+
+	out, err := json.Marshal(respObj)
+	if err != nil {
+		c.Data(proxyResp.StatusCode, contentType, proxyBody)
+		return
+	}
+
+	c.Data(proxyResp.StatusCode, contentType, out)
 }
 
 // GET /api/v1/admin/growth-quality/*path -> python-worker GET /api/v1/growth-quality/*path
@@ -221,6 +402,12 @@ func (h *AdminProxyHandler) GrowthQualityGet(c *gin.Context) {
 func (h *AdminProxyHandler) GrowthQualityPost(c *gin.Context) {
 	path := c.Param("path")
 	h.proxy(c, http.MethodPost, "/api/v1/growth-quality"+path)
+}
+
+// GET /api/v1/admin/fundamentals/*path -> python-worker GET /api/v1/fundamentals/*path
+func (h *AdminProxyHandler) FundamentalsGet(c *gin.Context) {
+	path := c.Param("path")
+	h.proxy(c, http.MethodGet, "/api/v1/fundamentals"+path)
 }
 
 // Rating Alerts proxy

@@ -858,8 +858,19 @@ class RedisStreamWorker:
 
     def run_forever(self):
         logger.info(f"Starting RedisStreamWorker consumer={self.consumer} group={self.group} stream={self.stream_key}")
-        self.ensure_group()
+        # Ensure Redis is reachable before creating consumer group.
+        # If Redis was restarted, the consumer group can disappear even if the stream key exists.
         self._wait_for_redis()
+        while True:
+            try:
+                self.ensure_group()
+                break
+            except Exception as e:
+                now = time.time()
+                if now - self._last_loop_error_log_at >= self.loop_error_log_interval_seconds:
+                    self._last_loop_error_log_at = now
+                    logger.warning(f"Failed to ensure consumer group (stream={self.stream_key} group={self.group}): {e}")
+                time.sleep(self.idle_retry_seconds)
 
         while True:
             try:
@@ -885,6 +896,14 @@ class RedisStreamWorker:
                 if now - self._last_loop_error_log_at >= self.loop_error_log_interval_seconds:
                     self._last_loop_error_log_at = now
                     logger.error(f"Worker loop error (count={self._loop_error_count}): {loop_err}")
+
+                # Auto-recover from missing consumer group (common after Redis restarts).
+                try:
+                    msg = str(loop_err)
+                    if "NOGROUP" in msg:
+                        self.ensure_group()
+                except Exception:
+                    pass
                 # Redis DNS resolution or transient connection failures can happen during container/network restarts.
                 # Re-create the redis client to force a fresh DNS lookup and new TCP connection.
                 try:

@@ -151,7 +151,7 @@ def create_holdings_table(holdings: List[Dict[str, Any]], show_actions: bool = T
 
 def create_portfolio_action_buttons(portfolio: Dict[str, Any]) -> None:
     """Create standardized portfolio action buttons"""
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         if st.button("✏️ Edit Portfolio", key=f"edit_{portfolio['id']}"):
@@ -170,6 +170,25 @@ def create_portfolio_action_buttons(portfolio: Dict[str, Any]) -> None:
         if st.button("📊 View Analysis", key=f"analyze_{portfolio['id']}"):
             st.session_state.selected_portfolio = portfolio['id']
             st.session_state.show_analysis = True
+
+    with col4:
+        if st.button("🔁 Run Rebalance", key=f"rebalance_{portfolio['id']}"):
+            payload: Dict[str, Any] = {"profile": "weekly_rebalance"}
+            try:
+                with st.spinner("Starting rebalance run..."):
+                    resp = go_client.post(
+                        f"api/v1/portfolios/{portfolio['id']}/rebalance-run",
+                        json_data=payload,
+                        timeout=30,
+                    )
+                if isinstance(resp, dict) and resp.get("run_id"):
+                    st.session_state["epa_last_rebalance_run_id"] = str(resp.get("run_id"))
+                    st.success(f"✅ Rebalance run started (run_id={resp.get('run_id')})")
+                else:
+                    st.error("❌ Failed to start rebalance run")
+                    st.json(resp)
+            except Exception as e:
+                st.error(f"❌ Failed to start rebalance run: {e}")
 
 
 def _load_users() -> List[Dict[str, Any]]:
@@ -389,6 +408,13 @@ def fetch_run_notifications(run_id: str) -> Dict[str, Any]:
     return resp if isinstance(resp, dict) else {}
 
 
+def cancel_run(run_id: str) -> Dict[str, Any]:
+    if not run_id:
+        return {}
+    resp = go_client.post(f"api/v1/data-load/runs/{run_id}/cancel", json_data={})
+    return resp if isinstance(resp, dict) else {}
+
+
 def fetch_schedules() -> Dict[str, Any]:
     resp = go_client.get("api/v1/schedules")
     return resp if isinstance(resp, dict) else {}
@@ -414,6 +440,11 @@ def run_now_schedule(schedule_id: str) -> Dict[str, Any]:
     return resp if isinstance(resp, dict) else {}
 
 
+def fetch_schedule_runs(schedule_id: str, limit: int = 10) -> Dict[str, Any]:
+    resp = go_client.get(f"api/v1/schedules/{schedule_id}/runs?limit={int(limit)}")
+    return resp if isinstance(resp, dict) else {}
+
+
 def show_schedules_tab(portfolios: List[Dict[str, Any]]):
     st.markdown("## ⏰ Schedules (Admin)")
     st.caption("Backed by Go API: /api/v1/schedules and /api/v1/scheduler/tick")
@@ -435,7 +466,136 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
     if not analysis_profile_names:
         analysis_profile_names = ["daily_signals", "intraday_signals", "weekly_rebalance"]
 
+    st.markdown("### ✅ Recommended schedules")
+    st.caption("Creates 5 low-bandwidth schedules (data_load) using the new profiles and recommended cadences")
+
+    auto_col1, auto_col2 = st.columns([2, 1])
+    with auto_col1:
+        if portfolios:
+            auto_portfolio_options = {f"{p.get('name')} ({p.get('portfolio_type', '').title()})": p for p in portfolios}
+            auto_selected_portfolio_label = st.selectbox(
+                "Portfolio for auto-create",
+                options=list(auto_portfolio_options.keys()),
+                key="epa_sched_auto_portfolio",
+            )
+            auto_portfolio_id = str((auto_portfolio_options.get(auto_selected_portfolio_label) or {}).get("id") or "")
+        else:
+            auto_portfolio_id = st.text_input("Portfolio ID (UUID)", key="epa_sched_auto_portfolio_id")
+
+    with auto_col2:
+        auto_create_clicked = st.button(
+            "Create 5 schedules",
+            type="primary",
+            use_container_width=True,
+            key="epa_sched_auto_create",
+        )
+
+    if auto_create_clicked:
+        if not auto_portfolio_id.strip():
+            st.error("Portfolio ID is required")
+        else:
+            recommended = [
+                {
+                    "profile": "intraday_prices_only",
+                    "cron_expression": "*/15 9-16 * * 1-5",
+                    "timezone": "America/New_York",
+                },
+                {
+                    "profile": "intraday_news_hourly",
+                    "cron_expression": "0 * * * 1-5",
+                    "timezone": "America/New_York",
+                },
+                {
+                    "profile": "daily_market_intel",
+                    "cron_expression": "0 18 * * 1-5",
+                    "timezone": "America/New_York",
+                },
+                {
+                    "profile": "weekly_fundamentals",
+                    "cron_expression": "0 9 * * 6",
+                    "timezone": "America/New_York",
+                },
+                {
+                    "profile": "monthly_reference_backfill",
+                    "cron_expression": "0 9 1 * *",
+                    "timezone": "America/New_York",
+                },
+            ]
+
+            existing_resp = {}
+            try:
+                existing_resp = fetch_schedules()
+            except Exception:
+                existing_resp = {}
+            existing = (existing_resp or {}).get("schedules") or []
+            existing = existing if isinstance(existing, list) else []
+
+            def _already_exists(item: Dict[str, Any]) -> bool:
+                for s in existing:
+                    if not isinstance(s, dict):
+                        continue
+                    if str(s.get("portfolio_id") or "") != str(auto_portfolio_id):
+                        continue
+                    if str(s.get("kind") or "") != "data_load":
+                        continue
+                    if str(s.get("profile") or "") != str(item.get("profile") or ""):
+                        continue
+                    if str(s.get("cron_expression") or "") != str(item.get("cron_expression") or ""):
+                        continue
+                    if str(s.get("timezone") or "") != str(item.get("timezone") or ""):
+                        continue
+                    return True
+                return False
+
+            created = 0
+            skipped = 0
+            failures: List[Dict[str, Any]] = []
+            with st.spinner("Creating schedules..."):
+                for item in recommended:
+                    if _already_exists(item):
+                        skipped += 1
+                        continue
+                    payload = {
+                        "kind": "data_load",
+                        "portfolio_id": auto_portfolio_id,
+                        "profile": item["profile"],
+                        "cron_expression": item["cron_expression"],
+                        "timezone": item["timezone"],
+                        "enabled": True,
+                        "config": {},
+                    }
+                    try:
+                        resp = create_schedule(payload)
+                        if resp and resp.get("schedule"):
+                            created += 1
+                        else:
+                            failures.append({"profile": item["profile"], "response": resp})
+                    except Exception as e:
+                        failures.append({"profile": item["profile"], "error": str(e)})
+
+            if failures:
+                st.error(f"Created {created}, skipped {skipped}, failed {len(failures)}")
+                st.json(failures)
+            else:
+                st.success(f"✅ Created {created}, skipped {skipped}")
+                st.rerun()
+
     with st.expander("➕ Create Schedule", expanded=False):
+        preset_options = {
+            "Custom": {"cron": "0 9 * * 1-5", "tz": "America/New_York"},
+            "Intraday prices (every 15m, market hours)": {"cron": "*/15 9-16 * * 1-5", "tz": "America/New_York"},
+            "Intraday news (every 60m, weekdays)": {"cron": "0 * * * 1-5", "tz": "America/New_York"},
+            "Daily (6pm ET, weekdays)": {"cron": "0 18 * * 1-5", "tz": "America/New_York"},
+            "Weekly (Sat 9am ET)": {"cron": "0 9 * * 6", "tz": "America/New_York"},
+            "Monthly (1st 9am ET)": {"cron": "0 9 1 * *", "tz": "America/New_York"},
+        }
+        selected_preset = st.selectbox(
+            "Preset",
+            options=list(preset_options.keys()),
+            index=0,
+            key="epa_sched_preset",
+        )
+
         kind = st.selectbox(
             "Kind",
             options=["data_load", "analysis_run", "rebalance_run"],
@@ -461,13 +621,18 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
         else:
             profile = st.selectbox("Profile", options=["weekly_rebalance"], index=0, key="epa_sched_profile_rebalance")
 
+        preset_default = preset_options.get(selected_preset) or preset_options["Custom"]
         cron_expression = st.text_input(
             "Cron (5-field)",
-            value="0 9 * * 1-5",
+            value=str(preset_default.get("cron") or "0 9 * * 1-5"),
             help="minute hour day-of-month month day-of-week",
             key="epa_sched_cron",
         )
-        timezone = st.text_input("Timezone", value="America/New_York", key="epa_sched_tz")
+        timezone = st.text_input(
+            "Timezone",
+            value=str(preset_default.get("tz") or "America/New_York"),
+            key="epa_sched_tz",
+        )
         enabled = st.checkbox("Enabled", value=True, key="epa_sched_enabled")
 
         symbols_csv = st.text_input(
@@ -554,6 +719,80 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
         selected_obj = next((x for x in schedules if isinstance(x, dict) and str(x.get("schedule_id")) == str(selected_id)), {})
         manage_col1, manage_col2, manage_col3, manage_col4 = st.columns([1, 1, 1, 1])
 
+        with st.expander("✏️ Edit selected schedule", expanded=False):
+            kind_val = str((selected_obj or {}).get("kind") or "")
+            current_profile = str((selected_obj or {}).get("profile") or "")
+            if kind_val == "data_load":
+                profile_options = job_profile_names
+            elif kind_val == "analysis_run":
+                profile_options = analysis_profile_names
+            elif kind_val == "rebalance_run":
+                profile_options = ["weekly_rebalance"]
+            else:
+                profile_options = sorted(list(set(job_profile_names + analysis_profile_names)))
+            if current_profile and current_profile not in profile_options:
+                profile_options = [current_profile] + profile_options
+
+            current_config_obj = (selected_obj or {}).get("config")
+            try:
+                config_default = json.dumps(current_config_obj or {}, indent=2)
+            except Exception:
+                config_default = "{}"
+
+            with st.form(key="epa_sched_edit_form"):
+                edit_cron = st.text_input(
+                    "Cron (5-field)",
+                    value=str((selected_obj or {}).get("cron_expression") or ""),
+                    key="epa_sched_edit_cron",
+                )
+                edit_tz = st.text_input(
+                    "Timezone",
+                    value=str((selected_obj or {}).get("timezone") or "UTC"),
+                    key="epa_sched_edit_tz",
+                )
+                edit_profile = st.selectbox(
+                    "Profile",
+                    options=profile_options,
+                    index=max(0, profile_options.index(current_profile)) if current_profile in profile_options else 0,
+                    key="epa_sched_edit_profile",
+                )
+                edit_enabled = st.checkbox(
+                    "Enabled",
+                    value=bool((selected_obj or {}).get("enabled", True)),
+                    key="epa_sched_edit_enabled",
+                )
+                edit_config_text = st.text_area(
+                    "Config (JSON)",
+                    value=config_default,
+                    height=180,
+                    key="epa_sched_edit_config",
+                )
+                submitted = st.form_submit_button("💾 Save changes", use_container_width=True)
+
+            if submitted:
+                try:
+                    cfg = json.loads(edit_config_text or "{}")
+                    if not isinstance(cfg, dict):
+                        raise ValueError("config must be a JSON object")
+                except Exception as e:
+                    st.error(f"Invalid config JSON: {e}")
+                else:
+                    payload = {
+                        "cron_expression": edit_cron,
+                        "timezone": edit_tz,
+                        "profile": edit_profile,
+                        "enabled": edit_enabled,
+                        "config": cfg,
+                    }
+                    with st.spinner("Updating schedule..."):
+                        resp = update_schedule(selected_id, payload)
+                        if resp and resp.get("schedule"):
+                            st.success("✅ Updated")
+                            st.rerun()
+                        else:
+                            st.error("❌ Update failed")
+                            st.json(resp)
+
         with manage_col1:
             if st.button("▶️ Run now", use_container_width=True, key="epa_sched_run_now"):
                 with st.spinner("Triggering run..."):
@@ -598,6 +837,68 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
                 with st.spinner("Calling scheduler tick..."):
                     resp = go_client.post("api/v1/scheduler/tick", json_data={})
                     st.json(resp)
+
+        st.markdown("### 🧾 Last 10 runs")
+        runs_resp: Dict[str, Any] = {}
+        try:
+            runs_resp = fetch_schedule_runs(selected_id, limit=10)
+        except Exception as e:
+            st.error(f"Failed to fetch schedule runs: {e}")
+            runs_resp = {}
+
+        runs = (runs_resp or {}).get("runs") or []
+        if isinstance(runs, list) and runs:
+            header_c1, header_c2, header_c3, header_c4, header_c5, header_c6 = st.columns([3, 1, 2, 2, 1, 1])
+            header_c1.caption("run_id")
+            header_c2.caption("status")
+            header_c3.caption("started_at")
+            header_c4.caption("finished_at")
+            header_c5.caption("inspect")
+            header_c6.caption("cancel")
+
+            for idx, r in enumerate(runs):
+                if not isinstance(r, dict):
+                    continue
+                rid = str(r.get("run_id") or "").strip()
+                status = str(r.get("status") or "")
+                started_at = _format_ts(r.get("started_at"))
+                finished_at = _format_ts(r.get("finished_at"))
+
+                c1, c2, c3, c4, c5, c6 = st.columns([3, 1, 2, 2, 1, 1])
+                c1.code(rid or "")
+                c2.write(status)
+                c3.write(started_at)
+                c4.write(finished_at)
+
+                inspect_clicked = c5.button("Select", use_container_width=True, key=f"epa_sched_run_select_{idx}_{rid}")
+                if inspect_clicked and rid:
+                    st.session_state["epa_last_analysis_run_id"] = rid
+                    st.session_state["epa_run_id"] = rid
+                    try:
+                        st.session_state["epa_last_run_details"] = fetch_run(rid)
+                    except Exception:
+                        pass
+                    st.rerun()
+
+                cancel_clicked = c6.button(
+                    "Cancel",
+                    use_container_width=True,
+                    disabled=not (rid and status.lower() == "running"),
+                    key=f"epa_sched_run_cancel_{idx}_{rid}",
+                )
+                if cancel_clicked and rid:
+                    try:
+                        resp = cancel_run(rid)
+                        if isinstance(resp, dict) and resp.get("success"):
+                            st.success(f"✅ Cancel requested for {rid}")
+                            st.rerun()
+                        else:
+                            st.error("❌ Cancel request failed")
+                            st.json(resp)
+                    except Exception as e:
+                        st.error(f"Cancel request failed: {e}")
+        else:
+            st.caption("No runs found for this schedule yet.")
     else:
         st.caption("No schedules found.")
 
@@ -1632,6 +1933,34 @@ def show_portfolio_overview():
                 "finished_at": finished_at,
             })
 
+
+            cancel_col1, cancel_col2 = st.columns([1, 3])
+            with cancel_col1:
+                cancel_clicked = st.button(
+                    "Cancel run",
+                    type="secondary",
+                    disabled=not (run_id_input and status.lower() == "running"),
+                    key="epa_cancel_run",
+                )
+            with cancel_col2:
+                if status.lower() != "running":
+                    st.caption("Cancel is only available while status=running")
+
+            if cancel_clicked and run_id_input:
+                try:
+                    resp = cancel_run(run_id_input)
+                    if isinstance(resp, dict) and resp.get("success"):
+                        st.success("✅ Cancel requested")
+                        try:
+                            st.session_state["epa_last_run_details"] = fetch_run(run_id_input)
+                        except Exception:
+                            pass
+                    else:
+                        st.error("❌ Cancel request failed")
+                        st.json(resp)
+                except Exception as e:
+                    st.error(f"Cancel request failed: {e}")
+
             events = details.get("events") or []
             if not isinstance(events, list):
                 events = []
@@ -2552,6 +2881,41 @@ def show_symbol_analysis(symbol: str):
     with st.spinner(f"Loading fresh analysis for {symbol}..."):
         asset_type = "stock"  # Default, could be enhanced to get from holdings
         analysis_data = get_symbol_analysis(symbol, asset_type)
+
+    # Enrich displayed technical reasoning with fundamentals overlay (best-effort).
+    try:
+        if isinstance(analysis_data, dict):
+            overlay = analysis_data.get("fundamentals_overlay")
+            sig = analysis_data.get("signal")
+            if isinstance(overlay, dict) and isinstance(sig, dict):
+                risk_state = str(overlay.get("risk_state") or "UNKNOWN")
+                pos_mult = overlay.get("position_size_multiplier")
+                conf_cap = overlay.get("confidence_cap")
+                alerts = overlay.get("active_fundamental_alerts") or []
+
+                # Cap displayed confidence if present.
+                try:
+                    if conf_cap is not None and sig.get("confidence") is not None:
+                        sig["confidence"] = float(min(float(sig.get("confidence")), float(conf_cap)))
+                except Exception:
+                    pass
+
+                # Append overlay to reasoning.
+                try:
+                    rs: List[str] = []
+                    if isinstance(sig.get("reasoning"), list):
+                        rs = [str(x) for x in sig.get("reasoning") if x is not None]
+                    overlay_reason = f"Fundamentals overlay: risk_state={risk_state}, position_size_multiplier={pos_mult}, confidence_cap={conf_cap}"
+                    if isinstance(alerts, list) and alerts:
+                        top = "; ".join([str(a) for a in alerts[:3] if a is not None])
+                        overlay_reason = overlay_reason + f" | alerts: {top}"
+                    rs.append(overlay_reason)
+                    sig["reasoning"] = rs
+                except Exception:
+                    pass
+                analysis_data["signal"] = sig
+    except Exception:
+        pass
     
     # Cache the analysis for potential reuse within this session
     cache_key = f"analysis_{symbol}"
@@ -2607,7 +2971,18 @@ def show_symbol_analysis(symbol: str):
                     # Show retry button
                     if st.button("🔄 Retry Analysis", key=f"retry_error_fundamentals_{symbol}"):
                         st.rerun()
-                    
+
+            st.markdown("---")
+            try:
+                ew = go_client.get(f"api/v1/admin/growth-quality/early-warning/{symbol}")
+                if isinstance(ew, dict):
+                    items = _build_fundamentals_change_feed_items_from_early_warning(ew)
+                    _render_fundamentals_change_feed(items)
+                else:
+                    _render_fundamentals_change_feed([])
+            except Exception:
+                _render_fundamentals_change_feed([])
+
         except requests.exceptions.RequestException as e:
             st.error(f"❌ Connection error: Unable to reach analysis service")
             st.error(f"🔍 Details: {str(e)}")
@@ -2644,6 +3019,86 @@ def _render_comprehensive_fundamentals_analysis(symbol: str):
         st.error(f"❌ Network error loading analysis for {symbol}: {str(e)}")
     except Exception as e:
         st.error(f"❌ Error loading comprehensive analysis for {symbol}: {str(e)}")
+
+
+def _build_fundamentals_change_feed_items_from_early_warning(analysis_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    overall_risk = (analysis_data or {}).get("overall_risk")
+    warnings = (analysis_data or {}).get("warnings") or []
+    metrics = (analysis_data or {}).get("metrics") or {}
+
+    if overall_risk:
+        severity = "LOW"
+        direction = "neutral"
+        action = "No action required"
+        if overall_risk == "YELLOW":
+            severity = "MEDIUM"
+            direction = "negative"
+            action = "Reduce size and tighten risk controls"
+        elif overall_risk == "RED":
+            severity = "HIGH"
+            direction = "negative"
+            action = "Avoid adding; consider trimming/exiting depending on your plan"
+
+        evidence: List[str] = []
+        for k in ["receivables_vs_revenue_growth", "margin_trend", "roe_trend"]:
+            if k in metrics:
+                evidence.append(f"{k}: {metrics.get(k)}")
+
+        items.append(
+            {
+                "headline": f"Overall fundamentals risk: {overall_risk}",
+                "severity": severity,
+                "direction": direction,
+                "evidence": evidence,
+                "recommended_action": action,
+            }
+        )
+
+    if isinstance(warnings, list):
+        for w in warnings[:5]:
+            if not isinstance(w, str) or not w.strip():
+                continue
+            items.append(
+                {
+                    "headline": w.strip(),
+                    "severity": "MEDIUM" if overall_risk in {"YELLOW", "RED"} else "LOW",
+                    "direction": "negative",
+                    "evidence": [],
+                    "recommended_action": "Monitor next quarter update; reduce position size if this persists",
+                }
+            )
+
+    return items
+
+
+def _render_fundamentals_change_feed(items: List[Dict[str, Any]]):
+    st.markdown("### 📰 Fundamentals Change Feed")
+    if not items:
+        st.info("No fundamentals change items available yet")
+        return
+
+    severity_icon = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}
+    direction_icon = {"positive": "⬆️", "negative": "⬇️", "neutral": "➡️"}
+    for i, it in enumerate(items):
+        if not isinstance(it, dict):
+            continue
+        headline = str(it.get("headline") or "")
+        severity = str(it.get("severity") or "LOW").upper()
+        direction = str(it.get("direction") or "neutral").lower()
+        evidence = it.get("evidence") or []
+        recommended_action = str(it.get("recommended_action") or "")
+
+        title = f"{severity_icon.get(severity, '🟢')} {direction_icon.get(direction, '➡️')} {headline}"
+        with st.expander(title, expanded=(i == 0)):
+            st.caption(f"Severity: {severity} | Direction: {direction}")
+            if isinstance(evidence, list) and evidence:
+                st.markdown("**Evidence**")
+                for ev in evidence[:3]:
+                    st.write(str(ev))
+            if recommended_action:
+                st.markdown("**Recommended action**")
+                st.write(recommended_action)
 
 def _render_fundamentals_risk_overview(analysis_data: Dict[str, Any], symbol: str):
     """Render risk overview with professional styling"""
