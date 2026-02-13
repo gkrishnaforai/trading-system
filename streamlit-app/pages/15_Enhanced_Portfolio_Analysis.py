@@ -839,12 +839,19 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
                     st.json(resp)
 
         st.markdown("### 🧾 Last 10 runs")
+        with st.expander("Debug: schedule runs", expanded=False):
+            st.write(f"Go API base_url: {getattr(go_client, 'base_url', 'unknown')}")
+            st.write(f"Selected schedule_id: {selected_id}")
+
         runs_resp: Dict[str, Any] = {}
         try:
             runs_resp = fetch_schedule_runs(selected_id, limit=10)
         except Exception as e:
             st.error(f"Failed to fetch schedule runs: {e}")
             runs_resp = {}
+
+        with st.expander("Debug: raw /runs response", expanded=False):
+            st.json(runs_resp)
 
         runs = (runs_resp or {}).get("runs") or []
         if isinstance(runs, list) and runs:
@@ -1126,7 +1133,12 @@ def show_edit_stock_form(portfolio_id: str, holding: Dict[str, Any]):
                                      index=["stock", "regular_etf", "3x_etf"].index(holding.get('asset_type', 'stock')))
         
         with col3:
-            shares = st.number_input("Shares*", min_value=0.0, value=float(holding['shares_held']), step=10.0)
+            shares_value = holding.get("shares_held")
+            if shares_value is None:
+                shares_value = holding.get("quantity")
+            if shares_value is None:
+                shares_value = holding.get("shares")
+            shares = st.number_input("Shares*", min_value=0.0, value=float(shares_value or 0.0), step=10.0)
         
         with col4:
             avg_cost = st.number_input("Avg Cost ($)*", min_value=0.0, value=float(holding['average_cost']), step=0.01)
