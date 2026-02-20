@@ -126,7 +126,7 @@ class DataSourceRegistry:
     def _determine_primary_source(self) -> str:
         """Determine primary data source based on configuration"""
         candidates = [
-            settings.primary_data_provider,
+            getattr(settings, "primary_data_provider", "fmp"),
             settings.default_data_provider,
             DataSourceType.YAHOO_FINANCE.value  # Default to Yahoo Finance if nothing else configured
         ]

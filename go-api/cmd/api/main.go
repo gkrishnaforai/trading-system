@@ -60,6 +60,7 @@ func main() {
 	portfolioRepo := repositories.NewPortfolioRepository()
 	indicatorRepo := repositories.NewIndicatorRepository()
 	marketDataRepo := repositories.NewMarketDataRepository()
+	stockGradesRepo := repositories.NewStockGradesRepository()
 	watchlistRepo := repositories.NewWatchlistRepository()
 	tickerRepo := repositories.NewTickerRepository()
 	userRepo := repositories.NewUserRepository()
@@ -67,6 +68,9 @@ func main() {
 	scheduleRepo := repositories.NewScheduleRepository()
 	dataPreviewRepo := repositories.NewDataPreviewRepository()
 	notificationQueueRepo := repositories.NewNotificationQueueRepository()
+	runRepo := repositories.NewRunRepository()
+	portfolioOverviewRepo := repositories.NewPortfolioOverviewRepository()
+	portfolioScheduleRepo := repositories.NewPortfolioScheduleRepository()
 
 	// Initialize services
 	portfolioService := services.NewPortfolioService(portfolioRepo, indicatorRepo, cacheService)
@@ -87,7 +91,7 @@ func main() {
 
 	// Initialize handlers
 	portfolioHandler := handlers.NewPortfolioHandler(portfolioService)
-	stockHandler := handlers.NewStockHandler(stockService)
+	stockHandler := handlers.NewStockHandler(stockService, ingestionAuditRepo, stockGradesRepo)
 	watchlistHandler := handlers.NewWatchlistHandler(watchlistService)
 	tickerHandler := handlers.NewTickerHandler(tickerService)
 	llmHandler := handlers.NewLLMHandler()
@@ -101,6 +105,9 @@ func main() {
 	portfolioAnalysisRunHandler := handlers.NewPortfolioAnalysisRunHandler(ingestionAuditRepo, jobQueue, useJobQueue)
 	analysisProfilesHandler := handlers.NewAnalysisProfilesHandler()
 	portfolioRebalanceRunHandler := handlers.NewPortfolioRebalanceRunHandler(ingestionAuditRepo, jobQueue, useJobQueue)
+	runHandler := handlers.NewRunHandler(runRepo, pythonWorkerClient)
+	portfolioOverviewHandler := handlers.NewPortfolioOverviewHandler(portfolioOverviewRepo)
+	portfolioScheduleHandler := handlers.NewPortfolioScheduleHandler(portfolioScheduleRepo)
 
 	schedulerService := services.NewSchedulerService(scheduleRepo, ingestionAuditRepo, jobQueue, useJobQueue)
 	scheduleHandler := handlers.NewScheduleHandler(scheduleRepo, schedulerService, ingestionAuditRepo)
@@ -184,7 +191,21 @@ func main() {
 		api.POST("/admin/swing/signal", adminProxyHandler.SwingSignal)
 		api.POST("/admin/swing/risk/check", adminProxyHandler.SwingRiskCheck)
 		api.POST("/admin/universal/signal/universal", adminProxyHandler.UniversalSignal)
+
+		// Portfolio Schedule Management endpoints
+		api.GET("/portfolio-schedules/list", portfolioScheduleHandler.ListSchedules)
+		api.GET("/portfolio-schedules/:schedule_id", portfolioScheduleHandler.GetSchedule)
+		api.POST("/portfolio-schedules/", portfolioScheduleHandler.CreateSchedule)
+		api.PUT("/portfolio-schedules/:schedule_id", portfolioScheduleHandler.UpdateSchedule)
+		api.DELETE("/portfolio-schedules/:schedule_id", portfolioScheduleHandler.DeleteSchedule)
+		api.POST("/portfolio-schedules/:schedule_id/toggle", portfolioScheduleHandler.ToggleSchedule)
+		api.GET("/portfolio-schedules/status/overview", portfolioScheduleHandler.GetScheduleOverview)
 		api.Any("/admin/fundamentals/*path", func(c *gin.Context) {
+			path := c.Param("path")
+			if path == "/fair-value" && c.Request.Method == "POST" {
+				adminProxyHandler.FairValue(c)
+				return
+			}
 			switch c.Request.Method {
 			case "GET":
 				adminProxyHandler.FundamentalsGet(c)
@@ -208,32 +229,6 @@ func main() {
 		api.PUT("/admin/rating-alerts/*path", adminProxyHandler.RatingAlertsPut)
 		api.DELETE("/admin/rating-alerts/*path", adminProxyHandler.RatingAlertsDelete)
 
-		// Portfolio endpoints
-		api.GET("/portfolios/user/:user_id", portfolioHandler.GetPortfolios)
-		api.GET("/portfolio/:user_id/:portfolio_id", portfolioHandler.GetPortfolio)
-		api.POST("/portfolio/:user_id", portfolioHandler.CreatePortfolio)
-		api.PUT("/portfolio/:user_id/:portfolio_id", portfolioHandler.UpdatePortfolio)
-		api.DELETE("/portfolio/:user_id/:portfolio_id", portfolioHandler.DeletePortfolio)
-
-		// Holdings endpoints
-		api.POST("/portfolio/:user_id/:portfolio_id/holdings", portfolioHandler.CreateHolding)
-		api.PUT("/holdings/:holding_id", portfolioHandler.UpdateHolding)
-		api.DELETE("/holdings/:holding_id", portfolioHandler.DeleteHolding)
-
-		// Portfolio data-load orchestration (Option B)
-		api.POST("/portfolios/:portfolio_id/data-load", dataLoadHandler.CreatePortfolioDataLoad)
-		api.GET("/portfolios/:portfolio_id/data-load/runs", dataLoadHandler.ListPortfolioRuns)
-		api.GET("/portfolios/:portfolio_id/alerts/summary", dataLoadHandler.GetPortfolioAlertsSummary)
-		api.GET("/data-load/runs/:run_id", dataLoadHandler.GetRun)
-		api.GET("/data-load/runs/:run_id/alert-events", dataLoadHandler.ListRunAlertEvents)
-		api.GET("/alerts/events", dataLoadHandler.ListAlertEventsForSymbol)
-		api.POST("/data-load/runs/:run_id/cancel", dataLoadHandler.CancelRun)
-		api.POST("/data-load/runs/:run_id/rerun-failed", dataLoadHandler.RerunFailed)
-
-		// Portfolio analysis run orchestration (Option B)
-		api.POST("/portfolios/:portfolio_id/analysis-run", portfolioAnalysisRunHandler.CreateRun)
-		api.POST("/portfolios/:portfolio_id/rebalance-run", portfolioRebalanceRunHandler.CreateRun)
-
 		// Generic, allowlisted data preview endpoint (Operator UX)
 		api.GET("/data-preview", dataPreviewHandler.GetPreview)
 
@@ -251,6 +246,26 @@ func main() {
 		api.DELETE("/watchlist-items/:item_id", watchlistHandler.RemoveItem)
 		api.POST("/watchlists/:watchlist_id/move-to-portfolio", watchlistHandler.MoveToPortfolio)
 
+		// Portfolio endpoints
+		api.GET("/portfolios/user/:user_id", portfolioHandler.GetPortfolios)
+		api.GET("/portfolio/:user_id/:portfolio_id", portfolioHandler.GetPortfolio)
+		api.POST("/portfolio/:user_id", portfolioHandler.CreatePortfolio)
+		api.GET("/portfolios/:portfolio_id/overview", portfolioOverviewHandler.GetOverview)
+
+		// Portfolio data-load orchestration (Option B)
+		api.POST("/portfolios/:portfolio_id/data-load", dataLoadHandler.CreatePortfolioDataLoad)
+		api.GET("/portfolios/:portfolio_id/data-load/runs", dataLoadHandler.ListPortfolioRuns)
+		api.GET("/portfolios/:portfolio_id/alerts/summary", dataLoadHandler.GetPortfolioAlertsSummary)
+		api.GET("/data-load/runs/:run_id", dataLoadHandler.GetRun)
+		api.GET("/data-load/runs/:run_id/alert-events", dataLoadHandler.ListRunAlertEvents)
+		api.GET("/alerts/events", dataLoadHandler.ListAlertEventsForSymbol)
+		api.POST("/data-load/runs/:run_id/cancel", dataLoadHandler.CancelRun)
+		api.POST("/data-load/runs/:run_id/rerun-failed", dataLoadHandler.RerunFailed)
+
+		// Portfolio analysis run orchestration (Option B)
+		api.POST("/portfolios/:portfolio_id/analysis-run", portfolioAnalysisRunHandler.CreateRun)
+		api.POST("/portfolios/:portfolio_id/rebalance-run", portfolioRebalanceRunHandler.CreateRun)
+
 		// Symbol scope endpoints (UI helper)
 		api.GET("/symbol-scope/resolve", symbolScopeHandler.Resolve)
 
@@ -261,12 +276,18 @@ func main() {
 
 		// Stock endpoints
 		api.GET("/stock/:symbol", stockHandler.GetStock)
+		api.GET("/stock/:symbol/alert-context", stockHandler.GetAlertContext)
 		api.GET("/stock/:symbol/advanced-analysis", stockHandler.GetAdvancedAnalysis)
 		api.GET("/stock/:symbol/fundamentals", stockHandler.GetFundamentals)
 		api.GET("/stock/:symbol/news", stockHandler.GetNews)
 		api.GET("/stock/:symbol/earnings", stockHandler.GetEarnings)
 		api.GET("/stock/:symbol/industry-peers", stockHandler.GetIndustryPeers)
 		api.GET("/signal/:symbol", stockHandler.GetSignal)
+
+		// Runs endpoints (DRY orchestration)
+		api.POST("/runs", runHandler.CreateRun)
+		api.GET("/runs/:run_id", runHandler.GetRun)
+		api.GET("/runs", runHandler.ListRuns)
 
 		// LLM endpoints
 		api.GET("/llm_blog/:symbol", llmHandler.GetLLMBlog)

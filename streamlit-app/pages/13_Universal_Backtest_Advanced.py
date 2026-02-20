@@ -356,7 +356,7 @@ def get_universal_signal(symbol, date, asset_type):
             "asset_type": asset_type
         }
         
-        response = requests.post(api_url, json=payload, timeout=30)
+        response = requests.post(api_url, json=payload, timeout=120)
         
         if response.status_code == 200:
             data = response.json()

@@ -1086,6 +1086,12 @@ Details:
         
         message += f"\nTriggered at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         
+        # Add stock overview link if this is a stock alert
+        entity_type = details.get('entity_type')
+        entity_id = details.get('entity_id') or details.get('symbol')
+        if entity_type == 'stock' and entity_id:
+            message += f"\n\n📈 View Stock Overview: http://localhost:8501/Stock_Overview_Pro?symbol={entity_id}"
+        
         return message.strip()
     
     def _generate_html_message(self, evaluation_result: Dict[str, Any]) -> str:
@@ -1138,6 +1144,25 @@ Details:
         <div class="detail-item">
             <span class="detail-label">Triggered at:</span> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         </div>
+"""
+        
+        # Add stock overview link if this is a stock alert
+        entity_type = details.get('entity_type')
+        entity_id = details.get('entity_id') or details.get('symbol')
+        if entity_type == 'stock' and entity_id:
+            html += f"""
+        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+            <a href="http://localhost:8501/Stock_Overview_Pro?symbol={entity_id}" 
+               style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
+                📈 View Stock Overview
+            </a>
+            <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                Click to view detailed analysis and recent news for {entity_id}
+            </p>
+        </div>
+"""
+        
+        html += """
     </div>
 </body>
 </html>

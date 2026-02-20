@@ -1,0 +1,390 @@
+services:
+  # PostgreSQL (default) - Primary database for all services
+  postgres:
+    image: postgres:15-alpine
+    container_name: trading-system-postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-trading}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trading-dev}
+      - POSTGRES_DB=${POSTGRES_DB:-trading_system}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - trading-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trading} -d ${POSTGRES_DB:-trading_system}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 1.5G
+
+  # PgBouncer - connection pooler (industry standard) to protect Postgres from too many client connections
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: trading-system-pgbouncer
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@postgres:5432/${POSTGRES_DB:-trading_system}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=${POSTGRES_USER:-trading}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-trading-dev}
+      - DB_NAME=${POSTGRES_DB:-trading_system}
+      - AUTH_TYPE=plain
+      - POOL_MODE=${PGBOUNCER_POOL_MODE:-transaction}
+      - MAX_CLIENT_CONN=${PGBOUNCER_MAX_CLIENT_CONN:-200}
+      - DEFAULT_POOL_SIZE=${PGBOUNCER_DEFAULT_POOL_SIZE:-20}
+      - MIN_POOL_SIZE=${PGBOUNCER_MIN_POOL_SIZE:-0}
+      - RESERVE_POOL_SIZE=${PGBOUNCER_RESERVE_POOL_SIZE:-5}
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - trading-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER:-trading} -d ${POSTGRES_DB:-trading_system}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Go API - Core trading engine, gRPC server, CRUD operations
+  go-api:
+    build:
+      context: .
+      dockerfile: go-api/Dockerfile
+    container_name: trading-system-go-api
+    env_file:
+      - .env
+    ports:
+      - "8000:8000" # REST API
+      - "50051:50051" # gRPC
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PORT=8000
+      - GRPC_PORT=50051
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - MIGRATIONS_DIR=/app/supabase/migrations
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
+      - SUPABASE_DB_URL=${SUPABASE_DB_URL:-}
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHON_WORKER_URL=http://python-worker:8001
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-key-change-in-production}
+      - DB_MAX_OPEN_CONNS=${DB_MAX_OPEN_CONNS:-10}
+      - DB_MAX_IDLE_CONNS=${DB_MAX_IDLE_CONNS:-5}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - trading-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -qO- --timeout=2 http://127.0.0.1:8000/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 1.5G
+
+  # Python AI/ML Worker - LLM, indicators, analysis
+  python-worker:
+    build:
+      context: .
+      dockerfile: python-worker/Dockerfile
+    image: trading-system-python-worker
+    container_name: trading-system-python-worker
+    env_file:
+      - .env
+    ports:
+      - "8001:8001" # FastAPI report generation endpoint
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - ENABLE_JOB_QUEUE=${ENABLE_JOB_QUEUE:-false}
+      - PYTHON_GRPC_URL=go-api:50051
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
+      - SUPABASE_DB_URL=${SUPABASE_DB_URL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - LITELLM_PROXY_URL=${LITELLM_PROXY_URL:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY:-}
+      - MASSIVE_API_KEY=${MASSIVE_API_KEY:-}
+      - MASSIVE_ENABLED=${MASSIVE_ENABLED:-false}
+      - MASSIVE_RATE_LIMIT_CALLS=${MASSIVE_RATE_LIMIT_CALLS:-4}
+      - MASSIVE_RATE_LIMIT_WINDOW=${MASSIVE_RATE_LIMIT_WINDOW:-60.0}
+      - ALPHAVANTAGE_API_KEY=${ALPHAVANTAGE_API_KEY:-}
+      - PRIMARY_DATA_PROVIDER=${PRIMARY_DATA_PROVIDER:-}
+      - FALLBACK_DATA_PROVIDER=${FALLBACK_DATA_PROVIDER:-}
+      - DEFAULT_DATA_PROVIDER=${DEFAULT_DATA_PROVIDER:-fallback}
+      - ENABLE_UNIVERSAL_ALERT_SCHEDULER=${ENABLE_UNIVERSAL_ALERT_SCHEDULER:-true}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-5}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-5}
+      - DB_POOL_TIMEOUT_SECONDS=${DB_POOL_TIMEOUT_SECONDS:-30}
+      - PYTHONPATH=/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - trading-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://127.0.0.1:8001/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2.0G
+
+  # Job Workers (Redis Streams consumers) - Scalable parallel executors for data-load jobs
+  python-worker-job-worker-1:
+    image: trading-system-python-worker
+    env_file:
+      - .env
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - PYTHON_GRPC_URL=go-api:50051
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - PYTHONPATH=/app
+      - JOB_DISABLE_POSTPROCESSING=${JOB_DISABLE_POSTPROCESSING:-true}
+      - JOB_STREAM_KEY=ts:jobs
+      - JOB_STREAM_GROUP=python-workers
+      - JOB_STREAM_MAXLEN=${JOB_STREAM_MAXLEN:-10000}
+      - JOB_DLQ_STREAM_KEY=${JOB_DLQ_STREAM_KEY:-ts:jobs:dlq}
+      - JOB_DLQ_MAXLEN=${JOB_DLQ_MAXLEN:-2000}
+      - JOB_PENDING_MIN_IDLE_MS=${JOB_PENDING_MIN_IDLE_MS:-60000}
+      - JOB_PENDING_CLAIM_BATCH=${JOB_PENDING_CLAIM_BATCH:-10}
+      - JOB_PENDING_CLAIM_INTERVAL_SECONDS=${JOB_PENDING_CLAIM_INTERVAL_SECONDS:-5}
+      - JOB_RATE_LIMIT_FMP_CALLS=${JOB_RATE_LIMIT_FMP_CALLS:-0}
+      - JOB_RATE_LIMIT_FMP_WINDOW_SECONDS=${JOB_RATE_LIMIT_FMP_WINDOW_SECONDS:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      go-api:
+        condition: service_healthy
+    networks:
+      - trading-network
+    restart: unless-stopped
+    command: [ "python", "app/workers/redis_stream_job_worker.py" ]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 1.5G
+
+  python-worker-job-worker-2:
+    image: trading-system-python-worker
+    env_file:
+      - .env
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - PYTHON_GRPC_URL=go-api:50051
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - PYTHONPATH=/app
+      - JOB_DISABLE_POSTPROCESSING=${JOB_DISABLE_POSTPROCESSING:-true}
+      - JOB_STREAM_KEY=ts:jobs
+      - JOB_STREAM_GROUP=python-workers
+      - JOB_STREAM_MAXLEN=${JOB_STREAM_MAXLEN:-10000}
+      - JOB_DLQ_STREAM_KEY=${JOB_DLQ_STREAM_KEY:-ts:jobs:dlq}
+      - JOB_DLQ_MAXLEN=${JOB_DLQ_MAXLEN:-2000}
+      - JOB_PENDING_MIN_IDLE_MS=${JOB_PENDING_MIN_IDLE_MS:-60000}
+      - JOB_PENDING_CLAIM_BATCH=${JOB_PENDING_CLAIM_BATCH:-10}
+      - JOB_PENDING_CLAIM_INTERVAL_SECONDS=${JOB_PENDING_CLAIM_INTERVAL_SECONDS:-5}
+      - JOB_RATE_LIMIT_FMP_CALLS=${JOB_RATE_LIMIT_FMP_CALLS:-0}
+      - JOB_RATE_LIMIT_FMP_WINDOW_SECONDS=${JOB_RATE_LIMIT_FMP_WINDOW_SECONDS:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      go-api:
+        condition: service_healthy
+    networks:
+      - trading-network
+    restart: unless-stopped
+    command: [ "python", "app/workers/redis_stream_job_worker.py" ]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 1.5G
+
+  python-worker-job-worker-3:
+    image: trading-system-python-worker
+    env_file:
+      - .env
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - PYTHON_GRPC_URL=go-api:50051
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - PYTHONPATH=/app
+      - JOB_DISABLE_POSTPROCESSING=${JOB_DISABLE_POSTPROCESSING:-true}
+      - JOB_STREAM_KEY=ts:jobs
+      - JOB_STREAM_GROUP=python-workers
+      - JOB_STREAM_MAXLEN=${JOB_STREAM_MAXLEN:-10000}
+      - JOB_DLQ_STREAM_KEY=${JOB_DLQ_STREAM_KEY:-ts:jobs:dlq}
+      - JOB_DLQ_MAXLEN=${JOB_DLQ_MAXLEN:-2000}
+      - JOB_PENDING_MIN_IDLE_MS=${JOB_PENDING_MIN_IDLE_MS:-60000}
+      - JOB_PENDING_CLAIM_BATCH=${JOB_PENDING_CLAIM_BATCH:-10}
+      - JOB_PENDING_CLAIM_INTERVAL_SECONDS=${JOB_PENDING_CLAIM_INTERVAL_SECONDS:-5}
+      - JOB_RATE_LIMIT_FMP_CALLS=${JOB_RATE_LIMIT_FMP_CALLS:-0}
+      - JOB_RATE_LIMIT_FMP_WINDOW_SECONDS=${JOB_RATE_LIMIT_FMP_WINDOW_SECONDS:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      go-api:
+        condition: service_healthy
+    networks:
+      - trading-network
+    restart: unless-stopped
+    command: [ "python", "app/workers/redis_stream_job_worker.py" ]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 1.5G
+
+  # Scheduler (single instance) - polls Go API /api/v1/scheduler/tick
+  scheduler:
+    build:
+      context: .
+      dockerfile: scheduler/Dockerfile
+    container_name: trading-system-scheduler
+    env_file:
+      - .env
+    environment:
+      - GO_API_URL=${GO_API_URL:-http://go-api:8000}
+      - SCHEDULER_TICK_INTERVAL_SECONDS=${SCHEDULER_TICK_INTERVAL_SECONDS:-30}
+      - SCHEDULER_TICK_LIMIT=${SCHEDULER_TICK_LIMIT:-25}
+    depends_on:
+      go-api:
+        condition: service_healthy
+    networks:
+      - trading-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 128M
+
+  # Redis - Queue and cache
+  redis:
+    image: redis:7-alpine
+    container_name: trading-system-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: sh -c "redis-server --appendonly yes --maxmemory $${REDIS_MAX_MEMORY:-256m} --maxmemory-policy allkeys-lru --protected-mode no"
+    networks:
+      - trading-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 0.5G
+
+  # Streamlit Dashboard (Main UI)
+  streamlit:
+    build:
+      context: .
+      dockerfile: streamlit-app/Dockerfile
+    container_name: trading-system-streamlit
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - GO_API_URL=${GO_API_URL:-http://go-api:8000}
+      - PYTHONPATH=/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      go-api:
+        condition: service_healthy
+    networks:
+      - trading-network
+    restart: unless-stopped
+    command: [ "streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://127.0.0.1:8501 || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 0.5G
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  trading-network:
+    driver: bridge

@@ -328,6 +328,56 @@ func (r *IngestionAuditRepository) SymbolsForPortfolio(portfolioID string) ([]st
 	return out, nil
 }
 
+func (r *IngestionAuditRepository) GetAlertEventByID(alertEventID string) (*models.DataLoadAlertEvent, error) {
+	query := `
+		SELECT
+			ae.event_id AS alert_event_id,
+			ae.alert_id AS alert_id,
+			a.alert_type AS alert_type,
+			a.alert_name AS alert_name,
+			COALESCE(NULLIF(ue.entity_id, ''), ue.event_data->>'symbol') AS symbol,
+			ue.event_type AS event_type,
+			ue.event_timestamp AS event_timestamp,
+			ae.created_at AS created_at,
+			ae.urgency_level AS urgency_level,
+			ae.status AS status,
+			ae.trigger_reason AS trigger_reason,
+			ae.trigger_details AS trigger_details,
+			ue.event_data AS event_data,
+			ue.previous_data AS previous_data
+		FROM universal_alert_events ae
+		JOIN universal_events ue ON ue.event_id = ae.universal_event_id
+		JOIN universal_alerts a ON a.alert_id = ae.alert_id
+		WHERE ae.event_id = $1
+		LIMIT 1
+	`
+
+	var row models.DataLoadAlertEvent
+	if err := r.db.QueryRow(query, alertEventID).Scan(
+		&row.AlertEventID,
+		&row.AlertID,
+		&row.AlertType,
+		&row.AlertName,
+		&row.Symbol,
+		&row.EventType,
+		&row.EventTimestamp,
+		&row.CreatedAt,
+		&row.UrgencyLevel,
+		&row.Status,
+		&row.TriggerReason,
+		&row.TriggerDetails,
+		&row.EventData,
+		&row.PreviousData,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("alert event not found: %s", alertEventID)
+		}
+		return nil, fmt.Errorf("failed to get alert event: %w", err)
+	}
+
+	return &row, nil
+}
+
 func (r *IngestionAuditRepository) PortfolioSymbolsAlertSummary(symbols []string, since time.Time) ([]models.PortfolioSymbolAlertSummary, error) {
 	if len(symbols) == 0 {
 		return []models.PortfolioSymbolAlertSummary{}, nil

@@ -162,6 +162,27 @@ func (c *PythonWorkerClient) AdminRefreshData(ctx context.Context, req AdminRefr
 	return &refreshResp, nil
 }
 
+// PostJSON sends a JSON POST request and discards the response (fire-and-forget).
+func (c *PythonWorkerClient) PostJSON(endpoint string, payload any) error {
+	url := fmt.Sprintf("%s%s", c.BaseURL, endpoint)
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(context.Background(), "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+	// We ignore the body/status for fire-and-forget
+	return nil
+}
+
 // SignalRequest represents a request to generate signals
 type SignalRequest struct {
 	Symbols  []string `json:"symbols"`

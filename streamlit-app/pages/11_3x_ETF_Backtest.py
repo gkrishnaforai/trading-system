@@ -79,7 +79,7 @@ def get_3x_etf_signal(etf_symbol: str, date: str):
             "asset_type": "3x_etf"
         }
         
-        response = requests.post(api_url, json=payload)
+        response = requests.post(api_url, json=payload, timeout=120)
         
         if response.status_code == 200:
             data = response.json()

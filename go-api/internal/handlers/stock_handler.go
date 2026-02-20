@@ -2,19 +2,30 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/trading-system/go-api/internal/repositories"
 	"github.com/trading-system/go-api/internal/services"
 )
 
 type StockHandler struct {
 	stockService *services.StockService
+	auditRepo    *repositories.IngestionAuditRepository
+	gradesRepo   *repositories.StockGradesRepository
 }
 
-func NewStockHandler(stockService *services.StockService) *StockHandler {
+func NewStockHandler(
+	stockService *services.StockService,
+	auditRepo *repositories.IngestionAuditRepository,
+	gradesRepo *repositories.StockGradesRepository,
+) *StockHandler {
 	return &StockHandler{
 		stockService: stockService,
+		auditRepo:    auditRepo,
+		gradesRepo:   gradesRepo,
 	}
 }
 
@@ -238,4 +249,100 @@ func (h *StockHandler) GetAdvancedAnalysis(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// GetAlertContext handles GET /api/v1/stock/:symbol/alert-context
+// Query params:
+// - alert_event_id (optional): pin this alert event at the top of the response
+// - days (optional, default 7): window for recent news + grade actions
+// - news_limit (optional, default 50)
+// - grades_limit (optional, default 100)
+// - subscription_level (optional, default basic)
+func (h *StockHandler) GetAlertContext(c *gin.Context) {
+	symbol := c.Param("symbol")
+
+	alertEventID := strings.TrimSpace(c.Query("alert_event_id"))
+
+	days := 7
+	if v := c.Query("days"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			days = parsed
+		}
+	}
+	newsLimit := 50
+	if v := c.Query("news_limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			newsLimit = parsed
+		}
+	}
+	gradesLimit := 100
+	if v := c.Query("grades_limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			gradesLimit = parsed
+		}
+	}
+
+	subscriptionLevel := c.Query("subscription_level")
+	if subscriptionLevel == "" {
+		subscriptionLevel = "basic"
+	}
+
+	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+
+	// Pinned alert event (optional)
+	var pinned any = nil
+	if alertEventID != "" {
+		ev, err := h.auditRepo.GetAlertEventByID(alertEventID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		if !strings.EqualFold(ev.Symbol, symbol) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "alert_event_id does not match symbol", "symbol": symbol, "alert_symbol": ev.Symbol})
+			return
+		}
+		pinned = ev
+	}
+
+	stock, err := h.stockService.GetStock(symbol, subscriptionLevel)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusOK, gin.H{
+				"symbol":         symbol,
+				"data_available": false,
+				"message":        "No data available for this symbol. Please run the batch worker to fetch market data first.",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	fundamentals, ferr := h.stockService.GetFundamentalsSnapshot(symbol)
+	if ferr != nil {
+		fundamentals = nil
+	}
+
+	news, nerr := h.stockService.GetNewsSince(symbol, since, newsLimit)
+	if nerr != nil {
+		news = []repositories.NewsArticle{}
+	}
+
+	grades, gerr := h.gradesRepo.ListRecentActions(symbol, days, gradesLimit)
+	if gerr != nil {
+		grades = []repositories.StockGradeAction{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"symbol":             symbol,
+		"alert_event_id":     alertEventID,
+		"pinned_alert":       pinned,
+		"window_days":        days,
+		"stock":              stock,
+		"fundamentals":       fundamentals,
+		"news":               news,
+		"grade_actions":      grades,
+		"generated_at":       time.Now().UTC().Format(time.RFC3339),
+		"subscription_level": subscriptionLevel,
+	})
 }

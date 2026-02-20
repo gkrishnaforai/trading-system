@@ -434,3 +434,8 @@ func (h *AdminProxyHandler) RatingAlertsDelete(c *gin.Context) {
 	path := c.Param("path")
 	h.proxy(c, http.MethodDelete, "/api/v1/rating-alerts"+path)
 }
+
+// POST /api/v1/admin/fundamentals/fair-value -> python-worker POST /api/v1/fundamentals/fair-value
+func (h *AdminProxyHandler) FairValue(c *gin.Context) {
+	h.proxy(c, http.MethodPost, "/api/v1/fundamentals/fair-value")
+}

@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     
     # Data provider selection (Industry Standard: Primary + Fallback pattern)
     # Set PRIMARY_DATA_PROVIDER, FALLBACK_DATA_PROVIDER, DEFAULT_DATA_PROVIDER in .env
-    primary_data_provider: Optional[str] = None
+    primary_data_provider: str = "fmp"
     fallback_data_provider: Optional[str] = None
     default_data_provider: str = "fmp"
     

@@ -420,10 +420,20 @@ async def get_universal_signal(request: SignalRequest):
                 max_volatility=8.0  # Stock volatility
             )
         
-        engine = UnifiedTQQQSwingEngine(config)
+        # Use adaptive signal engine instead of hardcoded configs
+        from app.signal_engines.adaptive_signal_engine import AdaptiveSignalEngine
+        adaptive_engine = AdaptiveSignalEngine()
         
-        # Generate signal
-        signal_result = engine.generate_signal(conditions)
+        # Generate adaptive signal score
+        signal_score = adaptive_engine.generate_signal_score(sym, conditions)
+        
+        # Convert to SignalResult for compatibility
+        signal_result = SignalResult(
+            signal=signal_score.get_primary_signal(),
+            confidence=signal_score.confidence,
+            reasoning=signal_score.reasoning,
+            metadata=signal_score.metadata
+        )
         
         # Adapt response for requested symbol
         macd_payload = None
@@ -451,49 +461,7 @@ async def get_universal_signal(request: SignalRequest):
                 "avg_volume_20d": (conditions.avg_volume_20d is not None and conditions.avg_volume_20d != 0),
             },
             "missing": [],
-        }
-        for k, v in data_completeness["indicators_present"].items():
-            if not v:
-                data_completeness["missing"].append(k)
-
-        response_data = {
-            "engine": {
-                "name": f"Universal {request.asset_type.replace('_', ' ').title()} Engine",
-                "type": request.asset_type,
-                "description": f"Optimized for {request.asset_type.replace('_', ' ').title()} trading",
-                "config": asset_config
-            },
-            "market_data": {
-                "symbol": sym,
-                "requested_date": requested_date,
-                "as_of_date": resolved_date,
-                "date": resolved_date,
-                "price": conditions.current_price,
-                "rsi": conditions.rsi,
-                "sma_20": conditions.sma_20,
-                "sma_50": conditions.sma_50,
-                "ema_20": conditions.ema_20,
-                "macd": macd_payload,
-                "macd_signal": macd_signal_payload,
-                "high": market_context.get('high', conditions.current_price),
-                "low": market_context.get('low', conditions.current_price),
-                "volume": conditions.volume,  # ✅ Add current volume
-                "avg_volume_20d": conditions.avg_volume_20d,  # ✅ Add average volume
-                "data_source": "python_worker"  # ✅ Add data source
-            },
-            "data_completeness": data_completeness,
-            "signal": {
-                "signal": signal_result.signal.value,
-                "confidence": signal_result.confidence,
-                "reasoning": signal_result.reasoning,
-                "metadata": signal_result.metadata,
-                "volume": conditions.volume,  # ✅ Add volume to signal
-                "avg_volume_20d": conditions.avg_volume_20d,  # ✅ Add average volume to signal
-                "data_source": "python_worker"  # ✅ Add data source
-            },
-            "analysis": {
-                "daily_range": f"{market_context.get('low', 0):.2f} - {market_context.get('high', 0):.2f}",
-                "intraday_change": f"{market_context.get('intraday_change', 0):.2f}%",
+            "additional_data": {
                 "real_volatility": f"{conditions.volatility:.2f}%",
                 "recent_change": f"{conditions.recent_change:.2f}%",
                 "vix_level": f"{conditions.vix_level:.2f}",
@@ -506,6 +474,29 @@ async def get_universal_signal(request: SignalRequest):
                 "ema_slope": ema_slope,  # ✅ Add EMA slope for trend analysis
                 "data_source": "python_worker"  # ✅ Add data source
             },
+            "timestamp": datetime.now().isoformat(),
+            "asset_type": request.asset_type
+        }
+        
+        # Create response data object
+        response_data = {
+            "signal": {
+                "signal": signal_result.signal.value,
+                "confidence": signal_result.confidence,
+                "reasoning": signal_result.reasoning,
+                "metadata": signal_result.metadata
+            },
+            "market_data": {
+                "symbol": sym,
+                "requested_date": request.date,
+                "as_of_date": market_context.get('date', request.date),
+                "date": market_context.get('date', request.date),
+                "current_price": conditions.current_price,
+                "recent_change": conditions.recent_change,
+                "volatility": conditions.volatility,
+                "vix_level": conditions.vix_level
+            },
+            "data_completeness": data_completeness,
             "timestamp": datetime.now().isoformat(),
             "asset_type": request.asset_type
         }

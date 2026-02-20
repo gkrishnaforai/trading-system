@@ -44,13 +44,21 @@ class InstrumentConfig:
     # Volatility thresholds
     volatility_expansion_threshold: float = 4.0
     high_volatility_threshold: float = 8.0
+
+    # Trend protection
+    require_price_above_ma200: bool = True
+    require_ma200_uptrend: bool = True
+
+    # Risk management
+    stop_loss_pct: float = 0.08
+    take_profit_reduce_pct: float = 0.20
     
     # RSI thresholds
-    rsi_oversold: float = 45.0
+    rsi_oversold: float = 40.0
     rsi_moderately_oversold: float = 35.0
-    rsi_overbought: float = 65.0
-    rsi_extreme_oversold: float = 30.0
-    rsi_extreme_overbought: float = 70.0
+    rsi_overbought: float = 70.0
+    rsi_extreme_oversold: float = 28.0
+    rsi_extreme_overbought: float = 80.0
     
     # Trend sensitivity
     trend_sensitivity: float = 1.0  # 1.0 = normal, >1.0 = more sensitive
@@ -58,7 +66,7 @@ class InstrumentConfig:
     
     # Momentum thresholds
     breakout_momentum_threshold: float = 0.02
-    breakout_rsi_upper_bound: float = 70.0
+    breakout_rsi_upper_bound: float = 65.0
     
     # Mean reversion thresholds
     mean_reversion_rsi_upper: float = 60.0

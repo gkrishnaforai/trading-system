@@ -93,11 +93,33 @@ class IndicatorService(BaseService):
                 self.logger.warning(
                     f"⚠️ FMP did not return full MACD series for {symbol}; backfilling MACD locally from price history"
                 )
+                self.logger.info(f"🔄 Starting local MACD backfill for {symbol}")
                 try:
+                    self.logger.info(f"📊 Calling calculate_indicators() for {symbol} (MACD backfill)")
                     _local_ok = self.calculate_indicators(symbol)
+                    self.logger.info(f"✅ Local MACD backfill completed for {symbol}: success={_local_ok}")
                     success = bool(success) and bool(_local_ok)
+                    
+                    # Verify MACD was actually stored
+                    if _local_ok:
+                        try:
+                            from app.database import db
+                            macd_check = db.execute_query("""
+                                SELECT macd, macd_signal, macd_hist 
+                                FROM indicators_daily 
+                                WHERE symbol = %s AND date = CURRENT_DATE 
+                                LIMIT 1
+                            """, [symbol])
+                            if macd_check and macd_check[0]['macd'] is not None:
+                                self.logger.info(f"✅ MACD verification passed for {symbol}: macd={macd_check[0]['macd']}")
+                            else:
+                                self.logger.error(f"❌ MACD verification failed for {symbol}: not found in database")
+                        except Exception as verify_e:
+                            self.logger.error(f"❌ Failed to verify MACD for {symbol}: {verify_e}")
+                    
                 except Exception as e:
                     self.logger.error(f"❌ Failed local MACD backfill for {symbol}: {e}")
+                    self.logger.error(f"🐛 Exception details:", exc_info=True)
                     success = False
 
             if success:
@@ -337,6 +359,8 @@ class IndicatorService(BaseService):
             raise ValidationError(f"Invalid symbol: {symbol}", details={'symbol': symbol})
         
         try:
+            self.logger.info(f"🔄 Starting calculate_indicators for {symbol}")
+            
             # Use provided data if available, otherwise fetch from database
             if data is not None and not data.empty:
                 # Use provided DataFrame (e.g., from validated/cleaned data)
@@ -352,19 +376,24 @@ class IndicatorService(BaseService):
                     df.index = pd.to_datetime(df.index)
             else:
                 # Fetch raw market data from database using helper
+                self.logger.info(f"📊 Fetching historical data for {symbol} from database")
                 from app.utils.database_helper import DatabaseQueryHelper
                 
                 data = DatabaseQueryHelper.get_historical_data(symbol)
                 
                 if not data:
+                    self.logger.error(f"❌ No market data found for {symbol} in database")
                     raise IndicatorCalculationError(
                         f"No market data found for {symbol}",
                         details={'symbol': symbol}
                     )
                 
+                self.logger.info(f"📈 Retrieved {len(data)} rows of market data for {symbol}")
+                
                 # Convert to DataFrame
                 df = pd.DataFrame(data)
                 if df.empty:
+                    self.logger.error(f"❌ Empty DataFrame for {symbol} after fetching from database")
                     raise IndicatorCalculationError(
                         f"Empty DataFrame for {symbol} after fetching from database",
                         details={'symbol': symbol}
@@ -372,6 +401,7 @@ class IndicatorService(BaseService):
                 
                 df['date'] = pd.to_datetime(df['date'])
                 df.set_index('date', inplace=True)
+                self.logger.info(f"📊 Created DataFrame for {symbol}: {len(df)} rows, date range {df.index[0]} to {df.index[-1]}")
             
             # Validate we have required columns
             required_cols = ['open', 'high', 'low', 'close', 'volume']
@@ -413,8 +443,19 @@ class IndicatorService(BaseService):
             sma200 = calculate_sma200(close)  # Long-term regime
             
             # Calculate momentum indicators
+            self.logger.info(f"📈 Calculating momentum indicators for {symbol}")
             rsi = calculate_rsi(close)
+            self.logger.debug(f"📊 RSI calculated for {symbol}: {len(rsi)} points")
+            
             macd_line, macd_signal, macd_histogram = calculate_macd(close)
+            self.logger.info(f"📊 MACD calculated for {symbol}: line={len(macd_line)}, signal={len(macd_signal)}, hist={len(macd_histogram)} points")
+            
+            # Check MACD values
+            latest_macd = macd_line.iloc[-1] if len(macd_line) > 0 and not pd.isna(macd_line.iloc[-1]) else None
+            latest_signal = macd_signal.iloc[-1] if len(macd_signal) > 0 and not pd.isna(macd_signal.iloc[-1]) else None
+            latest_hist = macd_histogram.iloc[-1] if len(macd_histogram) > 0 and not pd.isna(macd_histogram.iloc[-1]) else None
+            
+            self.logger.info(f"📊 Latest MACD values for {symbol}: macd={latest_macd}, signal={latest_signal}, hist={latest_hist}")
             
             # Calculate volatility indicators
             atr = calculate_atr(df['high'], df['low'], df['close'])
@@ -501,60 +542,84 @@ class IndicatorService(BaseService):
             latest_idx = df.index[-1]
             trade_date = latest_idx.date() if hasattr(latest_idx, 'date') else pd.Timestamp(latest_idx).date()
 
-            # Store each indicator as a separate row to match existing table structure
-            indicators_data = [
-                ("sma_50", safe_get(sma50, latest_idx)),
-                ("sma_200", safe_get(sma200, latest_idx)),
-                ("ema_20", safe_get(ema20, latest_idx)),
-                ("rsi_14", safe_get(rsi, latest_idx)),
-                ("macd", safe_get(macd_line, latest_idx)),
-                ("macd_signal", safe_get(macd_signal, latest_idx)),
-                ("macd_hist", safe_get(macd_histogram, latest_idx)),
-                ("atr", safe_get(atr, latest_idx)),
-                ("bb_width", (
+            # Store indicators in WIDE format (direct columns) for compatibility with universal signal API
+            # This matches the expected schema used by the query in universal_backtest_api.py
+            self.logger.info(f"💾 Preparing wide format data for {symbol}")
+            wide_format_data = {
+                'sma_50': safe_get(sma50, latest_idx),
+                'sma_200': safe_get(sma200, latest_idx),
+                'ema_20': safe_get(ema20, latest_idx),
+                'rsi_14': safe_get(rsi, latest_idx),
+                'macd': safe_get(macd_line, latest_idx),
+                'macd_signal': safe_get(macd_signal, latest_idx),
+                'macd_hist': safe_get(macd_histogram, latest_idx),
+                'atr': safe_get(atr, latest_idx),
+                'bb_width': (
                     (float(safe_get(bb_upper, latest_idx)) - float(safe_get(bb_lower, latest_idx))) / float(safe_get(bb_middle, latest_idx))
                     if safe_get(bb_lower, latest_idx) is not None and safe_get(bb_upper, latest_idx) is not None and safe_get(bb_middle, latest_idx) not in (None, 0)
                     else None
-                )),
-                ("signal", strategy_result.signal),
-                ("confidence_score", float(strategy_result.confidence) if strategy_result and strategy_result.confidence is not None else None),
-            ]
+                ),
+                'signal': strategy_result.signal,
+                'confidence_score': float(strategy_result.confidence) if strategy_result and strategy_result.confidence is not None else None,
+            }
             
-            # Insert all indicators in a single batch
-            query = """
-                INSERT INTO indicators_daily 
-                (symbol, date, indicator_name, indicator_value, data_source, created_at)
-                VALUES (:symbol, :date, :indicator_name, :indicator_value, :data_source, NOW())
-                ON CONFLICT (symbol, date, indicator_name, data_source)
-                DO UPDATE SET
-                    indicator_value = EXCLUDED.indicator_value,
-                    created_at = NOW()
-            """
+            self.logger.info(f"📊 Wide format data prepared for {symbol}: {len([v for v in wide_format_data.values() if v is not None])} non-null values")
+            self.logger.debug(f"📊 Wide format data for {symbol}: macd={wide_format_data['macd']}, macd_signal={wide_format_data['macd_signal']}, macd_hist={wide_format_data['macd_hist']}")
             
-            # Batch insert all indicators
-            rows_inserted = 0
-            for indicator_name, value in indicators_data:
-                if value is not None:
-                    params = {
-                        "symbol": symbol,
-                        "date": trade_date,
-                        "indicator_name": indicator_name,
-                        "indicator_value": float(value) if isinstance(value, (int, float)) and not pd.isna(value) else None,
-                        "data_source": "calculated"
-                    }
-                    
-                    try:
-                        db.execute_update(query, params)
-                        rows_inserted += 1
-                    except Exception as e:
-                        self.logger.warning(f"Failed to save indicator {indicator_name} for {symbol}: {e}")
-                        continue
-
-            self.log_info(
-                f"✅ Calculated and saved {rows_inserted} daily indicators for {symbol}",
-                context={"symbol": symbol, "trade_date": str(trade_date), "rows_inserted": rows_inserted},
-            )
-            return True
+            # Build dynamic UPDATE query for wide format
+            update_columns = [col for col, val in wide_format_data.items() if val is not None]
+            
+            self.logger.info(f"📊 Will update {len(update_columns)} columns for {symbol}: {', '.join(update_columns)}")
+            
+            if update_columns:
+                # Use DELETE + INSERT approach since wide format doesn't have proper unique constraint
+                self.logger.info(f"💾 Storing indicators in wide format for {symbol} on {trade_date}")
+                
+                # First delete any existing wide format record for this symbol/date
+                delete_query = """
+                    DELETE FROM indicators_daily 
+                    WHERE symbol = :symbol AND date = :date
+                    AND (sma_50 IS NOT NULL OR ema_20 IS NOT NULL OR rsi_14 IS NOT NULL OR macd IS NOT NULL)
+                """
+                
+                try:
+                    db.execute_update(delete_query, {"symbol": symbol, "date": trade_date})
+                    self.logger.debug(f"🗑️ Deleted existing wide format records for {symbol} on {trade_date}")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Failed to delete existing records for {symbol}: {e}")
+                
+                # Create INSERT query for wide format
+                wide_query = f"""
+                    INSERT INTO indicators_daily 
+                    (symbol, date, {', '.join(update_columns)}, data_source, created_at, updated_at)
+                    VALUES (:symbol, :date, {', '.join([f':{col}' for col in update_columns])}, :data_source, NOW(), NOW())
+                """
+                
+                # Prepare parameters for wide format
+                wide_params = {
+                    "symbol": symbol,
+                    "date": trade_date,
+                    "data_source": "calculated"
+                }
+                
+                # Add indicator values to parameters
+                for col in update_columns:
+                    value = wide_format_data[col]
+                    wide_params[col] = float(value) if isinstance(value, (int, float)) and not pd.isna(value) else None
+                
+                try:
+                    db.execute_update(wide_query, wide_params)
+                    self.logger.info(f"✅ Stored {len(update_columns)} indicators in wide format for {symbol} on {trade_date}")
+                    self.logger.debug(f"📊 Stored MACD values for {symbol}: macd={wide_params.get('macd')}, macd_signal={wide_params.get('macd_signal')}, macd_hist={wide_params.get('macd_hist')}")
+                    return True
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to store wide format indicators for {symbol}: {e}")
+                    self.logger.error(f"🐛 Query: {wide_query}")
+                    self.logger.error(f"🐛 Parameters: {wide_params}")
+                    return False
+            else:
+                self.logger.warning(f"⚠️ No valid indicator values to store for {symbol}")
+                return False
             
         except (ValidationError, IndicatorCalculationError) as e:
             # Re-raise validation and calculation errors

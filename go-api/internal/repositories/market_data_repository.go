@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/trading-system/go-api/internal/database"
 )
@@ -198,6 +199,41 @@ func (r *MarketDataRepository) GetLatestNews(symbol string, limit int) ([]NewsAr
 		}
 		// related_symbols is stored as JSONB; treat as opaque when scanning via database/sql.
 		// We keep RelatedSymbols empty for now.
+		a.RelatedSymbols = []string{}
+		articles = append(articles, a)
+	}
+
+	return articles, nil
+}
+
+func (r *MarketDataRepository) GetLatestNewsSince(symbol string, since time.Time, limit int) ([]NewsArticle, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	query := `
+		SELECT n.title, COALESCE(n.publisher, ''), COALESCE(n.url, ''), COALESCE(n.published_at::text, ''), n.related_symbols
+		FROM stock_news n
+		JOIN stocks s ON s.id = n.stock_id
+		WHERE s.symbol = $1
+		  AND n.published_at >= $2
+		ORDER BY n.published_at DESC NULLS LAST, n.created_at DESC
+		LIMIT $3
+	`
+
+	rows, err := r.db.Query(query, symbol, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get news since: %w", err)
+	}
+	defer rows.Close()
+
+	articles := make([]NewsArticle, 0)
+	for rows.Next() {
+		var a NewsArticle
+		var related sql.NullString
+		if err := rows.Scan(&a.Title, &a.Publisher, &a.Link, &a.PublishedDate, &related); err != nil {
+			continue
+		}
 		a.RelatedSymbols = []string{}
 		articles = append(articles, a)
 	}

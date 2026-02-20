@@ -22,7 +22,7 @@ class AdminAPIClient:
         self.python_api_url = python_api_url
         self.go_api_url = go_api_url
         self.session = requests.Session()
-        self.session.timeout = 30
+        self.session.timeout = 120
     
     def _make_request(self, url: str, method: str = "GET", data: Dict = None, 
                      params: Dict = None) -> Dict[str, Any]:

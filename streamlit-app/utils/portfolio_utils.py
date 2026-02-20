@@ -207,7 +207,7 @@ class PortfolioAnalyzer:
                 "asset_type": asset_type
             }
             
-            response = self.client.post("api/v1/universal/signal/universal", json_data=payload)
+            response = self.client.post("api/v1/universal/signal/universal", json_data=payload, timeout=120)
             
             if response.get("success"):
                 return response["data"]

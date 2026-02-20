@@ -7,7 +7,7 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime, timedelta, date, time
-import time
+import time as time_module
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import json
@@ -38,6 +38,13 @@ from components.analysis_display import display_signal_analysis, display_no_data
 
 # Initialize API clients
 go_client = get_go_api_client()
+# Always set correct URL based on environment
+import os
+if os.path.exists('/.dockerenv'):
+    go_client.base_url = "http://go-api:8000"
+else:
+    go_client.base_url = "http://localhost:8000"
+print(f"DEBUG PORTFOLIO: final go_client.base_url = {go_client.base_url}")
 
 # ========================================
 # Helper Functions for DRY Code
@@ -486,7 +493,7 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
         auto_create_clicked = st.button(
             "Create 5 schedules",
             type="primary",
-            use_container_width=True,
+            width='stretch',
             key="epa_sched_auto_create",
         )
 
@@ -658,7 +665,7 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
             asset_type = st.selectbox("Asset type", options=["stock", "etf"], index=0, key="epa_sched_asset_type")
             config["asset_type"] = asset_type
 
-        create_clicked = st.button("Create", type="primary", use_container_width=True, key="epa_sched_create")
+        create_clicked = st.button("Create", type="primary", width='stretch', key="epa_sched_create")
         if create_clicked:
             payload = {
                 "kind": kind,
@@ -711,7 +718,7 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
                 "last_run_id": s.get("last_run_id"),
             })
         df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width='stretch', hide_index=True)
 
         st.markdown("### ⚙️ Manage")
         sched_ids = [str(s.get("schedule_id")) for s in schedules if isinstance(s, dict) and s.get("schedule_id")]
@@ -767,7 +774,7 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
                     height=180,
                     key="epa_sched_edit_config",
                 )
-                submitted = st.form_submit_button("💾 Save changes", use_container_width=True)
+                submitted = st.form_submit_button("💾 Save changes", width='stretch')
 
             if submitted:
                 try:
@@ -794,7 +801,7 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
                             st.json(resp)
 
         with manage_col1:
-            if st.button("▶️ Run now", use_container_width=True, key="epa_sched_run_now"):
+            if st.button("▶️ Run now", width='stretch', key="epa_sched_run_now"):
                 with st.spinner("Triggering run..."):
                     resp = run_now_schedule(selected_id)
                     run_id = (resp or {}).get("run_id")
@@ -811,7 +818,7 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
                 value=bool(selected_obj.get("enabled", True)),
                 key="epa_sched_manage_enabled",
             )
-            if st.button("💾 Save", use_container_width=True, key="epa_sched_save"):
+            if st.button("💾 Save", width='stretch', key="epa_sched_save"):
                 with st.spinner("Updating..."):
                     resp = update_schedule(selected_id, {"enabled": new_enabled})
                     if resp and resp.get("schedule"):
@@ -822,7 +829,7 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
                         st.json(resp)
 
         with manage_col3:
-            if st.button("🗑️ Delete", use_container_width=True, key="epa_sched_delete"):
+            if st.button("🗑️ Delete", width='stretch', key="epa_sched_delete"):
                 with st.spinner("Deleting..."):
                     resp = delete_schedule(selected_id)
                     if resp and resp.get("success"):
@@ -833,7 +840,7 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
                         st.json(resp)
 
         with manage_col4:
-            if st.button("🔄 Tick now", use_container_width=True, key="epa_sched_tick"):
+            if st.button("🔄 Tick now", width='stretch', key="epa_sched_tick"):
                 with st.spinner("Calling scheduler tick..."):
                     resp = go_client.post("api/v1/scheduler/tick", json_data={})
                     st.json(resp)
@@ -877,7 +884,7 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
                 c3.write(started_at)
                 c4.write(finished_at)
 
-                inspect_clicked = c5.button("Select", use_container_width=True, key=f"epa_sched_run_select_{idx}_{rid}")
+                inspect_clicked = c5.button("Select", width='stretch', key=f"epa_sched_run_select_{idx}_{rid}")
                 if inspect_clicked and rid:
                     st.session_state["epa_last_analysis_run_id"] = rid
                     st.session_state["epa_run_id"] = rid
@@ -889,7 +896,7 @@ def show_schedules_tab(portfolios: List[Dict[str, Any]]):
 
                 cancel_clicked = c6.button(
                     "Cancel",
-                    use_container_width=True,
+                    width='stretch',
                     disabled=not (rid and status.lower() == "running"),
                     key=f"epa_sched_run_cancel_{idx}_{rid}",
                 )
@@ -915,17 +922,946 @@ def get_symbol_signal_history(symbol: str, limit: int = 50) -> List[Dict[str, An
     _ = limit
     return []
 
-def get_portfolio_schedules(portfolio_id: str) -> List[Dict[str, Any]]:
-    """Get scheduled analyses for portfolio with timeout handling"""
-    _ = portfolio_id
-    return []
+def get_schedule_runs(schedule_id: str, limit: int = 2) -> List[Dict[str, Any]]:
+    """Get last N runs for a schedule"""
+    try:
+        response = go_client.get(f"api/v1/schedules/{schedule_id}/runs")
+        if response and response.get("runs"):
+            return response["runs"][:limit]  # Return last N runs
+        return []
+    except Exception as e:
+        st.error(f"❌ Error loading schedule runs: {e}")
+        return []
 
-def create_portfolio_schedule(portfolio_id: str, schedule_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Create a scheduled analysis with timeout handling"""
-    _ = portfolio_id
-    _ = schedule_data
-    st.warning("Scheduling is not supported via Go API yet for this page (Phase 2/3).")
-    return None
+def cancel_run(run_id: str) -> bool:
+    """Cancel a running run"""
+    try:
+        response = go_client.post(f"api/v1/data-load/runs/{run_id}/cancel")
+        return response is not None
+    except Exception as e:
+        st.error(f"❌ Error canceling run: {e}")
+        return False
+
+def get_portfolio_schedule_runs(schedule_id: str, limit: int = 2) -> List[Dict[str, Any]]:
+    """Get last N runs for a portfolio schedule"""
+    try:
+        response = go_client.get(f"api/v1/portfolio-schedules/{schedule_id}/runs")
+        if response and response.get("runs"):
+            return response["runs"][:limit]  # Return last N runs
+        return []
+    except Exception as e:
+        st.error(f"❌ Error loading portfolio schedule runs: {e}")
+        return []
+
+def cancel_portfolio_run(run_id: str) -> bool:
+    """Cancel a running portfolio analysis run"""
+    try:
+        response = go_client.post(f"api/v1/portfolio-analysis/runs/{run_id}/cancel")
+        return response is not None
+    except Exception as e:
+        st.error(f"❌ Error canceling portfolio run: {e}")
+        return False
+
+def update_system_schedule(schedule_id: str, updates: Dict[str, Any]) -> bool:
+    """Update a system schedule configuration"""
+    try:
+        response = go_client.patch(f"api/v1/schedules/{schedule_id}", updates)
+        return response is not None
+    except Exception as e:
+        st.error(f"❌ Error updating schedule: {e}")
+        return False
+
+def get_portfolio_schedules(portfolio_id: str) -> List[Dict[str, Any]]:
+    """Get scheduled analyses for portfolio using new API"""
+    try:
+        response = go_client.get(f"api/v1/portfolio-schedules/list?portfolio_id={portfolio_id}")
+        if response and response.get("schedules"):
+            return response["schedules"]
+        return []
+    except Exception as e:
+        st.error(f"❌ Error loading schedules: {e}")
+        return []
+
+def create_portfolio_schedule(portfolio_id: str, schedule_type: str, schedule_time: str, schedule_day: Optional[int]) -> Optional[Dict[str, Any]]:
+    """Create a scheduled analysis using new API"""
+    try:
+        payload = {
+            "portfolio_id": portfolio_id,
+            "schedule_type": schedule_type,
+            "schedule_time": schedule_time.strftime("%H:%M"),
+            "notification_preferences": {
+                "push": False,
+                "email": True
+            }
+        }
+        
+        if schedule_day:
+            payload["schedule_day"] = schedule_day
+        
+        response = go_client.post("api/v1/portfolio-schedules/", json_data=payload)
+        if response and response.get("success"):
+            return response
+        else:
+            st.error(f"❌ Failed to create schedule: {response.get('error', 'Unknown error')}")
+            return None
+    except Exception as e:
+        st.error(f"❌ Error creating schedule: {e}")
+        return None
+
+def delete_portfolio_schedule(schedule_id: str) -> bool:
+    """Delete a scheduled analysis using new API"""
+    try:
+        response = go_client.delete(f"api/v1/portfolio-schedules/{schedule_id}")
+        return response and response.get("success", False)
+    except Exception as e:
+        st.error(f"❌ Error deleting schedule: {e}")
+        return False
+
+def toggle_portfolio_schedule(schedule_id: str) -> bool:
+    """Toggle schedule active/paused status using new API"""
+    try:
+        response = go_client.post(f"api/v1/portfolio-schedules/{schedule_id}/toggle")
+        return response and response.get("success", False)
+    except Exception as e:
+        st.error(f"❌ Error toggling schedule: {e}")
+        return False
+
+def update_portfolio_schedule(schedule_id: str, updates: Dict[str, Any]) -> bool:
+    """Update a scheduled analysis using new API"""
+    try:
+        response = go_client.put(f"api/v1/portfolio-schedules/{schedule_id}", json_data=updates)
+        return response and response.get("success", False)
+    except Exception as e:
+        st.error(f"❌ Error updating schedule: {e}")
+        return False
+
+def show_enhanced_portfolio_schedules_tab(portfolios: List[Dict[str, Any]]):
+    """Enhanced Portfolio Schedules Tab - Professional schedule management"""
+    st.markdown("## ⏰ Portfolio Analysis Schedules")
+    st.markdown("Manage automated portfolio analysis schedules with professional controls")
+    
+    # Debug: Show that function is being called
+    st.info("🐛 DEBUG: Enhanced Portfolio Schedules Tab is loading!")
+    
+    # Get schedule overview
+    try:
+        overview = go_client.get("api/v1/portfolio-schedules/status/overview")
+        if overview:
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("📊 Total Schedules", overview.get("total_schedules", 0))
+            with col2:
+                st.metric("🟢 Active", overview.get("active_schedules", 0))
+            with col3:
+                st.metric("🔴 Paused", overview.get("paused_schedules", 0))
+            with col4:
+                scheduler_status = "🟢 Running" if overview.get("scheduler_running", False) else "🔴 Stopped"
+                st.metric("🔄 Scheduler", scheduler_status)
+    except Exception as e:
+        st.warning(f"⚠️ Could not load schedule overview: {e}")
+    
+    # Portfolio selector for schedule management
+    if portfolios:
+        selected_portfolio = create_portfolio_selector(portfolios, "schedule_management")
+        
+        if selected_portfolio:
+            portfolio_id = selected_portfolio['id']
+            portfolio_name = selected_portfolio['name']
+            
+            st.markdown(f"### 📅 All Schedules for {portfolio_name}")
+            st.caption("Data loading schedules and portfolio analysis schedules")
+            
+            # Get system schedules for this portfolio
+            system_schedules_for_portfolio = []
+            try:
+                all_system_schedules = go_client.get("api/v1/schedules")
+                if all_system_schedules and all_system_schedules.get("schedules"):
+                    system_schedules_for_portfolio = [
+                        sched for sched in all_system_schedules["schedules"] 
+                        if sched.get('portfolio_id') == portfolio_id
+                    ]
+            except Exception as e:
+                st.warning(f"⚠️ Could not load system schedules: {e}")
+            
+            # Get portfolio analysis schedules for this portfolio
+            portfolio_schedules = get_portfolio_schedules(portfolio_id)
+            
+            # Display System Schedules (Data Loading)
+            if system_schedules_for_portfolio:
+                st.markdown("#### 🔄 Data Loading Schedules")
+                st.caption("System schedules that load market data for this portfolio")
+                
+                for schedule in system_schedules_for_portfolio:
+                    with st.container():
+                        # Enhanced schedule card with better styling
+                        schedule_card = st.container()
+                        with schedule_card:
+                            # Header with status badge
+                            col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 1])
+                            
+                            with col1:
+                                # Profile info with enhanced icons
+                                profile_icon = {
+                                    "monthly_reference_backfill": "🗓️", 
+                                    "weekly_fundamentals": "📊",
+                                    "daily_market_intel": "📈", 
+                                    "intraday_news_hourly": "📰",
+                                    "intraday_prices_only": "💹"
+                                }.get(schedule['profile'], "⏰")
+                                
+                                # Status badge
+                                status_badge = "🟢 ACTIVE" if schedule['enabled'] else "🔴 DISABLED"
+                                st.markdown(f"**{profile_icon} {schedule['profile'].replace('_', ' ').title()}**")
+                                st.markdown(f"<span style='font-size: 12px; color: {'#10b981' if schedule['enabled'] else '#ef4444'};'>{status_badge}</span>", unsafe_allow_html=True)
+                                st.caption(f"Data Loading • Cron: `{schedule['cron_expression']}`")
+                            
+                            with col2:
+                                st.markdown("**⏰ Next Run:**")
+                                if schedule.get('next_run_at'):
+                                    next_run = schedule['next_run_at']
+                                    if isinstance(next_run, str):
+                                        next_run = datetime.fromisoformat(next_run.replace('Z', '+00:00'))
+                                    st.caption(next_run.strftime('%Y-%m-%d %H:%M'))
+                                else:
+                                    st.caption("Not scheduled")
+                                
+                                st.markdown("**📅 Last Run:**")
+                                if schedule.get('last_run_at'):
+                                    last_run = schedule['last_run_at']
+                                    if isinstance(last_run, str):
+                                        last_run = datetime.fromisoformat(last_run.replace('Z', '+00:00'))
+                                    st.caption(last_run.strftime('%m-%d %H:%M'))
+                                else:
+                                    st.caption("Never run")
+                            
+                            with col3:
+                                st.markdown("**📊 Schedule Info:**")
+                                st.caption(f"ID: `{schedule['schedule_id'][:8]}...`")
+                                st.caption(f"Kind: `{schedule['kind']}`")
+                                if schedule.get('timezone'):
+                                    st.caption(f"Timezone: `{schedule['timezone']}`")
+                                
+                                # Show last 2 runs for active schedules
+                                if schedule['enabled']:
+                                    st.markdown("**🕐 Recent Runs:**")
+                                    recent_runs = get_schedule_runs(schedule['schedule_id'], 2)
+                                    if recent_runs:
+                                        for i, run in enumerate(recent_runs):
+                                            run_status = run.get('status', 'unknown')
+                                            status_icon = {
+                                                'success': '✅', 
+                                                'running': '🔄', 
+                                                'failed': '❌', 
+                                                'cancelled': '⏹️'
+                                            }.get(run_status, '❓')
+                                            
+                                            # Format time
+                                            run_time = "Unknown"
+                                            if run.get('started_at'):
+                                                try:
+                                                    started_at = datetime.fromisoformat(run['started_at'].replace('Z', '+00:00'))
+                                                    run_time = started_at.strftime('%m-%d %H:%M')
+                                                except:
+                                                    run_time = "Invalid date"
+                                            
+                                            # Show run info with cancel option for running runs
+                                            col_run, col_cancel = st.columns([4, 1])
+                                            with col_run:
+                                                st.caption(f"{status_icon} {run_status.title()} • {run_time}")
+                                            with col_cancel:
+                                                if run_status == 'running':
+                                                    if st.button("⏹️", key=f"cancel_run_{run['run_id']}", help="Cancel this run"):
+                                                        if cancel_run(run['run_id']):
+                                                            st.success(f"⏹️ Run cancelled!")
+                                                            st.rerun()
+                                                        else:
+                                                            st.error("❌ Failed to cancel run")
+                                    else:
+                                        st.caption("No recent runs")
+                                else:
+                                    st.markdown("**📊 Schedule Info:**")
+                                    st.caption(f"ID: `{schedule['schedule_id'][:8]}...`")
+                                    st.caption(f"Kind: `{schedule['kind']}`")
+                                    if schedule.get('timezone'):
+                                        st.caption(f"Timezone: `{schedule['timezone']}`")
+                                    st.caption("ℹ️ Enable schedule to see recent runs")
+                            
+                            with col4:
+                                st.markdown("**🎛️ Quick Actions:**")
+                                # Primary toggle button
+                                if schedule['enabled']:
+                                    if st.button("⏸️ Disable", key=f"disable_{schedule['schedule_id']}", help="Disable this schedule"):
+                                        response = go_client.patch(f"api/v1/schedules/{schedule['schedule_id']}", 
+                                                                  {"enabled": False})
+                                        if response:
+                                            st.success(f"✅ Disabled {schedule['profile']}")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ Failed to disable {schedule['profile']}")
+                                else:
+                                    if st.button("▶️ Enable", key=f"enable_{schedule['schedule_id']}", help="Enable this schedule"):
+                                        response = go_client.patch(f"api/v1/schedules/{schedule['schedule_id']}", 
+                                                                  {"enabled": True})
+                                        if response:
+                                            st.success(f"✅ Enabled {schedule['profile']}")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ Failed to enable {schedule['profile']}")
+                                
+                                # Run now button
+                                if st.button("🚀 Run Now", key=f"run_{schedule['schedule_id']}", help="Execute this schedule immediately"):
+                                    response = go_client.post(f"api/v1/schedules/{schedule['schedule_id']}/run-now")
+                                    if response:
+                                        st.success(f"🚀 Triggered {schedule['profile']} to run now!")
+                                    else:
+                                        st.error(f"❌ Failed to trigger {schedule['profile']}")
+                            
+                            with col5:
+                                st.markdown("**⚙️ More Actions:**")
+                                # Edit button
+                                if st.button("✏️ Edit", key=f"edit_{schedule['schedule_id']}", help="Edit schedule configuration"):
+                                    st.session_state[f'edit_system_schedule_{schedule["schedule_id"]}'] = True
+                                
+                                # Delete button with confirmation
+                                if st.button("🗑️ Delete", key=f"delete_{schedule['schedule_id']}", help="Delete this schedule"):
+                                    if st.session_state.get(f'confirm_delete_{schedule["schedule_id"]}', False):
+                                        response = go_client.delete(f"api/v1/schedules/{schedule['schedule_id']}")
+                                        if response:
+                                            st.success(f"🗑️ Deleted {schedule['profile']}")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ Failed to delete {schedule['profile']}")
+                                    else:
+                                        st.session_state[f'confirm_delete_{schedule["schedule_id"]}'] = True
+                                        st.warning("⚠️ Click Delete again to confirm")
+                        
+                        # Edit form (shown when edit button is clicked)
+                        if st.session_state.get(f'edit_system_schedule_{schedule["schedule_id"]}', False):
+                            with st.expander(f"✏️ Edit {schedule['profile'].replace('_', ' ').title()} Schedule", expanded=True):
+                                with st.form(f"edit_system_schedule_form_{schedule['schedule_id']}"):
+                                    st.markdown(f"**🔧 Edit System Schedule Configuration**")
+                                    st.caption(f"Profile: `{schedule['profile']}` | ID: `{schedule['schedule_id'][:8]}...`")
+                                    
+                                    col1, col2 = st.columns(2)
+                                    
+                                    with col1:
+                                        # Basic settings
+                                        st.markdown("**⚙️ Basic Settings:**")
+                                        
+                                        # Enable/Disable toggle
+                                        current_enabled = schedule.get('enabled', False)
+                                        new_enabled = st.checkbox("🟢 Enable Schedule", value=current_enabled, 
+                                                                 help="Enable or disable this schedule")
+                                        
+                                        # Cron expression editing
+                                        current_cron = schedule.get('cron_expression', '')
+                                        st.markdown("**⏰ Cron Expression:**")
+                                        st.caption("Define when this schedule should run using cron syntax")
+                                        new_cron = st.text_input("Cron Expression", value=current_cron, 
+                                                              help="Cron format: * * * * * (minute hour day month weekday)")
+                                        
+                                        # Cron helper
+                                        with st.expander("📖 Cron Expression Helper", expanded=False):
+                                            st.markdown("""
+                                            **Cron Format:** `minute hour day month weekday`
+                                            
+                                            **Examples:**
+                                            - `0 9 * * 1-5` - Weekdays at 9:00 AM
+                                            - `0 */6 * * *` - Every 6 hours
+                                            - `0 9 1 * *` - 1st of every month at 9:00 AM
+                                            - `*/15 9-17 * * 1-5` - Every 15 min, 9 AM-5 PM, weekdays
+                                            
+                                            **Fields:**
+                                            - **Minute:** 0-59
+                                            - **Hour:** 0-23 (24-hour format)
+                                            - **Day:** 1-31
+                                            - **Month:** 1-12
+                                            - **Weekday:** 0-7 (0 and 7 = Sunday)
+                                            """)
+                                        
+                                        # Timezone selection
+                                        current_timezone = schedule.get('timezone', 'UTC')
+                                        timezones = ['UTC', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Europe/London', 'Europe/Paris', 'Asia/Tokyo']
+                                        new_timezone = st.selectbox("🌍 Timezone", timezones, 
+                                                                 index=timezones.index(current_timezone) if current_timezone in timezones else 0,
+                                                                 help="Schedule timezone")
+                                    
+                                    with col2:
+                                        # Advanced settings
+                                        st.markdown("**🔧 Advanced Settings:**")
+                                        
+                                        # Force execution option
+                                        current_config = schedule.get('config', {})
+                                        current_force = current_config.get('force', False)
+                                        new_force = st.checkbox("💪 Force Execution", value=current_force,
+                                                              help="Force execution even if recently run")
+                                        
+                                        # Portfolio assignment (read-only for now)
+                                        st.markdown("**📊 Portfolio Assignment:**")
+                                        st.info(f"Portfolio: `{portfolio_name}`")
+                                        st.caption("Portfolio assignment cannot be changed here")
+                                    
+                                    # Data types configuration (preserve existing profile)
+                                    st.markdown("**📊 Data Types Configuration:**")
+                                    st.caption("Override default data types for this schedule (optional)")
+                                    
+                                    # Show current profile info
+                                    profile_name = schedule.get('profile', 'unknown')
+                                    st.info(f"📋 **Current Profile:** `{profile_name}`")
+                                    st.caption("This profile defines the default data types. Use overrides below to customize.")
+                                    
+                                    # Parse current data types
+                                    current_config = schedule.get('config', {})
+                                    current_include = current_config.get('include_data_types', [])
+                                    current_exclude = current_config.get('exclude_data_types', [])
+                                    
+                                    # Available data types (based on profile)
+                                    available_data_types = [
+                                        'market_data_daily', 'market_data_intraday', 'fundamentals_snapshot',
+                                        'earnings_transcripts', 'ratings_snapshot', 'corporate_actions',
+                                        'industry_peers', 'historical_grades', 'market_news', 'earnings_calendar'
+                                    ]
+                                    
+                                    # Profile-specific data types info
+                                    profile_data_info = {
+                                        'monthly_reference_backfill': ['fundamentals_snapshot', 'earnings_transcripts', 'ratings_snapshot', 'corporate_actions', 'industry_peers', 'historical_grades'],
+                                        'weekly_fundamentals': ['fundamentals_snapshot', 'earnings_transcripts', 'ratings_snapshot'],
+                                        'daily_market_intel': ['market_data_daily', 'market_news', 'earnings_calendar'],
+                                        'intraday_news_hourly': ['market_news'],
+                                        'intraday_prices_only': ['market_data_intraday']
+                                    }
+                                    
+                                    # Show profile defaults
+                                    if profile_name in profile_data_info:
+                                        with st.expander(f"📋 Default Data Types for {profile_name.replace('_', ' ').title()}", expanded=False):
+                                            st.markdown("**This profile normally loads:**")
+                                            for data_type in profile_data_info[profile_name]:
+                                                st.caption(f"• `{data_type}`")
+                                    
+                                    # Override options
+                                    col_include, col_exclude = st.columns(2)
+                                    with col_include:
+                                        st.markdown("**📥 Include Overrides:**")
+                                        st.caption("Add these data types (empty = use profile defaults)")
+                                        include_types = st.multiselect("Additional Data Types", 
+                                                                      available_data_types,
+                                                                      default=current_include,
+                                                                      help="Select additional data types to include")
+                                    with col_exclude:
+                                        st.markdown("**📤 Exclude Overrides:**")
+                                        st.caption("Remove these data types from profile defaults")
+                                        exclude_types = st.multiselect("Data Types to Exclude", 
+                                                                      available_data_types,
+                                                                      default=current_exclude,
+                                                                      help="Select data types to exclude from profile")
+                                    
+                                    # Action buttons
+                                    col_submit, col_cancel = st.columns(2)
+                                    with col_submit:
+                                        if st.form_submit_button("💾 Save Changes", type="primary"):
+                                            # Validate cron expression
+                                            if new_cron.strip():
+                                                # Prepare updates
+                                                updates = {
+                                                    "enabled": new_enabled,
+                                                    "cron_expression": new_cron.strip(),
+                                                    "timezone": new_timezone,
+                                                    "config": {
+                                                        "force": new_force,
+                                                        "include_data_types": include_types,
+                                                        "exclude_data_types": exclude_types
+                                                    }
+                                                }
+                                                
+                                                if update_system_schedule(schedule['schedule_id'], updates):
+                                                    st.success("✅ Schedule updated successfully!")
+                                                    st.session_state[f'edit_system_schedule_{schedule["schedule_id"]}'] = False
+                                                    st.rerun()
+                                                else:
+                                                    st.error("❌ Failed to update schedule")
+                                            else:
+                                                st.error("❌ Cron expression cannot be empty")
+                                    
+                                    with col_cancel:
+                                        if st.form_submit_button("❌ Cancel"):
+                                            st.session_state[f'edit_system_schedule_{schedule["schedule_id"]}'] = False
+                                            st.rerun()
+                        
+                        st.divider()
+                
+                st.markdown("---")
+            else:
+                st.info(f"🔄 No data loading schedules configured for {portfolio_name}")
+                st.caption("System schedules for market data, fundamentals, and news will appear here")
+            
+            # Display Portfolio Analysis Schedules
+            if portfolio_schedules:
+                st.markdown("#### 📊 Portfolio Analysis Schedules")
+                st.caption("Analysis and rebalancing schedules for this portfolio")
+                
+                for i, schedule in enumerate(portfolio_schedules):
+                    with st.container():
+                        # Enhanced schedule card with better styling
+                        schedule_card = st.container()
+                        with schedule_card:
+                            # Header with status badge
+                            col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 1])
+                            
+                            with col1:
+                                # Schedule type with enhanced icons
+                                type_icon = {"daily": "📅", "weekly": "📆", "monthly": "🗓️"}.get(schedule['schedule_type'], "⏰")
+                                
+                                # Status badge
+                                status_badge = "🟢 ACTIVE" if schedule['is_active'] else "🔴 PAUSED"
+                                st.markdown(f"**{type_icon} {schedule['schedule_type'].title()} Analysis**")
+                                st.markdown(f"<span style='font-size: 12px; color: {'#10b981' if schedule['is_active'] else '#ef4444'};'>{status_badge}</span>", unsafe_allow_html=True)
+                                st.caption(f"at {schedule['schedule_time']}")
+                                if schedule['schedule_day']:
+                                    if schedule['schedule_type'] == 'weekly':
+                                        days = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                                        st.caption(f"on {days[schedule['schedule_day']]}")
+                                    else:
+                                        st.caption(f"on day {schedule['schedule_day']}")
+                            
+                            with col2:
+                                st.markdown("**⏰ Next Run:**")
+                                if schedule.get('next_run'):
+                                    next_run = schedule['next_run']
+                                    if isinstance(next_run, str):
+                                        next_run = datetime.fromisoformat(next_run.replace('Z', '+00:00'))
+                                    st.caption(next_run.strftime('%Y-%m-%d %H:%M'))
+                                else:
+                                    st.caption("Not scheduled")
+                                
+                                st.markdown("**📅 Last Run:**")
+                                if schedule.get('last_run'):
+                                    last_run = schedule['last_run']
+                                    if isinstance(last_run, str):
+                                        last_run = datetime.fromisoformat(last_run.replace('Z', '+00:00'))
+                                    st.caption(last_run.strftime('%m-%d %H:%M'))
+                                else:
+                                    st.caption("Never run")
+                            
+                            with col3:
+                                st.markdown("**📊 Schedule Info:**")
+                                st.caption(f"ID: `{schedule['id'][:8]}...`")
+                                
+                                # Job status with enhanced icons
+                                job_status = schedule.get('job_status', 'unknown')
+                                job_icon = {"scheduled": "⏰", "running": "🔄", "paused": "⏸️", "error": "❌", "completed": "✅"}.get(job_status, "❓")
+                                job_color = {"scheduled": "#6b7280", "running": "#3b82f6", "paused": "#f59e0b", "error": "#ef4444", "completed": "#10b981"}.get(job_status, "#6b7280")
+                                st.markdown(f"<span style='font-size: 12px; color: {job_color};'>{job_icon} {job_status.title()}</span>", unsafe_allow_html=True)
+                                
+                                # Notification preferences
+                                notif_prefs = schedule.get('notification_preferences', {})
+                                notif_text = []
+                                if notif_prefs.get('email'):
+                                    notif_text.append("📧")
+                                if notif_prefs.get('push'):
+                                    notif_text.append("📱")
+                                if notif_text:
+                                    st.caption(f"Notifications: {' '.join(notif_text)}")
+                                else:
+                                    st.caption("Notifications: None")
+                                
+                                # Show last 2 runs for active schedules
+                                if schedule['is_active']:
+                                    st.markdown("**🕐 Recent Runs:**")
+                                    recent_runs = get_portfolio_schedule_runs(schedule['id'], 2)
+                                    if recent_runs:
+                                        for i, run in enumerate(recent_runs):
+                                            run_status = run.get('status', 'unknown')
+                                            status_icon = {
+                                                'success': '✅', 
+                                                'running': '🔄', 
+                                                'failed': '❌', 
+                                                'cancelled': '⏹️'
+                                            }.get(run_status, '❓')
+                                            
+                                            # Format time
+                                            run_time = "Unknown"
+                                            if run.get('started_at'):
+                                                try:
+                                                    started_at = datetime.fromisoformat(run['started_at'].replace('Z', '+00:00'))
+                                                    run_time = started_at.strftime('%m-%d %H:%M')
+                                                except:
+                                                    run_time = "Invalid date"
+                                            
+                                            # Show run info with cancel option for running runs
+                                            col_run, col_cancel = st.columns([4, 1])
+                                            with col_run:
+                                                st.caption(f"{status_icon} {run_status.title()} • {run_time}")
+                                            with col_cancel:
+                                                if run_status == 'running':
+                                                    if st.button("⏹️", key=f"cancel_portfolio_run_{run['run_id']}", help="Cancel this run"):
+                                                        if cancel_portfolio_run(run['run_id']):
+                                                            st.success(f"⏹️ Run cancelled!")
+                                                            st.rerun()
+                                                        else:
+                                                            st.error("❌ Failed to cancel run")
+                                    else:
+                                        st.caption("No recent runs")
+                                else:
+                                    st.caption("ℹ️ Resume schedule to see recent runs")
+                            
+                            with col4:
+                                st.markdown("**🎛️ Quick Actions:**")
+                                # Primary toggle button
+                                toggle_text = "⏸️ Pause" if schedule['is_active'] else "▶️ Resume"
+                                toggle_help = "Pause this schedule" if schedule['is_active'] else "Resume this schedule"
+                                if st.button(toggle_text, key=f"tab_toggle_{schedule['id']}", help=toggle_help):
+                                    if toggle_portfolio_schedule(schedule['id']):
+                                        st.success(f"✅ Schedule {'paused' if schedule['is_active'] else 'resumed'}!")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Failed to {'pause' if schedule['is_active'] else 'resume'} schedule")
+                                
+                                # Run now button
+                                if st.button("🚀 Run Now", key=f"run_now_{schedule['id']}", help="Execute analysis immediately"):
+                                    # Trigger portfolio analysis run
+                                    response = go_client.post(f"api/v1/portfolio-schedules/{schedule['id']}/run-now")
+                                    if response:
+                                        st.success(f"🚀 Triggered {schedule['schedule_type']} analysis to run now!")
+                                    else:
+                                        st.error(f"❌ Failed to trigger {schedule['schedule_type']} analysis")
+                            
+                            with col5:
+                                st.markdown("**⚙️ More Actions:**")
+                                # Edit button
+                                if st.button("✏️ Edit", key=f"tab_edit_{schedule['id']}", help="Edit schedule configuration"):
+                                    st.session_state[f'tab_edit_schedule_{schedule["id"]}'] = True
+                                
+                                # Delete button with confirmation
+                                if st.button("🗑️ Delete", key=f"tab_delete_{schedule['id']}", help="Delete this schedule"):
+                                    if st.session_state.get(f'confirm_delete_portfolio_{schedule["id"]}', False):
+                                        if delete_portfolio_schedule(schedule['id']):
+                                            st.success("🗑️ Schedule deleted!")
+                                            st.rerun()
+                                        else:
+                                            st.error("❌ Failed to delete schedule")
+                                    else:
+                                        st.session_state[f'confirm_delete_portfolio_{schedule["id"]}'] = True
+                                        st.warning("⚠️ Click Delete again to confirm")
+                        
+                        # Edit form (shown when edit button is clicked)
+                        if st.session_state.get(f'tab_edit_schedule_{schedule["id"]}', False):
+                            with st.expander(f"✏️ Edit {schedule['schedule_type'].title()} Schedule", expanded=True):
+                                with st.form(f"tab_edit_schedule_form_{schedule['id']}"):
+                                    col1, col2 = st.columns(2)
+                                    
+                                    with col1:
+                                        new_type = st.selectbox("Schedule Type", ["daily", "weekly", "monthly"], 
+                                                              index=["daily", "weekly", "monthly"].index(schedule['schedule_type']))
+                                        new_time = st.time_input("Time", value=datetime.strptime(schedule['schedule_time'], '%H:%M').time())
+                                    
+                                    with col2:
+                                        new_day = None
+                                        if new_type == "weekly":
+                                            new_day = st.selectbox("Day of Week", list(range(1, 8)), 
+                                                                  index=schedule.get('schedule_day', 1) - 1,
+                                                                  format_func=lambda x: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][x-1])
+                                        elif new_type == "monthly":
+                                            new_day = st.selectbox("Day of Month", list(range(1, 32)), 
+                                                                  index=schedule.get('schedule_day', 1) - 1)
+                                    
+                                    # Notification preferences
+                                    st.markdown("**🔔 Notification Preferences:**")
+                                    email_notif = st.checkbox("📧 Email Notifications", 
+                                                            value=schedule.get('notification_preferences', {}).get('email', True))
+                                    push_notif = st.checkbox("📱 Push Notifications", 
+                                                           value=schedule.get('notification_preferences', {}).get('push', False))
+                                    
+                                    col_submit, col_cancel = st.columns(2)
+                                    with col_submit:
+                                        if st.form_submit_button("💾 Save Changes", type="primary"):
+                                            updates = {
+                                                "schedule_type": new_type,
+                                                "schedule_time": new_time.strftime("%H:%M"),
+                                                "notification_preferences": {
+                                                    "email": email_notif,
+                                                    "push": push_notif
+                                                }
+                                            }
+                                            if new_day:
+                                                updates["schedule_day"] = new_day
+                                            
+                                            if update_portfolio_schedule(schedule['id'], updates):
+                                                st.success("✅ Schedule updated!")
+                                                st.session_state[f'tab_edit_schedule_{schedule["id"]}'] = False
+                                                st.rerun()
+                                    
+                                    with col_cancel:
+                                        if st.form_submit_button("❌ Cancel"):
+                                            st.session_state[f'tab_edit_schedule_{schedule["id"]}'] = False
+                                            st.rerun()
+                        
+                        st.divider()
+            else:
+                st.info(f"⏰ No scheduled analyses set up for {selected_portfolio['name']}")
+            
+            # Add new schedule section
+            with st.expander("➕ Create New Schedule", expanded=False):
+                st.markdown(f"**Schedule Analysis for {selected_portfolio['name']}**")
+                
+                with st.form("tab_create_schedule_form"):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        schedule_type = st.selectbox("📅 Schedule Type", ["daily", "weekly", "monthly"], 
+                                                   help="Choose how often to run the analysis")
+                        schedule_time = st.time_input("⏰ Execution Time", value=time(9, 0), 
+                                                     help="Time of day to run the analysis (9:00 AM default)")
+                    
+                    with col2:
+                        schedule_day = None
+                        if schedule_type == "weekly":
+                            schedule_day = st.selectbox("📆 Day of Week", list(range(1, 8)), 
+                                                      format_func=lambda x: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][x-1],
+                                                      help="Day of the week to run the analysis")
+                        elif schedule_type == "monthly":
+                            schedule_day = st.selectbox("🗓️ Day of Month", list(range(1, 32)), 
+                                                      help="Day of the month to run the analysis")
+                    
+                    # Notification preferences
+                    st.markdown("**🔔 Notification Preferences:**")
+                    col_email, col_push = st.columns(2)
+                    with col_email:
+                        email_notif = st.checkbox("📧 Email Notifications", value=True, 
+                                                 help="Receive email notifications when analysis completes")
+                    with col_push:
+                        push_notif = st.checkbox("📱 Push Notifications", value=False, 
+                                                 help="Receive push notifications (if enabled)")
+                    
+                    # Schedule description
+                    st.markdown("**📝 Schedule Description:**")
+                    if schedule_type == "daily":
+                        desc = f"Analysis will run every day at {schedule_time.strftime('%I:%M %p')}"
+                    elif schedule_type == "weekly":
+                        day_name = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][schedule_day-1] if schedule_day else "Monday"
+                        desc = f"Analysis will run every {day_name} at {schedule_time.strftime('%I:%M %p')}"
+                    else:
+                        day_num = schedule_day or 1
+                        desc = f"Analysis will run on the {day_num}{('st' if day_num == 1 else 'nd' if day_num == 2 else 'rd' if day_num == 3 else 'th')} of each month at {schedule_time.strftime('%I:%M %p')}"
+                    
+                    st.info(desc)
+                    
+                    if st.form_submit_button("⏰ Create Schedule", type="primary"):
+                        schedule = create_portfolio_schedule(selected_portfolio['id'], schedule_type, schedule_time, schedule_day)
+                        if schedule:
+                            st.success("✅ Schedule created successfully!")
+                            st.rerun()
+    else:
+        st.warning("⚠️ No portfolios available. Create a portfolio first to manage schedules.")
+
+def show_scheduling_section(portfolio_id: str):
+    """Show enhanced scheduling section for portfolio"""
+    st.markdown("### ⏰ Portfolio Analysis Scheduling")
+    
+    # Get schedule overview
+    try:
+        overview = go_client.get("api/v1/portfolio-schedules/status/overview")
+        if overview:
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("📊 Total Schedules", overview.get("total_schedules", 0))
+            with col2:
+                st.metric("🟢 Active", overview.get("active_schedules", 0))
+            with col3:
+                st.metric("🔴 Paused", overview.get("paused_schedules", 0))
+            with col4:
+                scheduler_status = "🟢 Running" if overview.get("scheduler_running", False) else "🔴 Stopped"
+                st.metric("🔄 Scheduler", scheduler_status)
+    except Exception as e:
+        st.warning(f"⚠️ Could not load schedule overview: {e}")
+    
+    # Get portfolio-specific schedules
+    schedules = get_portfolio_schedules(portfolio_id)
+    
+    if schedules:
+        st.markdown("#### 📅 Portfolio Schedules")
+        
+        for i, schedule in enumerate(schedules):
+            with st.container():
+                # Schedule card with professional styling
+                col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 1])
+                
+                with col1:
+                    # Schedule type and time with icon
+                    type_icon = {"daily": "📅", "weekly": "📆", "monthly": "🗓️"}.get(schedule['schedule_type'], "⏰")
+                    st.markdown(f"**{type_icon} {schedule['schedule_type'].title()}**")
+                    st.caption(f"at {schedule['schedule_time']}")
+                    if schedule['schedule_day']:
+                        if schedule['schedule_type'] == 'weekly':
+                            days = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                            st.caption(f"on {days[schedule['schedule_day']]}")
+                        else:
+                            st.caption(f"on day {schedule['schedule_day']}")
+                
+                with col2:
+                    # Next run information
+                    if schedule.get('next_run'):
+                        next_run = schedule['next_run']
+                        if isinstance(next_run, str):
+                            next_run = datetime.fromisoformat(next_run.replace('Z', '+00:00'))
+                        st.markdown("**Next Run:**")
+                        st.caption(next_run.strftime('%Y-%m-%d %H:%M'))
+                    else:
+                        st.markdown("**Next Run:**")
+                        st.caption("Not scheduled")
+                
+                with col3:
+                    # Status with toggle button
+                    status_color = "🟢" if schedule['is_active'] else "🔴"
+                    status_text = "Active" if schedule['is_active'] else "Paused"
+                    st.markdown(f"**{status_color} {status_text}**")
+                    
+                    # Job status
+                    job_status = schedule.get('job_status', 'unknown')
+                    job_icon = {"scheduled": "⏰", "running": "🔄", "paused": "⏸️", "error": "❌"}.get(job_status, "❓")
+                    st.caption(f"{job_icon} {job_status.title()}")
+                
+                with col4:
+                    # Last run information
+                    if schedule.get('last_run'):
+                        last_run = schedule['last_run']
+                        if isinstance(last_run, str):
+                            last_run = datetime.fromisoformat(last_run.replace('Z', '+00:00'))
+                        st.markdown("**Last Run:**")
+                        st.caption(last_run.strftime('%m-%d %H:%M'))
+                    else:
+                        st.markdown("**Last Run:**")
+                        st.caption("Never run")
+                
+                with col5:
+                    # Action buttons
+                    st.markdown("**Actions:**")
+                    
+                    # Toggle button
+                    toggle_text = "⏸️" if schedule['is_active'] else "▶️"
+                    toggle_help = "Pause" if schedule['is_active'] else "Resume"
+                    if st.button(toggle_text, key=f"toggle_{schedule['id']}", help=toggle_help):
+                        if toggle_portfolio_schedule(schedule['id']):
+                            st.success(f"✅ Schedule {'paused' if schedule['is_active'] else 'resumed'}!")
+                            st.rerun()
+                    
+                    # Edit button
+                    if st.button("✏️", key=f"edit_{schedule['id']}", help="Edit Schedule"):
+                        st.session_state[f'edit_schedule_{schedule["id"]}'] = True
+                    
+                    # Delete button
+                    if st.button("🗑️", key=f"delete_{schedule['id']}", help="Delete Schedule"):
+                        if delete_portfolio_schedule(schedule['id']):
+                            st.success("✅ Schedule deleted!")
+                            st.rerun()
+                
+                # Edit form (shown when edit button is clicked)
+                if st.session_state.get(f'edit_schedule_{schedule["id"]}', False):
+                    with st.expander(f"✏️ Edit Schedule - {schedule['schedule_type'].title()}", expanded=True):
+                        with st.form(f"edit_form_{schedule['id']}"):
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                new_type = st.selectbox("Schedule Type", ["daily", "weekly", "monthly"], 
+                                                      index=["daily", "weekly", "monthly"].index(schedule['schedule_type']))
+                                new_time = st.time_input("Time", value=datetime.strptime(schedule['schedule_time'], '%H:%M').time())
+                            
+                            with col2:
+                                new_day = None
+                                if new_type == "weekly":
+                                    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                                    current_day = schedule.get('schedule_day', 1) - 1 if schedule.get('schedule_day') else 0
+                                    new_day = st.selectbox("Day of Week", list(range(1, 8)), 
+                                                          index=current_day, format_func=lambda x: days[x-1])
+                                elif new_type == "monthly":
+                                    new_day = st.selectbox("Day of Month", list(range(1, 32)), 
+                                                          index=schedule.get('schedule_day', 1) - 1)
+                            
+                            # Notification preferences
+                            st.markdown("**Notification Preferences:**")
+                            email_notif = st.checkbox("📧 Email Notifications", 
+                                                    value=schedule.get('notification_preferences', {}).get('email', True))
+                            push_notif = st.checkbox("📱 Push Notifications", 
+                                                   value=schedule.get('notification_preferences', {}).get('push', False))
+                            
+                            col_submit, col_cancel = st.columns(2)
+                            with col_submit:
+                                if st.form_submit_button("💾 Save Changes", type="primary"):
+                                    updates = {
+                                        "schedule_type": new_type,
+                                        "schedule_time": new_time.strftime("%H:%M"),
+                                        "notification_preferences": {
+                                            "email": email_notif,
+                                            "push": push_notif
+                                        }
+                                    }
+                                    if new_day:
+                                        updates["schedule_day"] = new_day
+                                    
+                                    if update_portfolio_schedule(schedule['id'], updates):
+                                        st.success("✅ Schedule updated!")
+                                        st.session_state[f'edit_schedule_{schedule["id"]}'] = False
+                                        st.rerun()
+                            
+                            with col_cancel:
+                                if st.form_submit_button("❌ Cancel"):
+                                    st.session_state[f'edit_schedule_{schedule["id"]}'] = False
+                                    st.rerun()
+                
+                st.divider()
+    else:
+        st.info("⏰ No scheduled analyses set up for this portfolio")
+    
+    # Add new schedule section
+    with st.expander("➕ Create New Schedule", expanded=False):
+        st.markdown("**Schedule Portfolio Analysis**")
+        
+        with st.form("create_schedule_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                schedule_type = st.selectbox("📅 Schedule Type", ["daily", "weekly", "monthly"], 
+                                           help="Choose how often to run the analysis")
+                schedule_time = st.time_input("⏰ Execution Time", value=time(9, 0), 
+                                             help="Time of day to run the analysis (9:00 AM default)")
+            
+            with col2:
+                schedule_day = None
+                if schedule_type == "weekly":
+                    schedule_day = st.selectbox("📆 Day of Week", list(range(1, 8)), 
+                                              format_func=lambda x: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][x-1],
+                                              help="Day of the week to run the analysis")
+                elif schedule_type == "monthly":
+                    schedule_day = st.selectbox("🗓️ Day of Month", list(range(1, 32)), 
+                                              help="Day of the month to run the analysis")
+            
+            # Notification preferences
+            st.markdown("**🔔 Notification Preferences:**")
+            col_email, col_push = st.columns(2)
+            with col_email:
+                email_notif = st.checkbox("📧 Email Notifications", value=True, 
+                                         help="Receive email notifications when analysis completes")
+            with col_push:
+                push_notif = st.checkbox("📱 Push Notifications", value=False, 
+                                         help="Receive push notifications (if enabled)")
+            
+            # Schedule description
+            st.markdown("**📝 Schedule Description:**")
+            if schedule_type == "daily":
+                desc = f"Analysis will run every day at {schedule_time.strftime('%I:%M %p')}"
+            elif schedule_type == "weekly":
+                day_name = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][schedule_day-1] if schedule_day else "Monday"
+                desc = f"Analysis will run every {day_name} at {schedule_time.strftime('%I:%M %p')}"
+            else:
+                day_num = schedule_day or 1
+                desc = f"Analysis will run on the {day_num}{('st' if day_num == 1 else 'nd' if day_num == 2 else 'rd' if day_num == 3 else 'th')} of each month at {schedule_time.strftime('%I:%M %p')}"
+            
+            st.info(desc)
+            
+            if st.form_submit_button("⏰ Create Schedule", type="primary"):
+                schedule = create_portfolio_schedule(portfolio_id, schedule_type, schedule_time, schedule_day)
+                if schedule:
+                    st.success("✅ Schedule created successfully!")
+                    st.rerun()
 
 def refresh_symbol_analysis(symbol: str, asset_type: str = "stock") -> bool:
     """Refresh analysis for a symbol with timeout handling"""
@@ -976,7 +1912,7 @@ def show_login_page():
         return
 
     selected_label = st.selectbox("User", options=list(user_options.keys()), key="enh_portfolio_user_select")
-    if st.button("Continue", type="primary", use_container_width=True, key="enh_portfolio_user_continue"):
+    if st.button("Continue", type="primary", width='stretch', key="enh_portfolio_user_continue"):
         st.session_state.current_user = user_options[selected_label]
         st.rerun()
 
@@ -991,7 +1927,7 @@ def show_portfolio_management_tab(portfolios):
         selected_portfolio = create_portfolio_selector(portfolios, "management")
     
     with col2:
-        if st.button("➕ Create New", type="primary", use_container_width=True, key="create_portfolio_mgmt"):
+        if st.button("➕ Create New", type="primary", width='stretch', key="create_portfolio_mgmt"):
             st.session_state.show_create_portfolio = True
     
     # Show create portfolio form if requested
@@ -1022,7 +1958,7 @@ def show_portfolio_management_tab(portfolios):
             df_holdings = create_holdings_table(holdings)
             
             # Display the dataframe without styling the Signal column
-            st.dataframe(df_holdings, use_container_width=True, hide_index=True)
+            st.dataframe(df_holdings, width='stretch', hide_index=True)
             
             # Action buttons for each holding
             st.markdown("#### 🎯 Stock Actions")
@@ -1824,10 +2760,10 @@ def show_portfolio_overview():
         
         # Institutional action buttons
         st.markdown("### 🎯 Portfolio Actions")
-        col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
+        col1, col2, col3, col4, col5, col6 = st.columns([2, 1, 1, 1, 1, 1])
         
         with col1:
-            if st.button("📊 Institutional Analysis", type="primary", use_container_width=True, key="overview_analysis"):
+            if st.button("📊 Institutional Analysis", type="primary", width='stretch', key="overview_analysis"):
                 with st.spinner("Starting portfolio analysis run..."):
                     result = analyze_portfolio(selected_portfolio['id'])
                     if result and result.get('run_id'):
@@ -1846,7 +2782,7 @@ def show_portfolio_overview():
         with prof_col1:
             selected_profile = st.selectbox("Profile", options=profile_names, index=0, key="epa_analysis_profile_select")
         with prof_col2:
-            run_profile_clicked = st.button("▶️ Run", use_container_width=True, key="epa_run_analysis_profile")
+            run_profile_clicked = st.button("▶️ Run", width='stretch', key="epa_run_analysis_profile")
         with prof_col3:
             st.caption("Starts: POST /api/v1/portfolios/:portfolio_id/analysis-run")
 
@@ -1859,20 +2795,24 @@ def show_portfolio_overview():
                     st.error("❌ Failed to start analysis run")
         
         with col2:
-            if st.button("🔄 Refresh Data", use_container_width=True, key="overview_refresh"):
+            if st.button("🔄 Refresh Data", width='stretch', key="overview_refresh"):
                 load_portfolio_data(selected_portfolio['id'])
         
         with col3:
-            if st.button("📈 Risk Metrics", use_container_width=True, key="overview_risk"):
+            if st.button("📈 Risk Metrics", width='stretch', key="overview_risk"):
                 st.session_state.show_risk_metrics = True
         
         with col4:
-            if st.button("➕ Add Symbol", use_container_width=True, key="overview_add"):
+            if st.button("➕ Add Symbol", width='stretch', key="overview_add"):
                 st.session_state.show_add_symbol = True
         
         with col5:
-            if st.button("🔄 Load All Data", use_container_width=True, key="overview_load_all"):
+            if st.button("🔄 Load All Data", width='stretch', key="overview_load_all"):
                 load_all_portfolio_data(selected_portfolio['id'])
+        
+        with col6:
+            if st.button("⏰ Scheduling", width='stretch', key="overview_scheduling"):
+                st.session_state.show_scheduling = True
         
         # Show portfolio details with institutional formatting
         show_portfolio_details(selected_portfolio)
@@ -1880,6 +2820,10 @@ def show_portfolio_overview():
         # Show institutional risk metrics if requested
         if st.session_state.get('show_risk_metrics', False):
             show_institutional_risk_metrics(selected_portfolio)
+        
+        # Show portfolio scheduling section if requested
+        if st.session_state.get('show_scheduling', False):
+            show_scheduling_section(selected_portfolio['id'])
         
         # Show last analysis results with institutional formatting
         if 'last_analysis_result' in st.session_state:
@@ -1994,7 +2938,7 @@ def show_portfolio_overview():
                         "error": e.get("error_message"),
                     })
                 df = pd.DataFrame(rows)
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(df, width='stretch', hide_index=True)
             else:
                 st.caption("No events yet.")
 
@@ -2024,7 +2968,7 @@ def show_create_portfolio_form(location: str = "main"):
         
         description = st.text_area("Description (Optional)", placeholder="Describe your portfolio strategy...")
         
-        if st.form_submit_button("➕ Create Portfolio", type="primary", use_container_width=True):
+        if st.form_submit_button("➕ Create Portfolio", type="primary", width='stretch'):
             if name:
                 portfolio = create_portfolio(name, description, portfolio_type, initial_capital)
                 if portfolio:
@@ -2243,7 +3187,7 @@ def show_institutional_analysis_results(analysis_result: Dict[str, Any]):
                 paper_bgcolor='white'
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         
         # Detailed signals table
         st.markdown("#### 📋 Detailed Signals")
@@ -2260,7 +3204,7 @@ def show_institutional_analysis_results(analysis_result: Dict[str, Any]):
         
         if signal_data:
             df_signals = pd.DataFrame(signal_data)
-            st.dataframe(df_signals, use_container_width=True, hide_index=True)
+            st.dataframe(df_signals, width='stretch', hide_index=True)
 
 def show_portfolio_details(portfolio: Dict[str, Any]):
     """Show institutional-grade portfolio information"""
@@ -2422,13 +3366,13 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                     color = '#dc2626'
                 return f'color: {color}'
             
-            # Display the dataframe without View Analysis column
+            # Display the dataframe without styling the Signal column
             display_columns = ['Symbol', 'Shares', 'Avg Cost', 'Current Price', 'Market Value', 'Cost Basis', 'P&L %', 'Weight']
             df_display = df_holdings[display_columns]
             
             # Apply styling to P&L % column
             styled_df = df_display.style.applymap(highlight_pnl, subset=['P&L %'])
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, hide_index=True, width='stretch')
             
             # Add View Analysis buttons in a clean grid layout
             st.markdown("#### 📊 Stock Analysis")
@@ -2443,20 +3387,11 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                 symbol = holding_data['Symbol']
                 
                 with cols[col_idx]:
-                    if st.button(f"📊 {symbol}", key=f"overview_analysis_btn_{symbol}", 
-                               help=f"View detailed analysis for {symbol}",
-                               use_container_width=True):
-                        # Clear any previous analysis state
-                        if 'show_symbol_analysis' in st.session_state:
-                            st.session_state.show_symbol_analysis = False
-                        if 'selected_symbol_for_analysis' in st.session_state:
-                            del st.session_state.selected_symbol_for_analysis
-                        
-                        # Set new symbol for analysis
-                        st.session_state.selected_symbol_for_analysis = symbol
-                        st.session_state.show_symbol_analysis = True
-                        st.success(f"🔄 Loading analysis for {symbol}...")
-                        st.rerun()
+                    # Link to professional overview page with symbol (same page)
+                    st.markdown(
+                        f'<a href="http://localhost:8501/Stock_Overview_Pro?symbol={symbol}"><button style="background-color:#0f7938;color:white;border:none;padding:0.5rem 1rem;border-radius:0.25rem;cursor:pointer;width:100%;">📊 {symbol}</button></a>',
+                        unsafe_allow_html=True,
+                    )
             
             # Portfolio allocation chart
             st.markdown("#### 📊 Portfolio Allocation")
@@ -2484,7 +3419,7 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
                 )
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
     else:
         st.warning("No holdings data available for this portfolio")
         
@@ -2493,46 +3428,15 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
             st.empty()
         
         if holdings_data:
-            # Display as a professional table
-            df_holdings = pd.DataFrame(holdings_data)
-            
-            # Configure column display
-            column_config = {
-                "Symbol": st.column_config.TextColumn("Symbol", width=80),
-                "Shares": st.column_config.TextColumn("Shares", width=100),
-                "Avg Cost": st.column_config.TextColumn("Avg Cost", width=100),
-                "Current Price": st.column_config.TextColumn("Current Price", width=100),
-                "Signal": st.column_config.TextColumn("Signal", width=80),
-                "Target Price": st.column_config.TextColumn("Target Price", width=100)
-            }
-            
-            # Display the dataframe
-            st.dataframe(
-                df_holdings,
-                column_config=column_config,
-                hide_index=True,
-                use_container_width=True
-            )
-            
-            # Add View Analysis buttons below the table
-            st.markdown("#### 📊 Stock Analysis (Technical & Fundamentals)")
-            cols = st.columns(min(len(holdings_data), 4))  # Max 4 columns wide
             
             for i, holding_data in enumerate(holdings_data):
                 col_idx = i % len(cols)
                 with cols[col_idx]:
-                    if st.button(f"📊 {holding_data['Symbol']}", key=f"details_analyze_{holding_data['Symbol']}", help=f"View detailed analysis for {holding_data['Symbol']}"):
-                        # Clear any previous analysis state
-                        if 'show_symbol_analysis' in st.session_state:
-                            st.session_state.show_symbol_analysis = False
-                        if 'selected_symbol_for_analysis' in st.session_state:
-                            del st.session_state.selected_symbol_for_analysis
-                        
-                        # Set new symbol for analysis
-                        st.session_state.selected_symbol_for_analysis = holding_data['Symbol']
-                        st.session_state.show_symbol_analysis = True
-                        st.success(f"🔄 Loading analysis for {holding_data['Symbol']}...")
-                        st.rerun()
+                    # Link to professional overview page with symbol (same page)
+                    st.markdown(
+                        f'<a href="http://localhost:8501/Stock_Overview_Pro?symbol={holding_data["Symbol"]}"><button style="background-color:#0f7938;color:white;border:none;padding:0.5rem 1rem;border-radius:0.25rem;cursor:pointer;width:100%;">📊 {holding_data["Symbol"]}</button></a>',
+                        unsafe_allow_html=True,
+                    )
             
             st.markdown("---")
             
@@ -2639,7 +3543,7 @@ def show_analysis_results(result: Dict[str, Any]):
                 return 'background-color: #FFF3E0; color: #FF8800'
         
         styled_df = df_signals.style.applymap(color_signal, subset=['Signal'])
-        st.dataframe(styled_df, use_container_width=True)
+        st.dataframe(styled_df, width='stretch')
         
         # Signal distribution chart
         signal_counts = {'BUY': 0, 'SELL': 0, 'HOLD': 0}
@@ -2650,7 +3554,7 @@ def show_analysis_results(result: Dict[str, Any]):
         
         if sum(signal_counts.values()) > 0:
             fig = PortfolioVisualizer.create_signal_distribution_chart(signal_counts)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
 def load_all_symbol_data(symbol: str):
     """Load all data types for a single symbol (similar to Trading Dashboard)"""
@@ -2762,63 +3666,6 @@ def load_portfolio_data(portfolio_id: str):
     else:
         st.warning("⚠️ No symbols found in portfolio")
 
-def show_scheduling_section(portfolio_id: str):
-    """Show scheduling section for portfolio"""
-    st.markdown("### ⏰ Scheduled Analysis")
-    
-    schedules = get_portfolio_schedules(portfolio_id)
-    
-    if schedules:
-        st.markdown("#### 📅 Active Schedules")
-        
-        for schedule in schedules:
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.markdown(f"**{schedule['schedule_type'].title()}**")
-                st.caption(f"at {schedule['schedule_time']}")
-            
-            with col2:
-                if schedule['next_run']:
-                    st.markdown(f"**Next Run:**")
-                    st.caption(schedule['next_run'].strftime('%Y-%m-%d %H:%M'))
-            
-            with col3:
-                status = "🟢 Active" if schedule['is_active'] else "🔴 Inactive"
-                st.markdown(f"**Status:** {status}")
-            
-            with col4:
-                if st.button("🗑️", key=f"delete_schedule_{schedule['id']}", help="Delete Schedule"):
-                    # TODO: Implement delete schedule
-                    st.warning("Delete schedule feature coming soon!")
-    else:
-        st.info("⏰ No scheduled analyses set up")
-    
-    # Add new schedule
-    with st.expander("➕ Schedule Analysis", expanded=False):
-        with st.form("schedule_form"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                schedule_type = st.selectbox("Schedule Type", ["daily", "weekly", "monthly"])
-                schedule_time = st.time_input("Time", value=time(9, 0))  # 9:00 AM default
-            
-            with col2:
-                schedule_day = None
-                if schedule_type == "weekly":
-                    schedule_day = st.selectbox("Day of Week", [
-                        (1, "Monday"), (2, "Tuesday"), (3, "Wednesday"),
-                        (4, "Thursday"), (5, "Friday"), (6, "Saturday"), (7, "Sunday")
-                    ], format_func=lambda x: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][x-1])
-                elif schedule_type == "monthly":
-                    schedule_day = st.selectbox("Day of Month", list(range(1, 32)))
-            
-            if st.form_submit_button("⏰ Create Schedule", type="primary"):
-                schedule = create_portfolio_schedule(portfolio_id, schedule_type, schedule_time, schedule_day)
-                if schedule:
-                    st.success("✅ Schedule created successfully!")
-                    st.rerun()
-
 # ========================================
 # ========================================
 # Symbol Analysis Functions
@@ -2874,15 +3721,15 @@ def show_symbol_analysis(symbol: str):
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        if st.button("🔄 Load All Data", type="primary", use_container_width=True, help=f"Load fresh data for {symbol}"):
+        if st.button("🔄 Load All Data", type="primary", width='stretch', help=f"Load fresh data for {symbol}"):
             load_all_symbol_data(symbol)
     
     with col2:
-        if st.button("📊 Refresh Analysis", use_container_width=True, help=f"Refresh analysis for {symbol}"):
+        if st.button("📊 Refresh Analysis", width='stretch', help=f"Refresh analysis for {symbol}"):
             refresh_symbol_analysis(symbol)
     
     with col3:
-        if st.button("← Back to Portfolio", use_container_width=True):
+        if st.button("← Back to Portfolio", width='stretch'):
             st.session_state.show_symbol_analysis = False
             st.session_state.selected_symbol_for_analysis = None
             st.rerun()
@@ -3194,7 +4041,7 @@ def _render_domain_risk_gauge(risk_level: str, title: str):
     ))
     
     fig.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 def _render_fundamentals_detailed_flags(analysis_data: Dict[str, Any]):
     """Render detailed flag analysis"""
@@ -3653,14 +4500,14 @@ def main():
                     st.caption(f"⏰ Expires in {remaining_hours:.1f} hours")
                 else:
                     st.warning("⚠️ Session expired")
-                    if st.button("🔄 Refresh Session", use_container_width=True):
+                    if st.button("🔄 Refresh Session", width='stretch'):
                         logout_user()
             except:
                 st.warning("⚠️ Session status unknown")
         
         st.divider()
         
-        if st.button("🔄 Refresh Data", use_container_width=True):
+        if st.button("🔄 Refresh Data", width='stretch'):
             if 'selected_portfolio' in st.session_state:
                 load_portfolio_data(st.session_state.selected_portfolio)
         
@@ -3681,7 +4528,7 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         
-        show_create_portfolio_form("first_portfolio")
+        show_create_portfolio_form("first_portfolio_mgmt")
     else:
         # Tabbed interface for portfolio management
         tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
@@ -3733,7 +4580,7 @@ def main():
                 show_settings_tab()
 
             with tab8:
-                show_schedules_tab(portfolios)
+                show_enhanced_portfolio_schedules_tab(portfolios)
 
 def show_stock_symbols_tab():
     """Stock Symbols Management Tab - Add and view stock symbols"""
@@ -3789,25 +4636,25 @@ def show_stock_symbols_tab():
     with col4:
         # Scheduler control buttons
         if scheduler_status.get('is_running'):
-            if st.button("⏹️ Stop", use_container_width=True):
+            if st.button("⏹️ Stop", width='stretch'):
                 stop_scheduler()
         else:
-            if st.button("▶️ Start", use_container_width=True):
+            if st.button("▶️ Start", width='stretch'):
                 start_scheduler()
     
     # Manual Load All Stocks Button
     col_load1, col_load2, col_load3 = st.columns([2, 1, 1])
     
     with col_load1:
-        if st.button("🚀 Load All Stocks Data", type="primary", use_container_width=True):
+        if st.button("🚀 Load All Stocks Data", type="primary", width='stretch'):
             load_all_stocks_data()
     
     with col_load2:
-        if st.button("🔄 Quick Refresh", use_container_width=True):
+        if st.button("🔄 Quick Refresh", width='stretch'):
             load_all_stocks_data(quick_mode=True)
     
     with col_load3:
-        if st.button("📋 Schedule All", use_container_width=True):
+        if st.button("📋 Schedule All", width='stretch'):
             schedule_all_symbols()
     
     # Show scheduler details
@@ -3843,7 +4690,7 @@ def show_stock_symbols_tab():
         st.caption("💡 Company information is automatically fetched from Yahoo Finance")
     
     with col2:
-        if st.button("📝 Add Symbol", type="primary", use_container_width=True):
+        if st.button("📝 Add Symbol", type="primary", width='stretch'):
             st.session_state.add_symbol_form_visible = not st.session_state.add_symbol_form_visible
             st.rerun()
     
@@ -3962,7 +4809,7 @@ def show_analyst_ratings_tab():
     
     with col2:
         # Load ratings button
-        if selected_symbol and st.button("🔄 Load Ratings", use_container_width=True, help="Load latest ratings for selected symbol"):
+        if selected_symbol and st.button("🔄 Load Ratings", width='stretch', help="Load latest ratings for selected symbol"):
             # Clear cache and load fresh data
             clear_ratings_cache(selected_symbol)
             load_ratings_for_symbol(selected_symbol)
@@ -4139,7 +4986,7 @@ def show_latest_grades_cached(symbol: str):
         
         if df_data:
             df = pd.DataFrame(df_data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width='stretch', hide_index=True)
             
             # Refresh button
             if st.button(f"🔄 Refresh {symbol} Ratings", key=f"refresh_{symbol}"):
@@ -4199,7 +5046,7 @@ def show_recent_grade_changes_cached(symbol: str):
         
         if df_data:
             df = pd.DataFrame(df_data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width='stretch', hide_index=True)
             
             # Summary statistics
             upgrades = len([c for c in changes if c.get('action') == 'upgrade'])
@@ -4227,7 +5074,7 @@ def show_ratings_data_loading(symbol: str):
         st.markdown("**Load Fresh Data**")
         st.info("Click to load the latest analyst ratings from external sources")
         
-        if st.button(f"📥 Load {symbol} Ratings", key=f"load_fresh_{symbol}", use_container_width=True):
+        if st.button(f"📥 Load {symbol} Ratings", key=f"load_fresh_{symbol}", width='stretch'):
             load_ratings_for_symbol(symbol)
     
     with col2:
@@ -4374,7 +5221,7 @@ def show_latest_grades(symbol: str):
                     
                     if df_data:
                         df = pd.DataFrame(df_data)
-                        st.dataframe(df, use_container_width=True, hide_index=True)
+                        st.dataframe(df, width='stretch', hide_index=True)
                     
                     # Refresh button
                     if st.button(f"🔄 Refresh {symbol} Ratings", key=f"refresh_{symbol}"):
@@ -4429,7 +5276,7 @@ def show_recent_grade_changes(symbol: str):
                     
                     if df_data:
                         df = pd.DataFrame(df_data)
-                        st.dataframe(df, use_container_width=True, hide_index=True)
+                        st.dataframe(df, width='stretch', hide_index=True)
                         
                         # Summary statistics
                         upgrades = len([c for c in changes if c.get('action') == 'upgrade'])
@@ -4454,12 +5301,17 @@ def show_recent_grade_changes(symbol: str):
         st.help("Try refreshing the page or selecting a different symbol")
 
 def get_scheduler_status():
-    """Get current scheduler status"""
+    """Get current scheduler status using portfolio schedule overview"""
     try:
-        response = go_client.get("api/v1/scheduler/status")
+        response = go_client.get("api/v1/portfolio-schedules/status/overview")
         
-        if response and isinstance(response, dict):
-            return response
+        if response and response.get("scheduler_running") is not None:
+            return {
+                'is_running': response.get("scheduler_running", False),
+                'total_schedules': response.get("total_schedules", 0),
+                'active_schedules': response.get("active_schedules", 0),
+                'paused_schedules': response.get("paused_schedules", 0)
+            }
         else:
             return {'is_running': False, 'error': 'Failed to get status'}
             
@@ -4469,33 +5321,13 @@ def get_scheduler_status():
 
 def start_scheduler():
     """Start the data refresh scheduler"""
-    try:
-        response = go_client.post("api/v1/scheduler/start")
-        
-        if response and response.get("success"):
-            st.success("✅ Scheduler started successfully!")
-            st.rerun()
-        else:
-            error_msg = response.get("message", "Unknown error") if response else "No response"
-            st.error(f"❌ Failed to start scheduler: {error_msg}")
-            
-    except Exception as e:
-        st.error(f"❌ Error starting scheduler: {str(e)}")
+    st.warning("⚠️ Scheduler start/stop functionality is not yet implemented in the Go API.")
+    st.info("💡 You can create and manage portfolio schedules using the Scheduling button in Portfolio Actions.")
 
 def stop_scheduler():
     """Stop the data refresh scheduler"""
-    try:
-        response = go_client.post("api/v1/scheduler/stop")
-        
-        if response and response.get("success"):
-            st.success("✅ Scheduler stopped successfully!")
-            st.rerun()
-        else:
-            error_msg = response.get("message", "Unknown error") if response else "No response"
-            st.error(f"❌ Failed to stop scheduler: {error_msg}")
-            
-    except Exception as e:
-        st.error(f"❌ Error stopping scheduler: {str(e)}")
+    st.warning("⚠️ Scheduler start/stop functionality is not yet implemented in the Go API.")
+    st.info("💡 You can pause individual portfolio schedules using the Scheduling button in Portfolio Actions.")
 
 def schedule_all_symbols():
     """Schedule all symbols for automatic refresh"""
@@ -4616,8 +5448,7 @@ def load_all_stocks_data(quick_mode=False, auto_triggered=False):
             if i + batch_size < len(symbols):
                 if not auto_triggered:  # Only show delay message for manual loads
                     st.info(f"⏱️ Waiting {delay_between_batches}s to respect API rate limits...")
-                import time
-                time.sleep(delay_between_batches)
+                time_module.sleep(delay_between_batches)
         
         # Complete progress
         progress_bar.progress(1.0)
@@ -4699,10 +5530,10 @@ def show_add_symbol_form():
             col_submit, col_cancel = st.columns([1, 1])
             
             with col_submit:
-                submitted = st.form_submit_button("➕ Add Symbol", type="primary", use_container_width=True)
+                submitted = st.form_submit_button("➕ Add Symbol", type="primary", width='stretch')
             
             with col_cancel:
-                if st.form_submit_button("❌ Cancel", use_container_width=True):
+                if st.form_submit_button("❌ Cancel", width='stretch'):
                     st.session_state.add_symbol_form_visible = False
                     st.rerun()
             
@@ -4727,7 +5558,7 @@ def get_all_stock_symbols():
     # Check cache first
     if 'stock_symbols_cache' in st.session_state:
         cache_time = st.session_state.get('stock_symbols_cache_time', 0)
-        if time.time() - cache_time < 3600:  # Cache for 1 hour
+        if time_module.time() - cache_time < 3600:  # Cache for 1 hour
             return st.session_state.stock_symbols_cache
     
     try:
@@ -4748,7 +5579,7 @@ def get_all_stock_symbols():
             
             # Cache the results
             st.session_state.stock_symbols_cache = symbols
-            st.session_state.stock_symbols_cache_time = time.time()
+            st.session_state.stock_symbols_cache_time = time_module.time()
             
             return symbols
         return []
@@ -4996,10 +5827,10 @@ def show_create_alert_section(user_id: str):
         col_submit, col_cancel = st.columns([1, 1])
         
         with col_submit:
-            submitted = st.form_submit_button("🔔 Create Alert", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("🔔 Create Alert", type="primary", width='stretch')
         
         with col_cancel:
-            if st.form_submit_button("❌ Cancel", use_container_width=True):
+            if st.form_submit_button("❌ Cancel", width='stretch'):
                 st.rerun()
         
         # Debug: Check if form was submitted
@@ -5065,7 +5896,7 @@ def show_my_alerts_section(user_id: str):
     # Add refresh button
     col1, col2 = st.columns([1, 5])
     with col1:
-        if st.button("🔄 Refresh", key="refresh_alerts", use_container_width=True):
+        if st.button("🔄 Refresh", key="refresh_alerts", width='stretch'):
             st.rerun()
     with col2:
         st.write("")  # Empty space for alignment
@@ -5145,7 +5976,7 @@ def show_my_alerts_section(user_id: str):
                                 
                                 # Toggle enable/disable
                                 status_text = "Disable" if alert.get('enabled', True) else "Enable"
-                                if st.button(f"🔘 {status_text}", key=f"toggle_{alert['alert_id']}", use_container_width=True):
+                                if st.button(f"🔘 {status_text}", key=f"toggle_{alert['alert_id']}", width='stretch'):
                                     with st.spinner(f"{status_text} alert..."):
                                         try:
                                             response = go_client.put(
@@ -5161,7 +5992,7 @@ def show_my_alerts_section(user_id: str):
                                             st.error(f"Error: {e}")
                                 
                                 # Delete button
-                                if st.button("🗑️ Delete", key=f"delete_quick_{alert['alert_id']}", type="secondary", use_container_width=True):
+                                if st.button("🗑️ Delete", key=f"delete_quick_{alert['alert_id']}", type="secondary", width='stretch'):
                                     with st.spinner("Deleting alert..."):
                                         try:
                                             response = go_client.delete(
@@ -5238,7 +6069,7 @@ def show_quick_setup_section(user_id: str):
         st.markdown("#### 🏆 Top S&P 500 Stocks")
         st.write("Set up alerts for the top S&P 500 companies")
         
-        if st.button("🚀 Setup Top Stocks Alerts", type="primary", use_container_width=True):
+        if st.button("🚀 Setup Top Stocks Alerts", type="primary", width='stretch'):
             with st.spinner("Setting up alerts..."):
                 try:
                     response = go_client.post(
@@ -5263,7 +6094,7 @@ def show_quick_setup_section(user_id: str):
             help="Enter stock symbols for watchlist alerts"
         )
         
-        if st.button("🚀 Setup Watchlist Alerts", type="primary", use_container_width=True):
+        if st.button("🚀 Setup Watchlist Alerts", type="primary", width='stretch'):
             if symbols:
                 symbol_list = [s.strip().upper() for s in symbols.split('\n') if s.strip()]
                 with st.spinner("Setting up alerts..."):
@@ -5414,7 +6245,7 @@ def display_symbols_table(symbols_data):
     df = pd.DataFrame(df_data)
     
     # Display the table
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width='stretch', hide_index=True)
     
     # Show summary
     col1, col2, col3 = st.columns(3)

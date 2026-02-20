@@ -75,13 +75,7 @@ def test_direct_requests():
         print(f"   ❌ EXCEPTION: {e}")
 
 
-def test_enhanced_client():
-    """Test the enhanced FMP client"""
-    print("\n🔍 TESTING ENHANCED FMP CLIENT")
-    print("=" * 50)
-    
-    try:
-        # Import the enhanced client
+def test_legacy_client():
         from app.providers.financial_modeling_prep.client import EnhancedFMPClient, FinancialModelingPrepConfig
         
         # Create config
@@ -222,9 +216,6 @@ def main():
     
     # Test direct requests
     test_direct_requests()
-    
-    # Test enhanced client
-    test_enhanced_client()
     
     # Test legacy client
     test_legacy_client()

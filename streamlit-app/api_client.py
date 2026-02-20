@@ -3,6 +3,7 @@ Centralized API client with robust error handling and logging
 No fallbacks, no workarounds - fail fast with clear errors
 """
 import logging
+import streamlit as st
 import requests
 from typing import Optional, Dict, Any, List
 from requests.exceptions import RequestException, Timeout, ConnectionError
@@ -156,6 +157,22 @@ class APIClient:
         """GET request"""
         return self._make_request("GET", endpoint, params=params, timeout=timeout, headers=headers)
     
+    def get_stock(self, symbol: str) -> Dict[str, Any]:
+        """Get stock basic info"""
+        return self.get(f"stock/{symbol}")
+    
+    def get_news(self, symbol: str, limit: int = 20) -> Dict[str, Any]:
+        """Get recent news for a symbol"""
+        return self.get(f"stock/{symbol}/news", params={"limit": limit})
+    
+    @staticmethod
+    def link_button(label: str, url: str):
+        """Render a clickable link button using markdown."""
+        st.markdown(
+            f'<a href="{url}" target="_blank"><button style="background-color:#0f7938;color:white;border:none;padding:0.5rem 1rem;border-radius:0.25rem;cursor:pointer;">{label}</button></a>',
+            unsafe_allow_html=True,
+        )
+    
     def post(
         self,
         endpoint: str,
@@ -226,7 +243,10 @@ def get_go_api_client() -> APIClient:
         )
         if not go_api_url:
             raise ValueError("GO_API_URL/API_BASE_URL not configured")
-        _go_api_client = APIClient(go_api_url, timeout=30)
+        _go_api_client = APIClient(go_api_url, timeout=120)
+        # Override for local development only (not when running in Docker)
+        if _go_api_client.base_url.startswith("http://go-api:") and not os.path.exists('/.dockerenv'):
+            _go_api_client.base_url = "http://localhost:8000"
     
     return _go_api_client
 

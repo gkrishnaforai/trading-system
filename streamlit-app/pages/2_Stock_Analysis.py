@@ -26,11 +26,19 @@ st.title("📊 Stock Analysis")
 # Sidebar
 subscription_level = render_sidebar()
 
+# Check for symbol in query parameters (from Stock_Overview_Pro link)
+query_params = st.query_params
+default_symbol = "AAPL"
+if 'symbol_detail' in query_params:
+    default_symbol = query_params['symbol_detail']
+    st.write(f"Debug: Received symbol from URL: {default_symbol}")
+
 # Stock symbol input with data fetch button
 col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 
 with col1:
-    symbol = st.text_input("Enter Stock Symbol", value="AAPL", placeholder="e.g., AAPL, MSFT, GOOGL", key="stock_search_symbol")
+    symbol = st.text_input("Enter Stock Symbol", value=default_symbol, placeholder="e.g., AAPL, MSFT, GOOGL", key="stock_search_symbol")
+    st.write(f"Debug: Current symbol value: '{symbol}'")
 
 with col2:
     st.write("")  # Spacing
@@ -74,10 +82,7 @@ if symbol:
         quick_add_watchlist = st.button("➕ Add to Watchlist", key="quick_watchlist_btn", use_container_width=True, help="Add this symbol to your watchlist")
     with col2:
         quick_add_portfolio = st.button("💼 Add to Portfolio", key="quick_portfolio_btn", use_container_width=True, help="Add this symbol to your portfolio")
-else:
-    quick_add_watchlist = False
-    quick_add_portfolio = False
-    
+
     # Handle quick actions
     if quick_add_watchlist:
         with st.expander("➕ Add to Watchlist", expanded=True):
@@ -95,32 +100,23 @@ else:
                     selected_watchlist_name = st.selectbox(
                         "Select Watchlist",
                         options=list(watchlist_options.keys()),
-                        key="quick_select_watchlist"
+                        key="quick_watchlist_select"
                     )
-                    selected_watchlist_id = watchlist_options.get(selected_watchlist_name)
                     
-                    notes = st.text_area("Notes (optional)", key="quick_watchlist_notes")
-                    
-                    if st.button("✅ Add Symbol", key="quick_confirm_watchlist"):
-                        try:
-                            add_response = go_client.post(
-                                f"api/v1/watchlists/{selected_watchlist_id}/items",
-                                json_data={
-                                    "stock_symbol": symbol.upper(),
-                                    "notes": notes if notes else None,
-                                    "priority": 0
-                                }
-                            )
-                            st.success(f"✅ {symbol.upper()} added to {selected_watchlist_name}!")
-                            st.json(add_response)
-                        except APIError as e:
-                            st.error(f"❌ Error: {e}")
+                    if st.button("✅ Add to Watchlist", key="quick_confirm_watchlist"):
+                        selected_watchlist_id = watchlist_options[selected_watchlist_name]
+                        add_response = go_client.post(
+                            f"api/v1/watchlists/{selected_watchlist_id}/symbols",
+                            json_data={"symbol": symbol.upper()}
+                        )
+                        st.success(f"✅ {symbol.upper()} added to watchlist!")
+                        st.json(add_response)
                 else:
-                    st.info("💡 No watchlists found. Create a watchlist first in the Watchlist Management page.")
-                    if st.button("📋 Go to Watchlist Management"):
-                        st.switch_page("pages/4_Watchlist.py")
+                    st.info("No watchlists found. Create one first.")
             except APIError as e:
-                st.error(f"❌ Error loading watchlists: {e}")
+                st.error(f"❌ Error: {e}")
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
     
     if quick_add_portfolio:
         with st.expander("💼 Add to Portfolio", expanded=True):
@@ -128,7 +124,7 @@ else:
                 from api_client import get_go_api_client
                 go_client = get_go_api_client()
                 user_id = st.text_input("User ID", value="user1", key="quick_portfolio_user")
-                portfolio_id = st.text_input("Portfolio ID", key="quick_portfolio_id", placeholder="e.g., portfolio1")
+                portfolio_id = st.text_input("Portfolio ID", value="portfolio1", key="quick_portfolio_id")
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -164,7 +160,9 @@ else:
                             st.error(f"❌ Error: {e}")
             except Exception as e:
                 st.error(f"❌ Error: {e}")
-    
+
+# Main Analysis Display - Show when symbol is provided
+if symbol:
     st.markdown("---")
     
     # Now fetch and display stock data (Industry Standard: Fetch on-demand if not available)

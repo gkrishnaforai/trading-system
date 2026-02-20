@@ -204,6 +204,10 @@ func (s *StockService) GetNews(symbol string, limit int) ([]repositories.NewsArt
 	return s.marketDataRepo.GetLatestNews(symbol, limit)
 }
 
+func (s *StockService) GetNewsSince(symbol string, since time.Time, limit int) ([]repositories.NewsArticle, error) {
+	return s.marketDataRepo.GetLatestNewsSince(symbol, since, limit)
+}
+
 func (s *StockService) GetEarnings(symbol string, limit int) ([]repositories.EarningsData, error) {
 	return s.marketDataRepo.GetEarnings(symbol, limit)
 }

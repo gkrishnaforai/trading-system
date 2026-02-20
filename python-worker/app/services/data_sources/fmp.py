@@ -8,7 +8,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime, date
 
-from app.providers.financial_modeling_prep.client import enhanced_fmp_client
+from app.providers.financial_modeling_prep.client import get_fmp_client
 from app.services.data_sources.base import (
     BaseDataSource, DataSourceType, StockGrade, ConsensusData,
     DataSourceError, DataSourceUnavailableError, DataSourceRateLimitError
@@ -39,7 +39,7 @@ class FMPDataSource(BaseDataSource):
     
     def __init__(self):
         super().__init__(DataSourceType.FMP)
-        self.client = enhanced_fmp_client
+        self.client = get_fmp_client()
         self._setup_default_mappings()
     
     def _setup_default_mappings(self):

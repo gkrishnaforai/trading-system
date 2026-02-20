@@ -1,5 +1,8 @@
 """Database connection and utilities (Postgres-only)."""
 import logging
+from sqlalchemy import create_engine, text
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
 from contextlib import contextmanager
 from typing import Optional, Dict, Any, List, Union, Tuple
 from pathlib import Path
@@ -7,9 +10,6 @@ import os
 import re
 
 import asyncpg
-from sqlalchemy import create_engine, text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 
@@ -228,25 +228,26 @@ def run_migrations():
             with open(migration_path, "r") as f:
                 sql = f.read()
 
-            connection = db.engine.raw_connection()
-            try:
-                cursor = connection.cursor()
-                for stmt in _split_sql_statements(sql):
-                    cursor.execute(stmt)
-                connection.commit()
-                logger.info(f"✅ Applied migration {migration_file}")
+            with db.get_session() as session:
+                try:
+                    for stmt in _split_sql_statements(sql):
+                        session.execute(text(stmt))
+                    session.commit()
+                    logger.info(f"✅ Applied migration {migration_file}")
 
-                # Record as applied
-                db.execute_update(
-                    """
-                    INSERT INTO schema_migrations (migration_name)
-                    VALUES (:migration_name)
-                    ON CONFLICT (migration_name) DO NOTHING
-                    """,
-                    {"migration_name": migration_file},
-                )
-            finally:
-                connection.close()
+                    # Record as applied
+                    db.execute_update(
+                        """
+                        INSERT INTO schema_migrations (migration_name)
+                        VALUES (:migration_name)
+                        ON CONFLICT (migration_name) DO NOTHING
+                        """,
+                        {"migration_name": migration_file},
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Failed to apply migration {migration_file}: {e}")
+                    session.rollback()
+                    raise
         except Exception as e:
             logger.warning(f"Error applying migration {migration_file}: {e}")
 

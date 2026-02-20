@@ -65,7 +65,7 @@ class EnhancedFMPClient:
     @classmethod
     def from_settings(cls) -> "EnhancedFMPClient":
         """Create client with default settings"""
-        config = FinancialModelingPrepConfig(
+        fmp_config = FinancialModelingPrepConfig(
             api_key=settings.fmp_api_key,
             base_url=settings.fmp_base_url,
             timeout=settings.fmp_timeout,
@@ -74,7 +74,7 @@ class EnhancedFMPClient:
             rate_limit_calls=settings.fmp_rate_limit_calls,
             rate_limit_window=settings.fmp_rate_limit_window
         )
-        return cls(config)
+        return cls(fmp_config)
     
     def _make_request(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Make HTTP request with rate limiting, retries, and error handling"""
@@ -1453,7 +1453,6 @@ class EnhancedFMPClient:
 
 
 # Global instance for easy access
-enhanced_fmp_client = EnhancedFMPClient.from_settings()
 
 
 # Legacy compatibility methods for backward compatibility
@@ -1599,3 +1598,13 @@ class FinancialModelingPrepClient(EnhancedFMPClient):
             return True
         except:
             return False
+
+
+# Factory function for dependency injection
+def get_fmp_client():
+    """Get FMP client instance - safe for dependency injection"""
+    return EnhancedFMPClient.from_settings()
+
+
+# Global instance for backward compatibility (uses factory function)
+enhanced_fmp_client = get_fmp_client()
