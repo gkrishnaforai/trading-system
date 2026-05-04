@@ -2,11 +2,56 @@
 Database Models - Separate from business logic
 Follows Single Responsibility Principle
 """
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text, JSON, Boolean, Index
+from sqlalchemy import Column, String, Integer, Float, DateTime, Text, JSON, Boolean, Index, Date, Numeric, UUID, ForeignKey, BigInteger
+from sqlalchemy.dialects.postgresql import JSONB, UUID as psqlUUID
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
+import uuid
 
 Base = declarative_base()
+
+
+class Stock(Base):
+    """Stock information"""
+    __tablename__ = "stocks"
+    
+    id = Column(psqlUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    symbol = Column(String(10), nullable=False, unique=True)
+    exchange = Column(String(10))
+    company_name = Column(Text)
+    sector = Column(String(50))
+    industry = Column(String(100))
+    country = Column(String(10))
+    currency = Column(String(5))
+    market_cap = Column(BigInteger)
+    shares_outstanding = Column(BigInteger)
+    float_shares = Column(BigInteger)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    next_earnings_date = Column(Date)
+    next_earnings_time = Column(Text)
+    next_earnings_session = Column(Text)
+    next_earnings_source = Column(Text)
+    next_earnings_earnings_id = Column(Text)
+    next_earnings_updated_at = Column(DateTime)
+    next_earnings_at = Column(DateTime)
+    next_earnings_timezone = Column(Text)
+    rating = Column(String(20))
+    price_target = Column(Numeric(10, 2))
+    rating_score = Column(Numeric(4, 2))
+    rating_updated_at = Column(DateTime)
+    rating_data_source = Column(String(50), default="fmp")
+    alert_metadata = Column(JSONB, default='{}')
+    last_alert_check = Column(DateTime)
+    alert_subscription_count = Column(Integer, default=0)
+    alert_events_count = Column(Integer, default=0)
+    alert_preferences = Column(JSONB, default='{}')
+    
+    __table_args__ = (
+        Index('idx_stocks_symbol', 'symbol'),
+        Index('idx_stocks_active', 'is_active'),
+    )
 
 
 class CompanyProfile(Base):
@@ -17,7 +62,7 @@ class CompanyProfile(Base):
     company_name = Column(String(255), nullable=False)
     sector = Column(String(100))
     industry = Column(String(100))
-    market_cap = Column(Integer)
+    market_cap = Column(BigInteger)
     website = Column(String(255))
     description = Column(Text)
     country = Column(String(100))
@@ -103,6 +148,27 @@ class MarketNews(Base):
     )
 
 
+class StockNews(Base):
+    """Stock-specific news articles"""
+    __tablename__ = "stock_news"
+    
+    id = Column(psqlUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    stock_id = Column(psqlUUID(as_uuid=True), ForeignKey('stocks.id'), nullable=False)
+    published_at = Column(DateTime)
+    title = Column(Text, nullable=False)
+    publisher = Column(Text)
+    url = Column(Text)
+    sentiment_score = Column(Numeric(8, 6))
+    related_symbols = Column(JSONB)
+    source = Column(String(50))
+    raw_json = Column(JSONB)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_stock_news_stock_published', 'stock_id', 'published_at'),
+    )
+
+
 class RealTimePrice(Base):
     """Real-time price data"""
     __tablename__ = "fmp_real_time_prices"
@@ -132,4 +198,72 @@ class RealTimePrice(Base):
     __table_args__ = (
         Index('idx_real_time_price_symbol', 'symbol'),
         Index('idx_real_time_price_timestamp', 'price_timestamp'),
+    )
+
+
+class AnalystRatings(Base):
+    """Analyst ratings data"""
+    __tablename__ = "analyst_ratings"
+    
+    symbol = Column(String(10), primary_key=True)
+    rating_date = Column(Date, primary_key=True)
+    analyst_name = Column(String(100), primary_key=True)
+    analyst_firm = Column(String(100))
+    rating = Column(String(20))
+    rating_action = Column(String(50))
+    price_target = Column(Numeric(10, 2))
+    published_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    payload = Column(JSON)
+    
+    __table_args__ = (
+        Index('idx_analyst_ratings_symbol_date', 'symbol', 'rating_date'),
+        Index('idx_analyst_ratings_firm', 'analyst_firm'),
+    )
+
+
+class PriceTargets(Base):
+    """Price targets data"""
+    __tablename__ = "price_targets"
+    
+    symbol = Column(String(10), primary_key=True)
+    target_date = Column(Date, primary_key=True)
+    analyst_name = Column(String(100), primary_key=True)
+    analyst_firm = Column(String(100))
+    price_target = Column(Numeric(10, 2))
+    rating = Column(String(20))
+    price_when_posted = Column(Numeric(10, 2))
+    published_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    payload = Column(JSON)
+    
+    __table_args__ = (
+        Index('idx_price_targets_symbol_date', 'symbol', 'target_date'),
+        Index('idx_price_targets_target', 'price_target'),
+    )
+
+
+class ConsensusData(Base):
+    """Consensus analyst data"""
+    __tablename__ = "consensus_data"
+    
+    symbol = Column(String(10), primary_key=True)
+    consensus_date = Column(Date, nullable=False)
+    analyst_count = Column(Integer)
+    consensus_rating = Column(String(20))
+    consensus_price_target = Column(Numeric(10, 2))
+    price_target_high = Column(Numeric(10, 2))
+    price_target_low = Column(Numeric(10, 2))
+    buy_ratings = Column(Integer)
+    hold_ratings = Column(Integer)
+    sell_ratings = Column(Integer)
+    published_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    payload = Column(JSON)
+    
+    __table_args__ = (
+        Index('idx_consensus_data_date', 'consensus_date'),
     )

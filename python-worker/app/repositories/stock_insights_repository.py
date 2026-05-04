@@ -48,7 +48,7 @@ class StockInsightsRepository:
             # Use base repository upsert method
             success = BaseRepository.upsert_many(
                 table="stock_insights_snapshots",
-                unique_columns=["stock_symbol", "insights_date"],
+                unique_columns=["stock_symbol", "insights_date", "source"],
                 rows=[data]
             )
             

@@ -26,6 +26,7 @@ from app.repositories.market_data_intraday_repository import IntradayBarUpsertRo
 from app.utils.trading_calendar import expected_trading_days, expected_intraday_15m_timestamps, expected_intraday_5m_timestamps
 from app.utils.json_sanitize import json_dumps_sanitized
 from app.observability import audit
+from app.config import settings
 
 
 class DataRefreshManager(BaseService):
@@ -214,6 +215,22 @@ class DataRefreshManager(BaseService):
             total_skipped=skipped,
         )
 
+    def refresh_fundamentals_bundle(
+        self,
+        symbol: str,
+        mode: RefreshMode = RefreshMode.ON_DEMAND,
+        force: bool = False,
+    ) -> SymbolRefreshResult:
+        bundle = [
+            DataType.COMPANY_PROFILE,
+            DataType.FUNDAMENTALS,
+            DataType.KEY_METRICS_TTM,
+            DataType.FINANCIAL_GROWTH,
+            DataType.FINANCIAL_RATIOS,
+            DataType.INCOME_STATEMENT_GROWTH,
+        ]
+        return self.refresh_data(symbol=symbol, data_types=bundle, mode=mode, force=force)
+
     def _auto_backfill_price_daily(self, symbol: str, lookback_days: int = 10) -> None:
         """Detect and backfill missing NYSE trading days for the last N days."""
         end_date = datetime.utcnow().date()
@@ -340,10 +357,9 @@ class DataRefreshManager(BaseService):
                     INSERT INTO stock_insights_snapshots 
                     (stock_symbol, insights_date, generated_at, source, payload)
                     VALUES (:stock_symbol, :insights_date, :generated_at, :source, :payload)
-                    ON CONFLICT (stock_symbol, insights_date)
+                    ON CONFLICT (stock_symbol, insights_date, source)
                     DO UPDATE SET
                         generated_at = EXCLUDED.generated_at,
-                        source = EXCLUDED.source,
                         payload = EXCLUDED.payload,
                         updated_at = NOW()
                     """),
@@ -655,6 +671,15 @@ class DataRefreshManager(BaseService):
                     error=None if rows > 0 else "No intraday data returned",
                     timestamp=start_time,
                 )
+            elif data_type == DataType.COMPANY_PROFILE:
+                success = self._refresh_company_profile(symbol)
+                return DataTypeRefreshResult(
+                    data_type=data_type.value,
+                    status=RefreshStatus.SUCCESS if success else RefreshStatus.FAILED,
+                    message="Company profile updated" if success else "Failed to fetch company profile",
+                    error=None if success else "No company profile data available",
+                    timestamp=start_time,
+                )
             elif data_type == DataType.FUNDAMENTALS:
                 success = self._refresh_fundamentals(symbol)
                 return DataTypeRefreshResult(
@@ -749,7 +774,13 @@ class DataRefreshManager(BaseService):
                 # Always try FMP technical indicators API first for indicators
                 # This ensures we use professional-grade indicators from FMP
                 self.logger.info(f"🔄 Using FMP technical indicators API for {symbol} (preferred method)")
-                success = service.calculate_indicators_with_fmp(symbol)
+                error_detail = None
+                try:
+                    success = service.calculate_indicators_with_fmp(symbol)
+                except Exception as e:
+                    success = False
+                    error_detail = str(e)
+                    self.logger.error(f"❌ Indicators calculation crashed for {symbol}: {e}", exc_info=True)
                 
                 # Log the result for audit tracking
                 if success:
@@ -778,17 +809,36 @@ class DataRefreshManager(BaseService):
                     data_type=data_type.value,
                     status=RefreshStatus.SUCCESS if success else RefreshStatus.FAILED,
                     message=message,
-                    error=None if success else "Indicator calculation failed",
+                    error=None
+                    if success
+                    else (error_detail or f"Indicator calculation failed for {symbol}. Check API logs and data source configuration (e.g. FMP key / rate limits)."),
                     timestamp=start_time
                 )
             elif data_type == DataType.SIGNALS:
-                # Signals are generated from indicators, handled separately
-                return DataTypeRefreshResult(
-                    data_type=data_type.value,
-                    status=RefreshStatus.SUCCESS,
-                    message="Signals are generated from indicators",
-                    timestamp=start_time
-                )
+                try:
+                    from app.services.trading_decision_v2_service import TradingDecisionV2Service
+
+                    service = TradingDecisionV2Service()
+                    decision = service.run_for_symbol(symbol)
+                    service.persist_decision(decision)
+
+                    return DataTypeRefreshResult(
+                        data_type=data_type.value,
+                        status=RefreshStatus.SUCCESS,
+                        message=f"Generated trading decision v2: state={decision.state} action={decision.action}",
+                        rows_affected=1,
+                        timestamp=start_time,
+                    )
+                except Exception as e:
+                    error_msg = f"Failed to generate trading decision v2 for {symbol}: {str(e)}"
+                    self.logger.error(error_msg, exc_info=True)
+                    return DataTypeRefreshResult(
+                        data_type=data_type.value,
+                        status=RefreshStatus.FAILED,
+                        message=error_msg,
+                        error=str(e),
+                        timestamp=start_time,
+                    )
             elif data_type == DataType.REPORTS:
                 # Reports are generated on-demand, handled separately
                 return DataTypeRefreshResult(
@@ -1225,6 +1275,7 @@ class DataRefreshManager(BaseService):
         rows_saved = 0
         error_message = None
         validation_report_id = None
+        cleaned_data = pd.DataFrame()
 
         try:
             from app.services.data_fetcher import DataFetcher
@@ -1233,12 +1284,40 @@ class DataRefreshManager(BaseService):
             fetcher = DataFetcher()
             validator = DataValidator()
 
-            # Use the data source directly
-            data = self.data_source.fetch_price_data(symbol, period="1y")
-            rows_fetched = len(data) if data is not None and not data.empty else 0
+            latest_rows = db.execute_query(
+                """
+                SELECT MAX(m.date) AS max_date
+                FROM stock_market_metrics m
+                JOIN stocks s ON s.id = m.stock_id
+                WHERE s.symbol = :symbol
+                """,
+                {"symbol": symbol},
+            )
+            latest_date = latest_rows[0].get("max_date") if latest_rows else None
 
-            if data is None or data.empty:
-                error_message = "No data returned from data source"
+            lookback_days = int(getattr(settings, "price_incremental_lookback_days", 7) or 7)
+            end_dt = datetime.utcnow()
+            start_dt: Optional[datetime] = None
+            period: Optional[str] = None
+            if latest_date:
+                try:
+                    start_dt = datetime.combine(latest_date, datetime.min.time()) - timedelta(days=lookback_days)
+                except Exception:
+                    start_dt = None
+            if start_dt is None:
+                period = "1y"
+
+            data = self.data_source.fetch_price_data(
+                symbol,
+                start_date=start_dt,
+                end_date=end_dt,
+                period=period or "1y",
+                interval="1d",
+            )
+            rows_fetched = len(data) if data is not None and not getattr(data, "empty", True) else 0
+
+            if data is None or getattr(data, "empty", True):
+                error_message = "No historical price data returned"
                 return 0, pd.DataFrame()
 
             # Validate data before saving
@@ -1265,6 +1344,26 @@ class DataRefreshManager(BaseService):
             # Save cleaned data
             rows_saved = fetcher.save_raw_market_data(symbol, cleaned_data)
             fetch_success = True
+
+            try:
+                max_saved_date = None
+                if cleaned_data is not None and not cleaned_data.empty:
+                    if "date" in cleaned_data.columns:
+                        max_saved_date = pd.to_datetime(cleaned_data["date"]).max().date()
+                    elif isinstance(cleaned_data.index, pd.DatetimeIndex):
+                        max_saved_date = pd.to_datetime(cleaned_data.index).max().date()
+                if max_saved_date:
+                    self._update_ingestion_window(
+                        symbol=symbol,
+                        dataset=self._dataset_for_data_type(DataType.PRICE_HISTORICAL),
+                        interval="daily",
+                        source=self.data_source.name,
+                        historical_start_date=(start_dt.date() if start_dt else None),
+                        historical_end_date=max_saved_date,
+                        cursor_date=max_saved_date,
+                    )
+            except Exception:
+                pass
 
             if rows_saved != len(cleaned_data):
                 self.logger.warning(f"⚠️ Saved {rows_saved} rows but cleaned data has {len(cleaned_data)} rows")
@@ -1442,7 +1541,7 @@ class DataRefreshManager(BaseService):
                 volume = None
             
             if price is None:
-                error_message = "No price in returned data"
+                error_message = "No price in response"
                 return False
                 
             try:
@@ -1675,7 +1774,17 @@ class DataRefreshManager(BaseService):
             with db.get_session() as session:
                 # Use current date as insights date for fundamentals data
                 insights_date = datetime.now().date()
-                
+
+                analyst_estimates = None
+                try:
+                    from app.providers.financial_modeling_prep.client import EnhancedFMPClient
+                    client = EnhancedFMPClient.from_settings()
+                    analyst_estimates = client.get_financial_estimates(symbol, period="annual", limit=10)
+                    if not analyst_estimates:
+                        analyst_estimates = None
+                except Exception as e:
+                    self.logger.warning(f"Failed to fetch analyst estimates for {symbol} (non-critical): {e}")
+
                 # Save as insights payload
                 try:
                     from sqlalchemy import text
@@ -1684,10 +1793,9 @@ class DataRefreshManager(BaseService):
                         INSERT INTO stock_insights_snapshots 
                         (stock_symbol, insights_date, generated_at, source, payload)
                         VALUES (:stock_symbol, :insights_date, :generated_at, :source, :payload)
-                        ON CONFLICT (stock_symbol, insights_date)
+                        ON CONFLICT (stock_symbol, insights_date, source)
                         DO UPDATE SET
                             generated_at = EXCLUDED.generated_at,
-                            source = EXCLUDED.source,
                             payload = EXCLUDED.payload,
                             updated_at = NOW()
                         """
@@ -1697,7 +1805,7 @@ class DataRefreshManager(BaseService):
                         "insights_date": insights_date,
                         "generated_at": datetime.now(),
                         "source": "fmp_fundamentals",
-                        "payload": json_dumps_sanitized({"fundamentals": fundamentals})
+                        "payload": json_dumps_sanitized({"fundamentals": fundamentals, "analyst_estimates": analyst_estimates})
                     }
                     
                     # Log the full query for debugging
@@ -1717,6 +1825,65 @@ class DataRefreshManager(BaseService):
         except Exception as e:
             self.logger.error(f"Error refreshing fundamentals for {symbol}: {e}")
             raise
+
+    def _refresh_company_profile(self, symbol: str) -> bool:
+        try:
+            self.logger.info(f"Refreshing company profile for {symbol}")
+
+            profile = None
+            try:
+                from app.providers.financial_modeling_prep.client import EnhancedFMPClient
+
+                client = EnhancedFMPClient.from_settings()
+                profile = client.get_company_profile(symbol)
+            except Exception as e:
+                self.logger.warning(f"Failed to fetch company profile from FMP for {symbol}: {e}")
+                profile = None
+
+            if not profile or not isinstance(profile, dict) or not profile.get("symbol"):
+                return False
+
+            from app.db_storage.fmp_data_storage import FMPDataStorage
+
+            storage = FMPDataStorage()
+
+            ipo_dt = None
+            ipo_raw = profile.get("ipoDate")
+            if ipo_raw:
+                try:
+                    from datetime import datetime
+
+                    ipo_dt = datetime.strptime(str(ipo_raw), "%Y-%m-%d")
+                except Exception:
+                    ipo_dt = None
+
+            record = {
+                "symbol": profile.get("symbol") or symbol,
+                "company_name": profile.get("companyName") or profile.get("company_name") or profile.get("name") or symbol,
+                "sector": profile.get("sector"),
+                "industry": profile.get("industry"),
+                "market_cap": profile.get("mktCap") or profile.get("marketCap"),
+                "website": profile.get("website"),
+                "description": profile.get("description"),
+                "country": profile.get("country"),
+                "currency": profile.get("currency"),
+                "exchange": profile.get("exchange"),
+                "ipo_date": ipo_dt,
+                "logo_url": profile.get("image"),
+                "phone": profile.get("phone"),
+                "address": profile.get("address"),
+                "city": profile.get("city"),
+                "state": profile.get("state"),
+                "zip": profile.get("zip"),
+                "dcf_diff": profile.get("dcfDiff"),
+                "dcf": profile.get("dcf"),
+                "image_url": profile.get("image"),
+            }
+
+            return bool(storage.store_company_profile(record))
+        except Exception as e:
+            self.logger.warning(f"Failed to refresh company profile for {symbol}: {e}")
+            return False
 
     def _refresh_earnings(self, symbol: str) -> int:
         """Refresh earnings data for a symbol"""
@@ -2273,22 +2440,24 @@ class DataRefreshManager(BaseService):
             # Handle different period formats
             fiscal_period = None
             if period == "FY":
-                # Handle Fiscal Year - use the calendar year end or a default date
-                # For annual data, we'll use December 31 of the current year or the date from the item
-                if "calendarYear" in item:
-                    year = item["calendarYear"]
-                    fiscal_period = date(year, 12, 31)  # Use year-end as fiscal period
-                elif "fiscalDateEnding" in item:
-                    # Parse the fiscal date ending if available
+                # Handle Fiscal Year: prefer the provider's statement date fields.
+                # IMPORTANT: Do NOT default to current year end; that collapses history and causes upsert overwrites.
+                statement_date = item.get("date") or item.get("fiscalDateEnding")
+                if statement_date:
                     try:
-                        fiscal_period = pd.to_datetime(item["fiscalDateEnding"]).date()
-                    except:
-                        fiscal_period = date(datetime.now().year, 12, 31)  # Fallback to current year end
-                else:
-                    # Fallback to current year end
-                    fiscal_period = date(datetime.now().year, 12, 31)
-                
-                self.logger.info(f"📅 Converted FY to fiscal period: {fiscal_period}")
+                        fiscal_period = pd.to_datetime(statement_date, errors="coerce").date()
+                    except Exception:
+                        fiscal_period = None
+                if fiscal_period is None or pd.isna(fiscal_period):
+                    year_raw = item.get("calendarYear")
+                    try:
+                        year_int = int(year_raw) if year_raw is not None else None
+                    except Exception:
+                        year_int = None
+                    if year_int:
+                        fiscal_period = date(year_int, 12, 31)
+
+                self.logger.info(f"📅 Converted FY to fiscal period: {fiscal_period} (statement_date={statement_date}, calendarYear={item.get('calendarYear')})")
             else:
                 # Handle regular date formats
                 fiscal_period = pd.to_datetime(period, errors="coerce").date() if period else None
@@ -2433,6 +2602,12 @@ class DataRefreshManager(BaseService):
                 for ratio in ratios_data:
                     if not isinstance(ratio, dict):
                         continue
+
+                    def _pick_first(d: dict, *keys: str):
+                        for k in keys:
+                            if k in d and d.get(k) not in (None, ""):
+                                return d.get(k)
+                        return None
                     
                     # Extract key fields from FMP data
                     fiscal_date = ratio.get("date")
@@ -2447,12 +2622,99 @@ class DataRefreshManager(BaseService):
                         continue
                     
                     # Map FMP fields to database fields
+                    roe_value = _pick_first(
+                        ratio,
+                        "returnOnEquity",
+                        "returnOnEquityTTM",
+                        "returnOnEquityRatio",
+                        "roe",
+                        "roeTTM",
+                    )
+                    roa_value = _pick_first(
+                        ratio,
+                        "returnOnAssets",
+                        "returnOnAssetsTTM",
+                        "roa",
+                        "roaTTM",
+                    )
+                    roic_value = _pick_first(
+                        ratio,
+                        "returnOnCapitalEmployed",
+                        "returnOnCapitalEmployedTTM",
+                        "returnOnInvestedCapital",
+                        "returnOnInvestedCapitalTTM",
+                        "roic",
+                        "roicTTM",
+                    )
+
+                    # If provider does not supply ROE/ROA/ROIC for certain symbols (common for financials),
+                    # derive ROE from statements: netIncome / totalStockholdersEquity.
+                    if roe_value in (None, ""):
+                        try:
+                            is_row = session.execute(
+                                text(
+                                    """
+                                    SELECT
+                                        payload->>'date' as statement_date,
+                                        payload->>'netIncome' as net_income
+                                    FROM financial_statements
+                                    WHERE stock_symbol = :symbol
+                                      AND statement_type = 'income_statement'
+                                      AND (payload->>'date')::date <= :as_of_date
+                                    ORDER BY (payload->>'date')::date DESC NULLS LAST, fiscal_period DESC
+                                    LIMIT 1
+                                    """
+                                ),
+                                {"symbol": symbol, "as_of_date": fiscal_date_obj},
+                            ).fetchone()
+
+                            bs_row = session.execute(
+                                text(
+                                    """
+                                    SELECT
+                                        payload->>'date' as statement_date,
+                                        payload->>'totalStockholdersEquity' as equity,
+                                        payload->>'totalEquity' as total_equity
+                                    FROM financial_statements
+                                    WHERE stock_symbol = :symbol
+                                      AND statement_type = 'balance_sheet'
+                                      AND (payload->>'date')::date <= :as_of_date
+                                    ORDER BY (payload->>'date')::date DESC NULLS LAST, fiscal_period DESC
+                                    LIMIT 1
+                                    """
+                                ),
+                                {"symbol": symbol, "as_of_date": fiscal_date_obj},
+                            ).fetchone()
+
+                            ni = None
+                            if is_row:
+                                ni_raw = is_row[1]
+                                ni = float(ni_raw) if ni_raw not in (None, "") else None
+
+                            eq = None
+                            if bs_row:
+                                eq_raw = bs_row[1]
+                                te_raw = bs_row[2]
+                                eq = float(eq_raw) if eq_raw not in (None, "") else None
+                                if eq is None:
+                                    eq = float(te_raw) if te_raw not in (None, "") else None
+
+                            if ni is not None and eq is not None and eq != 0:
+                                roe_value = float(ni) / float(eq)
+                        except Exception:
+                            pass
+
                     db_record = {
                         "symbol": symbol,
                         "fiscal_date_ending": fiscal_date_obj,
-                        "roe": ratio.get("returnOnEquity"),
-                        "debt_to_equity": ratio.get("debtToEquity"),
+                        "roe": roe_value,
+                        "roa": roa_value,
+                        "roic": roic_value,
+                        "debt_to_equity": ratio.get("debtToEquityRatio"),
                         "current_ratio": ratio.get("currentRatio"),
+                        "gross_profit_margin": ratio.get("grossProfitMargin"),
+                        "operating_margin": ratio.get("operatingProfitMargin"),
+                        "net_profit_margin": ratio.get("netProfitMargin"),
                         "data_source": "fmp",
                     }
                     
@@ -2462,13 +2724,20 @@ class DataRefreshManager(BaseService):
                         session.execute(
                             text("""
                             INSERT INTO financial_ratios 
-                            (symbol, fiscal_date_ending, roe, debt_to_equity, current_ratio, data_source)
-                            VALUES (:symbol, :fiscal_date_ending, :roe, :debt_to_equity, :current_ratio, :data_source)
+                            (symbol, fiscal_date_ending, roe, roa, roic, debt_to_equity, current_ratio, 
+                             gross_profit_margin, operating_margin, net_profit_margin, data_source)
+                            VALUES (:symbol, :fiscal_date_ending, :roe, :roa, :roic, :debt_to_equity, :current_ratio,
+                                    :gross_profit_margin, :operating_margin, :net_profit_margin, :data_source)
                             ON CONFLICT (symbol, fiscal_date_ending, data_source)
                             DO UPDATE SET
                                 roe = EXCLUDED.roe,
+                                roa = EXCLUDED.roa,
+                                roic = EXCLUDED.roic,
                                 debt_to_equity = EXCLUDED.debt_to_equity,
                                 current_ratio = EXCLUDED.current_ratio,
+                                gross_profit_margin = EXCLUDED.gross_profit_margin,
+                                operating_margin = EXCLUDED.operating_margin,
+                                net_profit_margin = EXCLUDED.net_profit_margin,
                                 updated_at = NOW()
                             """),
                             db_record
@@ -2584,10 +2853,133 @@ class DataRefreshManager(BaseService):
             # Save to stock_insights_snapshots table
             saved = 0
             from datetime import datetime
+            from app.database import db
+            from sqlalchemy import text
             
             for metric in metrics_data:
                 if not isinstance(metric, dict):
                     continue
+
+                # Enrich payload with EPS-per-share when provider response omits it.
+                # For strict fair value methods, we want a canonical persisted EPS sourced from FMP filings.
+                try:
+                    eps_keys = (
+                        "netIncomePerShareTTM",
+                        "epsTTM",
+                        "epsDilutedTTM",
+                        "earningsPerShareTTM",
+                    )
+                    has_eps = any(metric.get(k) not in (None, "") for k in eps_keys)
+                    if not has_eps:
+                        with db.get_session() as session:
+                            eps_row = session.execute(
+                                text(
+                                    """
+                                    SELECT
+                                        payload->>'eps' as eps,
+                                        payload->>'epsdiluted' as eps_diluted,
+                                        payload->>'epsDiluted' as eps_diluted_alt,
+                                        payload->>'date' as report_date
+                                    FROM financial_statements
+                                    WHERE stock_symbol = :symbol
+                                      AND statement_type = 'income_statement'
+                                    ORDER BY (payload->>'date')::date DESC NULLS LAST, fiscal_period DESC
+                                    LIMIT 1
+                                    """
+                                ),
+                                {"symbol": symbol},
+                            ).fetchone()
+
+                        eps_val = None
+                        if eps_row:
+                            for raw in (eps_row[1], eps_row[2], eps_row[0]):
+                                try:
+                                    v = float(raw) if raw not in (None, "") else None
+                                except Exception:
+                                    v = None
+                                if v is not None and v != 0:
+                                    eps_val = v
+                                    break
+
+                        if eps_val is not None:
+                            metric["epsTTM"] = float(eps_val)
+                            metric["netIncomePerShareTTM"] = float(eps_val)
+                            metric["epsTTM_source"] = "derived_from_financial_statements.income_statement.eps_or_eps_diluted"
+                except Exception:
+                    pass
+
+                # Enrich payload with derived bookValueperShareTTM if missing.
+                # Some provider responses omit this field for certain symbols (e.g., banks).
+                try:
+                    if metric.get("bookValueperShareTTM") in (None, "") and metric.get("bookValuePerShareTTM") in (None, ""):
+                        with db.get_session() as session:
+                            eq_row = session.execute(
+                                text(
+                                    """
+                                    SELECT
+                                        payload->>'totalStockholdersEquity' as equity,
+                                        payload->>'totalEquity' as total_equity,
+                                        payload->>'commonStockSharesOutstanding' as shares_outstanding
+                                    FROM financial_statements
+                                    WHERE stock_symbol = :symbol
+                                      AND statement_type = 'balance_sheet'
+                                    ORDER BY (payload->>'date')::date DESC NULLS LAST, fiscal_period DESC
+                                    LIMIT 1
+                                    """
+                                ),
+                                {"symbol": symbol},
+                            ).fetchone()
+
+                            sh_row = session.execute(
+                                text(
+                                    """
+                                    SELECT
+                                        payload->>'weightedAverageShsOutDiluted' as shs_diluted,
+                                        payload->>'weightedAverageShsOut' as shs_basic,
+                                        payload->>'weightedAverageShsOutDil' as shs_dil
+                                    FROM financial_statements
+                                    WHERE stock_symbol = :symbol
+                                      AND statement_type = 'income_statement'
+                                    ORDER BY (payload->>'date')::date DESC NULLS LAST, fiscal_period DESC
+                                    LIMIT 1
+                                    """
+                                ),
+                                {"symbol": symbol},
+                            ).fetchone()
+
+                        equity = None
+                        shares = None
+                        if eq_row:
+                            try:
+                                equity = float(eq_row[0]) if eq_row[0] not in (None, "") else None
+                            except Exception:
+                                equity = None
+                            if equity is None:
+                                try:
+                                    equity = float(eq_row[1]) if eq_row[1] not in (None, "") else None
+                                except Exception:
+                                    equity = None
+                            try:
+                                shares = float(eq_row[2]) if eq_row[2] not in (None, "") else None
+                            except Exception:
+                                shares = None
+
+                        # If shares outstanding isn't present on the balance sheet, use income statement weighted-average shares.
+                        if (shares is None or shares <= 0) and sh_row:
+                            for raw in (sh_row[0], sh_row[1], sh_row[2]):
+                                try:
+                                    v = float(raw) if raw not in (None, "") else None
+                                except Exception:
+                                    v = None
+                                if v is not None and v > 0:
+                                    shares = v
+                                    break
+
+                        if equity is not None and shares is not None and shares > 0:
+                            metric["bookValueperShareTTM"] = float(equity) / float(shares)
+                            metric["bookValueperShareTTM_source"] = "derived_from_financial_statements.balance_sheet.totalStockholdersEquity_or_totalEquity / income_statement.weightedAverageShares_or_balance_sheet.commonStockSharesOutstanding"
+                except Exception:
+                    pass
                 
                 # Use current date as insights date for TTM data
                 insights_date = datetime.now().date()

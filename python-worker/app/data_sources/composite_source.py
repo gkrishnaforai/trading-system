@@ -276,16 +276,20 @@ class CompositeDataSource(BaseDataSource):
         
         raise
     
-    def fetch_financial_statements(self, symbol: str, period: str = None) -> Dict[str, Any]:
+    def fetch_financial_statements(self, symbol: str, quarterly: bool = False, period: str = None) -> Dict[str, Any]:
         """Fetch financial statements with automatic fallback"""
         logger.info(f"🔄 Composite Source - Fetching financial statements for {symbol}")
-        logger.info(f"   - Period: {period}")
+        effective_period = period
+        if effective_period is None and quarterly:
+            effective_period = "quarter"
+
+        logger.info(f"   - Period: {effective_period}")
         logger.info(f"   - Primary source: {self.primary_source.name}")
         logger.info(f"   - Fallback source: {self.fallback_source.name if self.fallback_source else 'None'}")
         
         try:
             logger.info(f"📡 Trying primary source: {self.primary_source.name}")
-            result = self.primary_source.fetch_financial_statements(symbol, period)
+            result = self.primary_source.fetch_financial_statements(symbol, effective_period)
             
             logger.info(f"📊 Primary source result for {symbol}:")
             logger.info(f"   - Type: {type(result)}")
@@ -310,7 +314,7 @@ class CompositeDataSource(BaseDataSource):
         if self.fallback_source:
             try:
                 logger.info(f"🔄 Trying fallback source: {self.fallback_source.name}")
-                result = self.fallback_source.fetch_financial_statements(symbol, period)
+                result = self.fallback_source.fetch_financial_statements(symbol, effective_period)
                 
                 logger.info(f"📊 Fallback source result for {symbol}:")
                 logger.info(f"   - Type: {type(result)}")

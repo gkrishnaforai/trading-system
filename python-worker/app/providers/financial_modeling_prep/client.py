@@ -13,6 +13,7 @@ import pandas as pd
 
 from app.config import settings
 from app.utils.rate_limiter import RateLimiter
+from app.utils.cache import CacheManager
 from app.observability.logging import get_logger
 
 logger = get_logger("fmp_enhanced_client")
@@ -39,6 +40,8 @@ class EnhancedFMPClient:
         self.config = config
         self.session = requests.Session()
         self.session.timeout = config.timeout
+
+        self.cache = CacheManager(prefix="fmp")
         
         # Set headers to mimic curl/browser requests
         self.session.headers.update({
@@ -121,6 +124,28 @@ class EnhancedFMPClient:
                         logger.error(f"❌ FMP JSON parsing error: {json_error}")
                         logger.debug(f"Raw response: {response.text[:500]}...")
                         raise ValueError(f"Invalid JSON response from FMP: {json_error}")
+                elif response.status_code == 429:
+                    retry_after_header = (response.headers or {}).get("Retry-After")
+                    retry_after_s = None
+                    if retry_after_header:
+                        try:
+                            retry_after_s = float(retry_after_header)
+                        except Exception:
+                            retry_after_s = None
+
+                    base_sleep = self.config.retry_delay * (2 ** attempt)
+                    sleep_s = max(base_sleep, retry_after_s or 0)
+                    logger.warning(
+                        f"⏳ FMP rate limited (429) for {endpoint} (attempt {attempt + 1}/{self.config.max_retries}). "
+                        f"Sleeping {sleep_s:.2f}s"
+                    )
+
+                    if attempt < self.config.max_retries - 1:
+                        time.sleep(sleep_s)
+                        continue
+
+                    logger.error("❌ FMP HTTP Error: status=429")
+                    response.raise_for_status()
                 elif response.status_code == 402:
                     # Plan limitation / not enabled for this API key.
                     # Treat as expected "no data" so ingestion can SKIP without noisy retries or API-key leaks.
@@ -513,16 +538,23 @@ class EnhancedFMPClient:
     
     def get_stock_list(self) -> List[Dict[str, Any]]:
         """Get complete list of available stocks"""
+        cache_key = "stock_list"
         try:
+            cached = self.cache.get(cache_key)
+            if cached:
+                return cached
+
             endpoint = "/stock-list"
             data = self._make_request(endpoint)
             
             if isinstance(data, list):
+                self.cache.set(cache_key, data, ttl=86400)
                 return data
             return []
         except Exception as e:
             logger.error(f"❌ Error fetching stock list: {e}")
-            return []
+            cached = self.cache.get(cache_key)
+            return cached or []
     
     def search_symbols(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Search for company stock symbols"""
@@ -1123,6 +1155,31 @@ class EnhancedFMPClient:
     
     # === ANALYST DATA ===
     
+    def get_analyst_ratings(self, symbol: str) -> List[Dict[str, Any]]:
+        """Get analyst ratings data"""
+        try:
+            # Try multiple possible endpoints for analyst ratings
+            endpoints = ["/grade", "/analyst-grades", "/analyst-ratings-ticker"]
+            
+            for endpoint in endpoints:
+                try:
+                    params = {"symbol": symbol}
+                    data = self._make_request(endpoint, params)
+                    
+                    if isinstance(data, list) and data:
+                        logger.info(f"✅ Found analyst ratings using endpoint: {endpoint}")
+                        return data
+                except Exception as endpoint_error:
+                    logger.debug(f"🔍 Endpoint {endpoint} failed: {endpoint_error}")
+                    continue
+            
+            logger.warning(f"⚠️ No analyst ratings data found for {symbol}")
+            return []
+            
+        except Exception as e:
+            logger.error(f"❌ Error fetching analyst ratings for {symbol}: {e}")
+            return []
+    
     def get_financial_estimates(self, symbol: str, period: str = "annual", page: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
         """Get analyst financial estimates"""
         try:
@@ -1593,10 +1650,16 @@ class FinancialModelingPrepClient(EnhancedFMPClient):
     def is_available(self) -> bool:
         """Legacy method - check availability"""
         try:
-            # Test with a simple API call
-            self.get_stock_list()
-            return True
-        except:
+            # Avoid calling /stock-list here (very large response; easy to rate-limit).
+            # Use a lightweight endpoint instead.
+            profile = self.get_company_profile("AAPL")
+            return bool(profile) or True
+        except requests.exceptions.HTTPError as e:
+            # If we're rate-limited, the service may still be up; treat as available.
+            if getattr(getattr(e, "response", None), "status_code", None) == 429:
+                return True
+            return False
+        except Exception:
             return False
 
 

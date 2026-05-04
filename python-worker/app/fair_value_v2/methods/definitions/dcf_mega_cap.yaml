@@ -1,0 +1,113 @@
+method_key: dcf_mega_cap
+version: 1
+category: general
+requires:
+  scalars:
+    - fcf_ttm
+    - shares_outstanding
+    - total_debt
+    - cash_and_equivalents
+  optional_scalars:
+    - market_cap
+  series: []
+params:
+  wacc: 0.10
+  terminal_growth: 0.03
+  growth: 0.08
+  growth_cap: 0.20
+  fade_years: 5
+  explicit_years: 10
+  terminal_value_cap_share_of_ev: 0.75
+  wacc_bear_add: 0.01
+  growth_bear_add: -0.02
+  terminal_growth_bear_add: -0.005
+  wacc_bull_add: -0.01
+  growth_bull_add: 0.02
+  terminal_growth_bull_add: 0.005
+  wacc_explosive_add: -0.015
+  growth_explosive_add: 0.04
+  terminal_growth_explosive_add: 0.01
+formula:
+  fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+          - lte:
+              - sub: [{param: wacc}, {param: terminal_growth}]
+              - 0
+      then: null
+      else:
+        dcf_mega_cap_price:
+          wacc: {param: wacc}
+          terminal_growth: {param: terminal_growth}
+          growth: {param: growth}
+          growth_cap: {param: growth_cap}
+          fade_years: {param: fade_years}
+          explicit_years: {param: explicit_years}
+          terminal_value_cap_share_of_ev: {param: terminal_value_cap_share_of_ev}
+  bear_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+          - lte:
+              - sub:
+                  - add: [{param: wacc}, {param: wacc_bear_add}]
+                  - add: [{param: terminal_growth}, {param: terminal_growth_bear_add}]
+              - 0
+      then: null
+      else:
+        dcf_mega_cap_price:
+          wacc: {add: [{param: wacc}, {param: wacc_bear_add}]}
+          terminal_growth: {add: [{param: terminal_growth}, {param: terminal_growth_bear_add}]}
+          growth: {add: [{param: growth}, {param: growth_bear_add}]}
+          growth_cap: {param: growth_cap}
+          fade_years: {param: fade_years}
+          explicit_years: {param: explicit_years}
+          terminal_value_cap_share_of_ev: {param: terminal_value_cap_share_of_ev}
+  bull_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+          - lte:
+              - sub:
+                  - add: [{param: wacc}, {param: wacc_bull_add}]
+                  - add: [{param: terminal_growth}, {param: terminal_growth_bull_add}]
+              - 0
+      then: null
+      else:
+        dcf_mega_cap_price:
+          wacc: {add: [{param: wacc}, {param: wacc_bull_add}]}
+          terminal_growth: {add: [{param: terminal_growth}, {param: terminal_growth_bull_add}]}
+          growth: {add: [{param: growth}, {param: growth_bull_add}]}
+          growth_cap: {param: growth_cap}
+          fade_years: {param: fade_years}
+          explicit_years: {param: explicit_years}
+          terminal_value_cap_share_of_ev: {param: terminal_value_cap_share_of_ev}
+  explosive_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+          - lte:
+              - sub:
+                  - add: [{param: wacc}, {param: wacc_explosive_add}]
+                  - add: [{param: terminal_growth}, {param: terminal_growth_explosive_add}]
+              - 0
+      then: null
+      else:
+        dcf_mega_cap_price:
+          wacc: {add: [{param: wacc}, {param: wacc_explosive_add}]}
+          terminal_growth: {add: [{param: terminal_growth}, {param: terminal_growth_explosive_add}]}
+          growth: {add: [{param: growth}, {param: growth_explosive_add}]}
+          growth_cap: {param: growth_cap}
+          fade_years: {param: fade_years}
+          explicit_years: {param: explicit_years}
+          terminal_value_cap_share_of_ev: {param: terminal_value_cap_share_of_ev}
+validations: []

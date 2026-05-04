@@ -1,0 +1,152 @@
+method_key: peg_40
+version: 1
+category: growth
+requires:
+  scalars:
+    - eps_forward
+    - forward_growth_pct_1y
+    - operating_margin_ttm
+  optional_scalars:
+    - eps_ttm
+  series: []
+params:
+  peg_40_target: 1.1
+  pe_floor: 15.0
+  pe_cap: 50.0
+  pe_cap_bear: 40.0
+  pe_cap_bull: 60.0
+  pe_cap_explosive: 70.0
+  growth_pct_cap: 60.0
+  margin_pct_floor: 0.0
+  margin_pct_cap: 60.0
+  bear_mult: 0.8
+  bull_mult: 1.15
+  explosive_mult: 1.3
+formula:
+  fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: eps_forward}, 0]
+          - lte: [{var: forward_growth_pct_1y}, 0]
+      then: null
+      else:
+        let:
+          bindings:
+            g:
+              clamp:
+                value: {var: forward_growth_pct_1y}
+                lo: 0
+                hi: {param: growth_pct_cap}
+            m:
+              clamp:
+                value: {mul: [100, {var: operating_margin_ttm}]}
+                lo: {param: margin_pct_floor}
+                hi: {param: margin_pct_cap}
+            score:
+              add: [{var: g}, {var: m}]
+            pe:
+              clamp:
+                value:
+                  mul: [{param: peg_40_target}, {var: score}]
+                lo: {param: pe_floor}
+                hi: {param: pe_cap}
+          in:
+            mul: [{var: eps_forward}, {var: pe}]
+  bear_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: eps_forward}, 0]
+          - lte: [{var: forward_growth_pct_1y}, 0]
+      then: null
+      else:
+        let:
+          bindings:
+            g:
+              clamp:
+                value: {var: forward_growth_pct_1y}
+                lo: 0
+                hi: {param: growth_pct_cap}
+            m:
+              clamp:
+                value: {mul: [100, {var: operating_margin_ttm}]}
+                lo: {param: margin_pct_floor}
+                hi: {param: margin_pct_cap}
+            score:
+              add: [{var: g}, {var: m}]
+            pe:
+              clamp:
+                value:
+                  mul:
+                    - {param: bear_mult}
+                    - mul: [{param: peg_40_target}, {var: score}]
+                lo: {param: pe_floor}
+                hi: {param: pe_cap_bear}
+          in:
+            mul: [{var: eps_forward}, {var: pe}]
+  bull_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: eps_forward}, 0]
+          - lte: [{var: forward_growth_pct_1y}, 0]
+      then: null
+      else:
+        let:
+          bindings:
+            g:
+              clamp:
+                value: {var: forward_growth_pct_1y}
+                lo: 0
+                hi: {param: growth_pct_cap}
+            m:
+              clamp:
+                value: {mul: [100, {var: operating_margin_ttm}]}
+                lo: {param: margin_pct_floor}
+                hi: {param: margin_pct_cap}
+            score:
+              add: [{var: g}, {var: m}]
+            pe:
+              clamp:
+                value:
+                  mul:
+                    - {param: bull_mult}
+                    - mul: [{param: peg_40_target}, {var: score}]
+                lo: {param: pe_floor}
+                hi: {param: pe_cap_bull}
+          in:
+            mul: [{var: eps_forward}, {var: pe}]
+  explosive_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: eps_forward}, 0]
+          - lte: [{var: forward_growth_pct_1y}, 0]
+      then: null
+      else:
+        let:
+          bindings:
+            g:
+              clamp:
+                value: {var: forward_growth_pct_1y}
+                lo: 0
+                hi: {param: growth_pct_cap}
+            m:
+              clamp:
+                value: {mul: [100, {var: operating_margin_ttm}]}
+                lo: {param: margin_pct_floor}
+                hi: {param: margin_pct_cap}
+            score:
+              add: [{var: g}, {var: m}]
+            pe:
+              clamp:
+                value:
+                  mul:
+                    - {param: explosive_mult}
+                    - mul: [{param: peg_40_target}, {var: score}]
+                lo: {param: pe_floor}
+                hi: {param: pe_cap_explosive}
+          in:
+            mul: [{var: eps_forward}, {var: pe}]
+validations: []

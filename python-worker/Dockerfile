@@ -11,7 +11,8 @@ RUN apt-get update && apt-get install -y \
 
 # Copy requirements
 COPY python-worker/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
+RUN python -m pip install --disable-pip-version-check --no-cache-dir --default-timeout=180 --retries=10 --upgrade pip setuptools wheel && \
+    pip install --disable-pip-version-check --no-cache-dir --default-timeout=180 --retries=10 -i https://pypi.org/simple -r requirements.txt && \
     python3 -c "import fastapi, passlib, jose, apscheduler; print('✅ Portfolio management dependencies installed successfully')" || \
     (echo "❌ CRITICAL: Portfolio management dependencies failed to install from requirements.txt" && exit 1)
 

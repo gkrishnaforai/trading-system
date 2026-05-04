@@ -35,9 +35,11 @@ class DataType(Enum):
     ANALYST_RATINGS = "analyst_ratings"
     PRICE_TARGETS = "price_targets"
     STOCK_GRADES = "stock_grades"
+    CONSENSUS_DATA = "consensus_data"
     STOCK_LIST = "stock_list"
     SYMBOL_SEARCH = "symbol_search"
     MARKET_NEWS = "market_news"
+    NEWS = "news"
     EARNINGS_TRANSCRIPTS = "earnings_transcripts"
 
 
@@ -124,11 +126,23 @@ LOAD_STRATEGIES = {
         on_demand=True,    # Load only when requested
         priority=12
     ),
+    DataType.CONSENSUS_DATA.value: LoadStrategy(
+        cache_ttl=3600,    # Cache for 1 hour
+        batch_size=5,      # Load 5 at once
+        on_demand=True,    # Load only when requested
+        priority=13
+    ),
     DataType.MARKET_NEWS.value: LoadStrategy(
         cache_ttl=1800,    # Cache for 30 minutes
         batch_size=1,      # Load one at a time
         on_demand=True,    # Load only when requested
         priority=13
+    ),
+    DataType.NEWS.value: LoadStrategy(
+        cache_ttl=1800,    # Cache for 30 minutes
+        batch_size=1,      # Load one at a time
+        on_demand=True,    # Load only when requested
+        priority=14
     ),
     DataType.EARNINGS_TRANSCRIPTS.value: LoadStrategy(
         cache_ttl=86400,   # Cache for 24 hours (transcripts don't change)
@@ -301,7 +315,7 @@ class OptimizedFMPLoader:
     def get_company_profile(self, symbol: str) -> Dict[str, Any]:
         """Get detailed company profile (on-demand)"""
         cache_key = f"profile:{symbol}"
-        strategy = LOAD_STRATEGIES[DataType.COMPANY_PROFILE]
+        strategy = LOAD_STRATEGIES[DataType.COMPANY_PROFILE.value]
         
         # Check cache
         cached = self.cache.get(cache_key)
@@ -311,7 +325,7 @@ class OptimizedFMPLoader:
         
         try:
             logger.info(f"🏢 Fetching company profile for: {symbol}")
-            profile_data = self.client.fetch_symbol_details(symbol)
+            profile_data = self.client.get_company_profile(symbol)
             
             if profile_data:
                 # Cache the result
@@ -512,20 +526,61 @@ class OptimizedFMPLoader:
             logger.error(f"❌ Error fetching financial scores for {symbol}: {e}")
             return []
     
-    def get_analyst_ratings(self, symbol: str) -> List[Dict[str, Any]]:
-        """Get analyst ratings (on-demand)"""
+    def get_analyst_ratings(self, symbol: str, force: bool = False) -> List[Dict[str, Any]]:
+        """Get analyst ratings (on-demand) - mapped to stock grades since FMP doesn't have separate analyst ratings"""
+        print(f"🔍 START DEBUG: get_analyst_ratings called for {symbol} with force={force}", flush=True)
+        
+        # Also configure logger to ensure it works
+        import logging
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+        
+        logger.info(f"🔍 LOGGER DEBUG: get_analyst_ratings called for {symbol} with force={force}")
+        
         cache_key = f"analyst_ratings:{symbol}"
         strategy = LOAD_STRATEGIES[DataType.ANALYST_RATINGS.value]
         
-        # Check cache
-        cached = self.cache.get(cache_key)
-        if cached:
-            logger.debug(f"🎯 Cache hit for analyst ratings: {symbol}")
-            return cached
+        # Check cache (bypass if force=True)
+        if not force:
+            cached = self.cache.get(cache_key)
+            if cached:
+                logger.debug(f"🎯 Cache hit for analyst ratings: {symbol}")
+                return cached
         
         try:
-            logger.info(f"⭐ Fetching analyst ratings for: {symbol}")
-            ratings = self.client.get_ratings_snapshot(symbol)
+            if force:
+                logger.info(f"🔄 Force refresh - bypassing cache for analyst ratings: {symbol}")
+            else:
+                logger.info(f"⭐ Fetching analyst ratings for: {symbol}")
+            
+            # FMP analyst ratings = stock grades - use the grades endpoint
+            logger.info(f"📊 Using FMP grades endpoint for analyst ratings")
+            ratings = self.client.get_stock_grades(symbol)
+            
+            # Store in database using DatabaseService pattern
+            if ratings:
+                print(f"🔍 DEBUG: Attempting to store {len(ratings)} analyst ratings for {symbol}")
+                try:
+                    # Use proper repository pattern - follows Dependency Inversion Principle
+                    from app.db_storage.repositories import get_database_service
+                    db_service = get_database_service()
+                    
+                    print(f"🔍 DEBUG: Database service available: {db_service.is_available()}")
+                    
+                    if db_service.is_available():
+                        success = db_service.analyst_ratings.store_ratings(symbol, ratings)
+                        print(f"🔍 DEBUG: Store ratings result: {success}")
+                        if success:
+                            logger.info(f"✅ Stored {len(ratings)} analyst ratings in database for {symbol}")
+                    else:
+                        logger.warning("⚠️  Database service not available - skipping storage")
+                        
+                except Exception as db_error:
+                    print(f"🔍 DEBUG: Database error: {db_error}")
+                    logger.warning(f"⚠️  Could not store analyst ratings in database: {db_error}")
             
             # Cache the result
             self.cache.set(cache_key, ratings, ttl=strategy.cache_ttl)
@@ -537,20 +592,47 @@ class OptimizedFMPLoader:
             logger.error(f"❌ Error fetching analyst ratings for {symbol}: {e}")
             return []
     
-    def get_price_targets(self, symbol: str) -> List[Dict[str, Any]]:
+    def get_price_targets(self, symbol: str, force: bool = False) -> List[Dict[str, Any]]:
         """Get price targets (on-demand)"""
         cache_key = f"price_targets:{symbol}"
         strategy = LOAD_STRATEGIES[DataType.PRICE_TARGETS.value]
         
-        # Check cache
-        cached = self.cache.get(cache_key)
-        if cached:
-            logger.debug(f"🎯 Cache hit for price targets: {symbol}")
-            return cached
+        # Check cache (bypass if force=True)
+        if not force:
+            cached = self.cache.get(cache_key)
+            if cached:
+                logger.debug(f"🎯 Cache hit for price targets: {symbol}")
+                return cached
         
         try:
-            logger.info(f"🎯 Fetching price targets for: {symbol}")
+            if force:
+                logger.info(f"🔄 Force refresh - bypassing cache for price targets: {symbol}")
+            else:
+                logger.info(f"🎯 Fetching price targets for: {symbol}")
             targets = self.client.get_price_target_consensus(symbol)
+            
+            # Store in database using DatabaseService pattern
+            if targets:
+                print(f"🔍 DEBUG: Attempting to store {len(targets)} price targets for {symbol}")
+                print(f"🔍 DEBUG: Price targets data sample: {targets[0] if targets else 'None'}")
+                try:
+                    # Use proper repository pattern - follows Dependency Inversion Principle
+                    from app.db_storage.repositories import get_database_service
+                    db_service = get_database_service()
+                    
+                    print(f"🔍 DEBUG: Database service available: {db_service.is_available()}")
+                    
+                    if db_service.is_available():
+                        success = db_service.price_targets.store_price_targets(symbol, targets)
+                        print(f"🔍 DEBUG: Store price targets result: {success}")
+                        if success:
+                            logger.info(f"✅ Stored {len(targets)} price targets in database for {symbol}")
+                    else:
+                        logger.warning("⚠️  Database service not available - skipping storage")
+                        
+                except Exception as db_error:
+                    print(f"🔍 DEBUG: Database error: {db_error}")
+                    logger.warning(f"⚠️  Could not store price targets in database: {db_error}")
             
             # Cache the result
             self.cache.set(cache_key, targets, ttl=strategy.cache_ttl)
@@ -562,19 +644,23 @@ class OptimizedFMPLoader:
             logger.error(f"❌ Error fetching price targets for {symbol}: {e}")
             return []
     
-    def get_stock_grades(self, symbol: str) -> List[Dict[str, Any]]:
+    def get_stock_grades(self, symbol: str, force: bool = False) -> List[Dict[str, Any]]:
         """Get stock grades (on-demand)"""
         cache_key = f"stock_grades:{symbol}"
         strategy = LOAD_STRATEGIES[DataType.STOCK_GRADES.value]
         
-        # Check cache
-        cached = self.cache.get(cache_key)
-        if cached:
-            logger.debug(f"🎯 Cache hit for stock grades: {symbol}")
-            return cached
+        # Check cache (bypass if force=True)
+        if not force:
+            cached = self.cache.get(cache_key)
+            if cached:
+                logger.debug(f"🎯 Cache hit for stock grades: {symbol}")
+                return cached
         
         try:
-            logger.info(f"📊 Fetching stock grades for: {symbol}")
+            if force:
+                logger.info(f"🔄 Force refresh - bypassing cache for stock grades: {symbol}")
+            else:
+                logger.info(f"📊 Fetching stock grades for: {symbol}")
             grades = self.client.get_stock_grades(symbol)
             
             # Store in database
@@ -602,6 +688,114 @@ class OptimizedFMPLoader:
             
         except Exception as e:
             logger.error(f"❌ Error fetching stock grades for {symbol}: {e}")
+            return []
+    
+    def get_consensus_data(self, symbol: str, force: bool = False) -> List[Dict[str, Any]]:
+        """Get consensus data (on-demand)"""
+        print(f"🔍 START DEBUG: get_consensus_data called for {symbol} with force={force}", flush=True)
+        
+        cache_key = f"consensus_data:{symbol}"
+        strategy = LOAD_STRATEGIES[DataType.CONSENSUS_DATA.value]
+        
+        # Check cache (bypass if force=True)
+        if not force:
+            cached = self.cache.get(cache_key)
+            if cached:
+                logger.debug(f"🎯 Cache hit for consensus data: {symbol}")
+                return cached
+        
+        try:
+            if force:
+                logger.info(f"🔄 Force refresh - bypassing cache for consensus data: {symbol}")
+            else:
+                logger.info(f"📊 Fetching consensus data for: {symbol}")
+            
+            consensus_data = self.client.get_stock_grades_summary(symbol)
+            print(f"🔍 DEBUG: Fetched {len(consensus_data) if consensus_data else 0} consensus data records for {symbol}")
+            if consensus_data:
+                print(f"🔍 DEBUG: Consensus data sample: {consensus_data[0] if consensus_data else 'None'}")
+            
+            # Store in database using DatabaseService pattern
+            if consensus_data:
+                print(f"🔍 DEBUG: Attempting to store {len(consensus_data)} consensus data records for {symbol}")
+                try:
+                    from app.db_storage.repositories import get_database_service
+                    db_service = get_database_service()
+                    
+                    print(f"🔍 DEBUG: Database service available: {db_service.is_available()}")
+                    
+                    if db_service.is_available():
+                        success = db_service.consensus_data.store_consensus(symbol, consensus_data)
+                        print(f"🔍 DEBUG: Store consensus result: {success}")
+                        if success:
+                            logger.info(f"✅ Stored consensus data in database for {symbol}")
+                    else:
+                        logger.warning("⚠️  Database service not available - skipping storage")
+                        
+                except Exception as db_error:
+                    print(f"🔍 DEBUG: Database error: {db_error}")
+                    logger.warning(f"⚠️  Could not store consensus data in database: {db_error}")
+            
+            # Cache the result
+            self.cache.set(cache_key, consensus_data, ttl=strategy.cache_ttl)
+            
+            logger.info(f"✅ Loaded consensus data for {symbol}")
+            return consensus_data
+            
+        except Exception as e:
+            logger.error(f"❌ Error fetching consensus data for {symbol}: {e}")
+            return []
+    
+    def get_stock_news(self, symbol: str, force: bool = False) -> List[Dict[str, Any]]:
+        """Get symbol-specific news (on-demand)"""
+        cache_key = f"stock_news:{symbol}"
+        strategy = LOAD_STRATEGIES[DataType.NEWS.value]
+        
+        # Check cache (bypass if force=True)
+        if not force:
+            cached = self.cache.get(cache_key)
+            if cached:
+                logger.debug(f"🎯 Cache hit for stock news: {symbol}")
+                return cached
+        
+        try:
+            if force:
+                logger.info(f"🔄 Force refresh - bypassing cache for stock news: {symbol}")
+            else:
+                logger.info(f"📰 Fetching stock news for: {symbol}")
+            
+            news = self.client.search_stock_news(symbol)
+            
+            # Store in database using DatabaseService pattern
+            if news:
+                print(f"🔍 DEBUG: Attempting to store {len(news)} news articles for {symbol}")
+                try:
+                    # Use proper repository pattern - follows Dependency Inversion Principle
+                    from app.db_storage.repositories import get_database_service
+                    db_service = get_database_service()
+                    
+                    print(f"🔍 DEBUG: Database service available: {db_service.is_available()}")
+                    
+                    if db_service.is_available():
+                        success = db_service.news.store_news(symbol, news)
+                        print(f"🔍 DEBUG: Store news result: {success}")
+                        if success:
+                            logger.info(f"✅ Stored {len(news)} news articles in database for {symbol}")
+                    else:
+                        logger.warning("⚠️  Database service not available - skipping storage")
+                        
+                except Exception as db_error:
+                    print(f"🔍 DEBUG: Database error: {db_error}")
+                    logger.warning(f"⚠️  Could not store news in database: {db_error}")
+            
+            # Cache the result
+            self.cache.set(cache_key, news, ttl=strategy.cache_ttl)
+            
+            logger.info(f"✅ Loaded stock news for {symbol}")
+            return news
+            
+        except Exception as e:
+            logger.error(f"❌ Error fetching stock news for {symbol}: {e}")
             return []
     
     def get_market_news(self, limit: int = 10) -> List[Dict[str, Any]]:
@@ -692,6 +886,8 @@ class OptimizedFMPLoader:
             "analyst_ratings": {},
             "price_targets": {},
             "stock_grades": {},
+            "consensus_data": {},
+            "news": {},
             "market_news": {},
             "earnings_transcripts": {},
             "errors": [],
@@ -834,6 +1030,27 @@ class OptimizedFMPLoader:
                 except Exception as e:
                     results["errors"].append(f"Stock grades error for {symbol}: {str(e)}")
             
+            logger.info("📈 Loading consensus data...")
+            for symbol in symbols:
+                try:
+                    consensus = self.get_consensus_data(symbol)
+                    if consensus:
+                        results["consensus_data"][symbol] = consensus
+                        results["stats"]["successful_analyst_data"] += 1
+                except Exception as e:
+                    results["errors"].append(f"Consensus data error for {symbol}: {str(e)}")
+            
+            # Load symbol-specific news for each symbol
+            if load_on_demand:
+                logger.info("📰 Loading symbol-specific news...")
+                for symbol in symbols:
+                    try:
+                        news = self.get_stock_news(symbol)
+                        if news:
+                            results["news"][symbol] = news
+                    except Exception as e:
+                        results["errors"].append(f"News error for {symbol}: {str(e)}")
+            
             # Load market news (once for all symbols)
             logger.info("📰 Loading market news...")
             try:
@@ -864,7 +1081,7 @@ class OptimizedFMPLoader:
         """
         return self.load_all_data_for_symbols(symbols, load_on_demand=False)
     
-    def get_on_demand_data(self, symbol: str, data_types: List[str] = None) -> Dict[str, Any]:
+    def get_on_demand_data(self, symbol: str, data_types: List[str] = None, force: bool = False) -> Dict[str, Any]:
         """
         Get specific data types on-demand for a single symbol
         Used when detailed information is needed for analysis
@@ -878,6 +1095,7 @@ class OptimizedFMPLoader:
         
         for data_type in data_types:
             try:
+                logger.info(f"📋 Processing data type: {data_type} for {symbol}")
                 if data_type == "profile":
                     result["data"]["profile"] = self.get_company_profile(symbol)
                 elif data_type == "financials":
@@ -894,14 +1112,20 @@ class OptimizedFMPLoader:
                     result["data"]["financial_ratios"] = self.get_financial_ratios(symbol)
                 elif data_type == "financial_scores":
                     result["data"]["financial_scores"] = self.get_financial_scores(symbol)
-                elif data_type == "analyst_ratings":
-                    result["data"]["analyst_ratings"] = self.get_analyst_ratings(symbol)
-                elif data_type == "price_targets":
-                    result["data"]["price_targets"] = self.get_price_targets(symbol)
                 elif data_type == "stock_grades":
-                    result["data"]["stock_grades"] = self.get_stock_grades(symbol)
+                    logger.info(f"📊 Calling get_stock_grades for {symbol}")
+                    result["data"]["stock_grades"] = self.get_stock_grades(symbol, force=force)
+                    logger.info(f"✅ Completed get_stock_grades for {symbol}")
+                elif data_type == "consensus_data":
+                    logger.info(f"📈 Calling get_consensus_data for {symbol}")
+                    result["data"]["consensus_data"] = self.get_consensus_data(symbol, force=force)
+                    logger.info(f"✅ Completed get_consensus_data for {symbol}")
+                elif data_type == "price_targets":
+                    result["data"]["price_targets"] = self.get_price_targets(symbol, force=force)
                 elif data_type == "market_news":
                     result["data"]["market_news"] = self.get_market_news()
+                elif data_type == "news":
+                    result["data"]["news"] = self.get_stock_news(symbol, force=force)
                 elif data_type == "earnings_transcript":
                     # For transcripts, we need year and quarter
                     current_year = datetime.now().year
@@ -909,8 +1133,10 @@ class OptimizedFMPLoader:
                 else:
                     result["errors"].append(f"Unknown data type: {data_type}")
             except Exception as e:
+                logger.error(f"❌ Error loading {data_type} for {symbol}: {str(e)}")
                 result["errors"].append(f"Error loading {data_type}: {str(e)}")
         
+        logger.info(f"🏁 Completed on-demand data loading for {symbol}")
         return result
     
     # === CACHE MANAGEMENT ===
@@ -918,10 +1144,10 @@ class OptimizedFMPLoader:
     def clear_cache(self, pattern: str = None):
         """Clear cache with optional pattern"""
         if pattern:
-            self.cache.clear_pattern(pattern)
+            self.cache.clear(pattern)
             logger.info(f"🧹 Cleared cache matching pattern: {pattern}")
         else:
-            self.cache.clear_all()
+            self.cache.clear()
             logger.info("🧹 Cleared all FMP cache")
     
     def get_cache_stats(self) -> Dict[str, Any]:

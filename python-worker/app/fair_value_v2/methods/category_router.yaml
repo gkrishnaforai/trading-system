@@ -1,0 +1,224 @@
+version: 1
+
+default_category: value
+
+rules:
+  - category: financials
+    when:
+      any:
+        - field: industry
+          contains: bank
+
+  - category: ai_infra
+    when:
+      any:
+        - field: industry
+          contains: optical
+        - field: industry
+          contains: photonic
+        - field: industry
+          contains: fiber
+        - field: industry
+          contains: data center
+        - field: industry
+          contains: cooling
+        - field: industry
+          contains: thermal
+        - field: industry
+          contains: electrical equipment
+        - field: industry
+          contains: power management
+        - field: industry
+          contains: semiconductor equipment
+        - field: industry
+          contains: semiconductor equipment & materials
+        - field: industry
+          contains: scientific & technical instruments
+        - field: industry
+          contains: test & measurement
+        - field: industry
+          contains: communication equipment
+
+  - category: ai_infra
+    when:
+      all:
+        - any:
+            - field: description
+              contains: data center
+            - field: description
+              contains: cloud platform
+            - field: description
+              contains: ai-centric cloud
+            - field: description
+              contains: infrastructure for ai
+            - field: description
+              contains: gpu cluster
+            - field: description
+              contains: gpu clusters
+        - any:
+            - field: description
+              contains: gpu
+            - field: description
+              contains: nvidia
+            - field: description
+              contains: inference
+            - field: description
+              contains: colocation
+            - field: description
+              contains: cloud infrastructure
+            - field: description
+              contains: hyperscale
+            - field: description
+              contains: ai workloads
+            - field: company_name
+              contains: data center
+
+  - category: ai_infra
+    when:
+      all:
+        - any:
+            - field: description
+              contains: bitcoin
+            - field: description
+              contains: mining
+            - field: description
+              contains: miner
+        - any:
+            - field: description
+              contains: data center
+            - field: description
+              contains: high-performance computing
+            - field: description
+              contains: hpc
+            - field: description
+              contains: compute
+
+  - category: ai_infra
+    when:
+      all:
+        - any:
+            - field: description
+              contains: laser
+            - field: description
+              contains: lasers
+            - field: description
+              contains: optics
+            - field: description
+              contains: photonic
+            - field: description
+              contains: photonics
+        - any:
+            - field: description
+              contains: semiconductor
+            - field: description
+              contains: microelectronics
+            - field: description
+              contains: data center
+            - field: description
+              contains: ai
+
+  - category: technology
+    when:
+      any:
+        - field: sector
+          contains: technology
+        - field: industry
+          contains: semiconductor
+
+  - category: technology
+    when:
+      all:
+        - field: sector
+          contains: communication
+        - field: industry
+          contains: internet
+
+  - category: technology
+    when:
+      any:
+        - field: industry
+          contains: social
+        - field: industry
+          contains: advertising
+
+  - category: technology
+    when:
+      any:
+        - field: industry
+          contains: software
+
+  - category: financials
+    when:
+      any:
+        - field: industry
+          contains: bank
+        - field: industry
+          contains: banks
+
+  - category: fintech
+    when:
+      all:
+        - field: sector
+          contains: financial
+        - field: industry
+          contains: credit
+
+  - category: fintech
+    when:
+      all:
+        - field: sector
+          contains: financial
+        - field: industry
+          contains: financial services
+
+  - category: fintech
+    when:
+      all:
+        - field: sector
+          contains: financial
+        - field: industry
+          contains: consumer finance
+
+  - category: fintech
+    when:
+      all:
+        - field: sector
+          contains: financial
+        - field: industry
+          contains: lending
+
+  - category: growth
+    when:
+      any:
+        - field: industry
+          contains: internet
+        - field: industry
+          contains: biotech
+        - field: industry
+          contains: software
+
+  - category: cyclical
+    when:
+      any:
+        - field: industry
+          contains: automotive
+        - field: industry
+          contains: auto manufacturers
+        - field: industry
+          contains: auto manufacturer
+        - field: industry
+          contains: automakers
+        - field: industry
+          contains: airlines
+        - field: industry
+          contains: chemicals
+
+  - category: value
+    when:
+      any:
+        - field: sector
+          contains: consumer defensive
+        - field: industry
+          contains: household
+        - field: industry
+          contains: beverages

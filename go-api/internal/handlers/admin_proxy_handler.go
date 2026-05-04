@@ -96,24 +96,183 @@ func (h *AdminProxyHandler) Refresh(c *gin.Context) {
 	b, _ := io.ReadAll(c.Request.Body)
 	c.Request.Body = io.NopCloser(bytes.NewReader(b))
 
-	// Best-effort symbol extraction for cache invalidation.
-	symbols := []string{}
+	// Parse request to check for grades data types
+	var payload struct {
+		Symbols   []string `json:"symbols"`
+		DataTypes []string `json:"data_types"`
+		Force     bool     `json:"force"`
+	}
+
+	hasGradesTypes := false
 	if len(b) > 0 {
-		var payload struct {
-			Symbols []string `json:"symbols"`
-		}
 		if err := json.Unmarshal(b, &payload); err == nil {
-			symbols = payload.Symbols
+			// Check if any data types are grades types
+			for _, dt := range payload.DataTypes {
+				if dt == "stock_grades" || dt == "analyst_ratings" || dt == "consensus_data" || dt == "price_targets" {
+					hasGradesTypes = true
+					break
+				}
+			}
 		}
 	}
 
-	// Proxy to python-worker.
+	// If we have grades data types, handle them using the grades refresh logic
+	if hasGradesTypes && len(payload.Symbols) > 0 {
+		results := make(map[string]interface{})
+
+		for _, symbol := range payload.Symbols {
+			symbolResult := make(map[string]interface{})
+
+			// Handle grades types using python worker grades refresh
+			for _, dataType := range payload.DataTypes {
+				if dataType == "stock_grades" || dataType == "analyst_ratings" || dataType == "consensus_data" {
+					// Call python worker grades refresh endpoint
+					gradesURL := fmt.Sprintf("%s/api/v1/grades/refresh/%s?data_source=fmp&include_consensus=true&force_refresh=%t",
+						h.pythonWorker.BaseURL, symbol, payload.Force)
+
+					resp, err := h.pythonWorker.HTTPClient.Post(gradesURL, "application/json", nil)
+					if err != nil {
+						symbolResult[dataType] = map[string]interface{}{
+							"success": false,
+							"message": fmt.Sprintf("Failed to refresh %s: %v", dataType, err),
+						}
+						continue
+					}
+					defer resp.Body.Close()
+
+					if resp.StatusCode == 200 {
+						body, _ := io.ReadAll(resp.Body)
+						var gradesResp map[string]interface{}
+						if err := json.Unmarshal(body, &gradesResp); err == nil {
+							symbolResult[dataType] = map[string]interface{}{
+								"success": true,
+								"message": fmt.Sprintf("%s refreshed successfully", dataType),
+								"data":    gradesResp,
+							}
+						} else {
+							symbolResult[dataType] = map[string]interface{}{
+								"success": false,
+								"message": fmt.Sprintf("Failed to parse %s response", dataType),
+							}
+						}
+					} else {
+						symbolResult[dataType] = map[string]interface{}{
+							"success": false,
+							"message": fmt.Sprintf("Grades refresh returned status %d", resp.StatusCode),
+						}
+					}
+				} else if dataType == "price_targets" {
+					// Call optimized_fmp_loader for price targets
+					bulkURL := fmt.Sprintf("%s/api/v1/bulk/on-demand/%s", h.pythonWorker.BaseURL, symbol)
+					bulkPayload := map[string]interface{}{
+						"data_types": []string{"price_targets"},
+						"force":      payload.Force,
+					}
+					payloadBytes, _ := json.Marshal(bulkPayload)
+
+					resp, err := h.pythonWorker.HTTPClient.Post(bulkURL, "application/json", bytes.NewBuffer(payloadBytes))
+					if err != nil {
+						symbolResult[dataType] = map[string]interface{}{
+							"success": false,
+							"message": fmt.Sprintf("Failed to refresh %s: %v", dataType, err),
+						}
+						continue
+					}
+					defer resp.Body.Close()
+
+					if resp.StatusCode == 200 {
+						body, _ := io.ReadAll(resp.Body)
+						var bulkResp map[string]interface{}
+						if err := json.Unmarshal(body, &bulkResp); err == nil {
+							symbolResult[dataType] = map[string]interface{}{
+								"success": true,
+								"message": fmt.Sprintf("%s refreshed successfully", dataType),
+								"data":    bulkResp,
+							}
+						} else {
+							symbolResult[dataType] = map[string]interface{}{
+								"success": false,
+								"message": fmt.Sprintf("Failed to parse %s response", dataType),
+							}
+						}
+					} else {
+						symbolResult[dataType] = map[string]interface{}{
+							"success": false,
+							"message": fmt.Sprintf("Bulk refresh returned status %d", resp.StatusCode),
+						}
+					}
+				} else if dataType == "news" {
+					// Call optimized_fmp_loader for news
+					bulkURL := fmt.Sprintf("%s/api/v1/bulk/on-demand/%s", h.pythonWorker.BaseURL, symbol)
+					bulkPayload := map[string]interface{}{
+						"data_types": []string{"news"},
+						"force":      payload.Force,
+					}
+					payloadBytes, _ := json.Marshal(bulkPayload)
+
+					resp, err := h.pythonWorker.HTTPClient.Post(bulkURL, "application/json", bytes.NewBuffer(payloadBytes))
+					if err != nil {
+						symbolResult[dataType] = map[string]interface{}{
+							"success": false,
+							"message": fmt.Sprintf("Failed to refresh %s: %v", dataType, err),
+						}
+						continue
+					}
+					defer resp.Body.Close()
+
+					if resp.StatusCode == 200 {
+						body, _ := io.ReadAll(resp.Body)
+						var bulkResp map[string]interface{}
+						if err := json.Unmarshal(body, &bulkResp); err == nil {
+							symbolResult[dataType] = map[string]interface{}{
+								"success": true,
+								"message": fmt.Sprintf("%s refreshed successfully", dataType),
+								"data":    bulkResp,
+							}
+						} else {
+							symbolResult[dataType] = map[string]interface{}{
+								"success": false,
+								"message": fmt.Sprintf("Failed to parse %s response", dataType),
+							}
+						}
+					} else {
+						symbolResult[dataType] = map[string]interface{}{
+							"success": false,
+							"message": fmt.Sprintf("Bulk refresh returned status %d", resp.StatusCode),
+						}
+					}
+				}
+			}
+			results[symbol] = symbolResult
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": fmt.Sprintf("Data refresh completed for %d symbols", len(payload.Symbols)),
+			"results": results,
+		})
+		return
+	}
+
+	// For non-grades data types, proxy to python-worker as before
 	h.proxy(c, http.MethodPost, "/admin/refresh")
 
 	// Invalidate cached stock indicator responses so Streamlit sees fresh MACD immediately.
 	if h.cache == nil {
 		return
 	}
+
+	// Extract symbols for cache invalidation
+	symbols := []string{}
+	if len(b) > 0 {
+		var symbolsPayload struct {
+			Symbols []string `json:"symbols"`
+		}
+		if err := json.Unmarshal(b, &symbolsPayload); err == nil {
+			symbols = symbolsPayload.Symbols
+		}
+	}
+
 	for _, sym := range symbols {
 		s := strings.TrimSpace(strings.ToUpper(sym))
 		if s == "" {

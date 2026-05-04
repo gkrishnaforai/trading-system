@@ -253,7 +253,48 @@ func (r *MarketDataRepository) GetIndustryPeers(symbol string) (*IndustryPeersDa
 	if err != nil {
 		return &IndustryPeersData{Peers: []IndustryPeer{}}, nil
 	}
-	return &IndustryPeersData{Sector: fundamentals.Sector, Industry: fundamentals.Industry, Peers: []IndustryPeer{}}, nil
+	sector := fundamentals.Sector
+	industry := fundamentals.Industry
+
+	return &IndustryPeersData{
+		Sector:   sector,
+		Industry: industry,
+		Peers:    []IndustryPeer{},
+	}, nil
+}
+
+func (r *MarketDataRepository) GetLatestIntradayPrice(symbol string) (*IntradayPrice, error) {
+	query := `
+		SELECT symbol, close, ts, data_source
+		FROM raw_market_data_intraday
+		WHERE UPPER(symbol) = UPPER($1)
+		ORDER BY ts DESC
+		LIMIT 1
+	`
+
+	var price IntradayPrice
+	err := r.db.QueryRow(query, symbol).Scan(
+		&price.Symbol,
+		&price.Price,
+		&price.Timestamp,
+		&price.DataSource,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no intraday data found for symbol: %s", symbol)
+		}
+		return nil, fmt.Errorf("failed to query latest intraday price: %w", err)
+	}
+
+	return &price, nil
+}
+
+type IntradayPrice struct {
+	Symbol     string    `json:"symbol"`
+	Price      float64   `json:"price"`
+	Timestamp  time.Time `json:"timestamp"`
+	DataSource string    `json:"data_source"`
 }
 
 type VolumeDataPoint struct {

@@ -1,0 +1,105 @@
+method_key: dcf_simple
+version: 1
+category: general
+requires:
+  scalars:
+    - fcf_ttm
+    - shares_outstanding
+    - total_debt
+    - cash_and_equivalents
+  optional_scalars:
+    - market_cap
+  series: []
+params:
+  wacc: 0.10
+  terminal_growth: 0.03
+  growth: 0.08
+  growth_cap: 0.20
+  terminal_value_cap_share_of_ev: 0.70
+formula:
+  fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+          - lte:
+              - sub: [{param: wacc}, {param: terminal_growth}]
+              - 0
+      then: null
+      else:
+        let:
+          bindings:
+            g:
+              clamp:
+                value: {param: growth}
+                lo: 0
+                hi: {param: growth_cap}
+            one_plus_g:
+              add: [1, {var: g}]
+            one_plus_wacc:
+              add: [1, {param: wacc}]
+            fcf_1:
+              mul: [{var: fcf_ttm}, {pow: [{var: one_plus_g}, 1]}]
+            fcf_2:
+              mul: [{var: fcf_ttm}, {pow: [{var: one_plus_g}, 2]}]
+            fcf_3:
+              mul: [{var: fcf_ttm}, {pow: [{var: one_plus_g}, 3]}]
+            fcf_4:
+              mul: [{var: fcf_ttm}, {pow: [{var: one_plus_g}, 4]}]
+            fcf_5:
+              mul: [{var: fcf_ttm}, {pow: [{var: one_plus_g}, 5]}]
+            pv_1:
+              div: [{var: fcf_1}, {pow: [{var: one_plus_wacc}, 1]}]
+            pv_2:
+              div: [{var: fcf_2}, {pow: [{var: one_plus_wacc}, 2]}]
+            pv_3:
+              div: [{var: fcf_3}, {pow: [{var: one_plus_wacc}, 3]}]
+            pv_4:
+              div: [{var: fcf_4}, {pow: [{var: one_plus_wacc}, 4]}]
+            pv_5:
+              div: [{var: fcf_5}, {pow: [{var: one_plus_wacc}, 5]}]
+            pv_fcf_1_5:
+              add:
+                - add:
+                    - add:
+                        - add: [{var: pv_1}, {var: pv_2}]
+                        - var: pv_3
+                    - var: pv_4
+                - var: pv_5
+            terminal_value:
+              div:
+                - mul:
+                    - var: fcf_5
+                    - add: [1, {param: terminal_growth}]
+                - sub: [{param: wacc}, {param: terminal_growth}]
+            pv_terminal:
+              div: [{var: terminal_value}, {pow: [{var: one_plus_wacc}, 5]}]
+            ev:
+              add: [{var: pv_fcf_1_5}, {var: pv_terminal}]
+            terminal_share_of_ev:
+              div: [{var: pv_terminal}, {var: ev}]
+            net_debt:
+              sub: [{var: total_debt}, {var: cash_and_equivalents}]
+            equity_value:
+              sub: [{var: ev}, {var: net_debt}]
+            fair_price_raw:
+              div: [{var: equity_value}, {var: shares_outstanding}]
+          in:
+            if:
+              cond:
+                or:
+                  - lte: [{var: ev}, 0]
+                  - gt: [{var: terminal_share_of_ev}, {param: terminal_value_cap_share_of_ev}]
+              then:
+                error:
+                  code: invalid_assumption
+                  message: terminal_value_dominates
+                  details:
+                    terminal_share_of_ev: {var: terminal_share_of_ev}
+                    terminal_value_cap_share_of_ev: {param: terminal_value_cap_share_of_ev}
+              else: {var: fair_price_raw}
+  bear_fair_price: null
+  bull_fair_price: null
+  explosive_fair_price: null
+validations: []

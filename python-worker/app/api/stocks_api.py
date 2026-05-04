@@ -459,3 +459,119 @@ async def get_stock_info(symbol: str):
             "success": False,
             "error": str(e)
         }
+
+
+@router.get("/{symbol}/alert-context")
+async def get_stock_alert_context(symbol: str):
+    """Get comprehensive stock data for alert context including news, ratings, and price targets"""
+    try:
+        # Get basic stock info
+        stock_query = """
+            SELECT symbol, company_name, sector, industry, market_cap, country, currency, exchange, is_active
+            FROM stocks 
+            WHERE symbol = :symbol AND is_active = true
+        """
+        
+        stock_result = db.execute_query(stock_query, {"symbol": symbol.upper()})
+        
+        if not stock_result:
+            return {
+                "stock": None,
+                "fundamentals": {},
+                "news": [],
+                "grade_actions": [],
+                "price_targets": None
+            }
+        
+        stock_row = stock_result[0]
+        stock = {
+            "symbol": stock_row['symbol'],
+            "company_name": stock_row.get('company_name'),
+            "sector": stock_row.get('sector'),
+            "industry": stock_row.get('industry'),
+            "market_cap": stock_row.get('market_cap'),
+            "country": stock_row.get('country'),
+            "currency": stock_row.get('currency'),
+            "exchange": stock_row.get('exchange'),
+            "is_active": stock_row.get('is_active')
+        }
+        
+        # Get fundamentals
+        fundamentals_query = """
+            SELECT payload, as_of_date
+            FROM fundamentals_snapshots
+            WHERE UPPER(symbol) = UPPER(:symbol)
+            ORDER BY as_of_date DESC
+            LIMIT 1
+        """
+        
+        fundamentals_result = db.execute_query(fundamentals_query, {"symbol": symbol})
+        fundamentals = fundamentals_result[0]['payload'] if fundamentals_result else {}
+        
+        # Get recent news, grades, and price targets using the FMP loader
+        try:
+            from app.services.optimized_fmp_loader import OptimizedFMPLoader
+            loader = OptimizedFMPLoader()
+            
+            # Get live data
+            stock_grades_data = loader.get_stock_grades(symbol)
+            analyst_ratings_data = loader.get_analyst_ratings(symbol)
+            price_targets_data = loader.get_price_targets(symbol)
+            market_news_data = loader.get_market_news()
+            
+            # Filter news for this symbol (last 7 days)
+            from datetime import datetime, timedelta
+            seven_days_ago = datetime.now() - timedelta(days=7)
+            news = []
+            if market_news_data:
+                for article in market_news_data:
+                    article_date = datetime.fromisoformat(article.get('publishedAt', '').replace('Z', '+00:00')) if article.get('publishedAt') else None
+                    if article_date and article_date >= seven_days_ago and symbol.upper() in [s.upper() for s in article.get('symbols', [])]:
+                        news.append({
+                            'title': article.get('title'),
+                            'text': article.get('text'),
+                            'url': article.get('url'),
+                            'source': article.get('source'),
+                            'published_date': article.get('publishedAt'),
+                            'symbols': article.get('symbols', [])
+                        })
+            
+            # Format grade actions
+            grade_actions = []
+            if stock_grades_data:
+                for grade in stock_grades_data[:10]:  # Limit to 10 most recent
+                    grade_actions.append({
+                        'symbol': symbol,
+                        'grade_date': grade.get('gradeDate'),
+                        'grading_company': grade.get('gradingCompany'),
+                        'previous_grade': grade.get('previousGrade'),
+                        'new_grade': grade.get('newGrade'),
+                        'action': grade.get('action')
+                    })
+            
+            # Use price targets data directly
+            price_targets = price_targets_data if price_targets_data else None
+            
+        except Exception as e:
+            # Fallback to empty data if loader fails
+            news = []
+            grade_actions = []
+            price_targets = None
+        
+        return {
+            "stock": stock,
+            "fundamentals": fundamentals,
+            "news": news,
+            "grade_actions": grade_actions,
+            "price_targets": price_targets
+        }
+        
+    except Exception as e:
+        return {
+            "stock": None,
+            "fundamentals": {},
+            "news": [],
+            "grade_actions": [],
+            "price_targets": None,
+            "error": str(e)
+        }

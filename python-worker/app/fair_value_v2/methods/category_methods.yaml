@@ -1,0 +1,36 @@
+version: 1
+
+default_methods:
+  - method_key: pe_basic
+    weight: 1.0
+
+categories:
+  financials:
+    methods:
+      - method_key: pb_bank
+        weight: 1.0
+
+  ai_infra:
+    methods:
+      - method_key: pe_technology_dynamic
+        weight: 1.0
+
+  growth:
+    methods:
+      - method_key: pe_growth
+        weight: 1.0
+
+  cyclical:
+    methods:
+      - method_key: pe_basic
+        weight: 1.0
+
+  value:
+    methods:
+      - method_key: pe_value
+        weight: 1.0
+
+  technology:
+    methods:
+      - method_key: pe_technology_dynamic
+        weight: 1.0

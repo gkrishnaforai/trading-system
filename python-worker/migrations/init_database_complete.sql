@@ -192,6 +192,23 @@ CREATE INDEX IF NOT EXISTS idx_fundamentals_snapshots_symbol ON fundamentals_sna
 CREATE INDEX IF NOT EXISTS idx_fundamentals_snapshots_as_of_date ON fundamentals_snapshots(as_of_date DESC);
 
 -- ===================================================
+-- 4b. Fair Value V2 Overrides
+-- ===================================================
+
+CREATE TABLE IF NOT EXISTS fair_value_v2_category_overrides (
+    symbol VARCHAR(10) PRIMARY KEY,
+    category_override VARCHAR(50) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    reason TEXT,
+    updated_by VARCHAR(100),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fv2_cat_overrides_enabled ON fair_value_v2_category_overrides(enabled);
+CREATE INDEX IF NOT EXISTS idx_fv2_cat_overrides_category ON fair_value_v2_category_overrides(category_override);
+
+-- ===================================================
 -- 5. Financial Statements Tables
 -- ===================================================
 

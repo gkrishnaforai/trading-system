@@ -1,6 +1,7 @@
 """
 Adaptive Signal Engine
 Implements institutional-grade adaptive signal generation with market regime, volatility, and relative strength awareness
+Refactored to use centralized services for DRY architecture and clean confidence calculation
 """
 
 from enum import Enum
@@ -13,6 +14,9 @@ from app.signal_engines.signal_calculator_core import SignalType, SignalResult, 
 from app.services.market_regime_service import MarketRegimeService, MarketRegime
 from app.services.volatility_profiler_service import VolatilityProfilerService, VolatilityProfile
 from app.services.relative_strength_service import RelativeStrengthService, RelativeStrengthTier
+from app.services.component_normalizer_service import ComponentNormalizer
+from app.services.confidence_calculator_service import ConfidenceCalculator
+from app.services.volatility_percentile_service import VolatilityPercentileService
 from app.adaptive_config_matrix import ConfigMatrix
 from app.observability.logging import get_logger
 
@@ -45,7 +49,9 @@ class SignalScore:
         return max(scores, key=scores.get)
 
 class AdaptiveSignalEngine:
-    """Adaptive signal engine with market regime, volatility, and relative strength awareness"""
+    """Adaptive signal engine with market regime, volatility, and relative strength awareness
+    Refactored to use centralized services for clean confidence calculation
+    """
     
     def __init__(self):
         self.regime_service = MarketRegimeService()
@@ -53,64 +59,100 @@ class AdaptiveSignalEngine:
         self.rs_service = RelativeStrengthService()
         self.config_matrix = ConfigMatrix()
         
+        # New centralized services for DRY architecture
+        self.component_normalizer = ComponentNormalizer()
+        self.confidence_calculator = ConfidenceCalculator()
+        self.volatility_percentile_service = VolatilityPercentileService()
+        
+        logger.info("AdaptiveSignalEngine initialized with centralized services")
+        
     def generate_signal_score(self, symbol: str, conditions: MarketConditions) -> SignalScore:
-        """Generate adaptive signal score with multi-factor analysis"""
+        """Generate adaptive signal score with clean confidence architecture"""
         
         try:
             # 1. Market Regime Detection
             market_regime_data = self.regime_service.detect_market_regime()
             market_regime = market_regime_data.regime
             
-            # 2. Volatility Profiling
-            market_data = {
-                'atr': getattr(conditions, 'atr', None),
-                'close': conditions.current_price
-            }
-            vol_data = self.volatility_service.get_volatility_profile(symbol, market_data)
-            vol_profile = vol_data.profile
-            
-            # 3. Relative Strength Analysis
+            # 2. Relative Strength Analysis (for RS filter and component)
             rs_data = self.rs_service.analyze_relative_strength(symbol)
             rs_tier = rs_data.tier
             
-            # 4. Get Adaptive Configuration
-            config = self.config_matrix.get_config(vol_profile, market_regime, rs_tier)
+            # 3. Volatility Percentile Calculation (FIXED - uses true rank percentile)
+            volatility_profile = self.volatility_percentile_service.calculate_volatility_profile(symbol)
+            volatility_percentile = volatility_profile['percentile']
             
-            # 5. Calculate Component Scores
-            trend_score = self._calculate_trend_score(conditions, config)
-            momentum_score = self._calculate_momentum_score(conditions, config)
-            breakout_score = self._calculate_breakout_score(conditions, config)
+            # 4. Prepare Market Data for Normalization
+            market_data = {
+                'current_price': conditions.current_price,
+                'sma_20': conditions.sma_20,
+                'sma_50': conditions.sma_50,
+                'sma_200': getattr(conditions, 'sma_200', None),
+                'rsi': conditions.rsi,
+                'rsi_history': getattr(conditions, 'rsi_history', None),
+                'macd': getattr(conditions, 'macd', None),
+                'macd_signal': getattr(conditions, 'macd_signal', None),
+                'relative_strength': rs_data.relative_strength,
+                'volatility_percentile': volatility_percentile,
+                'volume': getattr(conditions, 'volume', None),
+                'avg_volume_20d': getattr(conditions, 'avg_volume_20d', None),
+                'volume_history': getattr(conditions, 'volume_history', None),
+                'ema_20': getattr(conditions, 'ema_20', None),
+                # For breakout calculation
+                'recent_high': getattr(conditions, 'recent_high', conditions.current_price * 1.05),
+                'recent_low': getattr(conditions, 'recent_low', conditions.current_price * 0.95),
+                'atr': volatility_profile.get('current_atr', conditions.volatility)
+            }
             
-            # 6. Apply Relative Strength Filter
+            # 5. Normalize All Components to [-1, +1] (DRY - centralized)
+            normalized_components = self.component_normalizer.normalize_all_components(market_data)
+            
+            # 6. Apply Relative Strength Filter (if negative, penalize long signals)
             if not self.rs_service.should_allow_long_signals(rs_tier):
-                momentum_score.buy_score *= 0.2  # Severely penalize long signals
-                momentum_score.reasoning.append(f"Blocked: Negative relative strength vs SPY ({rs_data.relative_strength:.2%})")
-            else:
-                rs_multiplier = self.rs_service.get_relative_strength_filter_multiplier(rs_tier)
-                momentum_score.buy_score *= rs_multiplier
-                if rs_multiplier < 1.0:
-                    momentum_score.reasoning.append(f"Reduced: Relative strength vs SPY ({rs_data.relative_strength:.2%})")
+                if 'momentum' in normalized_components:
+                    normalized_components['momentum'] *= 0.2  # Severely penalize
+                logger.info(f"Applied RS filter for {symbol}: negative RS ({rs_data.relative_strength:.2%})")
             
-            # 7. Combine Scores with Adaptive Weights
-            final_score = self._combine_scores(trend_score, momentum_score, breakout_score, config)
+            # 7. Calculate Clean Confidence Architecture (DRY - centralized)
+            direction_score, environment_confidence, final_confidence = self.confidence_calculator.calculate_complete_confidence(
+                normalized_components=normalized_components,
+                regime=market_regime.value,
+                volatility_percentile=volatility_percentile,
+                regime_data={
+                    'regime_confidence': market_regime_data.confidence,
+                    'momentum_consistency': rs_data.momentum_consistency
+                }
+            )
             
-            # 8. Add Market Context Metadata
-            final_score.metadata.update({
-                'market_regime': market_regime.value,
-                'volatility_profile': vol_profile.value,
-                'relative_strength': rs_tier.value,
-                'relative_strength_value': rs_data.relative_strength,
-                'volatility_atr_pct': vol_data.atr_pct,
-                'volatility_percentile': vol_data.atr_percentile,
-                'config_used': config,
-                'regime_confidence': market_regime_data.confidence,
-                'momentum_consistency': rs_data.momentum_consistency
-            })
+            # 8. Convert Direction Score to Signal Scores (for compatibility)
+            signal_scores = self._direction_score_to_signal_scores(direction_score, normalized_components)
             
-            # 9. Apply Final Confidence Adjustments
-            final_score.confidence = self._adjust_confidence(final_score, config, market_regime_data)
+            # 9. Create Final Signal Score
+            final_score = SignalScore(
+                buy_score=signal_scores['buy'],
+                sell_score=signal_scores['sell'],
+                hold_score=signal_scores['hold'],
+                reduce_score=signal_scores['reduce'],
+                confidence=final_confidence,
+                reasoning=self._generate_reasoning(direction_score, normalized_components, market_regime, rs_data, volatility_profile),
+                metadata={
+                    'market_regime': market_regime.value,
+                    'volatility_profile': volatility_profile['profile'],
+                    'relative_strength': rs_tier.value,
+                    'relative_strength_value': rs_data.relative_strength,
+                    'volatility_atr_pct': volatility_profile.get('current_atr', 0),
+                    'volatility_percentile': volatility_percentile,
+                    'regime_confidence': market_regime_data.confidence,
+                    'momentum_consistency': rs_data.momentum_consistency,
+                    'direction_score': direction_score,
+                    'environment_confidence': environment_confidence,
+                    'normalized_components': normalized_components,
+                    'architecture': 'clean_multiplicative_v2'
+                }
+            )
             
-            logger.debug(f"Generated adaptive signal for {symbol}: {final_score.get_primary_signal().value} (confidence: {final_score.confidence:.2f})")
+            logger.info(f"Generated adaptive signal for {symbol}: {final_score.get_primary_signal().value} "
+                       f"(confidence: {final_confidence:.3f}, direction: {direction_score:.3f})")
             
             return final_score
             
@@ -127,230 +169,113 @@ class AdaptiveSignalEngine:
                 metadata={'error': str(e)}
             )
     
-    def _calculate_trend_score(self, conditions: MarketConditions, config: Dict[str, Any]) -> SignalScore:
-        """Calculate trend-based signal score"""
-        score = SignalScore()
+    def _direction_score_to_signal_scores(self, direction_score: float, normalized_components: Dict[str, float]) -> Dict[str, float]:
+        """
+        Convert direction score to individual signal scores for compatibility
+        Uses the magnitude of direction score to determine signal strength
+        """
+        abs_direction = abs(direction_score)
         
-        # Trend direction analysis
-        is_uptrend = (conditions.sma_20 > conditions.sma_50 and 
-                      conditions.current_price > conditions.sma_20)
-        is_downtrend = (conditions.sma_20 < conditions.sma_50 and 
-                       conditions.current_price < conditions.sma_20)
+        if direction_score > 0.1:  # Bullish
+            return {
+                'buy': abs_direction,
+                'sell': 0.0,
+                'hold': max(0.0, 1.0 - abs_direction),
+                'reduce': 0.0
+            }
+        elif direction_score < -0.1:  # Bearish
+            return {
+                'buy': 0.0,
+                'sell': abs_direction,
+                'hold': max(0.0, 1.0 - abs_direction),
+                'reduce': 0.0
+            }
+        else:  # Neutral
+            return {
+                'buy': 0.0,
+                'sell': 0.0,
+                'hold': 1.0,
+                'reduce': 0.0
+            }
+    
+    def _generate_reasoning(
+        self, 
+        direction_score: float, 
+        normalized_components: Dict[str, float],
+        market_regime: MarketRegime,
+        rs_data,
+        volatility_profile: Dict[str, Any]
+    ) -> List[str]:
+        """
+        Generate reasoning based on the new architecture components
+        """
+        reasoning = []
         
-        # Long-term trend (if available)
-        long_term_uptrend = hasattr(conditions, 'sma_200') and conditions.sma_200 and \
-                           conditions.current_price > conditions.sma_200
+        # Trend reasoning
+        if 'trend' in normalized_components:
+            trend_val = normalized_components['trend']
+            if trend_val > 0.5:
+                reasoning.append("Strong uptrend: Price > SMA20 > SMA50")
+            elif trend_val < -0.5:
+                reasoning.append("Medium downtrend: Price < SMA20 < SMA50")
         
-        if is_uptrend:
-            if long_term_uptrend:
-                score.buy_score = 0.7
-                score.reasoning.append("Strong uptrend: Price > SMA20 > SMA50 > SMA200")
-            else:
-                score.buy_score = 0.5
-                score.reasoning.append("Medium uptrend: Price > SMA20 > SMA50")
-        elif is_downtrend:
-            if hasattr(conditions, 'sma_200') and conditions.sma_200 and \
-               conditions.current_price < conditions.sma_200:
-                score.sell_score = 0.6
-                score.reasoning.append("Strong downtrend: Price < SMA20 < SMA50 < SMA200")
-            else:
-                score.sell_score = 0.4
-                score.reasoning.append("Medium downtrend: Price < SMA20 < SMA50")
+        # Relative Strength reasoning
+        if rs_data.relative_strength < -0.15:
+            reasoning.append(f"Blocked: Negative relative strength vs SPY ({rs_data.relative_strength:.2%})")
+        elif rs_data.relative_strength > 0.15:
+            reasoning.append(f"Boosted: Positive relative strength vs SPY ({rs_data.relative_strength:.2%})")
+        
+        # Momentum reasoning
+        if 'momentum' in normalized_components:
+            momentum_val = normalized_components['momentum']
+            if momentum_val > 0.3:
+                reasoning.append("Strong momentum: RSI oversold + MACD bullish")
+            elif momentum_val < -0.3:
+                reasoning.append("Weak momentum: RSI overbought + MACD bearish")
+
+        # RSI trend reasoning (swing-entry style: rising off ~40)
+        if 'rsi_trend' in normalized_components:
+            rsi_trend_val = normalized_components['rsi_trend']
+            if rsi_trend_val > 0.35:
+                reasoning.append("RSI strengthening (rising off support zone)")
+            elif rsi_trend_val < -0.35:
+                reasoning.append("RSI weakening (rolling over)")
+
+        # Volume confirmation reasoning
+        if 'volume_confirmation' in normalized_components:
+            vol_conf = normalized_components['volume_confirmation']
+            if vol_conf > 0.35:
+                reasoning.append("Volume confirmation: above-average participation")
+            elif vol_conf < -0.35:
+                reasoning.append("Low participation: below-average volume")
+
+        # Breakout confirmation reasoning (EMA + volume confirmation + volume trend)
+        try:
+            breakout_raw = float(normalized_components.get('breakout_raw', 0.0) or 0.0)
+            breakout_adj = float(normalized_components.get('breakout', 0.0) or 0.0)
+            if breakout_raw > 0.25 and breakout_adj < breakout_raw * 0.6:
+                reasoning.append("Breakout not confirmed: lacking EMA/volume expansion confirmation")
+            elif breakout_raw > 0.25 and breakout_adj >= breakout_raw:
+                reasoning.append("Breakout confirmed: above EMA with expanding volume")
+        except Exception:
+            pass
+        
+        # Volatility reasoning
+        vol_percentile = volatility_profile['percentile']
+        if vol_percentile < 0.2:
+            reasoning.append(f"Low volatility environment (ATR {vol_percentile:.1%} percentile)")
+        elif vol_percentile > 0.8:
+            reasoning.append(f"High volatility environment (ATR {vol_percentile:.1%} percentile)")
+        
+        # Regime reasoning
+        reasoning.append(f"Market regime: {market_regime.value}")
+        
+        # Direction summary
+        if direction_score > 0.3:
+            reasoning.append("Overall bullish bias across multiple factors")
+        elif direction_score < -0.3:
+            reasoning.append("Overall bearish bias across multiple factors")
         else:
-            score.hold_score = 0.6
-            score.reasoning.append("Sideways trend: Mixed SMA signals")
+            reasoning.append("Mixed signals with no clear directional edge")
         
-        # Apply configuration adjustments
-        rsi_oversold = config.get('rsi_oversold', 35)
-        rsi_overbought = config.get('rsi_overbought', 70)
-        
-        # RSI trend confirmation
-        if conditions.rsi < rsi_oversold and is_uptrend:
-            score.buy_score = min(score.buy_score + 0.2, 1.0)
-            score.reasoning.append(f"Trend + Oversold RSI ({conditions.rsi:.1f} < {rsi_oversold})")
-        elif conditions.rsi > rsi_overbought and is_downtrend:
-            score.sell_score = min(score.sell_score + 0.2, 1.0)
-            score.reasoning.append(f"Trend + Overbought RSI ({conditions.rsi:.1f} > {rsi_overbought})")
-        
-        return score
-    
-    def _calculate_momentum_score(self, conditions: MarketConditions, config: Dict[str, Any]) -> SignalScore:
-        """Calculate momentum-based signal score"""
-        score = SignalScore()
-        
-        # RSI momentum
-        rsi_oversold = config.get('rsi_oversold', 35)
-        rsi_overbought = config.get('rsi_overbought', 70)
-        rsi_extreme_oversold = config.get('rsi_extreme_oversold', 25)
-        rsi_extreme_overbought = config.get('rsi_extreme_overbought', 80)
-        
-        if conditions.rsi < rsi_extreme_oversold:
-            score.buy_score = 0.8
-            score.reasoning.append(f"Extreme oversold: RSI {conditions.rsi:.1f} < {rsi_extreme_oversold}")
-        elif conditions.rsi < rsi_oversold:
-            score.buy_score = 0.6
-            score.reasoning.append(f"Oversold: RSI {conditions.rsi:.1f} < {rsi_oversold}")
-        elif conditions.rsi > rsi_extreme_overbought:
-            score.sell_score = 0.8
-            score.reasoning.append(f"Extreme overbought: RSI {conditions.rsi:.1f} > {rsi_extreme_overbought}")
-        elif conditions.rsi > rsi_overbought:
-            score.sell_score = 0.6
-            score.reasoning.append(f"Overbought: RSI {conditions.rsi:.1f} > {rsi_overbought}")
-        
-        # Recent price momentum
-        breakout_threshold = config.get('breakout_threshold', 0.02)
-        if conditions.recent_change > breakout_threshold:
-            momentum_boost = min(conditions.recent_change / 0.05, 0.3)  # Cap at 0.3
-            score.buy_score = min(score.buy_score + momentum_boost, 1.0)
-            score.reasoning.append(f"Price momentum: +{conditions.recent_change:.2%}")
-        elif conditions.recent_change < -breakout_threshold:
-            momentum_boost = min(abs(conditions.recent_change) / 0.05, 0.3)
-            score.sell_score = min(score.sell_score + momentum_boost, 1.0)
-            score.reasoning.append(f"Price momentum: {conditions.recent_change:.2%}")
-        
-        # MACD confirmation
-        if hasattr(conditions, 'macd') and hasattr(conditions, 'macd_signal'):
-            if conditions.macd and conditions.macd_signal and conditions.macd > conditions.macd_signal:
-                if score.buy_score > 0:
-                    score.buy_score = min(score.buy_score + 0.1, 1.0)
-                    score.reasoning.append("MACD bullish confirmation")
-            elif conditions.macd and conditions.macd_signal and conditions.macd < conditions.macd_signal:
-                if score.sell_score > 0:
-                    score.sell_score = min(score.sell_score + 0.1, 1.0)
-                    score.reasoning.append("MACD bearish confirmation")
-        
-        return score
-    
-    def _calculate_breakout_score(self, conditions: MarketConditions, config: Dict[str, Any]) -> SignalScore:
-        """Calculate breakout-based signal score"""
-        score = SignalScore()
-        
-        # Breakout conditions
-        breakout_threshold = config.get('breakout_threshold', 0.02)
-        breakout_rsi_upper = config.get('breakout_rsi_upper_bound', 65)
-        
-        # Price breakout above SMA20 with momentum
-        if (conditions.recent_change > breakout_threshold and 
-            conditions.rsi > 55 and conditions.rsi < breakout_rsi_upper and
-            conditions.current_price > conditions.sma_20):
-            
-            score.buy_score = 0.7
-            score.reasoning.append(f"Breakout: Price > SMA20, RSI {conditions.rsi:.1f}, momentum +{conditions.recent_change:.2%}")
-        
-        # Failed breakout (RSI drops below 55 after breakout attempt)
-        elif (conditions.recent_change < 0 and conditions.rsi < 55 and 
-              conditions.current_price < conditions.sma_20):
-            
-            score.sell_score = 0.6
-            score.reasoning.append(f"Failed breakout: RSI {conditions.rsi:.1f}, price below SMA20")
-        
-        # Volume confirmation (if available)
-        if hasattr(conditions, 'volume') and hasattr(conditions, 'avg_volume_20d'):
-            if conditions.volume and conditions.avg_volume_20d and conditions.avg_volume_20d > 0:
-                volume_ratio = conditions.volume / conditions.avg_volume_20d
-                
-                if score.buy_score > 0.5 and volume_ratio > 1.5:
-                    score.buy_score = min(score.buy_score + 0.1, 1.0)
-                    score.reasoning.append(f"Volume confirmation: {volume_ratio:.1f}x average")
-                elif score.sell_score > 0.5 and volume_ratio > 2.0:
-                    score.sell_score = min(score.sell_score + 0.1, 1.0)
-                    score.reasoning.append(f"High volume selling: {volume_ratio:.1f}x average")
-        
-        return score
-    
-    def _combine_scores(self, trend_score: SignalScore, momentum_score: SignalScore, 
-                       breakout_score: SignalScore, config: Dict[str, Any]) -> SignalScore:
-        """Combine component scores with adaptive weights"""
-        
-        final_score = SignalScore()
-        
-        # Get adaptive weights from config
-        weights = config.get('score_weights', {
-            'trend': 0.3,
-            'momentum': 0.4,
-            'breakout': 0.3
-        })
-        
-        # Combine buy scores
-        final_score.buy_score = (
-            trend_score.buy_score * weights['trend'] +
-            momentum_score.buy_score * weights['momentum'] +
-            breakout_score.buy_score * weights['breakout']
-        )
-        
-        # Combine sell scores
-        final_score.sell_score = (
-            trend_score.sell_score * weights['trend'] +
-            momentum_score.sell_score * weights['momentum'] +
-            breakout_score.sell_score * weights['breakout']
-        )
-        
-        # Combine hold scores
-        final_score.hold_score = (
-            trend_score.hold_score * weights['trend'] +
-            momentum_score.hold_score * weights['momentum'] +
-            breakout_score.hold_score * weights['breakout']
-        )
-        
-        # Combine reduce scores
-        final_score.reduce_score = (
-            trend_score.reduce_score * weights['trend'] +
-            momentum_score.reduce_score * weights['momentum'] +
-            breakout_score.reduce_score * weights['breakout']
-        )
-        
-        # Combine reasoning
-        all_reasoning = (trend_score.reasoning + momentum_score.reasoning + 
-                        breakout_score.reasoning)
-        final_score.reasoning = list(dict.fromkeys(all_reasoning))  # Remove duplicates
-        
-        # Calculate initial confidence
-        max_score = max(final_score.buy_score, final_score.sell_score, 
-                       final_score.hold_score, final_score.reduce_score)
-        final_score.confidence = max_score
-        
-        return final_score
-    
-    def _adjust_confidence(self, score: SignalScore, config: Dict[str, Any], 
-                          market_regime_data) -> float:
-        """Apply final confidence adjustments"""
-        
-        confidence = score.confidence
-        
-        # Apply confidence boost from config
-        confidence_boost = config.get('confidence_boost', 0.0)
-        confidence += confidence_boost
-        
-        # Apply regime-based adjustments
-        regime_confidence = market_regime_data.confidence
-        confidence *= (0.5 + regime_confidence * 0.5)  # Scale by regime confidence
-        
-        # Apply volatility-based adjustments
-        vol_profile = score.metadata.get('volatility_profile')
-        if vol_profile == VolatilityProfile.HIGH.value:
-            confidence *= 0.9  # Reduce confidence in high volatility
-        elif vol_profile == VolatilityProfile.LOW.value:
-            confidence *= 1.1  # Boost confidence in low volatility
-        
-        # Apply relative strength consistency adjustments
-        momentum_consistency = score.metadata.get('momentum_consistency', 0.5)
-        confidence *= (0.7 + momentum_consistency * 0.3)  # Scale by consistency
-        
-        # Ensure confidence stays in valid range
-        return max(0.0, min(confidence, 1.0))
-    
-    def generate_signal_result(self, symbol: str, conditions: MarketConditions) -> SignalResult:
-        """Generate SignalResult for compatibility with existing systems"""
-        
-        # Get adaptive signal score
-        signal_score = self.generate_signal_score(symbol, conditions)
-        
-        # Convert to SignalResult
-        primary_signal = signal_score.get_primary_signal()
-        
-        return SignalResult(
-            signal=primary_signal,
-            confidence=signal_score.confidence,
-            reasoning=signal_score.reasoning,
-            metadata=signal_score.metadata
-        )
+        return reasoning

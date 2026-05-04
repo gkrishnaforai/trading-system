@@ -11,6 +11,8 @@ import json
 import uuid
 import os
 
+from sqlalchemy import text
+
 from app.database import db
 from app.data_management.refresh_manager import DataRefreshManager, DataType
 from app.data_management.refresh_result import RefreshStatus
@@ -59,6 +61,14 @@ class ScreenerRequest(BaseModel):
 
 class StockInsightsRequest(BaseModel):
     symbol: str
+
+
+class FairValueV2CategoryOverrideRequest(BaseModel):
+    symbol: str
+    category_override: str
+    enabled: bool = True
+    reason: Optional[str] = None
+    updated_by: Optional[str] = None
 
 
 @router.post("/refresh", response_model=RefreshResponse)
@@ -1511,6 +1521,92 @@ async def get_data_summary(table: str):
         raise
     except Exception as e:
         logger.error(f"Failed to get data summary for {table}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/fair-value-v2/category-overrides/ensure-table")
+async def ensure_fair_value_v2_category_overrides_table():
+    """Create the fair_value_v2_category_overrides table if it doesn't exist."""
+    try:
+        with db.get_session() as session:
+            session.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS fair_value_v2_category_overrides (
+                        symbol VARCHAR(10) PRIMARY KEY,
+                        category_override VARCHAR(50) NOT NULL,
+                        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                        reason TEXT,
+                        updated_by VARCHAR(100),
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_fv2_cat_overrides_enabled
+                        ON fair_value_v2_category_overrides(enabled);
+
+                    CREATE INDEX IF NOT EXISTS idx_fv2_cat_overrides_category
+                        ON fair_value_v2_category_overrides(category_override);
+                    """
+                )
+            )
+            session.commit()
+        return {"success": True, "message": "✅ fair_value_v2_category_overrides ensured"}
+    except Exception as e:
+        logger.error(f"Failed to ensure fair_value_v2_category_overrides table: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/fair-value-v2/category-overrides")
+async def list_fair_value_v2_category_overrides(enabled_only: bool = True):
+    """List Fair Value V2 category overrides."""
+    try:
+        where = "WHERE enabled = TRUE" if enabled_only else ""
+        rows = db.execute_query(
+            f"""
+            SELECT symbol, category_override, enabled, reason, updated_by, created_at, updated_at
+            FROM fair_value_v2_category_overrides
+            {where}
+            ORDER BY updated_at DESC
+            """
+        )
+        return {"success": True, "overrides": rows or []}
+    except Exception as e:
+        logger.error(f"Failed to list fair value v2 category overrides: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/fair-value-v2/category-overrides")
+async def upsert_fair_value_v2_category_override(req: FairValueV2CategoryOverrideRequest):
+    """Upsert a Fair Value V2 category override."""
+    try:
+        from app.fair_value_v2.feature_store.postgres_point_in_time import PostgresPointInTimeFeatureStore
+
+        store = PostgresPointInTimeFeatureStore()
+        store.upsert_category_override(
+            symbol=req.symbol.strip().upper(),
+            category_override=req.category_override.strip(),
+            enabled=bool(req.enabled),
+            reason=req.reason,
+            updated_by=req.updated_by,
+        )
+        return {"success": True, "message": "✅ category override upserted", "symbol": req.symbol.strip().upper()}
+    except Exception as e:
+        logger.error(f"Failed to upsert fair value v2 category override: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/fair-value-v2/category-overrides/{symbol}/disable")
+async def disable_fair_value_v2_category_override(symbol: str, updated_by: Optional[str] = None):
+    """Disable an override (soft delete)."""
+    try:
+        from app.fair_value_v2.feature_store.postgres_point_in_time import PostgresPointInTimeFeatureStore
+
+        store = PostgresPointInTimeFeatureStore()
+        store.disable_category_override(symbol.strip().upper(), updated_by=updated_by)
+        return {"success": True, "message": "✅ category override disabled", "symbol": symbol.strip().upper()}
+    except Exception as e:
+        logger.error(f"Failed to disable fair value v2 category override: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

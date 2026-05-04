@@ -98,6 +98,7 @@ func main() {
 	reportHandler := handlers.NewReportHandler()
 	adminProxyHandler := handlers.NewAdminProxyHandler(pythonWorkerClient, cacheService)
 	dataLoadHandler := handlers.NewDataLoadHandler(pythonWorkerClient, ingestionAuditRepo, jobQueue, useJobQueue)
+	tradingDecisionV3Handler := handlers.NewTradingDecisionV3Handler(ingestionAuditRepo, jobQueue, useJobQueue)
 	dataPreviewHandler := handlers.NewDataPreviewHandler(dataPreviewService)
 	notificationQueueHandler := handlers.NewNotificationQueueHandler(notificationQueueRepo)
 	jobQueueAdminHandler := handlers.NewJobQueueAdminHandler(jobQueue)
@@ -261,6 +262,9 @@ func main() {
 		api.GET("/alerts/events", dataLoadHandler.ListAlertEventsForSymbol)
 		api.POST("/data-load/runs/:run_id/cancel", dataLoadHandler.CancelRun)
 		api.POST("/data-load/runs/:run_id/rerun-failed", dataLoadHandler.RerunFailed)
+
+		// Trading Decision V3 orchestration (Option B)
+		api.POST("/portfolios/:portfolio_id/trading-decisions/v3/run", tradingDecisionV3Handler.CreatePortfolioDecisionRun)
 
 		// Portfolio analysis run orchestration (Option B)
 		api.POST("/portfolios/:portfolio_id/analysis-run", portfolioAnalysisRunHandler.CreateRun)

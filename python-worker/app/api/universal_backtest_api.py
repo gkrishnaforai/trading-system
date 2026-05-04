@@ -4,6 +4,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
+from functools import lru_cache
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,6 +39,61 @@ logger = get_logger(__name__)
 # Initialize database helper and data loader
 db_helper = DatabaseQueryHelper()
 data_loader = ComprehensiveDataLoader()
+
+
+def _get_rsi_history(symbol: str, target_date: str, db_url: str, limit: int = 5) -> List[float]:
+    try:
+        engine = create_engine(db_url)
+
+        query = """
+            SELECT date, rsi_14
+            FROM indicators_daily
+            WHERE symbol = :symbol
+              AND data_source = 'calculated'
+              AND date <= :target_date
+              AND rsi_14 IS NOT NULL
+            ORDER BY date DESC
+            LIMIT :limit
+        """
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(query),
+                {"symbol": symbol.upper(), "target_date": target_date, "limit": int(limit)},
+            ).fetchall()
+
+        # Return in chronological order for trend logic
+        rows_sorted = list(reversed(rows))
+        return [float(r[1]) for r in rows_sorted if r[1] is not None]
+    except Exception:
+        return []
+
+
+def _get_volume_history(symbol: str, target_date: str, db_url: str, limit: int = 10) -> List[float]:
+    try:
+        engine = create_engine(db_url)
+
+        query = """
+            SELECT r.date, r.volume
+            FROM raw_market_data_daily r
+            WHERE r.symbol = :symbol
+              AND r.date <= :target_date
+              AND r.volume IS NOT NULL
+              AND r.volume > 0
+            ORDER BY r.date DESC
+            LIMIT :limit
+        """
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(query),
+                {"symbol": symbol.upper(), "target_date": target_date, "limit": int(limit)},
+            ).fetchall()
+
+        rows_sorted = list(reversed(rows))
+        return [float(r[1]) for r in rows_sorted if r[1] is not None]
+    except Exception:
+        return []
 
 # Request models
 class HistoricalDataRequest(BaseModel):
@@ -139,12 +195,23 @@ async def get_historical_data_endpoint(
         log_exception(logger, e, f"Historical data fetch for {symbol}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Simple in-memory cache with 24-hour TTL
+_signal_cache = {}
+
+def _get_cache_key(symbol: str, date: str, asset_type: str) -> str:
+    """Generate cache key with date for 24-hour TTL"""
+    # Use current date to ensure cache expires daily
+    cache_date = datetime.now().strftime('%Y-%m-%d')
+    return f"{symbol}_{date}_{asset_type}_{cache_date}"
+
 @router.post("/signal/universal")
 async def get_universal_signal(request: SignalRequest):
     """
     Get signal for any asset type using appropriate engine
     Reuses existing TQQQ engine for 3x ETFs, proxy for others
     """
+    print(f"🎯🎯🎯 UNIVERSAL SIGNAL ENDPOINT CALLED: {request.symbol}, date: {request.date}, asset_type: {request.asset_type}")
+    
     try:
         logger.info(f"🎯 Generating universal signal for {request.symbol}", extra={
             'context': {
@@ -157,6 +224,12 @@ async def get_universal_signal(request: SignalRequest):
         sym = (request.symbol or "").strip().upper()
         requested_date = (request.date or "").strip()
         resolved_date = requested_date
+        
+        # Check cache first (24-hour TTL)
+        cache_key = _get_cache_key(sym, requested_date, request.asset_type)
+        if cache_key in _signal_cache:
+            logger.info(f"🎯 Cache hit for universal signal {sym} ({request.asset_type})")
+            return _signal_cache[cache_key]
 
         try:
             engine = create_engine(settings.database_url)
@@ -209,36 +282,42 @@ async def get_universal_signal(request: SignalRequest):
             sym,
             resolved_date,
             required_indicators=required_indicators,
-            require_fundamentals=require_fundamentals,
+            require_fundamentals=require_fundamentals
         )
+        
+        print(f"🔍 DEBUG: Prerequisites check result: ok={prereq.ok}, missing={prereq.missing}, backfilled={prereq.backfilled}")
+        
         if not prereq.ok:
+            print(f"🔍 DEBUG: Prerequisites not met, returning early")
             return {
                 "success": True,
                 "data": {
                     "engine": {"type": request.asset_type},
                     "market_data": {
                         "symbol": sym,
-                        "requested_date": requested_date,
+                        "requested_date": request.date,
                         "as_of_date": resolved_date,
-                        "date": resolved_date,
+                        "date": resolved_date
                     },
                     "data_completeness": {
                         "indicators_present": prereq.indicators_present,
                         "fundamentals_present": prereq.fundamentals_present,
                         "missing": prereq.missing,
-                        "backfilled": prereq.backfilled,
+                        "backfilled": prereq.backfilled
                     },
                     "signal": {
                         "status": "data_missing",
                         "signal": "hold",
                         "confidence": 0.0,
                         "reasoning": [f"Insufficient data: missing {', '.join(prereq.missing)}"],
-                        "metadata": {"error": "insufficient_data", "missing": prereq.missing},
+                        "metadata": {"error": "insufficient_data", "missing": prereq.missing}
                     },
                     "timestamp": datetime.now().isoformat(),
-                    "asset_type": request.asset_type,
-                },
+                    "asset_type": request.asset_type
+                }
             }
+        
+        print(f"🔍 DEBUG: Prerequisites met, proceeding with signal generation")
         
         # Check if data exists for the symbol using existing DatabaseQueryHelper
         try:
@@ -271,20 +350,21 @@ async def get_universal_signal(request: SignalRequest):
         
         # For TQQQ, use the exact same method as TQQQ API for consistency
         if sym == 'TQQQ':
+            print(f"🎯 Using TQQQ-specific path for {sym}")
             # Use the same query and logic as TQQQ Engine API (unchanged)
             engine = create_engine(settings.database_url)
             
-            # Build the same query as TQQQ API
+            # Build the same query as TQQQ API but filter for calculated data source
             query = """
                 SELECT i.date, r.close, i.rsi_14, i.sma_50, i.ema_20, i.macd, i.macd_signal, r.volume, r.low, r.high
                 FROM indicators_daily i
                 JOIN raw_market_data_daily r ON i.symbol = r.symbol AND i.date = r.date
-                WHERE i.symbol = 'TQQQ' AND i.date = :target_date
+                WHERE i.symbol = :symbol AND i.date = :target_date AND i.data_source = 'calculated'
                 ORDER BY i.date
             """
             
             with engine.connect() as conn:
-                result = conn.execute(text(query), {"target_date": target_date.strftime("%Y-%m-%d")})
+                result = conn.execute(text(query), {"symbol": sym, "target_date": target_date.strftime("%Y-%m-%d")})
                 rows = result.fetchall()
                 
                 if not rows:
@@ -293,11 +373,11 @@ async def get_universal_signal(request: SignalRequest):
                         SELECT i.date, r.close, i.rsi_14, i.sma_50, i.ema_20, i.macd, i.macd_signal, r.volume, r.low, r.high
                         FROM indicators_daily i
                         JOIN raw_market_data_daily r ON i.symbol = r.symbol AND i.date = r.date
-                        WHERE i.symbol = 'TQQQ'
+                        WHERE i.symbol = :symbol AND i.data_source = 'calculated'
                         ORDER BY i.date DESC
                         LIMIT 1
                     """
-                    result = conn.execute(text(query_latest))
+                    result = conn.execute(text(query_latest), {"symbol": sym})
                     rows = result.fetchall()
                 
                 if not rows:
@@ -331,6 +411,7 @@ async def get_universal_signal(request: SignalRequest):
                 )
         else:
             # For other symbols, use the enhanced methodology with same data source
+            print(f"🎯 Using general path for {sym} (asset_type: {request.asset_type})")
             from app.utils.market_data_utils import get_symbol_indicators_data
             
             # Get symbol data using same indicators methodology as TQQQ
@@ -389,7 +470,9 @@ async def get_universal_signal(request: SignalRequest):
                 vix_level=market_context['vix_level'],
                 volatility_trend='stable',
                 volume=float(symbol_data['volume']) if symbol_data['volume'] is not None else 0.0,  # Current volume
-                avg_volume_20d=float(symbol_data['avg_volume_20d']) if symbol_data.get('avg_volume_20d') is not None else 0.0  # 20-day average volume
+                avg_volume_20d=float(symbol_data['avg_volume_20d']) if symbol_data.get('avg_volume_20d') is not None else 0.0,  # 20-day average volume
+                rsi_history=_get_rsi_history(sym, target_date.strftime("%Y-%m-%d"), settings.database_url, limit=5),
+                volume_history=_get_volume_history(sym, target_date.strftime("%Y-%m-%d"), settings.database_url, limit=10)
             )
         
         # Calculate EMA slope for trend analysis
@@ -502,6 +585,12 @@ async def get_universal_signal(request: SignalRequest):
         }
         
         logger.info(f"✅ Generated {request.asset_type} signal for {sym}: {signal_result.signal.value}")
+        
+        # Store in cache for 24-hour TTL
+        _signal_cache[cache_key] = {
+            "success": True,
+            "data": response_data
+        }
         
         return {
             "success": True,

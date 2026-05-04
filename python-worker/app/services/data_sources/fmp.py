@@ -8,7 +8,9 @@ import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime, date
 
+from app.config import settings
 from app.providers.financial_modeling_prep.client import get_fmp_client
+from app.repositories.stocks_repository import StocksRepository
 from app.services.data_sources.base import (
     BaseDataSource, DataSourceType, StockGrade, ConsensusData,
     DataSourceError, DataSourceUnavailableError, DataSourceRateLimitError
@@ -133,12 +135,27 @@ class FMPDataSource(BaseDataSource):
     
     async def validate_symbol(self, symbol: str) -> bool:
         """Validate if symbol exists in FMP"""
+        symbol = (symbol or "").strip().upper()
+        if not symbol:
+            return False
+
+        source = (settings.symbol_validation_source or "db").strip().lower()
+
+        if source == "db":
+            try:
+                if StocksRepository.symbol_exists(symbol):
+                    return True
+            except Exception as e:
+                logger.warning(f"DB symbol validation failed for {symbol}: {e}")
+
+            if not settings.symbol_validation_fmp_fallback:
+                return False
+
         try:
-            # Try to get company profile
             profile = self.client.get_company_profile(symbol)
             return profile is not None and len(profile) > 0
         except Exception as e:
-            logger.warning(f"Symbol validation failed for {symbol}: {e}")
+            logger.warning(f"FMP symbol validation failed for {symbol}: {e}")
             return False
     
     async def get_historical_grades(self, symbol: str, start_date: date, end_date: date) -> List[Dict[str, Any]]:

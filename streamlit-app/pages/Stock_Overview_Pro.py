@@ -117,26 +117,208 @@ def main():
     if "symbol" in query_params:
         default_symbol = query_params["symbol"]
 
-    # Symbol selector
-    symbol = st.text_input("Enter Stock Symbol", value=default_symbol, max_chars=10).strip().upper()
+    # Symbol selector and view options
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        symbol = st.text_input("Enter Stock Symbol", value=default_symbol, max_chars=10).strip().upper()
+    with col2:
+        email_view = st.checkbox("📧 Email View", help="Compact view optimized for email delivery")
+    
     if not symbol:
         st.warning("Enter a symbol to view overview.")
         return
 
-    # Fetch stock comprehensive data
+    # Fetch all data using enhanced alert-context endpoint (single API call)
     try:
-        url = f"api/v1/stock/{symbol}/alert-context"
-        st.write(f"Debug: calling {api.base_url}/{url}")
-        stock_resp = api.get(url)
-        st.write("Debug: response keys:", list(stock_resp.keys()))
-        stock = stock_resp.get("stock", {})
-        fundamentals = stock_resp.get("fundamentals", {})
+        url = f"api/v1/stock/{symbol}/alert-context?days=7&grades_limit=50&news_limit=20"
+        response = api.get(url)
+        
+        # Check if this is a "no data available" response
+        if response.get("data_available") == False:
+            st.error(f"No data available for {symbol}. Please run the batch worker to fetch market data first.")
+            return
+            
+        # Extract all data from alert-context response
+        stock = response.get("stock", {})
+        fundamentals = response.get("fundamentals", {})
+        news = response.get("news", [])
+        grade_actions = response.get("grade_actions", [])
+        consensus_data = response.get("consensus_data", {})
+        price_targets = response.get("price_targets", {})
+        
+        # Get latest available price from multiple sources
+        current_price = (
+            stock.get('price') or  # From stock data
+            fundamentals.get('current_price') or  # From fundamentals
+            fundamentals.get('price') or  # Alternative fundamentals field
+            fundamentals.get('close') or  # Close price
+            None
+        )
+        
         if not stock or not stock.get("symbol"):
             st.error(f"Stock {symbol} not found.")
             return
     except Exception as e:
-        st.error(f"Failed to fetch stock data: {api.base_url}/{url} {e}")
+        st.error(f"Failed to fetch stock data for given stock symbol: {e}")
         return
+
+    # Email-Optimized Summary Section (for quick scanning)
+    st.markdown("## 📧 Email Alert Summary")
+    
+    # Key metrics row
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        current_price = fundamentals.get('current_price') or stock.get('current_price')
+        st.metric("Current Price", f"${current_price:.2f}" if current_price else "N/A")
+    with col2:
+        if consensus_data:
+            st.metric("Consensus", consensus_data.get('consensus_rating', 'N/A'))
+        else:
+            st.metric("Consensus", "No Data")
+    with col3:
+        if grade_actions:
+            recent_upgrades = len([g for g in grade_actions if g.get('action') == 'upgrade'])
+            st.metric("Recent Upgrades", recent_upgrades)
+        else:
+            st.metric("Recent Upgrades", "No Data")
+    with col4:
+        if price_targets and price_targets.get('price_targets'):
+            avg_target = sum(pt.get('price_target', 0) for pt in price_targets['price_targets']) / len(price_targets['price_targets'])
+            st.metric("Avg Target", f"${avg_target:.2f}")
+        else:
+            st.metric("Avg Target", "No Data")
+    with col5:
+        if news:
+            st.metric("News Articles", len(news))
+        else:
+            st.metric("News Articles", "No Data")
+    
+    # Alert indicators
+    alert_col1, alert_col2, alert_col3 = st.columns(3)
+    with alert_col1:
+        if consensus_data and consensus_data.get('consensus_rating') in ['Strong Buy', 'Buy']:
+            st.success("🟢 Bullish Consensus")
+        elif consensus_data and consensus_data.get('consensus_rating') in ['Strong Sell', 'Sell']:
+            st.error("🔴 Bearish Consensus")
+        else:
+            st.info("🟡 Neutral/Mixed")
+    
+    with alert_col2:
+        if grade_actions:
+            upgrades = len([g for g in grade_actions if g.get('action') == 'upgrade'])
+            downgrades = len([g for g in grade_actions if g.get('action') == 'downgrade'])
+            if upgrades > downgrades:
+                st.success(f"🟢 {upgrades} Upgrades vs {downgrades} Downgrades")
+            elif downgrades > upgrades:
+                st.error(f"🔴 {downgrades} Downgrades vs {upgrades} Upgrades")
+            else:
+                st.info(f"🟡 {upgrades} Upgrades, {downgrades} Downgrades")
+        else:
+            st.info("🟡 No Recent Rating Changes")
+    
+    with alert_col3:
+        if price_targets and price_targets.get('price_targets') and current_price:
+            avg_target = sum(pt.get('price_target', 0) for pt in price_targets['price_targets']) / len(price_targets['price_targets'])
+            upside = ((avg_target - current_price) / current_price) * 100
+            if upside > 10:
+                st.success(f"🟢 {upside:.1f}% Upside Potential")
+            elif upside < -10:
+                st.error(f"🔴 {upside:.1f}% Downside Risk")
+            else:
+                st.info(f"🟡 {upside:.1f}% from Current")
+        else:
+            st.info("🟡 No Target Data")
+    
+    st.divider()
+
+    # Email View - Compact, scannable format
+    if email_view:
+        st.markdown("## 📧 Email Alert Format")
+        st.markdown(f"**{symbol} Stock Alert - {datetime.now().strftime('%Y-%m-%d %H:%M')}**")
+        
+        # One-liner summary
+        summary_parts = []
+        if consensus_data:
+            summary_parts.append(f"Consensus: {consensus_data.get('consensus_rating', 'N/A')}")
+        if current_price:
+            summary_parts.append(f"Price: ${current_price:.2f}")
+        if price_targets and price_targets.get('price_targets'):
+            avg_target = sum(pt.get('price_target', 0) for pt in price_targets['price_targets']) / len(price_targets['price_targets'])
+            if current_price:
+                upside = ((avg_target - current_price) / current_price) * 100
+                summary_parts.append(f"Avg Target: ${avg_target:.2f} ({upside:+.1f}%)")
+            else:
+                summary_parts.append(f"Avg Target: ${avg_target:.2f}")
+        if grade_actions:
+            upgrades = len([g for g in grade_actions if g.get('action') == 'upgrade'])
+            downgrades = len([g for g in grade_actions if g.get('action') == 'downgrade'])
+            summary_parts.append(f"Ratings: {upgrades}↑/{downgrades}↓")
+        
+        st.markdown(f"**Quick Summary:** {' | '.join(summary_parts)}")
+        
+        # Key highlights in bullet points
+        st.markdown("### 🔍 Key Highlights:")
+        highlights = []
+        
+        if consensus_data:
+            rating = consensus_data.get('consensus_rating', 'N/A')
+            if rating in ['Strong Buy', 'Buy']:
+                highlights.append(f"🟢 **Bullish Consensus** ({rating})")
+            elif rating in ['Strong Sell', 'Sell']:
+                highlights.append(f"🔴 **Bearish Consensus** ({rating})")
+            else:
+                highlights.append(f"🟡 **Neutral Consensus** ({rating})")
+        
+        if grade_actions:
+            upgrades = len([g for g in grade_actions if g.get('action') == 'upgrade'])
+            downgrades = len([g for g in grade_actions if g.get('action') == 'downgrade'])
+            if upgrades > downgrades:
+                highlights.append(f"🟢 **Recent Momentum** ({upgrades} upgrades vs {downgrades} downgrades)")
+            elif downgrades > upgrades:
+                highlights.append(f"🔴 **Recent Pressure** ({downgrades} downgrades vs {upgrades} upgrades)")
+        
+        if price_targets and price_targets.get('price_targets') and current_price:
+            avg_target = sum(pt.get('price_target', 0) for pt in price_targets['price_targets']) / len(price_targets['price_targets'])
+            upside = ((avg_target - current_price) / current_price) * 100
+            if upside > 10:
+                highlights.append(f"🟢 **Strong Upside Potential** ({upside:.1f}% to avg target)")
+            elif upside < -10:
+                highlights.append(f"🔴 **Downside Risk** ({upside:.1f}% from avg target)")
+        
+        if news:
+            highlights.append(f"📰 **{len(news)} Recent News Articles**")
+        
+        for highlight in highlights:
+            st.markdown(f"- {highlight}")
+        
+        # Detailed sections (collapsed)
+        with st.expander("📊 Detailed Analyst Ratings", expanded=False):
+            if grade_actions:
+                for action in grade_actions[:5]:  # Show top 5
+                    action_emoji = "🟢" if action.get('action') == 'upgrade' else "🔴" if action.get('action') == 'downgrade' else "🟡"
+                    st.markdown(f"{action_emoji} **{action.get('grading_company', 'N/A')}**: {action.get('previous_grade', 'N/A')} → {action.get('new_grade', 'N/A')} ({action.get('grade_date', 'N/A')})")
+            else:
+                st.info("No recent rating changes")
+        
+        with st.expander("🎯 Price Targets", expanded=False):
+            if price_targets and price_targets.get('price_targets'):
+                for target in price_targets['price_targets'][:3]:  # Show top 3
+                    st.markdown(f"📈 **${target.get('price_target', 0):.2f}** - {target.get('analyst_firm', 'N/A')} ({target.get('target_date', 'N/A')})")
+            else:
+                st.info("No price targets available")
+        
+        with st.expander("📰 Recent News Headlines", expanded=False):
+            if news:
+                for article in news[:3]:  # Show top 3
+                    st.markdown(f"📰 **{article.get('title', 'N/A')}** - {article.get('source', 'N/A')} ({article.get('published_date', 'N/A')})")
+            else:
+                st.info("No recent news")
+        
+        st.markdown("---")
+        st.markdown(f"*Data sourced from {len(grade_actions) if grade_actions else 0} analysts, {price_targets.get('count', 0) if price_targets else 0} price targets, and {len(news) if news else 0} news articles*")
+        st.markdown(f"*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        
+        return  # Skip the regular view when in email mode
 
     # Header with key metrics (using available data)
     indicators = stock.get('indicators', {})
@@ -158,35 +340,74 @@ def main():
     st.divider()
 
     # Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📰 News", "⭐ Ratings", "🎯 Price Targets", "🔍 Analysis"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📰 News", "⭐ Ratings", "🎯 Price Targets", "📈 Consensus", "🔍 Analysis"])
 
     with tab1:
         st.subheader("Recent News (Last 7 Days)")
-        news_items = stock_resp.get('news', [])
-        if news_items:
-            render_news_section(news_items)
+        if news:
+            render_news_section(news)
         else:
             st.info("No recent news available for this symbol.")
 
     with tab2:
-        st.subheader("Recent Ratings & Grade Actions (Last 7 Days)")
-        grade_actions = stock_resp.get('grade_actions', [])
+        st.subheader("Analyst Ratings & Grade Actions")
+        
+        # Show grade actions (from separate call)
         if grade_actions:
+            st.subheader("Recent Grade Actions")
             render_ratings_section(grade_actions)
         else:
-            st.info("No recent ratings available for this symbol.")
+            st.info("No recent grade actions available for this symbol.")
+        
+        # Note about individual analyst ratings
+        st.info("💡 Individual analyst ratings can be loaded via the Analysis tab's data loading features")
 
     with tab3:
-        st.subheader("Price Targets (Last 7 Days)")
-        try:
-            # Fetch price targets via consensus data (placeholder)
-            ctx_resp = api.get(f"api/v1/stock/{symbol}/alert-context")
-            # Note: price targets may be part of consensus or separate endpoint
-            st.info("Price target data integration pending.")
-        except Exception as e:
-            st.error(f"Failed to fetch price targets: {e}")
-
+        st.subheader("Price Targets")
+        if price_targets and price_targets.get("price_targets"):
+            targets = price_targets["price_targets"]
+            st.write(f"📊 Found {price_targets.get('count', 0)} price targets")
+            
+            for target in targets:
+                with st.container():
+                    col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
+                    with col1:
+                        st.metric("Target Price", f"${target.get('price_target', 0):.2f}")
+                    with col2:
+                        st.write(f"**Firm:** {target.get('analyst_firm', 'N/A')}")
+                    with col3:
+                        st.write(f"**Analyst:** {target.get('analyst_name', 'N/A')}")
+                    with col4:
+                        if target.get('rating'):
+                            st.write(f"**Rating:** {target.get('rating', 'N/A')}")
+                    st.write(f"**Date:** {target.get('target_date', 'N/A')}")
+                    st.divider()
+        else:
+            st.info("No price targets available for this symbol.")
+    
     with tab4:
+        st.subheader("Consensus Data")
+        if consensus_data:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Consensus Rating", consensus_data.get('consensus_rating', 'N/A'))
+                st.metric("Total Analysts", consensus_data.get('total_analysts', 0))
+            with col2:
+                st.write("**Buy Distribution:**")
+                st.write(f"🟢 Strong Buy: {consensus_data.get('strong_buy', 0)}")
+                st.write(f"� Buy: {consensus_data.get('buy', 0)}")
+                st.write(f"🟡 Hold: {consensus_data.get('hold', 0)}")
+            with col3:
+                st.write("**Sell Distribution:**")
+                st.write(f"🔴 Sell: {consensus_data.get('sell', 0)}")
+                st.write(f"🔴 Strong Sell: {consensus_data.get('strong_sell', 0)}")
+                st.write(f"📊 Consensus Score: {consensus_data.get('consensus_score', 0):.2f}")
+            
+            st.write(f"**Last Updated:** {consensus_data.get('last_updated', 'N/A')}")
+        else:
+            st.info("No consensus data available for this symbol.")
+
+    with tab5:
         # Copy the exact show_symbol_analysis function from Enhanced Portfolio Analysis
         def show_symbol_analysis(symbol: str):
             """Show detailed analysis for a symbol using shared component"""
@@ -411,7 +632,7 @@ def main():
                             checklist_items.append("❌ Debt/Equity < 1.5")
                         
                         # Check FCF (from fundamentals data)
-                        fundamentals = stock_resp.get('fundamentals', {})
+                        fundamentals = response.get('fundamentals', {})
                         fcf = fundamentals.get('free_cash_flow')
                         if fcf and fcf > 0:
                             checklist_items.append("✅ Positive FCF")
@@ -494,12 +715,12 @@ def main():
                     st.error(f"❌ Error in fundamentals analysis: {str(e)}")
         
         # Call the adaptive analysis function
-        show_adaptive_analysis(symbol, api, stock_resp)
+        show_adaptive_analysis(symbol, api, response)
         
         # Add fundamental analysis tab
         show_fundamental_analysis(symbol, api)
 
-def show_adaptive_analysis(symbol: str, api, stock_resp: dict):
+def show_adaptive_analysis(symbol: str, api, response: dict):
     """Display adaptive signal analysis with scoring and market context"""
     
     st.markdown(f"### 🎯 Adaptive Signal Analysis - {symbol}")
@@ -800,11 +1021,30 @@ def show_fundamental_analysis(symbol: str, api):
         st.markdown("#### 🎯 Fair Value Methods")
         
         individual_valuations = analysis.get("individual_valuations", {})
+        valuation_metrics = analysis.get("valuation_metrics", {})
+        peg_rule_of_40_metrics = valuation_metrics.get("peg_rule_of_40_forward_cagr") if isinstance(valuation_metrics, dict) else None
+        peg_rule_of_40_fair_price = None
+        if isinstance(peg_rule_of_40_metrics, dict) and peg_rule_of_40_metrics.get("enabled") is True:
+            try:
+                peg_rule_of_40_fair_price = float(peg_rule_of_40_metrics.get("fair_price"))
+            except Exception:
+                peg_rule_of_40_fair_price = None
+
         method_data = [
             {"Method": "PEG Method", "Fair Value": f"${individual_valuations.get('peg_method', 0):.2f}", "vs Current": f"{(individual_valuations.get('peg_method', 0)/current_price - 1):+.1%}"},
             {"Method": "P/E Method", "Fair Value": f"${individual_valuations.get('pe_method', 0):.2f}", "vs Current": f"{(individual_valuations.get('pe_method', 0)/current_price - 1):+.1%}"},
             {"Method": "DCF Method", "Fair Value": f"${individual_valuations.get('dcf_method', 0):.2f}", "vs Current": f"{(individual_valuations.get('dcf_method', 0)/current_price - 1):+.1%}"}
         ]
+
+        if peg_rule_of_40_fair_price is not None and current_price > 0:
+            method_data.insert(
+                1,
+                {
+                    "Method": "PEG Rule-of-40 (Forward CAGR)",
+                    "Fair Value": f"${peg_rule_of_40_fair_price:.2f}",
+                    "vs Current": f"{(peg_rule_of_40_fair_price/current_price - 1):+.1%}",
+                },
+            )
         
         df_methods = pd.DataFrame(method_data)
         st.dataframe(df_methods, use_container_width=True, hide_index=True)
@@ -838,16 +1078,22 @@ def show_fundamental_analysis(symbol: str, api):
             
             col1, col2 = st.columns(2)
             
+            # Industry benchmarks with safe formatting
+            def format_metric(value, format_str):
+                if isinstance(value, (int, float)):
+                    return format_str % value
+                return str(value)
+            
             with col1:
                 st.write(f"**Industry:** {industry}")
                 st.write(f"**Industry Avg P/E:** {benchmarks.get('avg_pe', 'N/A')}")
                 st.write(f"**Industry Avg PEG:** {benchmarks.get('avg_peg', 'N/A')}")
-                st.write(f"**Industry Avg Growth:** {benchmarks.get('avg_growth', 'N/A'):.1f}%")
+                st.write(f"**Industry Avg Growth:** {format_metric(benchmarks.get('avg_growth', 'N/A'), '%.1f%%')}")
             
             with col2:
-                st.write(f"**Industry Avg Margin:** {benchmarks.get('avg_margin', 'N/A'):.1f}%")
-                st.write(f"**Industry Avg ROIC:** {benchmarks.get('avg_roic', 'N/A'):.1f}%")
-                st.write(f"**Industry Avg D/E:** {benchmarks.get('avg_debt_equity', 'N/A'):.2f}")
+                st.write(f"**Industry Avg Margin:** {format_metric(benchmarks.get('avg_margin', 'N/A'), '%.1f%%')}")
+                st.write(f"**Industry Avg ROIC:** {format_metric(benchmarks.get('avg_roic', 'N/A'), '%.1f%%')}")
+                st.write(f"**Industry Avg D/E:** {format_metric(benchmarks.get('avg_debt_equity', 'N/A'), '%.2f')}")
         
         # Trading recommendations
         st.markdown("#### 📋 Trading Recommendations")
@@ -923,6 +1169,76 @@ def _get_debt_rating(debt_to_equity: float) -> str:
         return "Poor"
     else:
         return "Very Poor"
+
+def render_analyst_ratings_section(analyst_ratings):
+    """Render individual analyst ratings"""
+    if not analyst_ratings:
+        st.info("No individual analyst ratings available.")
+        return
+    
+    # Convert to DataFrame for easier manipulation
+    df_ratings = pd.DataFrame(analyst_ratings)
+    
+    if df_ratings.empty:
+        st.info("No analyst ratings data available.")
+        return
+    
+    st.subheader("Detailed Ratings")
+    
+    # Prepare data for display
+    display_columns = ['ratingDate', 'gradingCompany', 'previousGrade', 'newGrade', 'action']
+    available_columns = [col for col in display_columns if col in df_ratings.columns]
+    
+    if available_columns:
+        display_df = df_ratings[available_columns].copy()
+        
+        # Format dates
+        if 'ratingDate' in display_df.columns:
+            display_df['ratingDate'] = pd.to_datetime(display_df['ratingDate']).dt.strftime('%Y-%m-%d')
+        
+        st.dataframe(display_df, use_container_width=True)
+    else:
+        st.info("Rating data format not recognized.")
+    
+    # Show rating distribution
+    if 'newGrade' in df_ratings.columns and len(df_ratings) > 0:
+        st.subheader("Rating Distribution")
+        rating_counts = df_ratings['newGrade'].value_counts()
+        st.bar_chart(rating_counts)
+
+def render_consensus_section(consensus_data):
+    """Render consensus data summary."""
+    if not consensus_data:
+        st.info("No consensus data.")
+        return
+    
+    # Get the first (and typically only) consensus record
+    consensus = consensus_data[0] if consensus_data else {}
+    
+    # Display consensus metrics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Strong Buy", consensus.get("strongBuy", 0))
+    with col2:
+        st.metric("Buy", consensus.get("buy", 0))
+    with col3:
+        st.metric("Hold", consensus.get("hold", 0))
+    with col4:
+        st.metric("Sell", consensus.get("sell", 0))
+    
+    # Additional consensus details
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Strong Sell", consensus.get("strongSell", 0))
+        st.metric("Total Analysts", consensus.get("totalAnalysts", 0))
+    with col2:
+        st.metric("Consensus Score", consensus.get("consensusScore", 0))
+        st.metric("Price Target", f"${consensus.get('priceTarget', 0):.2f}" if consensus.get('priceTarget') else "N/A")
+    
+    # Consensus trend if available
+    if consensus.get("trend"):
+        st.subheader("Consensus Trend")
+        st.write(consensus["trend"])
 
 if __name__ == "__main__":
     main()

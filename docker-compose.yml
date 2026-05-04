@@ -147,6 +147,7 @@ services:
       - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-5}
       - DB_POOL_TIMEOUT_SECONDS=${DB_POOL_TIMEOUT_SECONDS:-30}
       - PYTHONPATH=/app
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-2}
     depends_on:
       postgres:
         condition: service_healthy
@@ -160,8 +161,8 @@ services:
     healthcheck:
       test: [ "CMD-SHELL", "curl -f http://127.0.0.1:8001/health || exit 1" ]
       interval: 30s
-      timeout: 10s
-      retries: 3
+      timeout: 30s
+      retries: 5
       start_period: 40s
     deploy:
       resources:

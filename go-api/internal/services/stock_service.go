@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/trading-system/go-api/internal/models"
@@ -32,6 +33,8 @@ func NewStockService(
 
 type StockResponse struct {
 	Symbol     string                       `json:"symbol"`
+	Price      *float64                     `json:"price,omitempty"`
+	PriceTime  *time.Time                   `json:"price_time,omitempty"`
 	Indicators *models.AggregatedIndicators `json:"indicators"`
 	Signal     *SignalResponse              `json:"signal,omitempty"`
 }
@@ -61,6 +64,16 @@ func (s *StockService) GetStock(symbol string, subscriptionLevel string) (*Stock
 	response := &StockResponse{
 		Symbol:     symbol,
 		Indicators: nil,
+	}
+
+	// Get latest intraday price
+	latestPrice, err := s.marketDataRepo.GetLatestIntradayPrice(symbol)
+	if err == nil {
+		response.Price = &latestPrice.Price
+		response.PriceTime = &latestPrice.Timestamp
+	} else if !strings.Contains(err.Error(), "no intraday data found") {
+		// Log error but don't fail the request if price is not available
+		fmt.Printf("Warning: failed to get latest price for %s: %v\n", symbol, err)
 	}
 
 	// Get latest indicators (best-effort; indicators may not be persisted yet)

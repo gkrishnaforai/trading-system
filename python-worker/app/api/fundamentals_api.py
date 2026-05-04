@@ -8,13 +8,18 @@ from pydantic import BaseModel
 from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
+import os
 
 from app.services.fair_value_service import FairValueService
+from app.fair_value_v2.service import FairValueV2Service
 from app.signal_engines.enhanced_adaptive_signal_engine import EnhancedAdaptiveSignalEngine
 from app.observability.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["fundamentals"])
+
+_TRUE_VALUES = {"1", "true", "yes", "y", "on"}
+ENABLE_FAIR_VALUE_V2 = os.getenv("ENABLE_FAIR_VALUE_V2", "false").strip().lower() in _TRUE_VALUES
 
 # Request models
 class FairValueRequest(BaseModel):
@@ -43,7 +48,44 @@ class FundamentalScreenResponse(BaseModel):
 
 # Initialize services
 fair_value_service = FairValueService()
+fair_value_v2_service = FairValueV2Service()
 enhanced_engine = EnhancedAdaptiveSignalEngine()
+
+
+@router.get("/fair-value", response_model=FairValueResponse)
+async def get_fair_value_analysis_query(symbol: str, method_key: Optional[str] = None):
+    """Get fair value analysis for a symbol.
+
+    If `method_key` is provided, this forces a single Fair Value v2 method to run for the symbol.
+    """
+
+    try:
+        if method_key:
+            if not ENABLE_FAIR_VALUE_V2:
+                raise HTTPException(status_code=400, detail="fair_value_v2 is disabled")
+            try:
+                v2 = fair_value_v2_service.calculate_method(method_key=method_key, symbol=symbol)
+            except KeyError:
+                raise HTTPException(status_code=400, detail=f"unknown method_key: {method_key}")
+
+            return FairValueResponse(
+                success=True,
+                data={
+                    "symbol": symbol,
+                    "method_key": method_key,
+                    "v2": v2.model_dump(),
+                },
+            )
+
+        # Default: preserve existing behavior of /fair-value by delegating to the POST handler
+        # semantics (v1 fair value with optional v2 override).
+        req = FairValueRequest(symbol=symbol)
+        return await get_fair_value_analysis(req)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in fair value analysis for {symbol}: {e}")
+        return FairValueResponse(success=False, error=f"Error analyzing fair value: {str(e)}")
 
 @router.post("/fair-value", response_model=FairValueResponse)
 async def get_fair_value_analysis(request: FairValueRequest):
@@ -51,7 +93,23 @@ async def get_fair_value_analysis(request: FairValueRequest):
     
     try:
         # Calculate fair value
-        fair_value_result = fair_value_service.calculate_fair_value(request.symbol)
+        if ENABLE_FAIR_VALUE_V2:
+            v2 = fair_value_v2_service.calculate(request.symbol)
+            fair_value_result = fair_value_service.calculate_fair_value(request.symbol)
+            if v2.fair_value and v2.fair_value > 0:
+                fair_value_result.fair_value = float(v2.fair_value)
+                fair_value_result.individual_valuations = dict(fair_value_result.individual_valuations or {})
+                method_key = None
+                try:
+                    if v2.method_results:
+                        method_key = v2.method_results[0].method_key
+                except Exception:
+                    method_key = None
+                fair_value_result.individual_valuations[f"{(method_key or 'v2')}_v2"] = float(v2.fair_value)
+                fair_value_result.valuation_metrics = dict(fair_value_result.valuation_metrics or {})
+                fair_value_result.valuation_metrics["fair_value_model"] = f"fair_value_v2.{(method_key or 'unknown')}"
+        else:
+            fair_value_result = fair_value_service.calculate_fair_value(request.symbol)
         
         # Debug logging to understand the data structure
         import logging
@@ -66,9 +124,6 @@ async def get_fair_value_analysis(request: FairValueRequest):
             
             if not fair_value_result.fundamentals:
                 missing_data.append("fundamentals (EPS, revenue, ratios)")
-            
-            if fair_value_result.current_price <= 0:
-                missing_data.append("current market price")
             
             if not fair_value_result.individual_valuations:
                 missing_data.append("valuation metrics (P/E, P/S, etc.)")
@@ -97,6 +152,8 @@ async def get_fair_value_analysis(request: FairValueRequest):
             ema_20=fair_value_result.current_price,
             current_price=fair_value_result.current_price,
             recent_change=0.0,
+            macd=0.0,  # Neutral MACD for fundamental analysis
+            macd_signal=0.0,  # Neutral MACD signal for fundamental analysis
             volatility=0.0,
             vix_level=20.0,
             volume=0,
@@ -106,13 +163,25 @@ async def get_fair_value_analysis(request: FairValueRequest):
         enhanced_signal = enhanced_engine.generate_enhanced_signal_score(request.symbol, conditions)
         
         # Prepare response data
+        valuation_ratio = None
+        undervaluation_pct = None
+        try:
+            if fair_value_result.current_price and fair_value_result.current_price > 0 and fair_value_result.fair_value and fair_value_result.fair_value > 0:
+                valuation_ratio = fair_value_result.current_price / fair_value_result.fair_value
+                undervaluation_pct = (1 - valuation_ratio) * 100
+        except Exception:
+            valuation_ratio = None
+            undervaluation_pct = None
+
         response_data = {
+            "run_id": fair_value_result.run_id,
             "symbol": request.symbol,
             "current_price": fair_value_result.current_price,
             "fair_value": fair_value_result.fair_value,
-            "valuation_ratio": fair_value_result.current_price / fair_value_result.fair_value,
-            "undervaluation_pct": (1 - fair_value_result.current_price / fair_value_result.fair_value) * 100,
+            "valuation_ratio": valuation_ratio,
+            "undervaluation_pct": undervaluation_pct,
             "valuation_rating": fair_value_result.valuation_metrics.get("valuation_rating", "Unknown"),
+            "valuation_metrics": fair_value_result.valuation_metrics,
             "quality_score": fair_value_result.quality_score,
             "individual_valuations": fair_value_result.individual_valuations,
             "fundamentals": fair_value_result.fundamentals,

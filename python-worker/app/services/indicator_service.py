@@ -52,6 +52,13 @@ class IndicatorService(BaseService):
         """
         try:
             self.logger.info(f"🔄 Calculating indicators for {symbol} using FMP API")
+
+            from app.config import settings
+            if not getattr(settings, "fmp_technical_indicators_enabled", True):
+                self.logger.info(
+                    f"FMP technical indicators disabled by config; calculating indicators locally for {symbol}"
+                )
+                return self.calculate_indicators(symbol)
             
             # Check if data source supports technical indicators
             if not hasattr(self.data_source, 'fetch_technical_indicators'):
@@ -104,16 +111,25 @@ class IndicatorService(BaseService):
                     if _local_ok:
                         try:
                             from app.database import db
-                            macd_check = db.execute_query("""
-                                SELECT macd, macd_signal, macd_hist 
-                                FROM indicators_daily 
-                                WHERE symbol = %s AND date = CURRENT_DATE 
+                            macd_check = db.execute_query(
+                                """
+                                SELECT date, macd, macd_signal, macd_hist
+                                FROM indicators_daily
+                                WHERE symbol = %s
+                                ORDER BY date DESC
                                 LIMIT 1
-                            """, [symbol])
-                            if macd_check and macd_check[0]['macd'] is not None:
-                                self.logger.info(f"✅ MACD verification passed for {symbol}: macd={macd_check[0]['macd']}")
+                                """,
+                                [symbol],
+                            )
+                            if macd_check and macd_check[0].get('macd') is not None:
+                                self.logger.info(
+                                    f"✅ MACD verification passed for {symbol} ({macd_check[0].get('date')}): macd={macd_check[0].get('macd')}"
+                                )
                             else:
-                                self.logger.error(f"❌ MACD verification failed for {symbol}: not found in database")
+                                latest_date = macd_check[0].get('date') if macd_check else None
+                                self.logger.warning(
+                                    f"⚠️ MACD verification incomplete for {symbol}: latest indicators_daily row has no macd (date={latest_date})"
+                                )
                         except Exception as verify_e:
                             self.logger.error(f"❌ Failed to verify MACD for {symbol}: {verify_e}")
                     
@@ -268,16 +284,17 @@ class IndicatorService(BaseService):
                     delete_query = """
                         DELETE FROM indicators_daily 
                         WHERE symbol = $1 AND date = $2 AND indicator_name = $3
+                          AND interval = '1d'
                     """
                     db.execute_update_positional(delete_query, [symbol.upper(), point_date, indicator_name])
                     
                     # Insert new record
                     insert_query = """
                         INSERT INTO indicators_daily (
-                            symbol, date, indicator_name, indicator_value, data_source, 
+                            symbol, date, interval, as_of_ts, indicator_name, indicator_value, data_source, 
                             created_at, updated_at
                         ) VALUES (
-                            $1, $2, $3, $4, 'fmp_api',
+                            $1, $2, '1d', $3::timestamptz, $4, $5, 'fmp_api',
                             NOW(), NOW()
                         )
                     """
@@ -286,6 +303,7 @@ class IndicatorService(BaseService):
                     result = db.execute_update_positional(insert_query, [
                         symbol.upper(), 
                         point_date, 
+                        datetime.combine(point_date, datetime.min.time()).isoformat(),
                         indicator_name,  # Use the indicator name directly
                         float(point_value)
                     ])
@@ -534,6 +552,10 @@ class IndicatorService(BaseService):
                 try:
                     if idx in series.index:
                         val = series.loc[idx]
+                        if isinstance(val, pd.Series):
+                            if val.empty:
+                                return default
+                            val = val.iloc[-1]
                         return None if pd.isna(val) else val
                     return default
                 except (KeyError, IndexError):
@@ -579,6 +601,7 @@ class IndicatorService(BaseService):
                 delete_query = """
                     DELETE FROM indicators_daily 
                     WHERE symbol = :symbol AND date = :date
+                      AND interval = '1d'
                     AND (sma_50 IS NOT NULL OR ema_20 IS NOT NULL OR rsi_14 IS NOT NULL OR macd IS NOT NULL)
                 """
                 
@@ -591,14 +614,15 @@ class IndicatorService(BaseService):
                 # Create INSERT query for wide format
                 wide_query = f"""
                     INSERT INTO indicators_daily 
-                    (symbol, date, {', '.join(update_columns)}, data_source, created_at, updated_at)
-                    VALUES (:symbol, :date, {', '.join([f':{col}' for col in update_columns])}, :data_source, NOW(), NOW())
+                    (symbol, date, interval, as_of_ts, {', '.join(update_columns)}, data_source, created_at, updated_at)
+                    VALUES (:symbol, :date, '1d', :as_of_ts, {', '.join([f':{col}' for col in update_columns])}, :data_source, NOW(), NOW())
                 """
                 
                 # Prepare parameters for wide format
                 wide_params = {
                     "symbol": symbol,
                     "date": trade_date,
+                    "as_of_ts": datetime.combine(trade_date, datetime.min.time()),
                     "data_source": "calculated"
                 }
                 
@@ -637,7 +661,8 @@ class IndicatorService(BaseService):
         query = """
             SELECT * FROM indicators_daily
             WHERE symbol = :symbol
-            ORDER BY date DESC
+              AND interval = '1d'
+            ORDER BY as_of_ts DESC
             LIMIT 1
         """
         

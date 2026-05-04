@@ -14,6 +14,7 @@ import logging
 import json
 import asyncio
 import os
+import warnings
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date
 from fastapi import FastAPI, HTTPException
@@ -34,6 +35,13 @@ from app.strategies import DEFAULT_STRATEGY
 from app.di import get_container
 
 logger = logging.getLogger(__name__)
+
+try:
+    import pandas as pd
+
+    warnings.filterwarnings("ignore", category=getattr(pd.errors, "Pandas4Warning", Warning))
+except Exception:
+    pass
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -105,6 +113,8 @@ from app.api.universal_alert_api import router as universal_alert_router
 from app.api.audit_endpoints import audit_router
 from app.api.worker_run_api import router as worker_run_router
 from app.api.portfolio_schedule_api import router as portfolio_schedule_router
+from app.api.fundamentals_scheduler_api import router as fundamentals_scheduler_router
+from app.api.db_stats_api import router as db_stats_router
 
 # Include all routers with proper prefixes
 # ========================================
@@ -135,6 +145,8 @@ app.include_router(fundamentals_router, prefix="/api/v1/fundamentals")
 # app.include_router(rating_alert_router, prefix="/api/v1")
 app.include_router(universal_alert_router, prefix="/api/v1/universal-alerts")
 app.include_router(portfolio_schedule_router, prefix="/api/v1/portfolio-schedules")
+app.include_router(fundamentals_scheduler_router, prefix="/api/v1/fundamentals-scheduler")
+app.include_router(db_stats_router, prefix="/api/v1/db-stats")
 app.include_router(audit_router)
 app.include_router(worker_run_router)
 
@@ -1272,5 +1284,9 @@ async def get_data_source_config():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    workers = int(os.getenv("UVICORN_WORKERS", "1"))
+    if workers and int(workers) > 1:
+        uvicorn.run("app.api_server:app", host="0.0.0.0", port=8001, workers=int(workers))
+    else:
+        uvicorn.run(app, host="0.0.0.0", port=8001)
 

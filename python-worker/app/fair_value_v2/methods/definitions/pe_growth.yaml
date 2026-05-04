@@ -1,0 +1,64 @@
+method_key: pe_growth
+version: 1
+category: growth
+requires:
+  scalars:
+    - eps_ttm
+  series: []
+params:
+  pe_floor: 12.0
+  pe_cap: 70.0
+  base_pe: 38.0
+  bear_pe: 28.0
+  bull_pe: 48.0
+  explosive_pe: 62.0
+formula:
+  fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value: {param: base_pe}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap}
+  bear_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value: {param: bear_pe}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap}
+  bull_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value: {param: bull_pe}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap}
+  explosive_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value: {param: explosive_pe}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap}
+validations: []

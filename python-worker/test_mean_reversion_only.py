@@ -18,7 +18,7 @@ from datetime import datetime
 from app.signal_engines.signal_calculator_core import (
     SignalType, MarketConditions, SignalConfig, SignalResult
 )
-from specialized_engines import MeanReversionEngine
+from enhancements.specialized_engines import MeanReversionEngine
 
 def test_mean_reversion_only():
     """Test just the MeanReversion engine"""

@@ -1,0 +1,213 @@
+version: 1
+
+# Methods are selected by (category, regime). If there is no exact match,
+# selection falls back to (category, default_regime) and then (default_category, default_regime)
+# only if the fallback chain is explicitly configured.
+
+default_category: value
+default_regime: standard
+
+fallback_chain:
+  - {category: "{category}", regime: "{default_regime}"}
+  - {category: "{default_category}", regime: "{default_regime}"}
+
+selections:
+  financials:
+    bank:
+      combine: weighted_average
+      methods:
+        - method_key: pb_bank
+          weight: 1.0
+
+  ai_infra:
+    standard:
+      combine: weighted_average
+      methods:
+        - method_key: pe_technology_dynamic
+          weight: 1.0
+
+    mega_cap_high_growth:
+      combine: weighted_average
+      methods:
+        - method_key: peg_corrected
+          weight: 0.3
+        - method_key: pe_technology_dynamic
+          weight: 0.5
+        - method_key: dcf_mega_cap
+          weight: 0.2
+
+    pre_earnings:
+      combine: weighted_average
+      methods:
+        - method_key: ev_sales_growth
+          weight: 1.0
+
+    mega_cap:
+      combine: weighted_average
+      methods:
+        - method_key: pe_forward
+          weight: 0.6
+        - method_key: dcf_mega_cap
+          weight: 0.4
+
+    high_growth:
+      combine: weighted_average
+      methods:
+        - method_key: peg_40
+          weight: 0.3
+        - method_key: peg_corrected
+          weight: 0.2
+        - method_key: pe_technology_dynamic
+          weight: 0.5
+
+  fintech:
+    standard:
+      combine: weighted_average
+      methods:
+        - method_key: pe_forward
+          weight: 0.6
+        - method_key: pe_growth
+          weight: 0.4
+
+    pre_earnings:
+      combine: weighted_average
+      methods:
+        - method_key: ev_sales_fintech
+          weight: 1.0
+
+  technology:
+    standard:
+      combine: weighted_average
+      methods:
+        - method_key: pe_technology_dynamic
+          weight: 1.0
+
+    mega_cap_high_growth:
+      combine: weighted_average
+      methods:
+        - method_key: peg_corrected
+          weight: 0.3
+        - method_key: pe_technology_dynamic
+          weight: 0.5
+        - method_key: dcf_mega_cap
+          weight: 0.2
+
+    pre_earnings:
+      combine: weighted_average
+      methods:
+        - method_key: ev_sales_growth
+          weight: 1.0
+
+    mega_cap:
+      combine: weighted_average
+      methods:
+        - method_key: pe_forward
+          weight: 0.6
+        - method_key: dcf_mega_cap
+          weight: 0.4
+
+    high_growth:
+      combine: weighted_average
+      methods:
+        - method_key: peg_40
+          weight: 0.3
+        - method_key: peg_corrected
+          weight: 0.2
+        - method_key: pe_technology_dynamic
+          weight: 0.5
+
+  value:
+    standard:
+      combine: weighted_average
+      methods:
+        - method_key: pe_value
+          weight: 0.6
+        - method_key: pe_basic
+          weight: 0.4
+
+    pre_earnings:
+      combine: weighted_average
+      methods:
+        - method_key: ev_sales_growth
+          weight: 1.0
+
+  general:
+    standard:
+      combine: weighted_average
+      methods:
+        - method_key: pe_basic
+          weight: 0.5
+        - method_key: pe_value
+          weight: 0.5
+
+    pre_earnings:
+      combine: weighted_average
+      methods:
+        - method_key: ev_sales_growth
+          weight: 1.0
+
+  growth:
+    standard:
+      combine: weighted_average
+      methods:
+        - method_key: pe_growth
+          weight: 0.6
+        - method_key: pe_forward
+          weight: 0.4
+
+    mega_cap_high_growth:
+      combine: weighted_average
+      methods:
+        - method_key: peg_corrected
+          weight: 0.3
+        - method_key: pe_growth
+          weight: 0.4
+        - method_key: dcf_mega_cap
+          weight: 0.3
+
+    mega_cap:
+      combine: weighted_average
+      methods:
+        - method_key: pe_forward
+          weight: 0.7
+        - method_key: dcf_mega_cap
+          weight: 0.3
+
+    pre_earnings:
+      combine: weighted_average
+      methods:
+        - method_key: ev_sales_growth
+          weight: 1.0
+
+    high_growth:
+      combine: weighted_average
+      methods:
+        - method_key: peg_40
+          weight: 0.4
+        - method_key: peg
+          weight: 0.3
+        - method_key: pe_growth
+          weight: 0.3
+
+  cyclical:
+    standard:
+      combine: weighted_average
+      methods:
+        - method_key: pe_basic
+          weight: 0.5
+        - method_key: pe_value
+          weight: 0.5
+
+    mega_cap:
+      combine: weighted_average
+      methods:
+        - method_key: pe_basic
+          weight: 0.5
+        - method_key: pe_value
+          weight: 0.5
+
+    pre_earnings:
+      combine: weighted_average
+      methods:
+        - method_key: ev_sales_growth
+          weight: 1.0

@@ -2,7 +2,7 @@
 FMP Data Storage
 Database models and storage logic for enhanced FMP data
 """
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text, JSON, Boolean, Index
+from sqlalchemy import BigInteger, Column, String, Integer, Float, DateTime, Text, Boolean, JSON, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -34,7 +34,7 @@ class CompanyProfile(Base):
     company_name = Column(String(255), nullable=False)
     sector = Column(String(100))
     industry = Column(String(100))
-    market_cap = Column(Integer)
+    market_cap = Column(BigInteger)
     website = Column(String(255))
     description = Column(Text)
     country = Column(String(100))
@@ -295,12 +295,21 @@ class FMPDataStorage:
     """Storage manager for FMP data"""
     
     def __init__(self):
-        if hasattr(db, 'session_factory') and db.session_factory is not None:
-            self.session_factory = db.session_factory
-        else:
-            # Fallback for testing without database
+        self.session_factory = None
+
+        try:
+            if hasattr(db, "session_factory") and db.session_factory is None:
+                db.initialize()
+            if hasattr(db, "session_factory") and db.session_factory is not None:
+                self.session_factory = db.session_factory
+                return
+        except Exception as e:
+            logger.warning(f"⚠️  Database not available - using fallback mode ({e})")
             self.session_factory = None
-            logger.warning("⚠️  Database not available - using fallback mode")
+            return
+
+        # Fallback for testing without database
+        logger.warning("⚠️  Database not available - using fallback mode")
         
     def store_company_profile(self, profile_data: Dict[str, Any]) -> bool:
         """Store company profile data"""

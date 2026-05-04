@@ -9,11 +9,13 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, date, time
 import json
 from decimal import Decimal
+import uuid
 
 from app.database import get_db
 from app.config import settings
 from app.utils.auth import get_current_user, create_access_token, hash_password, verify_password
 from app.observability.logging import get_logger
+from app.services.portfolio_calculator import PortfolioCalculatorService
 
 logger = get_logger("portfolio_api")
 
@@ -92,6 +94,38 @@ class HoldingResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     notes: Optional[str] = None
+
+
+class FairValueSnapshot(BaseModel):
+    run_id: Optional[str] = None
+    as_of: Optional[datetime] = None
+    current_price_at_valuation: Optional[Decimal] = None
+    fair_value: Optional[Decimal] = None
+    undervaluation_pct: Optional[Decimal] = None
+    valuation_rating: Optional[str] = None
+    method_weights: Optional[Dict[str, Any]] = None
+    peg_selected_method: Optional[str] = None
+
+
+class HoldingValuationResponse(BaseModel):
+    holding: HoldingResponse
+    fair_value: FairValueSnapshot
+    action: str
+
+
+class RebalanceSuggestion(BaseModel):
+    symbol: str
+    action: str
+    reason: str
+    current_allocation_pct: Optional[Decimal] = None
+    suggested_allocation_pct: Optional[Decimal] = None
+
+
+class PortfolioValuationResponse(BaseModel):
+    portfolio_id: str
+    as_of: datetime
+    holdings: List[HoldingValuationResponse]
+    suggestions: List[RebalanceSuggestion]
 
 class SignalHistoryResponse(BaseModel):
     id: int
@@ -251,46 +285,48 @@ async def get_user_portfolios(user_id: Optional[str] = None, db=Depends(get_db))
     to function without requiring a JWT token.
     """
 
+    where_clause = ""
+    params: Dict[str, Any] = {}
     if user_id:
-        where_clause = "WHERE p.user_id = $1"
-        params = [user_id]
-    else:
-        where_clause = ""
-        params = []
+        where_clause = "WHERE p.user_id = :user_id"
+        params["user_id"] = user_id
 
-    portfolios = db.execute_query_positional(
+    portfolios = db.execute_query(
         f"""
-        SELECT p.id, p.name, p.description, p.portfolio_type, 
-               p.initial_capital, p.currency, p.is_active, p.created_at,
-               COUNT(ph.id) as holdings_count
+        SELECT
+            p.id,
+            p.user_id,
+            p.name,
+            p.created_at,
+            p.updated_at,
+            COUNT(pp.id) AS holdings_count
         FROM portfolios p
-        LEFT JOIN portfolio_holdings ph ON p.id = ph.portfolio_id AND ph.status = 'active'
+        LEFT JOIN portfolio_positions pp
+          ON p.id = pp.portfolio_id
         {where_clause}
-        GROUP BY p.id, p.name, p.description, p.portfolio_type, 
-                 p.initial_capital, p.currency, p.is_active, p.created_at
+        GROUP BY p.id, p.user_id, p.name, p.created_at, p.updated_at
         ORDER BY p.created_at DESC
         """,
-        params
+        params,
     )
     
     portfolio_responses = []
     for portfolio in portfolios:
-        # Calculate current value (simplified)
-        current_value = float(portfolio['initial_capital'])
-        
-        portfolio_responses.append(PortfolioResponse(
-            id=str(portfolio['id']),
-            name=portfolio['name'],
-            description=portfolio['description'],
-            portfolio_type=portfolio['portfolio_type'],
-            initial_capital=float(portfolio['initial_capital']),
-            current_value=current_value,
-            currency=portfolio['currency'],
-            is_active=portfolio['is_active'],
-            created_at=portfolio['created_at'],
-            updated_at=portfolio['created_at'],  # TODO: Add updated_at to table
-            holdings_count=portfolio['holdings_count']
-        ))
+        portfolio_responses.append(
+            PortfolioResponse(
+                id=str(portfolio["id"]),
+                name=portfolio.get("name"),
+                description=None,
+                portfolio_type="mixed",
+                initial_capital=Decimal("0"),
+                current_value=Decimal("0"),
+                currency="USD",
+                is_active=True,
+                created_at=portfolio.get("created_at") or datetime.now(),
+                updated_at=portfolio.get("updated_at") or portfolio.get("created_at") or datetime.now(),
+                holdings_count=int(portfolio.get("holdings_count") or 0),
+            )
+        )
     
     return portfolio_responses
 
@@ -301,41 +337,37 @@ async def create_portfolio(
     db=Depends(get_db)
 ):
     """Create a new portfolio"""
-    
-    # Insert portfolio
-    db.execute_update_positional(
+
+    # The portfolios table uses a UUID PK column named `id` with default gen_random_uuid()
+    portfolio_id = str(uuid.uuid4())
+    db.execute_update(
         """
-        INSERT INTO portfolios (user_id, name, description, portfolio_type, initial_capital, currency)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO portfolios (id, user_id, name, description, portfolio_type, initial_capital, currency, is_active)
+        VALUES (:id, :user_id, :name, :description, :portfolio_type, :initial_capital, :currency, true)
         """,
-        [current_user["id"], portfolio_data.name, portfolio_data.description, 
-         portfolio_data.portfolio_type, portfolio_data.initial_capital, portfolio_data.currency]
+        {
+            "id": portfolio_id,
+            "user_id": current_user["id"],
+            "name": portfolio_data.name,
+            "description": portfolio_data.description,
+            "portfolio_type": portfolio_data.portfolio_type,
+            "initial_capital": float(portfolio_data.initial_capital),
+            "currency": portfolio_data.currency,
+        },
     )
-    
-    # Get the created portfolio (most recent one for this user)
-    portfolio = db.execute_query_positional(
-        """
-        SELECT id, name, description, portfolio_type, initial_capital, currency, is_active, created_at 
-        FROM portfolios 
-        WHERE user_id = $1 
-        ORDER BY created_at DESC 
-        LIMIT 1
-        """,
-        [current_user["id"]]
-    )[0]
-    
+
     return PortfolioResponse(
-        id=str(portfolio['id']),
-        name=portfolio['name'],
-        description=portfolio['description'],
-        portfolio_type=portfolio['portfolio_type'],
-        initial_capital=float(portfolio['initial_capital']),
-        current_value=float(portfolio['initial_capital']),
-        currency=portfolio['currency'],
-        is_active=portfolio['is_active'],
-        created_at=portfolio['created_at'],
-        updated_at=portfolio['created_at'],
-        holdings_count=0
+        id=portfolio_id,
+        name=portfolio_data.name,
+        description=portfolio_data.description,
+        portfolio_type=portfolio_data.portfolio_type,
+        initial_capital=portfolio_data.initial_capital,
+        current_value=Decimal("0"),
+        currency=portfolio_data.currency,
+        is_active=True,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        holdings_count=0,
     )
 
 @router.get("/portfolios/{portfolio_id}/holdings", response_model=List[HoldingResponse])
@@ -349,9 +381,9 @@ async def get_portfolio_holdings(
     admin dashboard to function without requiring a JWT token.
     """
 
-    portfolio_rows = db.execute_query_positional(
-        "SELECT id FROM portfolios WHERE id = $1",
-        [portfolio_id],
+    portfolio_rows = db.execute_query(
+        "SELECT id FROM portfolios WHERE id = :portfolio_id",
+        {"portfolio_id": portfolio_id},
     )
 
     if not portfolio_rows:
@@ -360,124 +392,330 @@ async def get_portfolio_holdings(
             detail="Portfolio not found"
         )
     
-    holdings = db.execute_query_positional(
+    holdings = db.execute_query(
         """
-        SELECT ph.id, ph.symbol, ph.asset_type, ph.shares_held, ph.average_cost,
-               ph.status, ph.created_at
-        FROM portfolio_holdings ph
-        WHERE ph.portfolio_id = $1 AND ph.status = 'active'
-        ORDER BY ph.created_at DESC
+        SELECT
+            pp.id AS holding_id,
+            s.symbol,
+            pp.quantity,
+            pp.avg_price,
+            pp.current_price,
+            pp.current_value,
+            pp.unrealized_gain_loss,
+            pp.unrealized_gain_loss_percent,
+            pp.created_at,
+            pp.updated_at
+        FROM portfolio_positions pp
+        JOIN stocks s
+          ON pp.stock_id = s.id
+        WHERE pp.portfolio_id = :portfolio_id
+        ORDER BY pp.created_at DESC
         """,
-        [portfolio_id],
+        {"portfolio_id": portfolio_id},
     )
     
-    holding_responses = []
+    holding_responses: List[HoldingResponse] = []
     for holding in holdings:
-        current_price = None
-        market_value = None
-        unrealized_pnl = None
-        unrealized_pnl_pct = None
-        
-        if current_price and holding.get("shares_held") and holding.get("shares_held") > 0:  # shares_held > 0
-            market_value = current_price * holding["shares_held"]
-            cost_basis = holding["average_cost"] * holding["shares_held"]  # average_cost * shares_held
-            unrealized_pnl = market_value - cost_basis
-            unrealized_pnl_pct = (unrealized_pnl / cost_basis * 100) if cost_basis > 0 else 0
-        
         holding_responses.append(
             HoldingResponse(
-                id=str(holding.get("id")) if holding.get("id") is not None else "",
+                id=str(holding.get("holding_id") or ""),
                 symbol=holding.get("symbol"),
-                asset_type=holding.get("asset_type"),
-                shares_held=holding.get("shares_held"),
-                average_cost=holding.get("average_cost"),
-                current_price=current_price,
-                market_value=market_value,
-                unrealized_pnl=unrealized_pnl,
-                unrealized_pnl_pct=unrealized_pnl_pct,
-                status=holding.get("status"),
+                asset_type="stock",
+                shares_held=Decimal(str(holding.get("quantity") or 0)),
+                average_cost=Decimal(str(holding.get("avg_price") or 0)),
+                current_price=(
+                    Decimal(str(holding.get("current_price"))) if holding.get("current_price") is not None else None
+                ),
+                market_value=(
+                    Decimal(str(holding.get("current_value"))) if holding.get("current_value") is not None else None
+                ),
+                unrealized_pnl=(
+                    Decimal(str(holding.get("unrealized_gain_loss"))) if holding.get("unrealized_gain_loss") is not None else None
+                ),
+                unrealized_pnl_pct=(
+                    Decimal(str(holding.get("unrealized_gain_loss_percent"))) if holding.get("unrealized_gain_loss_percent") is not None else None
+                ),
+                status="active",
                 created_at=holding.get("created_at"),
                 updated_at=holding.get("updated_at") or holding.get("created_at"),
-                notes=holding.get("notes"),
+                notes=None,
             )
         )
-    
+
     return holding_responses
+
+
+@router.post("/portfolios/{portfolio_id}/refresh-metrics")
+async def refresh_portfolio_metrics(
+    portfolio_id: str,
+    db=Depends(get_db),
+):
+    """Refresh cached holding metrics (including current_price/current_value) for a portfolio."""
+
+    portfolio_rows = db.execute_query(
+        "SELECT id FROM portfolios WHERE id = :portfolio_id",
+        {"portfolio_id": portfolio_id},
+    )
+    if not portfolio_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found")
+
+    calculator = PortfolioCalculatorService()
+    updated_count = calculator.update_portfolio_holdings(portfolio_id)
+    return {"success": True, "data": {"portfolio_id": portfolio_id, "holdings_updated": updated_count}}
+
+
+def _action_from_undervaluation_pct(undervaluation_pct: Optional[float]) -> str:
+    if undervaluation_pct is None:
+        return "hold"
+    if undervaluation_pct >= 20:
+        return "buy"
+    if undervaluation_pct <= -10:
+        return "trim"
+    return "hold"
+
+
+@router.get("/portfolios/{portfolio_id}/valuation", response_model=PortfolioValuationResponse)
+async def get_portfolio_valuation(
+    portfolio_id: str,
+    db=Depends(get_db),
+):
+    """Return portfolio holdings enriched with latest fair value runs and rebalance suggestions.
+
+    Uses cached `portfolio_positions.current_price` and the latest `fair_value_runs` per symbol.
+    """
+
+    portfolio_rows = db.execute_query(
+        "SELECT id FROM portfolios WHERE id = :portfolio_id",
+        {"portfolio_id": portfolio_id},
+    )
+    if not portfolio_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found")
+
+    holdings_rows = db.execute_query(
+        """
+        SELECT
+            pp.id AS holding_id,
+            s.symbol AS stock_symbol,
+            pp.quantity,
+            pp.avg_price AS avg_entry_price,
+            pp.created_at,
+            pp.updated_at,
+            pp.current_price,
+            pp.current_value,
+            pp.unrealized_gain_loss,
+            pp.unrealized_gain_loss_percent
+        FROM portfolio_positions pp
+        JOIN stocks s
+          ON pp.stock_id = s.id
+        WHERE pp.portfolio_id = :portfolio_id
+        ORDER BY COALESCE(pp.current_value, 0) DESC, pp.created_at DESC
+        """,
+        {"portfolio_id": portfolio_id},
+    )
+
+    symbols = [r["stock_symbol"] for r in holdings_rows if r.get("stock_symbol")]
+    latest_runs_by_symbol: Dict[str, Dict[str, Any]] = {}
+    if symbols:
+        latest_runs = db.execute_query(
+            """
+            SELECT DISTINCT ON (symbol)
+                run_id,
+                symbol,
+                as_of,
+                current_price,
+                fair_value,
+                undervaluation_pct,
+                valuation_rating,
+                valuation_metrics
+            FROM fair_value_runs
+            WHERE symbol = ANY(:symbols)
+            ORDER BY symbol, as_of DESC
+            """,
+            {"symbols": symbols},
+        )
+        latest_runs_by_symbol = {r["symbol"]: r for r in latest_runs}
+
+    holdings: List[HoldingValuationResponse] = []
+    suggestions: List[RebalanceSuggestion] = []
+
+    # Build holding valuations
+    for h in holdings_rows:
+        symbol = h.get("stock_symbol")
+        holding_resp = HoldingResponse(
+            id=str(h.get("holding_id") or ""),
+            symbol=symbol,
+            asset_type="stock",
+            shares_held=Decimal(str(h.get("quantity") or 0)),
+            average_cost=Decimal(str(h.get("avg_entry_price") or 0)),
+            current_price=(
+                Decimal(str(h.get("current_price"))) if h.get("current_price") is not None else None
+            ),
+            market_value=(
+                Decimal(str(h.get("current_value"))) if h.get("current_value") is not None else None
+            ),
+            unrealized_pnl=(
+                Decimal(str(h.get("unrealized_gain_loss"))) if h.get("unrealized_gain_loss") is not None else None
+            ),
+            unrealized_pnl_pct=(
+                Decimal(str(h.get("unrealized_gain_loss_percent"))) if h.get("unrealized_gain_loss_percent") is not None else None
+            ),
+            status="active",
+            created_at=h.get("created_at"),
+            updated_at=h.get("updated_at") or h.get("created_at"),
+            notes=None,
+        )
+
+        run = latest_runs_by_symbol.get(symbol) if symbol else None
+        method_weights = None
+        peg_selected_method = None
+        if run and run.get("valuation_metrics"):
+            try:
+                metrics = run["valuation_metrics"]
+                if isinstance(metrics, str):
+                    metrics = json.loads(metrics)
+                method_weights = metrics.get("method_weights")
+                peg_selected_method = metrics.get("peg_selected_method")
+            except Exception:
+                method_weights = None
+                peg_selected_method = None
+
+        undervaluation_pct = run.get("undervaluation_pct") if run else None
+        action = _action_from_undervaluation_pct(undervaluation_pct)
+
+        fv_snapshot = FairValueSnapshot(
+            run_id=(run.get("run_id") if run else None),
+            as_of=(run.get("as_of") if run else None),
+            current_price_at_valuation=(
+                Decimal(str(run.get("current_price"))) if run and run.get("current_price") is not None else None
+            ),
+            fair_value=(
+                Decimal(str(run.get("fair_value"))) if run and run.get("fair_value") is not None else None
+            ),
+            undervaluation_pct=(
+                Decimal(str(undervaluation_pct)) if undervaluation_pct is not None else None
+            ),
+            valuation_rating=(run.get("valuation_rating") if run else None),
+            method_weights=method_weights,
+            peg_selected_method=peg_selected_method,
+        )
+
+        holdings.append(HoldingValuationResponse(holding=holding_resp, fair_value=fv_snapshot, action=action))
+
+        # Suggest trim/buy from valuation alone
+        allocation_pct = None
+        if action in {"buy", "trim"} and symbol:
+            suggestions.append(
+                RebalanceSuggestion(
+                    symbol=symbol,
+                    action=action,
+                    reason=f"valuation_{action}",
+                    current_allocation_pct=(
+                        Decimal(str(allocation_pct)) if allocation_pct is not None else None
+                    ),
+                    suggested_allocation_pct=None,
+                )
+            )
+
+    return PortfolioValuationResponse(
+        portfolio_id=portfolio_id,
+        as_of=datetime.now(),
+        holdings=holdings,
+        suggestions=suggestions,
+    )
 
 @router.post("/portfolios/{portfolio_id}/holdings", response_model=HoldingResponse)
 async def add_holding(
-    portfolio_id: int,
+    portfolio_id: str,
     holding_data: HoldingCreate,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ):
     """Add a holding to a portfolio"""
-    
-    # Verify portfolio ownership
-    portfolio = db.execute(
-        "SELECT id FROM portfolios WHERE id = %s AND user_id = %s",
-        (portfolio_id, current_user["id"])
-    ).fetchone()
-    
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Portfolio not found"
-        )
-    
-    # Check if holding already exists
-    existing = db.execute(
-        "SELECT id FROM portfolio_holdings WHERE portfolio_id = %s AND symbol = %s",
-        (portfolio_id, holding_data.symbol.upper())
-    ).fetchone()
-    
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Symbol already exists in portfolio"
-        )
-    
-    # Add to symbol master table (audit trail)
-    db.execute(
-        """
-        INSERT INTO symbol_master (symbol, asset_type, first_analyzed, last_analyzed)
-        VALUES (%s, %s, CURRENT_DATE, CURRENT_DATE)
-        ON CONFLICT (symbol) DO UPDATE SET
-            asset_type = EXCLUDED.asset_type,
-            last_analyzed = CURRENT_DATE
-        """,
-        (holding_data.symbol.upper(), holding_data.asset_type)
+
+    portfolio_rows = db.execute_query(
+        "SELECT id FROM portfolios WHERE id = :portfolio_id AND user_id = :user_id",
+        {"portfolio_id": portfolio_id, "user_id": current_user["id"]},
     )
-    
-    # Add holding
-    holding_id = db.execute(
+    if not portfolio_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portfolio not found")
+
+    symbol = holding_data.symbol.upper()
+    stock_rows = db.execute_query(
+        "SELECT id FROM stocks WHERE symbol = :symbol LIMIT 1",
+        {"symbol": symbol},
+    )
+    if stock_rows:
+        stock_id = stock_rows[0].get("id")
+    else:
+        created_stock = db.execute_query(
+            """
+            INSERT INTO stocks (symbol, is_active, created_at, updated_at)
+            VALUES (:symbol, true, NOW(), NOW())
+            RETURNING id
+            """,
+            {"symbol": symbol},
+        )
+        stock_id = created_stock[0].get("id") if created_stock else None
+
+    if not stock_id:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create/find stock")
+
+    db.execute_update(
         """
-        INSERT INTO portfolio_holdings 
-        (portfolio_id, symbol, asset_type, shares_held, average_cost, notes, 
-         first_purchase_date, last_purchase_date)
-        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_DATE, CURRENT_DATE)
-        RETURNING id, symbol, asset_type, shares_held, average_cost, status, created_at
+        INSERT INTO portfolio_positions (portfolio_id, stock_id, quantity, avg_price, updated_at)
+        VALUES (:portfolio_id, :stock_id, :quantity, :avg_price, NOW())
+        ON CONFLICT (portfolio_id, stock_id)
+        DO UPDATE SET
+            quantity = EXCLUDED.quantity,
+            avg_price = EXCLUDED.avg_price,
+            updated_at = NOW()
         """,
-        (portfolio_id, holding_data.symbol.upper(), holding_data.asset_type,
-         holding_data.shares_held, holding_data.average_cost, holding_data.notes)
-    ).fetchone()
-    
-    db.commit()
-    
+        {
+            "portfolio_id": portfolio_id,
+            "stock_id": int(stock_id),
+            "quantity": float(holding_data.shares_held),
+            "avg_price": float(holding_data.average_cost),
+        },
+    )
+
+    row = db.execute_query(
+        """
+        SELECT
+            pp.id AS holding_id,
+            s.symbol,
+            pp.quantity,
+            pp.avg_price,
+            pp.current_price,
+            pp.current_value,
+            pp.unrealized_gain_loss,
+            pp.unrealized_gain_loss_percent,
+            pp.created_at,
+            pp.updated_at
+        FROM portfolio_positions pp
+        JOIN stocks s
+          ON pp.stock_id = s.id
+        WHERE pp.portfolio_id = :portfolio_id
+          AND pp.stock_id = :stock_id
+        LIMIT 1
+        """,
+        {"portfolio_id": portfolio_id, "stock_id": int(stock_id)},
+    )[0]
+
     return HoldingResponse(
-        id=holding_id[0],
-        symbol=holding_id[1],
-        asset_type=holding_id[2],
-        shares_held=holding_id[3],
-        average_cost=holding_id[4],
-        status=holding_id[5],
-        created_at=holding_id[6]
+        id=str(row.get("holding_id") or ""),
+        symbol=row.get("symbol"),
+        asset_type="stock",
+        shares_held=Decimal(str(row.get("quantity") or 0)),
+        average_cost=Decimal(str(row.get("avg_price") or 0)),
+        current_price=Decimal(str(row.get("current_price"))) if row.get("current_price") is not None else None,
+        market_value=Decimal(str(row.get("current_value"))) if row.get("current_value") is not None else None,
+        unrealized_pnl=Decimal(str(row.get("unrealized_gain_loss"))) if row.get("unrealized_gain_loss") is not None else None,
+        unrealized_pnl_pct=Decimal(str(row.get("unrealized_gain_loss_percent"))) if row.get("unrealized_gain_loss_percent") is not None else None,
+        status="active",
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at") or row.get("created_at"),
+        notes=holding_data.notes,
     )
-
-# ========================================
-# Signal History & Analysis Endpoints
-# ========================================
-
 @router.get("/symbols/{symbol}/signals", response_model=List[SignalHistoryResponse])
 async def get_symbol_signal_history(
     symbol: str,
@@ -486,178 +724,57 @@ async def get_symbol_signal_history(
     db=Depends(get_db)
 ):
     """Get signal history for a specific symbol"""
-    
-    signals = db.execute(
-        """
-        SELECT id, symbol, signal_type, confidence, price, signal_date,
-               actual_outcome, actual_return, days_held
-        FROM signal_history
-        WHERE symbol = %s
-        ORDER BY signal_date DESC
-        LIMIT %s
-        """,
-        (symbol.upper(), limit)
-    ).fetchall()
-    
+
+    try:
+        signals = db.execute_query(
+            """
+            SELECT id, symbol, signal_type, confidence, price, signal_date,
+                   actual_outcome, actual_return, days_held
+            FROM signal_history
+            WHERE symbol = :symbol
+            ORDER BY signal_date DESC
+            LIMIT :limit
+            """,
+            {"symbol": symbol.upper(), "limit": limit},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=f"signal_history table not available: {str(e)}",
+        )
+
     return [
         SignalHistoryResponse(
-            id=signal[0],
-            symbol=signal[1],
-            signal_type=signal[2],
-            confidence=signal[3],
-            price=signal[4],
-            signal_date=signal[5],
-            actual_outcome=signal[6],
-            actual_return=signal[7],
-            days_held=signal[8]
+            id=int(s.get("id")) if s.get("id") is not None else 0,
+            symbol=s.get("symbol"),
+            signal_type=s.get("signal_type"),
+            confidence=Decimal(str(s.get("confidence") or 0)),
+            price=Decimal(str(s.get("price") or 0)),
+            signal_date=s.get("signal_date"),
+            actual_outcome=s.get("actual_outcome"),
+            actual_return=(
+                Decimal(str(s.get("actual_return"))) if s.get("actual_return") is not None else None
+            ),
+            days_held=s.get("days_held"),
         )
-        for signal in signals
+        for s in signals
     ]
 
 @router.post("/portfolios/{portfolio_id}/analyze")
 async def analyze_portfolio(
-    portfolio_id: int,
+    portfolio_id: str,
     target_date: Optional[date] = None,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ):
     """Run analysis on all symbols in a portfolio"""
-    
-    # Verify portfolio ownership
-    portfolio = db.execute(
-        "SELECT id, name FROM portfolios WHERE id = %s AND user_id = %s",
-        (portfolio_id, current_user["id"])
-    ).fetchone()
-    
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Portfolio not found"
-        )
-    
-    # Get portfolio holdings
-    holdings = db.execute(
-        """
-        SELECT symbol, asset_type FROM portfolio_holdings
-        WHERE portfolio_id = %s AND status = 'active'
-        """,
-        (portfolio_id,)
-    ).fetchall()
-    
-    if not holdings:
-        return {"success": False, "error": "No holdings found in portfolio"}
-    
-    # Create analysis log
-    log_id = db.execute(
-        """
-        INSERT INTO analysis_logs (user_id, portfolio_id, analysis_type, symbols_analyzed, start_time, status)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id
-        """,
-        (current_user["id"], portfolio_id, "portfolio", len(holdings), datetime.now(), "running")
-    ).fetchone()[0]
-    
-    try:
-        # Import signal generation logic
-        from app.api.universal_backtest_api import generate_universal_signal
-        
-        signals_generated = 0
-        successful_analyses = []
-        
-        for holding in holdings:
-            symbol, asset_type = holding
-            
-            try:
-                # Generate signal for this symbol
-                signal_data = generate_universal_signal(
-                    symbol=symbol,
-                    target_date=target_date or datetime.now().date(),
-                    asset_type=asset_type
-                )
-                
-                if signal_data and "error" not in signal_data:
-                    # Extract signal data
-                    signal = signal_data.get("signal", {})
-                    market_data = signal_data.get("market_data", {})
-                    analysis = signal_data.get("analysis", {})
-                    
-                    # Store in signal history (audit trail)
-                    db.execute(
-                        """
-                        INSERT INTO signal_history 
-                        (symbol, portfolio_id, user_id, signal_type, confidence, price,
-                         rsi, macd, macd_signal, sma_20, sma_50, ema_20, volume,
-                         ema_slope, volatility, vix_level, recent_change,
-                         fear_greed_state, fear_greed_bias, recovery_detected,
-                         engine_type, asset_type, strategy, reasoning, signal_date)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (symbol, portfolio_id, current_user["id"],
-                         signal.get("signal", "HOLD"), signal.get("confidence", 0),
-                         market_data.get("price", 0), market_data.get("rsi", 0),
-                         market_data.get("macd", 0), market_data.get("macd_signal", 0),
-                         market_data.get("sma_20", 0), market_data.get("sma_50", 0),
-                         market_data.get("ema_20", 0), market_data.get("volume", 0),
-                         analysis.get("ema_slope", 0), analysis.get("real_volatility", 0),
-                         analysis.get("vix_level", 0), analysis.get("recent_change", 0),
-                         signal.get("metadata", {}).get("fear_greed_state"),
-                         signal.get("metadata", {}).get("fear_greed_bias"),
-                         signal.get("metadata", {}).get("recovery_detected", False),
-                         signal_data.get("engine", {}).get("engine_type"),
-                         asset_type, signal_data.get("engine", {}).get("engine_type"),
-                         json.dumps(signal.get("reasoning", [])),
-                         target_date or datetime.now().date())
-                    )
-                    
-                    signals_generated += 1
-                    successful_analyses.append({
-                        "symbol": symbol,
-                        "signal": signal.get("signal", "HOLD"),
-                        "confidence": signal.get("confidence", 0),
-                        "price": market_data.get("price", 0)
-                    })
-                
-            except Exception as e:
-                db.execute(
-                    "UPDATE analysis_logs SET error_message = %s WHERE id = %s",
-                    (f"Error analyzing {symbol}: {str(e)}", log_id)
-                )
-        
-        # Update analysis log
-        success_rate = (signals_generated / len(holdings) * 100) if holdings else 0
-        db.execute(
-            """
-            UPDATE analysis_logs 
-            SET signals_generated = %s, success_rate = %s, end_time = %s, 
-                duration_ms = %s, status = %s
-            WHERE id = %s
-            """,
-            (signals_generated, success_rate, datetime.now(),
-             (datetime.now() - datetime.now()).microseconds // 1000, "completed", log_id)
-        )
-        
-        db.commit()
-        
-        return {
-            "success": True,
-            "portfolio_id": portfolio_id,
-            "portfolio_name": portfolio[1],
-            "symbols_analyzed": len(holdings),
-            "signals_generated": signals_generated,
-            "success_rate": success_rate,
-            "analysis_date": target_date or datetime.now().date(),
-            "results": successful_analyses
-        }
-        
-    except Exception as e:
-        db.execute(
-            "UPDATE analysis_logs SET status = %s, error_message = %s WHERE id = %s",
-            ("failed", str(e), log_id)
-        )
-        db.commit()
-        
-        return {"success": False, "error": str(e)}
+
+    # This endpoint depends on analysis_logs + signal_history tables and a legacy portfolio_holdings
+    # schema that isn't part of the Postgres migration set. Keep it from crashing the API.
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Portfolio analysis endpoint is not implemented for the current Postgres schema. Use /refresh-metrics + /valuation.",
+    )
 
 # ========================================
 # Scheduled Analysis Endpoints
@@ -665,98 +782,29 @@ async def analyze_portfolio(
 
 @router.get("/portfolios/{portfolio_id}/schedules", response_model=List[ScheduledAnalysisResponse])
 async def get_portfolio_schedules(
-    portfolio_id: int,
+    portfolio_id: str,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ):
     """Get scheduled analyses for a portfolio"""
-    
-    # Verify portfolio ownership
-    portfolio = db.execute(
-        "SELECT id FROM portfolios WHERE id = %s AND user_id = %s",
-        (portfolio_id, current_user["id"])
-    ).fetchone()
-    
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Portfolio not found"
-        )
-    
-    schedules = db.execute(
-        """
-        SELECT id, portfolio_id, schedule_type, schedule_time, schedule_day,
-               is_active, last_run, next_run
-        FROM scheduled_analyses
-        WHERE portfolio_id = %s
-        ORDER BY created_at DESC
-        """,
-        (portfolio_id,)
-    ).fetchall()
-    
-    return [
-        ScheduledAnalysisResponse(
-            id=schedule[0],
-            portfolio_id=schedule[1],
-            schedule_type=schedule[2],
-            schedule_time=schedule[3],
-            schedule_day=schedule[4],
-            is_active=schedule[5],
-            last_run=schedule[6],
-            next_run=schedule[7]
-        )
-        for schedule in schedules
-    ]
+
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Scheduled analyses are not implemented for the current Postgres schema.",
+    )
 
 @router.post("/portfolios/{portfolio_id}/schedules", response_model=ScheduledAnalysisResponse)
-async def create_scheduled_analysis(
-    portfolio_id: int,
+async def create_portfolio_schedule(
+    portfolio_id: str,
     schedule_data: ScheduledAnalysisCreate,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ):
     """Create a scheduled analysis for a portfolio"""
-    
-    # Verify portfolio ownership
-    portfolio = db.execute(
-        "SELECT id FROM portfolios WHERE id = %s AND user_id = %s",
-        (portfolio_id, current_user["id"])
-    ).fetchone()
-    
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Portfolio not found"
-        )
-    
-    # Calculate next run time
-    next_run = calculate_next_run_time(schedule_data.schedule_type, schedule_data.schedule_time, schedule_data.schedule_day)
-    
-    schedule_id = db.execute(
-        """
-        INSERT INTO scheduled_analyses 
-        (user_id, portfolio_id, schedule_type, schedule_time, schedule_day, 
-         notification_preferences, next_run)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        RETURNING id, portfolio_id, schedule_type, schedule_time, schedule_day,
-                  is_active, last_run, next_run
-        """,
-        (current_user["id"], portfolio_id, schedule_data.schedule_type,
-         schedule_data.schedule_time, schedule_data.schedule_day,
-         json.dumps(schedule_data.notification_preferences), next_run)
-    ).fetchone()
-    
-    db.commit()
-    
-    return ScheduledAnalysisResponse(
-        id=schedule_id[0],
-        portfolio_id=schedule_id[1],
-        schedule_type=schedule_id[2],
-        schedule_time=schedule_id[3],
-        schedule_day=schedule_id[4],
-        is_active=schedule_id[5],
-        last_run=schedule_id[6],
-        next_run=schedule_id[7]
+
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Scheduled analyses are not implemented for the current Postgres schema.",
     )
 
 def calculate_next_run_time(schedule_type: str, schedule_time: time, schedule_day: Optional[int]) -> datetime:

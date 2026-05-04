@@ -32,6 +32,73 @@ class PortfolioCalculatorService(BaseService):
         """Initialize portfolio calculator service"""
         super().__init__()
         self.data_source = get_data_source()
+
+    def _upsert_portfolio_position(
+        self,
+        *,
+        portfolio_id: str,
+        stock_id: str,
+        quantity: float,
+        avg_price: float,
+        current_price: Optional[float],
+    ) -> None:
+        current_value = (quantity * current_price) if (current_price is not None) else None
+        cost_basis = quantity * avg_price
+        unrealized_gain_loss = (current_value - cost_basis) if current_value is not None else None
+        unrealized_gain_loss_percent = (
+            (unrealized_gain_loss / cost_basis * 100) if (unrealized_gain_loss is not None and cost_basis > 0) else None
+        )
+
+        db.execute_update(
+            """
+            INSERT INTO portfolio_positions
+            (
+                portfolio_id,
+                stock_id,
+                quantity,
+                avg_price,
+                current_price,
+                current_value,
+                unrealized_gain_loss,
+                unrealized_gain_loss_percent,
+                last_valued_at,
+                updated_at
+            )
+            VALUES
+            (
+                :portfolio_id,
+                :stock_id,
+                :quantity,
+                :avg_price,
+                :current_price,
+                :current_value,
+                :unrealized_gain_loss,
+                :unrealized_gain_loss_percent,
+                CASE WHEN :current_price IS NULL THEN NULL ELSE NOW() END,
+                NOW()
+            )
+            ON CONFLICT (portfolio_id, stock_id)
+            DO UPDATE SET
+                quantity = EXCLUDED.quantity,
+                avg_price = EXCLUDED.avg_price,
+                current_price = EXCLUDED.current_price,
+                current_value = EXCLUDED.current_value,
+                unrealized_gain_loss = EXCLUDED.unrealized_gain_loss,
+                unrealized_gain_loss_percent = EXCLUDED.unrealized_gain_loss_percent,
+                last_valued_at = EXCLUDED.last_valued_at,
+                updated_at = NOW()
+            """,
+            {
+                "portfolio_id": portfolio_id,
+                "stock_id": stock_id,
+                "quantity": quantity,
+                "avg_price": avg_price,
+                "current_price": current_price,
+                "current_value": current_value,
+                "unrealized_gain_loss": unrealized_gain_loss,
+                "unrealized_gain_loss_percent": unrealized_gain_loss_percent,
+            },
+        )
     
     def update_holding_metrics(self, holding_id: str) -> bool:
         """
@@ -44,91 +111,67 @@ class PortfolioCalculatorService(BaseService):
             True if successful
         """
         try:
-            # Get holding
-            query = """
-                SELECT h.*, p.user_id
-                FROM holdings h
-                JOIN portfolios p ON h.portfolio_id = p.portfolio_id
-                WHERE h.holding_id = :holding_id
-            """
-            holdings = db.execute_query(query, {"holding_id": holding_id})
-            
-            if not holdings:
+            row = db.execute_query(
+                """
+                SELECT
+                    pp.id AS holding_id,
+                    pp.portfolio_id,
+                    s.symbol,
+                    pp.quantity,
+                    pp.avg_price,
+                    s.id AS stock_id
+                FROM portfolio_positions pp
+                JOIN stocks s
+                  ON pp.stock_id = s.id
+                WHERE pp.id = :holding_id
+                """,
+                {"holding_id": holding_id},
+            )
+
+            if not row:
                 raise ValidationError(f"Holding {holding_id} not found")
-            
-            holding = holdings[0]
-            symbol = holding['stock_symbol']
-            
-            # Fetch current price
-            current_price = self.data_source.fetch_current_price(symbol)
+
+            holding = row[0]
+            symbol = holding.get("symbol")
+            stock_id = holding.get("stock_id")
+            portfolio_id = holding.get("portfolio_id")
+            if not symbol or not stock_id or not portfolio_id:
+                raise ValidationError(f"Holding {holding_id} missing required fields")
+
+            price_result = self.data_source.fetch_current_price(symbol)
+            current_price: Optional[float] = None
+            if isinstance(price_result, dict):
+                current_price = price_result.get("price")
+            elif isinstance(price_result, (int, float)):
+                current_price = float(price_result)
+
             if current_price is None:
-                self.log_warning(f"Could not fetch current price for {symbol}", context={'symbol': symbol})
+                self.log_warning(
+                    f"Could not fetch current price for {symbol}",
+                    context={"symbol": symbol, "holding_id": holding_id},
+                )
                 return False
-            
-            # Fetch fundamentals for sector/industry/dividend
-            fundamentals = self.data_source.fetch_fundamentals(symbol)
-            
-            # Calculate metrics
-            quantity = holding['quantity']
-            avg_entry_price = holding['avg_entry_price']
-            
-            current_value = quantity * current_price
-            cost_basis = quantity * avg_entry_price
-            unrealized_gain_loss = current_value - cost_basis
-            unrealized_gain_loss_percent = (unrealized_gain_loss / cost_basis * 100) if cost_basis > 0 else 0
-            
-            # Extract sector/industry from fundamentals
-            sector = fundamentals.get('sector') or fundamentals.get('industry')
-            industry = fundamentals.get('industry')
-            market_cap = fundamentals.get('marketCap', 0)
-            dividend_yield = fundamentals.get('dividendYield', 0)
-            
-            # Determine market cap category
-            market_cap_category = self._get_market_cap_category(market_cap)
-            
-            # Get portfolio total value for allocation calculation
-            portfolio_total = self._get_portfolio_total_value(holding['portfolio_id'])
-            allocation_percent = (current_value / portfolio_total * 100) if portfolio_total > 0 else 0
-            
-            # Update holding
-            update_query = """
-                UPDATE holdings SET
-                    current_price = :current_price,
-                    current_value = :current_value,
-                    cost_basis = :cost_basis,
-                    unrealized_gain_loss = :unrealized_gain_loss,
-                    unrealized_gain_loss_percent = :unrealized_gain_loss_percent,
-                    sector = :sector,
-                    industry = :industry,
-                    market_cap_category = :market_cap_category,
-                    dividend_yield = :dividend_yield,
-                    allocation_percent = :allocation_percent,
-                    last_updated_price = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE holding_id = :holding_id
-            """
-            
-            db.execute_update(update_query, {
-                "holding_id": holding_id,
-                "current_price": current_price,
-                "current_value": current_value,
-                "cost_basis": cost_basis,
-                "unrealized_gain_loss": unrealized_gain_loss,
-                "unrealized_gain_loss_percent": unrealized_gain_loss_percent,
-                "sector": sector,
-                "industry": industry,
-                "market_cap_category": market_cap_category,
-                "dividend_yield": dividend_yield * 100 if dividend_yield else None,  # Convert to percentage
-                "allocation_percent": allocation_percent
-            })
-            
-            self.log_info(f"✅ Updated metrics for holding {holding_id} ({symbol})", 
-                         context={'holding_id': holding_id, 'symbol': symbol})
+
+            self._upsert_portfolio_position(
+                portfolio_id=str(portfolio_id),
+                stock_id=str(stock_id),
+                quantity=float(holding.get("quantity") or 0),
+                avg_price=float(holding.get("avg_price") or 0),
+                current_price=float(current_price),
+            )
+
+            self.log_info(
+                f"✅ Updated metrics for holding {holding_id} ({symbol})",
+                context={"holding_id": holding_id, "symbol": symbol},
+            )
             return True
             
         except Exception as e:
-            self.log_error(f"Error updating holding metrics for {holding_id}", e, 
-                          context={'holding_id': holding_id, 'symbol': symbol})
+            self.log_error(
+                f"Error updating holding metrics for {holding_id}",
+                e,
+                context={"holding_id": holding_id},
+            )
             raise DatabaseError(f"Failed to update holding metrics: {str(e)}") from e
     
     def update_portfolio_holdings(self, portfolio_id: str) -> int:
@@ -141,19 +184,58 @@ class PortfolioCalculatorService(BaseService):
         Returns:
             Number of holdings updated
         """
-        # Get all holdings
-        query = "SELECT holding_id FROM holdings WHERE portfolio_id = :portfolio_id AND is_closed = 0"
-        holdings = db.execute_query(query, {"portfolio_id": portfolio_id})
+        rows = db.execute_query(
+            """
+            SELECT
+                pp.id AS holding_id,
+                s.symbol,
+                pp.quantity,
+                pp.avg_price,
+                pp.stock_id
+            FROM portfolio_positions pp
+            JOIN stocks s
+              ON pp.stock_id = s.id
+            WHERE pp.portfolio_id = :portfolio_id
+            """,
+            {"portfolio_id": portfolio_id},
+        )
         
         updated_count = 0
-        for holding in holdings:
+        for row in rows:
+            symbol = row.get("symbol")
+            stock_id = row.get("stock_id")
             try:
-                if self.update_holding_metrics(holding['holding_id']):
-                    updated_count += 1
+                if not symbol or not stock_id:
+                    continue
+
+                current_price: Optional[float] = None
+                try:
+                    price_result = self.data_source.fetch_current_price(symbol)
+                    if isinstance(price_result, dict):
+                        current_price = price_result.get("price")
+                    elif isinstance(price_result, (int, float)):
+                        current_price = float(price_result)
+                except Exception as price_error:
+                    self.log_warning(
+                        f"Could not fetch current price for {symbol}",
+                        context={"symbol": symbol, "portfolio_id": portfolio_id, "error": str(price_error)},
+                    )
+
+                self._upsert_portfolio_position(
+                    portfolio_id=portfolio_id,
+                    stock_id=str(stock_id),
+                    quantity=float(row.get("quantity") or 0),
+                    avg_price=float(row.get("avg_price") or 0),
+                    current_price=float(current_price) if current_price is not None else None,
+                )
+                updated_count += 1
             except Exception as e:
-                self.log_error(f"Error updating holding {holding['holding_id']}", e, 
-                              context={'holding_id': holding['holding_id'], 'symbol': holding.get('stock_symbol')})
-                # Continue with other holdings (fail-fast per holding, not all)
+                self.log_error(
+                    f"Error updating portfolio position for {symbol}",
+                    e,
+                    context={"portfolio_id": portfolio_id, "symbol": symbol, "stock_id": str(stock_id) if stock_id else None},
+                )
+                # Continue with other symbols
         
         return updated_count
     
@@ -172,14 +254,22 @@ class PortfolioCalculatorService(BaseService):
             snapshot_date = date.today()
         
         try:
-            # Get all holdings
-            query = """
-                SELECT * FROM holdings 
-                WHERE portfolio_id = :portfolio_id AND is_closed = 0
-            """
-            holdings = db.execute_query(query, {"portfolio_id": portfolio_id})
+            positions = db.execute_query(
+                """
+                SELECT
+                    pp.current_value,
+                    pp.quantity,
+                    pp.avg_price,
+                    s.symbol
+                FROM portfolio_positions pp
+                JOIN stocks s
+                  ON pp.stock_id = s.id
+                WHERE pp.portfolio_id = :portfolio_id
+                """,
+                {"portfolio_id": portfolio_id},
+            )
             
-            if not holdings:
+            if not positions:
                 return {
                     "total_value": 0,
                     "cost_basis": 0,
@@ -189,60 +279,67 @@ class PortfolioCalculatorService(BaseService):
                 }
             
             # Calculate totals
-            total_value = sum(h.get('current_value') or 0 for h in holdings)
-            cost_basis = sum(h.get('cost_basis') or (h['quantity'] * h['avg_entry_price']) for h in holdings)
+            total_value = sum(p.get("current_value") or 0 for p in positions)
+            cost_basis = sum((p.get("quantity") or 0) * (p.get("avg_price") or 0) for p in positions)
             total_gain_loss = total_value - cost_basis
             total_gain_loss_percent = (total_gain_loss / cost_basis * 100) if cost_basis > 0 else 0
             
             # Calculate sector allocation
             sector_allocation = {}
-            for holding in holdings:
-                sector = holding.get('sector') or 'Unknown'
-                value = holding.get('current_value') or (holding['quantity'] * holding.get('current_price', 0))
-                sector_allocation[sector] = sector_allocation.get(sector, 0) + value
+            for position in positions:
+                sector_allocation["Unknown"] = sector_allocation.get("Unknown", 0) + float(position.get("current_value") or 0)
             
             # Get top holdings
-            holdings_sorted = sorted(
-                holdings,
-                key=lambda h: h.get('current_value') or 0,
-                reverse=True
-            )
+            holdings_sorted = sorted(positions, key=lambda p: p.get("current_value") or 0, reverse=True)
             top_holdings = [
                 {
-                    "symbol": h['stock_symbol'],
-                    "value": h.get('current_value') or 0,
-                    "allocation": h.get('allocation_percent') or 0
+                    "symbol": p.get("symbol"),
+                    "value": p.get("current_value") or 0,
+                    "allocation": 0
                 }
-                for h in holdings_sorted[:10]
+                for p in holdings_sorted[:10]
             ]
             
             # Save snapshot
-            query = """
-                INSERT OR REPLACE INTO portfolio_performance
-                (portfolio_id, snapshot_date, total_value, cost_basis, total_gain_loss, 
-                 total_gain_loss_percent, invested_amount, sector_allocation, top_holdings)
-                VALUES (:portfolio_id, :snapshot_date, :total_value, :cost_basis, :total_gain_loss,
-                        :total_gain_loss_percent, :invested_amount, :sector_allocation, :top_holdings)
-            """
-            
-            db.execute_update(query, {
-                "portfolio_id": portfolio_id,
-                "snapshot_date": snapshot_date.isoformat(),
-                "total_value": total_value,
-                "cost_basis": cost_basis,
-                "total_gain_loss": total_gain_loss,
-                "total_gain_loss_percent": total_gain_loss_percent,
-                "invested_amount": cost_basis,
-                "sector_allocation": json.dumps(sector_allocation),
-                "top_holdings": json.dumps(top_holdings)
-            })
+            db.execute_update(
+                """
+                INSERT INTO portfolio_snapshots
+                (
+                    portfolio_id,
+                    snapshot_date,
+                    total_value,
+                    invested_value,
+                    cash_balance,
+                    created_at
+                )
+                VALUES
+                (
+                    :portfolio_id,
+                    :snapshot_date,
+                    :total_value,
+                    :invested_value,
+                    0,
+                    CURRENT_TIMESTAMP
+                )
+                ON CONFLICT (portfolio_id, snapshot_date)
+                DO UPDATE SET
+                    total_value = EXCLUDED.total_value,
+                    invested_value = EXCLUDED.invested_value
+                """,
+                {
+                    "portfolio_id": portfolio_id,
+                    "snapshot_date": snapshot_date,
+                    "total_value": total_value,
+                    "invested_value": cost_basis,
+                },
+            )
             
             return {
                 "total_value": total_value,
                 "cost_basis": cost_basis,
                 "total_gain_loss": total_gain_loss,
                 "total_gain_loss_percent": total_gain_loss_percent,
-                "total_stocks": len(holdings),
+                "total_stocks": len(positions),
                 "sector_allocation": sector_allocation,
                 "top_holdings": top_holdings
             }
@@ -253,13 +350,15 @@ class PortfolioCalculatorService(BaseService):
     
     def _get_portfolio_total_value(self, portfolio_id: str) -> float:
         """Get total portfolio value"""
-        query = """
-            SELECT COALESCE(SUM(current_value), 0) as total
-            FROM holdings
-            WHERE portfolio_id = :portfolio_id AND is_closed = 0
-        """
-        result = db.execute_query(query, {"portfolio_id": portfolio_id})
-        return result[0]['total'] if result else 0.0
+        result = db.execute_query(
+            """
+            SELECT COALESCE(SUM(current_value), 0) AS total
+            FROM portfolio_positions
+            WHERE portfolio_id = :portfolio_id
+            """,
+            {"portfolio_id": portfolio_id},
+        )
+        return float(result[0]["total"]) if result else 0.0
     
     def _get_market_cap_category(self, market_cap: float) -> Optional[str]:
         """Determine market cap category"""

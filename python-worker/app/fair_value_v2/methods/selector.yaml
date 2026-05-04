@@ -1,0 +1,44 @@
+version: 1
+# Deterministic method selection rules.
+# First match wins; if nothing matches, default_method_key is used.
+# Matching is simple substring (case-insensitive) against sector/industry.
+
+default_method_key: pe_basic
+
+rules:
+  - method_key: pb_bank
+    when:
+      any:
+        - field: industry
+          contains: bank
+        - field: industry
+          contains: banks
+        - field: sector
+          contains: financial
+
+  - method_key: pe_technology
+    when:
+      any:
+        - field: sector
+          contains: technology
+        - field: industry
+          contains: software
+        - field: industry
+          contains: semiconduct
+
+  # Placeholder buckets you can tune as you add more YAML methods.
+  - method_key: pe_growth
+    when:
+      any:
+        - field: industry
+          contains: internet
+        - field: industry
+          contains: biotech
+
+  - method_key: pe_value
+    when:
+      any:
+        - field: sector
+          contains: consumer defensive
+        - field: industry
+          contains: household

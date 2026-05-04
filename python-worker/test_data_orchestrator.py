@@ -36,6 +36,8 @@ def test_intelligent_routing():
     """Test intelligent source selection for different data types"""
     print("\n🧠 INTELLIGENT SOURCE ROUTING")
     print("=" * 50)
+
+    status = data_orchestrator.get_source_status()
     
     symbol = "AAPL"
     

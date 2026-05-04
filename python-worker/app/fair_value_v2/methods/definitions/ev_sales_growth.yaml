@@ -1,0 +1,46 @@
+method_key: ev_sales_growth
+version: 1
+category: growth
+requires:
+  scalars:
+    - revenue_ttm
+    - shares_outstanding
+    - total_debt
+    - cash_and_equivalents
+    - revenue_growth_ttm
+  series: []
+params:
+  base_multiple: 4.0
+  growth_weight: 20.0
+  multiple_cap: 25.0
+formula:
+  fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub:
+              - mul:
+                  - var: revenue_ttm
+                  - clamp:
+                      value:
+                        add:
+                          - {param: base_multiple}
+                          - mul:
+                              - {param: growth_weight}
+                              - clamp:
+                                  value: {var: revenue_growth_ttm}
+                                  lo: 0
+                                  hi: 0.50
+                      lo: 0
+                      hi: {param: multiple_cap}
+              - sub: [{var: total_debt}, {var: cash_and_equivalents}]
+          - var: shares_outstanding
+  bear_fair_price: null
+  bull_fair_price: null
+  explosive_fair_price: null
+validations: []

@@ -1,0 +1,64 @@
+method_key: pe_basic
+version: 1
+category: general
+requires:
+  scalars:
+    - eps_ttm
+  series: []
+params:
+  pe_floor: 6.0
+  pe_cap: 45.0
+  base_pe: 26.0
+  bear_pe: 20.0
+  bull_pe: 32.0
+  explosive_pe: 40.0
+formula:
+  fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value: {param: base_pe}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap}
+  bear_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value: {param: bear_pe}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap}
+  bull_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value: {param: bull_pe}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap}
+  explosive_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value: {param: explosive_pe}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap}
+validations: []

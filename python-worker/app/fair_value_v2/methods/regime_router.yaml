@@ -1,0 +1,54 @@
+version: 1
+
+default_regime: standard
+
+rules:
+  - name: bank
+    when:
+      any:
+        - field: category
+          eq: financials
+        - field: industry
+          contains: bank
+
+  - name: pre_earnings
+    when:
+      any:
+        - field: eps_ttm
+          lte: 0
+        - field: eps_forward
+          lte: 0
+        - field: operating_margin_ttm
+          lte: 0
+
+  - name: mega_cap_high_growth
+    when:
+      all:
+        - field: market_cap
+          gte: 200000000000
+        - field: revenue_growth_ttm
+          gte: 0.25
+
+  - name: mega_cap
+    when:
+      all:
+        - field: market_cap
+          gte: 200000000000
+
+  - name: high_growth
+    when:
+      all:
+        - field: revenue_growth_ttm
+          gte: 0.25
+
+  - name: high_growth
+    when:
+      all:
+        - field: forward_growth_pct_1y
+          gte: 25
+
+  - name: standard
+    when:
+      all:
+        - field: always
+          eq: true

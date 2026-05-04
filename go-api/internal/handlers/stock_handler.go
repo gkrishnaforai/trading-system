@@ -333,6 +333,16 @@ func (h *StockHandler) GetAlertContext(c *gin.Context) {
 		grades = []repositories.StockGradeAction{}
 	}
 
+	consensus, cerr := h.gradesRepo.GetLatestConsensus(symbol)
+	if cerr != nil {
+		consensus = nil
+	}
+
+	priceTargets, perr := h.gradesRepo.GetLatestPriceTargets(symbol)
+	if perr != nil {
+		priceTargets = nil
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"symbol":             symbol,
 		"alert_event_id":     alertEventID,
@@ -342,6 +352,8 @@ func (h *StockHandler) GetAlertContext(c *gin.Context) {
 		"fundamentals":       fundamentals,
 		"news":               news,
 		"grade_actions":      grades,
+		"consensus_data":     consensus,
+		"price_targets":      priceTargets,
 		"generated_at":       time.Now().UTC().Format(time.RFC3339),
 		"subscription_level": subscriptionLevel,
 	})

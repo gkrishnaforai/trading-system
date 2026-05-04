@@ -69,6 +69,11 @@ def get_indicators_with_price_query(symbol: str, date: str = None, limit: int = 
     
     return full_query
 
+
+def get_latest_indicators_query(symbol: str) -> str:
+    """Generate query to get latest available indicators in wide format for a symbol."""
+    return get_indicators_wide_query(symbol, date=None, limit=1)
+
 def get_backtest_indicators_query(symbol: str, backtest_date: str) -> str:
     """
     Generate query for backtesting (indicators as of specific date)

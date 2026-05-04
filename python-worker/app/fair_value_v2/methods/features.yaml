@@ -1,0 +1,470 @@
+version: 1
+
+# Explicit allowlist for SQL identifiers used by `table_column` sources.
+# This keeps feature sourcing editable in YAML while preventing arbitrary table/column access.
+allow_table_columns:
+  financial_ratios:
+    as_of_columns: [fiscal_date_ending]
+    columns: [roe, operating_margin, net_profit_margin]
+  income_statements:
+    as_of_columns: [fiscal_date_ending]
+    columns: [total_revenue]
+  balance_sheets:
+    as_of_columns: [fiscal_date_ending]
+    columns: [cash_and_cash_equivalents, long_term_debt, total_stockholders_equity]
+  cash_flow_statements:
+    as_of_columns: [fiscal_date_ending]
+    columns: [operating_cash_flow, free_cash_flow, capital_expenditures]
+  raw_market_data_intraday:
+    as_of_columns: [ts]
+    columns: [close, interval]
+  fmp_real_time_prices:
+    as_of_columns: [price_timestamp, created_at, updated_at]
+    columns: [price]
+
+allow_macro_columns:
+  as_of_columns: [data_date]
+  columns: [tnx_yield, irx_yield, yield_curve_spread, vix_close]
+
+# Safe, constrained feature sourcing DSL.
+# Each scalar feature declares how it is obtained.
+# Sources supported by the resolver:
+# - snapshot_json: read from stock_insights_snapshots payload JSON
+# - table_column: read a scalar column from a table with point-in-time filtering
+# - derived: safe built-in derivations using other features
+#
+# Fixing feature issues should be possible by editing this YAML (keys, fallbacks, derivations).
+
+features:
+  book_value_per_share:
+    type: coalesce
+    sources:
+      - type: snapshot_json
+        source: fmp_key_metrics_ttm
+        json_root: key_metrics_ttm
+        keys:
+          - bookValuePerShareTTM
+          - bookValueperShareTTM
+          - tangibleBookValuePerShareTTM
+          - tangibleBookValueperShareTTM
+          - bookValuePerShare
+          - bookValueperShare
+          - tangibleBookValuePerShare
+          - tangibleBookValueperShare
+      - type: derived
+        name: ratio
+        params:
+          numerator:
+            type: coalesce
+            sources:
+              - type: snapshot_json_path
+                source: fmp_fundamentals
+                path: [fundamentals, statements, balance, 0, totalStockholdersEquity]
+              - type: snapshot_json_path
+                source: fmp_fundamentals
+                path: [fundamentals, statements, balance, 0, totalEquity]
+              - type: snapshot_json_path
+                source: fmp_fundamentals
+                path: [fundamentals, statements, balance, 0, stockholdersEquity]
+              - type: table_column
+                table: balance_sheets
+                column: total_stockholders_equity
+                as_of: fiscal_date_ending
+                order_by: fiscal_date_ending
+                where_not_null: true
+          denominator:
+            type: feature_ref
+            name: shares_outstanding
+
+  roe:
+    type: coalesce
+    sources:
+      - type: table_column
+        table: financial_ratios
+        column: roe
+        as_of: fiscal_date_ending
+        order_by: fiscal_date_ending
+        where_not_null: true
+      - type: snapshot_json
+        source: fmp_key_metrics_ttm
+        json_root: key_metrics_ttm
+        keys:
+          - roeTTM
+          - returnOnEquityTTM
+          - roe
+          - returnOnEquity
+
+  eps_ttm:
+    type: coalesce
+    sources:
+      - type: snapshot_json
+        source: fmp_key_metrics_ttm
+        json_root: key_metrics_ttm
+        keys:
+          - netIncomePerShareTTM
+          - epsTTM
+          - epsDilutedTTM
+          - eps
+          - netIncomePerShare
+          - netIncomePerShareTTM
+          - earningsPerShareTTM
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, eps_trailing]
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, eps]
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, income, 0, epsDiluted]
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, income, 0, eps]
+      - type: derived
+        name: price_div_pe
+        params:
+          price:
+            type: coalesce
+            sources:
+              - type: table_column
+                table: raw_market_data_intraday
+                column: close
+                as_of: ts
+                order_by: ts
+                where_not_null: true
+                where:
+                  interval: last
+              - type: table_column
+                table: fmp_real_time_prices
+                column: price
+                as_of: created_at
+                order_by: created_at
+                where_not_null: true
+              - type: snapshot_json
+                source: fmp_quote
+                json_root: quote
+                keys: [price]
+          pe:
+            type: coalesce
+            sources:
+              - type: snapshot_json
+                source: fmp_key_metrics_ttm
+                json_root: key_metrics_ttm
+                keys:
+                  - peRatioTTM
+                  - peRatio
+                  - trailingPE
+                  - priceEarningsRatio
+                  - priceEarningsRatioTTM
+                  - peTTM
+              - type: derived
+                name: inv_earnings_yield
+                params:
+                  earnings_yield:
+                    type: snapshot_json
+                    source: fmp_key_metrics_ttm
+                    json_root: key_metrics_ttm
+                    keys: [earningsYieldTTM]
+
+  eps_ttm_implied:
+    type: derived
+    name: price_div_pe
+    params:
+      price:
+        type: coalesce
+        sources:
+          - type: table_column
+            table: raw_market_data_intraday
+            column: close
+            as_of: ts
+            order_by: ts
+            where_not_null: true
+            where:
+              interval: last
+          - type: table_column
+            table: fmp_real_time_prices
+            column: price
+            as_of: created_at
+            order_by: created_at
+            where_not_null: true
+          - type: snapshot_json
+            source: fmp_quote
+            json_root: quote
+            keys: [price]
+      pe:
+        type: coalesce
+        sources:
+          - type: snapshot_json
+            source: fmp_key_metrics_ttm
+            json_root: key_metrics_ttm
+            keys:
+              - peRatioTTM
+              - peRatio
+              - trailingPE
+              - priceEarningsRatio
+              - priceEarningsRatioTTM
+              - peTTM
+          - type: derived
+            name: inv_earnings_yield
+            params:
+              earnings_yield:
+                type: snapshot_json
+                source: fmp_key_metrics_ttm
+                json_root: key_metrics_ttm
+                keys: [earningsYieldTTM]
+
+  eps_forward:
+    type: coalesce
+    sources:
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, eps_forward]
+      - type: snapshot_json
+        source: fmp_key_metrics_ttm
+        json_root: key_metrics_ttm
+        keys:
+          - epsForward
+          - epsForwardTTM
+          - epsNextYear
+          - epsEstimatedNextYear
+
+  eps_growth_ttm:
+    type: snapshot_json
+    source: fmp_financial_growth
+    json_root: financial_growth
+    keys:
+      - epsgrowth
+      - epsGrowth
+      - epsGrowthTTM
+      - growthEPS
+      - growthEPSDiluted
+
+  operating_margin_ttm:
+    type: table_column
+    table: financial_ratios
+    column: operating_margin
+    as_of: fiscal_date_ending
+    order_by: fiscal_date_ending
+    where_not_null: true
+
+  net_profit_margin_ttm:
+    type: table_column
+    table: financial_ratios
+    column: net_profit_margin
+    as_of: fiscal_date_ending
+    order_by: fiscal_date_ending
+    where_not_null: true
+
+  revenue_growth_ttm:
+    type: snapshot_json
+    source: fmp_financial_growth
+    json_root: financial_growth
+    keys:
+      - revenueGrowth
+      - revenueGrowthTTM
+      - revenuegrowth
+
+  market_cap:
+    type: snapshot_json
+    source: fmp_key_metrics_ttm
+    json_root: key_metrics_ttm
+    keys:
+      - marketCap
+      - marketCapTTM
+
+  shares_outstanding:
+    type: coalesce
+    sources:
+      - type: snapshot_json
+        source: fmp_key_metrics_ttm
+        json_root: key_metrics_ttm
+        keys:
+          - sharesOutstanding
+          - weightedAverageShsOutDilTTM
+          - weightedAverageShsOutTTM
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, income, 0, weightedAverageShsOutDil]
+
+  revenue_ttm:
+    type: coalesce
+    sources:
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, income, 0, revenue]
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, income, 0, totalRevenue]
+      - type: table_column
+        table: income_statements
+        column: total_revenue
+        as_of: fiscal_date_ending
+        order_by: fiscal_date_ending
+        where_not_null: true
+
+  fcf_ttm:
+    type: coalesce
+    sources:
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, cash_flow, 0, freeCashFlow]
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, cash_flow, 0, freeCashFlowTTM]
+      - type: table_column
+        table: cash_flow_statements
+        column: free_cash_flow
+        as_of: fiscal_date_ending
+        order_by: fiscal_date_ending
+        where_not_null: true
+
+  cash_and_equivalents:
+    type: coalesce
+    sources:
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, balance, 0, cashAndCashEquivalents]
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, balance, 0, cashAndShortTermInvestments]
+      - type: table_column
+        table: balance_sheets
+        column: cash_and_cash_equivalents
+        as_of: fiscal_date_ending
+        order_by: fiscal_date_ending
+        where_not_null: true
+
+  total_debt:
+    type: coalesce
+    sources:
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, balance, 0, totalDebt]
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, balance, 0, longTermDebt]
+      - type: table_column
+        table: balance_sheets
+        column: long_term_debt
+        as_of: fiscal_date_ending
+        order_by: fiscal_date_ending
+        where_not_null: true
+
+  forward_growth:
+    type: coalesce
+    sources:
+      - type: snapshot_json
+        source: fmp_fundamentals
+        json_root: analyst_estimates
+        keys:
+          - epsGrowth
+          - epsGrowthNextYear
+          - epsEstimatedGrowth
+          - estimatedEpsGrowth
+      - type: derived
+        name: growth_from_eps_forward_and_eps_ttm
+        params:
+          eps_forward:
+            type: coalesce
+            sources:
+              - type: snapshot_json_path
+                source: fmp_fundamentals
+                path: [fundamentals, eps_forward]
+              - type: snapshot_json
+                source: fmp_key_metrics_ttm
+                json_root: key_metrics_ttm
+                keys:
+                  - epsForward
+                  - epsForwardTTM
+                  - epsNextYear
+                  - epsEstimatedNextYear
+          eps_ttm:
+            type: coalesce
+            sources:
+              - type: snapshot_json
+                source: fmp_key_metrics_ttm
+                json_root: key_metrics_ttm
+                keys:
+                  - netIncomePerShareTTM
+                  - epsTTM
+                  - epsDilutedTTM
+                  - eps
+                  - netIncomePerShare
+                  - netIncomePerShareTTM
+                  - earningsPerShareTTM
+              - type: snapshot_json_path
+                source: fmp_fundamentals
+                path: [fundamentals, eps_trailing]
+              - type: snapshot_json_path
+                source: fmp_fundamentals
+                path: [fundamentals, eps]
+              - type: snapshot_json_path
+                source: fmp_fundamentals
+                path: [fundamentals, statements, income, 0, epsDiluted]
+              - type: snapshot_json_path
+                source: fmp_fundamentals
+                path: [fundamentals, statements, income, 0, eps]
+
+  forward_growth_pct_1y:
+    type: derived
+    name: growth_pct_from_forward_growth
+    params:
+      growth:
+        type: coalesce
+        sources:
+          - type: snapshot_json
+            source: fmp_fundamentals
+            json_root: analyst_estimates
+            keys:
+              - epsGrowth
+              - epsGrowthNextYear
+              - epsEstimatedGrowth
+              - estimatedEpsGrowth
+          - type: derived
+            name: growth_from_eps_forward_and_eps_ttm
+            params:
+              eps_forward:
+                type: coalesce
+                sources:
+                  - type: snapshot_json_path
+                    source: fmp_fundamentals
+                    path: [fundamentals, eps_forward]
+                  - type: snapshot_json
+                    source: fmp_key_metrics_ttm
+                    json_root: key_metrics_ttm
+                    keys:
+                      - epsForward
+                      - epsForwardTTM
+                      - epsNextYear
+                      - epsEstimatedNextYear
+              eps_ttm:
+                type: coalesce
+                sources:
+                  - type: snapshot_json
+                    source: fmp_key_metrics_ttm
+                    json_root: key_metrics_ttm
+                    keys:
+                      - netIncomePerShareTTM
+                      - epsTTM
+                      - epsDilutedTTM
+                      - eps
+                      - netIncomePerShare
+                      - netIncomePerShareTTM
+                      - earningsPerShareTTM
+                  - type: snapshot_json_path
+                    source: fmp_fundamentals
+                    path: [fundamentals, eps_trailing]
+                  - type: snapshot_json_path
+                    source: fmp_fundamentals
+                    path: [fundamentals, eps]
+                  - type: snapshot_json_path
+                    source: fmp_fundamentals
+                    path: [fundamentals, statements, income, 0, epsDiluted]
+                  - type: snapshot_json_path
+                    source: fmp_fundamentals
+                    path: [fundamentals, statements, income, 0, eps]
+
+  tnx_yield:
+    type: macro_column
+    column: tnx_yield
+    as_of: data_date

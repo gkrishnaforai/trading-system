@@ -24,6 +24,7 @@ class DataType(Enum):
     PRICE_HISTORICAL = "price_historical"
     PRICE_CURRENT = "price_current"
     PRICE_INTRADAY_5M = "price_intraday_5m"  # Updated from 15m to 5m
+    COMPANY_PROFILE = "company_profile"
     FUNDAMENTALS = "fundamentals"
     INDICATORS = "indicators"
     NEWS = "news"

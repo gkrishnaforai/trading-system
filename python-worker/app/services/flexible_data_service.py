@@ -283,10 +283,43 @@ class FlexibleDataService:
     def _get_yahoo_indicators(self, symbol: str, indicators: List[str]) -> Dict[str, Any]:
         """Get technical indicators from Yahoo (calculated from historical data)"""
         try:
+            def _normalize_payload(indicator: str, payload: Any) -> Any:
+                # The Yahoo client returns a single dict payload. Tests and callers expect a
+                # list-of-dicts shape similar to Massive loaders.
+                if not isinstance(payload, dict):
+                    return payload
+
+                ind_upper = (indicator or "").upper()
+                if ind_upper in ("SMA", "EMA", "RSI"):
+                    prefix = ind_upper.lower() + "_"
+                    for k, v in payload.items():
+                        if isinstance(k, str) and k.lower().startswith(prefix):
+                            try:
+                                window = int(k.split("_", 1)[1])
+                            except Exception:
+                                window = None
+                            return [{"window": window, "value": v}]
+                    return []
+
+                if ind_upper == "MACD":
+                    if "macd" in payload:
+                        return [
+                            {
+                                "window": None,
+                                "value": payload.get("macd"),
+                                "macd_signal": payload.get("macd_signal"),
+                                "macd_histogram": payload.get("macd_histogram"),
+                            }
+                        ]
+                    return []
+
+                return payload
+
             result: Dict[str, Any] = {}
             for ind in indicators:
                 try:
-                    result[ind] = self.yahoo_source.fetch_technical_indicators(symbol, indicator_type=ind)
+                    payload = self.yahoo_source.fetch_technical_indicators(symbol, indicator_type=ind)
+                    result[ind] = _normalize_payload(ind, payload)
                 except Exception as e:
                     logger.warning(f"Yahoo indicator {ind} failed for {symbol}: {e}")
             return result

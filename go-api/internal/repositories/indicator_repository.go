@@ -22,10 +22,10 @@ func NewIndicatorRepository() *IndicatorRepository {
 
 func (r *IndicatorRepository) GetLatest(symbol string) (*models.AggregatedIndicators, error) {
 	query := `
-		SELECT trade_date, sma_50, sma_200, ema_20, rsi_14, macd, macd_signal, macd_hist, signal
+		SELECT date, sma_50, sma_200, ema_20, rsi_14, macd, macd_signal, macd_hist, signal
 		FROM indicators_daily
 		WHERE symbol = $1
-		ORDER BY trade_date DESC
+		ORDER BY date DESC
 		LIMIT 1
 	`
 
@@ -54,7 +54,7 @@ func (r *IndicatorRepository) GetLatest(symbol string) (*models.AggregatedIndica
 		// Fallback: indicators_daily stored as long/EAV schema (symbol,date,indicator_name,indicator_value,...)
 		// Try to pivot the required fields.
 		errStr := strings.ToLower(err.Error())
-		if err == sql.ErrNoRows || strings.Contains(errStr, "column") || strings.Contains(errStr, "trade_date") {
+		if err == sql.ErrNoRows || strings.Contains(errStr, "column") || strings.Contains(errStr, "date") {
 			return r.getLatestFromEAV(symbol)
 		}
 		return nil, err
@@ -104,7 +104,7 @@ func (r *IndicatorRepository) GetLatest(symbol string) (*models.AggregatedIndica
 func (r *IndicatorRepository) getLatestFromEAV(symbol string) (*models.AggregatedIndicators, error) {
 	query := `
 		SELECT
-			d.date as trade_date,
+			d.date as date,
 			MAX(CASE WHEN d.indicator_name = 'sma_50' THEN d.indicator_value END) as sma_50,
 			MAX(CASE WHEN d.indicator_name = 'sma_200' THEN d.indicator_value END) as sma_200,
 			MAX(CASE WHEN d.indicator_name = 'ema_20' THEN d.indicator_value END) as ema_20,
@@ -189,19 +189,19 @@ func (r *IndicatorRepository) getLatestFromEAV(symbol string) (*models.Aggregate
 
 func (r *IndicatorRepository) GetByDateRange(symbol string, startDate, endDate time.Time) ([]models.AggregatedIndicators, error) {
 	query := `
-		SELECT trade_date, sma_50, sma_200, ema_20, rsi_14, macd, macd_signal, macd_hist, signal
+		SELECT date, sma_50, sma_200, ema_20, rsi_14, macd, macd_signal, macd_hist, signal
 		FROM indicators_daily
 		WHERE symbol = $1
-		  AND trade_date >= $2
-		  AND trade_date <= $3
-		ORDER BY trade_date ASC
+		  AND date >= $2
+		  AND date <= $3
+		ORDER BY date ASC
 	`
 
 	rows, err := r.db.Query(query, symbol, startDate, endDate)
 	if err != nil {
 		// Fallback: indicators_daily stored as long/EAV schema.
 		errStr := strings.ToLower(err.Error())
-		if strings.Contains(errStr, "column") || strings.Contains(errStr, "trade_date") {
+		if strings.Contains(errStr, "column") || strings.Contains(errStr, "date") {
 			return r.getByDateRangeFromEAV(symbol, startDate, endDate)
 		}
 		return nil, err
@@ -285,7 +285,7 @@ func (r *IndicatorRepository) GetByDateRange(symbol string, startDate, endDate t
 func (r *IndicatorRepository) getByDateRangeFromEAV(symbol string, startDate, endDate time.Time) ([]models.AggregatedIndicators, error) {
 	query := `
 		SELECT
-			d.date as trade_date,
+			d.date as date,
 			MAX(CASE WHEN d.indicator_name = 'sma_50' THEN d.indicator_value END) as sma_50,
 			MAX(CASE WHEN d.indicator_name = 'sma_200' THEN d.indicator_value END) as sma_200,
 			MAX(CASE WHEN d.indicator_name = 'ema_20' THEN d.indicator_value END) as ema_20,

@@ -14,6 +14,8 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 
+import pytest
+
 # Import engines
 from app.signal_engines.unified_tqqq_swing_engine import UnifiedTQQQSwingEngine
 from app.signal_engines.generic_etf_engine import create_instrument_engine
@@ -96,7 +98,7 @@ def create_market_conditions(df: pd.DataFrame, idx: int) -> MarketConditions:
         print(f"   ❌ Error creating conditions for {row['date']}: {e}")
         return None
 
-def test_symbol_engines(symbol: str, df: pd.DataFrame, sample_size: int = 10) -> Dict[str, Any]:
+def _test_symbol_engines(symbol: str, df: pd.DataFrame, sample_size: int = 10) -> Dict[str, Any]:
     """Test a symbol with both engines and show sample results"""
     
     print(f"\n🎯 TESTING {symbol} SWING ENGINES")
@@ -208,6 +210,20 @@ def test_symbol_engines(symbol: str, df: pd.DataFrame, sample_size: int = 10) ->
         'results': results
     }
 
+
+def test_swing_engines_smoke():
+    run_live = os.getenv("RUN_SWING_ENGINE_LIVE_TESTS") == "1"
+    if not run_live:
+        pytest.skip("Set RUN_SWING_ENGINE_LIVE_TESTS=1 to enable DB-backed swing engine smoke test")
+
+    symbol = os.getenv("SWING_ENGINE_TEST_SYMBOL", "TQQQ")
+    df = load_historical_data(symbol)
+    if df is None or df.empty:
+        pytest.skip(f"No historical data available for {symbol}")
+
+    results = _test_symbol_engines(symbol, df, sample_size=5)
+    assert results['samples'] >= 1
+
 def main():
     """Main function to test swing engines on multiple symbols"""
     
@@ -239,7 +255,7 @@ def main():
         
         # Test engines
         try:
-            results = test_symbol_engines(symbol, df, sample_size=15)
+            results = _test_symbol_engines(symbol, df, sample_size=15)
             all_results[symbol] = results
         except Exception as e:
             print(f"❌ Error testing {symbol}: {e}")

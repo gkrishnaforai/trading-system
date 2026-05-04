@@ -401,6 +401,7 @@ async def bulk_load_data(request: BulkLoadRequest):
 
 class OnDemandRequest(BaseModel):
     data_types: List[str] = Field(..., description="List of data types to load")
+    force: bool = Field(False, description="Force refresh and bypass cache")
 
 @router.post("/bulk/on-demand/{symbol}", response_model=Dict[str, Any])
 async def get_on_demand_bulk(
@@ -409,7 +410,7 @@ async def get_on_demand_bulk(
 ):
     """Get multiple on-demand data types for a symbol"""
     try:
-        result = optimized_fmp_loader.get_on_demand_data(symbol, request.data_types)
+        result = optimized_fmp_loader.get_on_demand_data(symbol, request.data_types, force=request.force)
         return result
         
     except Exception as e:

@@ -1,0 +1,133 @@
+method_key: ev_sales_fintech
+version: 1
+category: fintech
+requires:
+  scalars:
+    - revenue_ttm
+    - shares_outstanding
+    - total_debt
+    - cash_and_equivalents
+    - revenue_growth_ttm
+  series: []
+params:
+  base_multiple: 1.5
+  growth_weight: 6.0
+  multiple_cap: 6.0
+  bear_mult: 0.75
+  bull_mult: 1.15
+  explosive_mult: 1.3
+  multiple_cap_bear: 5.0
+  multiple_cap_bull: 7.0
+  multiple_cap_explosive: 8.0
+formula:
+  fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub:
+              - mul:
+                  - var: revenue_ttm
+                  - clamp:
+                      value:
+                        add:
+                          - {param: base_multiple}
+                          - mul:
+                              - {param: growth_weight}
+                              - clamp:
+                                  value: {var: revenue_growth_ttm}
+                                  lo: 0
+                                  hi: 0.50
+                      lo: 0
+                      hi: {param: multiple_cap}
+              - sub: [{var: total_debt}, {var: cash_and_equivalents}]
+          - var: shares_outstanding
+  bear_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub:
+              - mul:
+                  - var: revenue_ttm
+                  - clamp:
+                      value:
+                        mul:
+                          - {param: bear_mult}
+                          - add:
+                              - {param: base_multiple}
+                              - mul:
+                                  - {param: growth_weight}
+                                  - clamp:
+                                      value: {var: revenue_growth_ttm}
+                                      lo: 0
+                                      hi: 0.50
+                      lo: 0
+                      hi: {param: multiple_cap_bear}
+              - sub: [{var: total_debt}, {var: cash_and_equivalents}]
+          - var: shares_outstanding
+  bull_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub:
+              - mul:
+                  - var: revenue_ttm
+                  - clamp:
+                      value:
+                        mul:
+                          - {param: bull_mult}
+                          - add:
+                              - {param: base_multiple}
+                              - mul:
+                                  - {param: growth_weight}
+                                  - clamp:
+                                      value: {var: revenue_growth_ttm}
+                                      lo: 0
+                                      hi: 0.50
+                      lo: 0
+                      hi: {param: multiple_cap_bull}
+              - sub: [{var: total_debt}, {var: cash_and_equivalents}]
+          - var: shares_outstanding
+  explosive_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub:
+              - mul:
+                  - var: revenue_ttm
+                  - clamp:
+                      value:
+                        mul:
+                          - {param: explosive_mult}
+                          - add:
+                              - {param: base_multiple}
+                              - mul:
+                                  - {param: growth_weight}
+                                  - clamp:
+                                      value: {var: revenue_growth_ttm}
+                                      lo: 0
+                                      hi: 0.50
+                      lo: 0
+                      hi: {param: multiple_cap_explosive}
+              - sub: [{var: total_debt}, {var: cash_and_equivalents}]
+          - var: shares_outstanding
+validations: []

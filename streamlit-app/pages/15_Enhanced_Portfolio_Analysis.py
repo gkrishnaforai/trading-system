@@ -46,6 +46,11 @@ else:
     go_client.base_url = "http://localhost:8000"
 print(f"DEBUG PORTFOLIO: final go_client.base_url = {go_client.base_url}")
 
+if os.path.exists('/.dockerenv'):
+    python_worker_base_url = "http://python-worker:8001"
+else:
+    python_worker_base_url = "http://127.0.0.1:8001"
+
 # ========================================
 # Helper Functions for DRY Code
 # ========================================
@@ -109,6 +114,61 @@ def create_portfolio_metrics(portfolio: Dict[str, Any]) -> None:
     with col4:
         status = "🟢 Active" if portfolio.get('is_active', True) else "🔴 Inactive"
         st.metric("Status", status)
+
+
+def run_v3_portfolio_decisions_python_worker(
+    portfolio_id: str,
+    *,
+    refresh: bool,
+    data_types: Optional[List[str]],
+    force: bool,
+    as_of_date: Optional[str],
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "portfolio_id": portfolio_id,
+        "refresh": bool(refresh),
+        "data_types": data_types,
+        "force": bool(force),
+        "as_of_date": as_of_date,
+    }
+
+    url = f"{python_worker_base_url}/api/v1/trading-v3/decisions/run-portfolio"
+    timeout_seconds = int(os.getenv("PYTHON_WORKER_TIMEOUT_SECONDS", "1800"))
+    resp = requests.post(url, json=payload, timeout=timeout_seconds)
+    if resp.status_code >= 400:
+        raise Exception(f"python-worker error {resp.status_code}: {resp.text[:300]}")
+    out = resp.json()
+    if not isinstance(out, dict):
+        raise Exception("python-worker returned invalid response")
+    return out
+
+
+def list_v3_decision_dates_python_worker(limit: int = 60) -> List[str]:
+    url = f"{python_worker_base_url}/api/v1/trading-v3/decisions/dates"
+    resp = requests.get(url, params={"limit": int(limit)}, timeout=30)
+    if resp.status_code >= 400:
+        raise Exception(f"python-worker error {resp.status_code}: {resp.text[:300]}")
+    out = resp.json()
+    dates = (out or {}).get("dates") or []
+    return [str(d) for d in dates if d]
+
+
+def list_v3_decisions_by_date_python_worker(
+    *,
+    as_of_date: str,
+    portfolio_id: Optional[str],
+    limit: int = 5000,
+) -> List[Dict[str, Any]]:
+    url = f"{python_worker_base_url}/api/v1/trading-v3/decisions/by-date"
+    params: Dict[str, Any] = {"as_of_date": as_of_date, "limit": int(limit)}
+    if portfolio_id:
+        params["portfolio_id"] = portfolio_id
+    resp = requests.get(url, params=params, timeout=60)
+    if resp.status_code >= 400:
+        raise Exception(f"python-worker error {resp.status_code}: {resp.text[:300]}")
+    out = resp.json()
+    decisions = (out or {}).get("decisions") or []
+    return [d for d in decisions if isinstance(d, dict)]
 
 def create_holdings_table(holdings: List[Dict[str, Any]], show_actions: bool = True) -> pd.DataFrame:
     """Create standardized holdings table with formatting"""
@@ -2793,7 +2853,113 @@ def show_portfolio_overview():
                     st.success(f"✅ Analysis run started: {result.get('run_id')}")
                 else:
                     st.error("❌ Failed to start analysis run")
-        
+
+        st.markdown("#### 🧠 Trading Decision V3 (Portfolio)")
+        tdv3_col1, tdv3_col2, tdv3_col3, tdv3_col4 = st.columns([1, 1, 1, 2])
+        with tdv3_col1:
+            tdv3_refresh = st.checkbox("Refresh first", value=False, key="epa_tdv3_refresh")
+        with tdv3_col2:
+            tdv3_force = st.checkbox("Force", value=False, key="epa_tdv3_force")
+        with tdv3_col3:
+            tdv3_as_of_date = st.text_input("As-of date", value="", key="epa_tdv3_as_of_date")
+        with tdv3_col4:
+            tdv3_data_types = st.multiselect(
+                "Refresh data types",
+                options=["price_historical", "indicators", "price_current", "signals"],
+                default=["price_historical", "indicators"],
+                key="epa_tdv3_data_types",
+            )
+
+        run_tdv3_clicked = st.button("▶️ Run V3 Decisions", width='stretch', key="epa_tdv3_run")
+        if run_tdv3_clicked:
+            try:
+                with st.spinner("Running V3 decisions for portfolio..."):
+                    resp = run_v3_portfolio_decisions_python_worker(
+                        selected_portfolio['id'],
+                        refresh=tdv3_refresh,
+                        data_types=tdv3_data_types if tdv3_refresh else None,
+                        force=tdv3_force,
+                        as_of_date=(tdv3_as_of_date.strip() or None),
+                    )
+                st.session_state.epa_last_tdv3_portfolio_resp = resp
+                st.success("✅ V3 decisions complete")
+            except Exception as e:
+                st.error(f"❌ Failed to run V3 decisions: {e}")
+
+        tdv3_resp = st.session_state.get("epa_last_tdv3_portfolio_resp")
+        if isinstance(tdv3_resp, dict) and tdv3_resp.get("decisions"):
+            decisions = tdv3_resp.get("decisions") or []
+            df = pd.DataFrame(decisions)
+            if "opportunity_score" in df.columns:
+                df = df.sort_values(by=["opportunity_score"], ascending=False, na_position="last")
+            st.dataframe(
+                df[[c for c in ["symbol", "action", "state", "phase", "extension", "confidence", "opportunity_score", "volume_context", "price"] if c in df.columns]],
+                width='stretch',
+                hide_index=True,
+            )
+            with st.expander("Reasons"):
+                reasons_df = df[[c for c in ["symbol", "reasons"] if c in df.columns]]
+                st.dataframe(reasons_df, width='stretch', hide_index=True)
+
+        st.markdown("#### 🗓️ Trading Decision V3 History")
+        hist_col1, hist_col2, hist_col3 = st.columns([2, 1, 2])
+        with hist_col1:
+            hist_limit = st.number_input("Dates to load", min_value=5, max_value=365, value=60, step=5, key="epa_tdv3_hist_limit")
+        with hist_col2:
+            hist_refresh_dates = st.button("🔄 Load dates", key="epa_tdv3_hist_refresh_dates")
+        with hist_col3:
+            hist_filter_to_portfolio = st.checkbox("Filter to this portfolio", value=True, key="epa_tdv3_hist_filter_portfolio")
+
+        if hist_refresh_dates or ("epa_tdv3_hist_dates" not in st.session_state):
+            try:
+                with st.spinner("Loading available decision dates..."):
+                    st.session_state.epa_tdv3_hist_dates = list_v3_decision_dates_python_worker(limit=int(hist_limit))
+            except Exception as e:
+                st.error(f"❌ Failed to load V3 decision dates: {e}")
+                st.session_state.epa_tdv3_hist_dates = []
+
+        hist_dates = st.session_state.get("epa_tdv3_hist_dates") or []
+        selected_hist_date = st.selectbox(
+            "As-of date",
+            options=hist_dates,
+            index=0 if hist_dates else None,
+            key="epa_tdv3_hist_date_select",
+        )
+
+        hist_load_clicked = st.button("📥 Load decisions", width='stretch', key="epa_tdv3_hist_load")
+        if hist_load_clicked and selected_hist_date:
+            try:
+                with st.spinner(f"Loading V3 decisions for {selected_hist_date}..."):
+                    decisions = list_v3_decisions_by_date_python_worker(
+                        as_of_date=str(selected_hist_date),
+                        portfolio_id=(selected_portfolio['id'] if hist_filter_to_portfolio else None),
+                        limit=5000,
+                    )
+                st.session_state.epa_tdv3_hist_decisions = decisions
+            except Exception as e:
+                st.error(f"❌ Failed to load V3 decisions: {e}")
+                st.session_state.epa_tdv3_hist_decisions = []
+
+        hist_decisions = st.session_state.get("epa_tdv3_hist_decisions") or []
+        if hist_decisions:
+            hist_df = pd.DataFrame(hist_decisions)
+            if "opportunity_score" in hist_df.columns:
+                hist_df = hist_df.sort_values(by=["opportunity_score"], ascending=False, na_position="last")
+            st.dataframe(
+                hist_df[[c for c in ["symbol", "action", "state", "phase", "extension", "confidence", "opportunity_score", "volume_context", "price", "timestamp"] if c in hist_df.columns]],
+                width='stretch',
+                hide_index=True,
+            )
+
+            symbols = [str(s) for s in hist_df.get("symbol", []).tolist() if s]
+            selected_symbol = st.selectbox("Inspect symbol", options=symbols, index=0 if symbols else None, key="epa_tdv3_hist_symbol")
+            if selected_symbol:
+                selected_rows = [d for d in hist_decisions if d.get("symbol") == selected_symbol]
+                selected_decision = selected_rows[0] if selected_rows else None
+                if isinstance(selected_decision, dict):
+                    with st.expander("Decision details", expanded=True):
+                        st.json(selected_decision.get("metadata") or selected_decision)
+
         with col2:
             if st.button("🔄 Refresh Data", width='stretch', key="overview_refresh"):
                 load_portfolio_data(selected_portfolio['id'])

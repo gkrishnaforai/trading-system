@@ -10,6 +10,9 @@ from typing import Tuple, Optional
 import psycopg2
 import os
 from sqlalchemy import create_engine
+from app.observability.logging import get_logger
+
+logger = get_logger(__name__)
 
 def calculate_real_market_metrics(symbol: str, target_date: str, db_url: str) -> Tuple[float, float]:
     """
@@ -556,7 +559,7 @@ def get_symbol_indicators_data(symbol: str, target_date: str, db_url: str) -> di
                 r.volume
             FROM raw_market_data_daily r
             LEFT JOIN indicators_daily w
-                ON w.symbol = r.symbol AND w.date = r.date
+                ON w.symbol = r.symbol AND w.date = r.date AND w.data_source = 'calculated'
             LEFT JOIN LATERAL (
                 SELECT
                     MAX(indicator_value) FILTER (WHERE indicator_name = 'rsi_14') AS rsi_14,
@@ -565,7 +568,7 @@ def get_symbol_indicators_data(symbol: str, target_date: str, db_url: str) -> di
                     MAX(indicator_value) FILTER (WHERE indicator_name = 'macd') AS macd,
                     MAX(indicator_value) FILTER (WHERE indicator_name = 'macd_signal') AS macd_signal
                 FROM indicators_daily
-                WHERE symbol = r.symbol AND date = r.date
+                WHERE symbol = r.symbol AND date = r.date AND data_source = 'fmp_api'
             ) n ON TRUE
             WHERE r.symbol = :symbol AND r.date = :target_date
             ORDER BY r.date
@@ -574,6 +577,15 @@ def get_symbol_indicators_data(symbol: str, target_date: str, db_url: str) -> di
         with engine.connect() as conn:
             result = conn.execute(text(query), {"symbol": symbol.upper(), "target_date": target_date})
             rows = result.fetchall()
+            
+            # Debug logging
+            print(f"🔍 DEBUG: Query for {symbol} on {target_date} returned {len(rows)} rows")
+            if rows:
+                row = rows[0]
+                print(f"🔍 DEBUG: MACD data - macd={row[8]}, macd_signal={row[9]}")
+                print(f"🔍 DEBUG: RSI={row[5]}, SMA50={row[6]}, EMA20={row[7]}")
+            else:
+                print(f"🔍 DEBUG: No rows returned for {symbol} on {target_date}")
             
             if not rows:
                 # Try to get most recent data if specific date not found
@@ -592,7 +604,7 @@ def get_symbol_indicators_data(symbol: str, target_date: str, db_url: str) -> di
                         r.volume
                     FROM raw_market_data_daily r
                     LEFT JOIN indicators_daily w
-                        ON w.symbol = r.symbol AND w.date = r.date
+                        ON w.symbol = r.symbol AND w.date = r.date AND w.data_source = 'calculated'
                     LEFT JOIN LATERAL (
                         SELECT
                             MAX(indicator_value) FILTER (WHERE indicator_name = 'rsi_14') AS rsi_14,
@@ -601,7 +613,7 @@ def get_symbol_indicators_data(symbol: str, target_date: str, db_url: str) -> di
                             MAX(indicator_value) FILTER (WHERE indicator_name = 'macd') AS macd,
                             MAX(indicator_value) FILTER (WHERE indicator_name = 'macd_signal') AS macd_signal
                         FROM indicators_daily
-                        WHERE symbol = r.symbol AND date = r.date
+                        WHERE symbol = r.symbol AND date = r.date AND data_source = 'fmp_api'
                     ) n ON TRUE
                     WHERE r.symbol = :symbol
                     ORDER BY r.date DESC

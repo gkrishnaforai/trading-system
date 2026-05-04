@@ -56,11 +56,16 @@ class IngestionProfile:
                     mode=RefreshMode.ON_DEMAND,
                     force=False,
                 )
-                results.append({"symbol": symbol, "status": result.status.name, "details": result.to_dict()})
+                # Calculate overall status from results
+                if result.total_successful > 0:
+                    overall_status = "success" if result.total_failed == 0 else "partial"
+                else:
+                    overall_status = "failed" if result.total_failed > 0 else "skipped"
+                results.append({"symbol": symbol, "status": overall_status, "details": result.to_dict()})
 
                 # Emit change events for each data type that changed
-                for dt, dt_result in result.data_type_results.items():
-                    if dt_result.status == "success":
+                for dt, dt_result in result.results.items():
+                    if dt_result.status.value == "success":
                         # Detect change vs prior snapshot (simplified: always emit for now)
                         self.event_emitter.emit_change_event(
                             entity_type="stock",
@@ -137,4 +142,57 @@ register_profile(IngestionProfile(
     name="prices_live_v1",
     data_types=[DataType.PRICE_INTRADAY_5M],
     window_days=1,
+))
+
+# Enhanced fundamentals profile with FMP growth and key metrics
+register_profile(IngestionProfile(
+    name="enhanced_fundamentals_v1",
+    data_types=[
+        DataType.FUNDAMENTALS,
+        DataType.KEY_METRICS_TTM,
+        DataType.INCOME_STATEMENT_GROWTH,
+        DataType.BALANCE_SHEET_GROWTH,
+        DataType.CASH_FLOW_GROWTH,
+        DataType.FINANCIAL_GROWTH,
+        DataType.FINANCIAL_RATIOS,
+        DataType.STOCK_GRADES,
+        DataType.ANALYST_RATINGS,
+    ],
+    window_days=30,
+))
+
+# Weekly fundamentals with enhanced FMP data - COMPREHENSIVE
+register_profile(IngestionProfile(
+    name="weekly_fundamentals_enhanced",
+    data_types=[
+        # Core fundamentals
+        DataType.FUNDAMENTALS,
+        DataType.KEY_METRICS_TTM,
+        
+        # Financial statements (essential for calculations)
+        DataType.INCOME_STATEMENTS,
+        DataType.BALANCE_SHEETS,
+        DataType.CASH_FLOW_STATEMENTS,
+        
+        # Financial metrics and ratios
+        DataType.FINANCIAL_RATIOS,
+        DataType.FINANCIAL_GROWTH,
+        DataType.FINANCIAL_SCORES,
+        
+        # Growth metrics (detailed)
+        DataType.INCOME_STATEMENT_GROWTH,
+        DataType.BALANCE_SHEET_GROWTH,
+        DataType.CASH_FLOW_GROWTH,
+        
+        # Analyst and grading data
+        DataType.STOCK_GRADES,
+        DataType.ANALYST_RATINGS,
+        DataType.PRICE_TARGETS,
+        DataType.CONSENSUS_DATA,
+        
+        # Market intelligence
+        DataType.INSTITUTIONAL_BUYING,
+        DataType.EARNINGS_TRANSCRIPTS,
+    ],
+    window_days=7,
 ))

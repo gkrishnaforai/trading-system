@@ -29,14 +29,20 @@ class DatabaseRepository(ABC):
     
     def _execute_query(self, query_func):
         """Execute a database query with proper error handling"""
+        print(f"🔍 BASE REPO DEBUG: _is_available = {self._is_available}")
         if not self._is_available:
             logger.warning("⚠️  Database not available - returning fallback result")
+            print(f"🔍 BASE REPO DEBUG: Returning fallback result: {self._get_fallback_result()}")
             return self._get_fallback_result()
         
         try:
+            print(f"🔍 BASE REPO DEBUG: Executing query with session")
             with self.session_factory() as session:
-                return query_func(session)
+                result = query_func(session)
+                print(f"🔍 BASE REPO DEBUG: Query result: {result}")
+                return result
         except Exception as e:
+            print(f"🔍 BASE REPO DEBUG: Exception in query: {e}")
             logger.error(f"❌ Database query error: {e}")
             return self._get_fallback_result()
     
@@ -200,6 +206,61 @@ class StockGradesRepository(DatabaseRepository):
         return []
 
 
+class StockNewsRepository(DatabaseRepository):
+    """Repository for stock-specific news data"""
+    
+    def store_news(self, symbol: str, news_articles: List[Dict[str, Any]]) -> bool:
+        """Store stock-specific news articles"""
+        def store_in_session(session):
+            # Import models here to avoid circular imports
+            from app.db_storage.models import StockNews, Stock
+            
+            stored_count = 0
+            
+            # Get stock record
+            stock = session.query(Stock).filter_by(symbol=symbol).first()
+            if not stock:
+                logger.warning(f"⚠️  Stock {symbol} not found - cannot store news")
+                return 0
+            
+            for article in news_articles:
+                # Check if article already exists (avoid duplicates)
+                existing = session.query(StockNews).filter_by(
+                    stock_id=stock.id,
+                    title=article.get("title"),
+                    published_at=article.get("publishedDate")
+                ).first()
+                
+                if existing:
+                    continue  # Skip existing articles
+                
+                record_data = {
+                    "stock_id": stock.id,
+                    "published_at": article.get("publishedDate"),
+                    "title": article.get("title"),
+                    "publisher": article.get("site"),
+                    "url": article.get("url"),
+                    "sentiment_score": article.get("sentiment"),
+                    "related_symbols": article.get("tickers", []),
+                    "source": "fmp",
+                    "raw_json": article
+                }
+                
+                news_record = StockNews(**record_data)
+                session.add(news_record)
+                stored_count += 1
+            
+            session.commit()
+            logger.info(f"✅ Stored {stored_count} news articles for {symbol}")
+            return stored_count
+        
+        return self._execute_query(store_in_session)
+    
+    def _get_fallback_result(self):
+        """Fallback result when database is not available"""
+        return False
+
+
 class MarketNewsRepository(DatabaseRepository):
     """Repository for market news data"""
     
@@ -248,6 +309,312 @@ class MarketNewsRepository(DatabaseRepository):
         return True
 
 
+class AnalystRatingsRepository(DatabaseRepository):
+    """Repository for analyst ratings data"""
+    
+    def store_ratings(self, symbol: str, ratings_data: List[Dict[str, Any]]) -> bool:
+        """Store analyst ratings data"""
+        def store_in_session(session):
+            print(f"🔍 REPO DEBUG: Starting store_ratings for {symbol} with {len(ratings_data)} ratings")
+            # Import models here to avoid circular imports
+            from app.db_storage.models import AnalystRatings
+            
+            stored_count = 0
+            for i, rating in enumerate(ratings_data):
+                print(f"🔍 REPO DEBUG: Processing rating {i+1}: {rating}")
+                rating_date = rating.get("ratingDate") or rating.get("publishedAt") or rating.get("date")
+                if not rating_date:
+                    print(f"🔍 REPO DEBUG: Skipping rating {i+1} - no date")
+                    continue
+                
+                # Parse rating date
+                from datetime import datetime
+                if isinstance(rating_date, str):
+                    try:
+                        rating_date = datetime.fromisoformat(rating_date.replace('Z', '+00:00')).date()
+                    except:
+                        rating_date = datetime.now().date()
+                elif isinstance(rating_date, datetime):
+                    rating_date = rating_date.date()
+                
+                print(f"🔍 REPO DEBUG: Parsed rating_date: {rating_date}")
+                
+                # Check if rating record exists
+                try:
+                    existing = session.query(AnalystRatings).filter_by(
+                        symbol=symbol,
+                        rating_date=rating_date,
+                        analyst_name=rating.get("analystName", "")
+                    ).first()
+                    print(f"🔍 REPO DEBUG: Existing record found: {existing is not None}")
+                except Exception as query_error:
+                    print(f"🔍 REPO DEBUG: Query error: {query_error}")
+                    continue
+                
+                if existing:
+                    print(f"🔍 REPO DEBUG: Updating existing record")
+                    # Update existing record
+                    existing.rating = rating.get("rating")
+                    existing.rating_action = rating.get("ratingAction")
+                    existing.price_target = rating.get("priceTarget")
+                    existing.analyst_firm = rating.get("analystFirm")
+                    existing.updated_at = datetime.utcnow()
+                else:
+                    print(f"🔍 REPO DEBUG: Creating new record")
+                    # Create new record
+                    import json
+                    
+                    record_data = {
+                        "symbol": symbol,
+                        "rating_date": rating_date,
+                        "analyst_name": rating.get("analystName", ""),
+                        "analyst_firm": rating.get("analystFirm", ""),
+                        "rating": rating.get("rating"),
+                        "rating_action": rating.get("ratingAction"),
+                        "price_target": rating.get("priceTarget"),
+                        "published_at": rating.get("publishedAt"),
+                        "payload": json.dumps(rating) if rating else "{}"
+                    }
+                    
+                    print(f"🔍 REPO DEBUG: Record data: {record_data}")
+                    
+                    try:
+                        analyst_rating = AnalystRatings(**record_data)
+                        session.add(analyst_rating)
+                        stored_count += 1
+                        print(f"🔍 REPO DEBUG: Added new record, stored_count: {stored_count}")
+                    except Exception as create_error:
+                        print(f"🔍 REPO DEBUG: Create record error: {create_error}")
+                        continue
+            
+            try:
+                print(f"🔍 REPO DEBUG: Attempting to commit session with {stored_count} records")
+                session.commit()
+                print(f"🔍 REPO DEBUG: Session committed successfully")
+                logger.info(f"✅ Stored {stored_count} analyst ratings for {symbol}")
+                return True
+            except Exception as commit_error:
+                print(f"🔍 REPO DEBUG: Commit error: {commit_error}")
+                session.rollback()
+                print(f"🔍 REPO DEBUG: Session rolled back")
+                return False
+        
+        return self._execute_query(store_in_session)
+    
+    def _get_fallback_result(self):
+        return []
+
+
+class PriceTargetsRepository(DatabaseRepository):
+    """Repository for price targets data"""
+    
+    def store_price_targets(self, symbol: str, targets_data: List[Dict[str, Any]]) -> bool:
+        """Store price targets data"""
+        def store_in_session(session):
+            # Import models here to avoid circular imports
+            from app.db_storage.models import PriceTargets
+            from datetime import datetime
+            
+            stored_count = 0
+            for target in targets_data:
+                print(f"🔍 REPO DEBUG: Processing price target: {target}")
+                
+                # Handle consensus data (no individual analyst info)
+                if 'targetConsensus' in target or 'targetMedian' in target:
+                    print(f"🔍 REPO DEBUG: Processing consensus data")
+                    target_date = datetime.now().date()  # Use current date for consensus data
+                    analyst_name = "Consensus"
+                    analyst_firm = "Market Consensus"
+                    price_target = target.get("targetConsensus") or target.get("targetMedian")
+                    rating = None
+                    price_when_posted = None
+                    published_at = datetime.now().isoformat()
+                else:
+                    # Handle individual analyst data
+                    print(f"🔍 REPO DEBUG: Processing individual analyst data")
+                    target_date = target.get("targetDate") or target.get("publishedAt")
+                    if not target_date:
+                        print(f"🔍 REPO DEBUG: Skipping target - no date")
+                        continue
+                    
+                    # Parse target date
+                    if isinstance(target_date, str):
+                        try:
+                            target_date = datetime.fromisoformat(target_date.replace('Z', '+00:00')).date()
+                        except:
+                            target_date = datetime.now().date()
+                    elif isinstance(target_date, datetime):
+                        target_date = target_date.date()
+                    
+                    analyst_name = target.get("analystName", "")
+                    analyst_firm = target.get("analystFirm", "")
+                    price_target = target.get("priceTarget")
+                    rating = target.get("rating")
+                    price_when_posted = target.get("priceWhenPosted")
+                    published_at = target.get("publishedAt")
+                
+                print(f"🔍 REPO DEBUG: Parsed target_date: {target_date}")
+                
+                # Check if target record exists
+                try:
+                    existing = session.query(PriceTargets).filter_by(
+                        symbol=symbol,
+                        target_date=target_date,
+                        analyst_name=analyst_name
+                    ).first()
+                    print(f"🔍 REPO DEBUG: Existing record found: {existing is not None}")
+                except Exception as query_error:
+                    print(f"🔍 REPO DEBUG: Query error: {query_error}")
+                    continue
+                
+                if existing:
+                    print(f"🔍 REPO DEBUG: Updating existing record")
+                    # Update existing record
+                    existing.price_target = price_target
+                    existing.rating = rating
+                    existing.price_when_posted = price_when_posted
+                    existing.analyst_firm = analyst_firm
+                    existing.updated_at = datetime.utcnow()
+                else:
+                    print(f"🔍 REPO DEBUG: Creating new record")
+                    # Create new record
+                    import json
+                    
+                    record_data = {
+                        "symbol": symbol,
+                        "target_date": target_date,
+                        "analyst_name": analyst_name,
+                        "analyst_firm": analyst_firm,
+                        "price_target": price_target,
+                        "rating": rating,
+                        "price_when_posted": price_when_posted,
+                        "published_at": published_at,
+                        "payload": json.dumps(target) if target else "{}"
+                    }
+                    
+                    print(f"🔍 REPO DEBUG: Record data: {record_data}")
+                    
+                    try:
+                        price_target_record = PriceTargets(**record_data)
+                        session.add(price_target_record)
+                        stored_count += 1
+                        print(f"🔍 REPO DEBUG: Added new record, stored_count: {stored_count}")
+                    except Exception as create_error:
+                        print(f"🔍 REPO DEBUG: Create record error: {create_error}")
+                        continue
+            
+            try:
+                print(f"🔍 REPO DEBUG: Attempting to commit session with {stored_count} records")
+                session.commit()
+                print(f"🔍 REPO DEBUG: Session committed successfully")
+                logger.info(f"✅ Stored {stored_count} price targets for {symbol}")
+                return True
+            except Exception as commit_error:
+                print(f"🔍 REPO DEBUG: Commit error: {commit_error}")
+                session.rollback()
+                print(f"🔍 REPO DEBUG: Session rolled back")
+                return False
+        
+        return self._execute_query(store_in_session)
+    
+    def _get_fallback_result(self):
+        return []
+
+
+class ConsensusDataRepository(DatabaseRepository):
+    """Repository for consensus data"""
+    
+    def store_consensus(self, symbol: str, consensus_data_list: List[Dict[str, Any]]) -> bool:
+        """Store consensus data"""
+        def store_in_session(session):
+            print(f"🔍 REPO DEBUG: Starting store_consensus for {symbol} with {len(consensus_data_list)} consensus records")
+            # Import models here to avoid circular imports
+            from app.db_storage.models import ConsensusData
+            from datetime import datetime
+            
+            stored_count = 0
+            for consensus_data in consensus_data_list:
+                print(f"🔍 REPO DEBUG: Processing consensus data: {consensus_data}")
+                
+                # Parse consensus date - use current date if not provided
+                consensus_date = datetime.now().date()
+                published_at = datetime.now()
+                
+                print(f"🔍 REPO DEBUG: Parsed consensus_date: {consensus_date}")
+                
+                # Check if consensus record exists
+                try:
+                    existing = session.query(ConsensusData).filter_by(
+                        symbol=symbol,
+                        consensus_date=consensus_date
+                    ).first()
+                    print(f"🔍 REPO DEBUG: Existing record found: {existing is not None}")
+                except Exception as query_error:
+                    print(f"🔍 REPO DEBUG: Query error: {query_error}")
+                    continue
+                
+                if existing:
+                    print(f"🔍 REPO DEBUG: Updating existing record")
+                    # Update existing record
+                    existing.analyst_count = consensus_data.get("analystCount")
+                    existing.consensus_rating = consensus_data.get("consensusRating")
+                    existing.consensus_price_target = consensus_data.get("priceTarget")
+                    existing.price_target_high = consensus_data.get("targetHigh")
+                    existing.price_target_low = consensus_data.get("targetLow")
+                    existing.buy_ratings = consensus_data.get("buy")
+                    existing.hold_ratings = consensus_data.get("hold")
+                    existing.sell_ratings = consensus_data.get("sell")
+                    existing.published_at = published_at
+                    existing.updated_at = datetime.utcnow()
+                else:
+                    print(f"🔍 REPO DEBUG: Creating new record")
+                    # Create new record
+                    import json
+                    
+                    record_data = {
+                        "symbol": symbol,
+                        "consensus_date": consensus_date,
+                        "analyst_count": consensus_data.get("analystCount"),
+                        "consensus_rating": consensus_data.get("consensusRating"),
+                        "consensus_price_target": consensus_data.get("priceTarget"),
+                        "price_target_high": consensus_data.get("targetHigh"),
+                        "price_target_low": consensus_data.get("targetLow"),
+                        "buy_ratings": consensus_data.get("buy"),
+                        "hold_ratings": consensus_data.get("hold"),
+                        "sell_ratings": consensus_data.get("sell"),
+                        "published_at": published_at,
+                        "payload": json.dumps(consensus_data) if consensus_data else "{}"
+                    }
+                    
+                    print(f"🔍 REPO DEBUG: Record data: {record_data}")
+                    
+                    try:
+                        consensus_record = ConsensusData(**record_data)
+                        session.add(consensus_record)
+                        stored_count += 1
+                        print(f"🔍 REPO DEBUG: Added new record, stored_count: {stored_count}")
+                    except Exception as create_error:
+                        print(f"🔍 REPO DEBUG: Create record error: {create_error}")
+                        continue
+            
+            try:
+                print(f"🔍 REPO DEBUG: Attempting to commit session with {stored_count} records")
+                session.commit()
+                print(f"🔍 REPO DEBUG: Session committed successfully")
+                logger.info(f"✅ Stored {stored_count} consensus data records for {symbol}")
+                return True
+            except Exception as commit_error:
+                print(f"🔍 REPO DEBUG: Commit error: {commit_error}")
+                session.rollback()
+                print(f"🔍 REPO DEBUG: Session rolled back")
+                return False
+        
+        return self._execute_query(store_in_session)
+    
+    def _get_fallback_result(self):
+        return {}
+
+
 # Factory for creating repositories - follows Factory Pattern
 class RepositoryFactory:
     """Factory for creating repository instances"""
@@ -261,6 +628,26 @@ class RepositoryFactory:
     def create_market_news_repository(session_factory=None) -> MarketNewsRepository:
         """Create market news repository"""
         return MarketNewsRepository(session_factory)
+    
+    @staticmethod
+    def create_stock_news_repository(session_factory=None) -> StockNewsRepository:
+        """Create stock news repository"""
+        return StockNewsRepository(session_factory)
+    
+    @staticmethod
+    def create_analyst_ratings_repository(session_factory=None) -> 'AnalystRatingsRepository':
+        """Create analyst ratings repository"""
+        return AnalystRatingsRepository(session_factory)
+    
+    @staticmethod
+    def create_price_targets_repository(session_factory=None) -> 'PriceTargetsRepository':
+        """Create price targets repository"""
+        return PriceTargetsRepository(session_factory)
+    
+    @staticmethod
+    def create_consensus_data_repository(session_factory=None) -> 'ConsensusDataRepository':
+        """Create consensus data repository"""
+        return ConsensusDataRepository(session_factory)
 
 
 # Service layer - follows Single Responsibility Principle
@@ -271,6 +658,11 @@ class DatabaseService:
         self.session_factory = session_factory
         self._stock_grades_repo = RepositoryFactory.create_stock_grades_repository(session_factory)
         self._market_news_repo = RepositoryFactory.create_market_news_repository(session_factory)
+        self._stock_news_repo = RepositoryFactory.create_stock_news_repository(session_factory)
+        # Add missing analyst data repositories
+        self._analyst_ratings_repo = RepositoryFactory.create_analyst_ratings_repository(session_factory)
+        self._price_targets_repo = RepositoryFactory.create_price_targets_repository(session_factory)
+        self._consensus_data_repo = RepositoryFactory.create_consensus_data_repository(session_factory)
     
     @property
     def stock_grades(self) -> StockGradesRepository:
@@ -281,6 +673,26 @@ class DatabaseService:
     def market_news(self) -> MarketNewsRepository:
         """Get market news repository"""
         return self._market_news_repo
+    
+    @property
+    def news(self) -> StockNewsRepository:
+        """Get stock news repository"""
+        return self._stock_news_repo
+    
+    @property
+    def analyst_ratings(self) -> 'AnalystRatingsRepository':
+        """Get analyst ratings repository"""
+        return self._analyst_ratings_repo
+    
+    @property
+    def price_targets(self) -> 'PriceTargetsRepository':
+        """Get price targets repository"""
+        return self._price_targets_repo
+    
+    @property
+    def consensus_data(self) -> 'ConsensusDataRepository':
+        """Get consensus data repository"""
+        return self._consensus_data_repo
     
     def is_available(self) -> bool:
         """Check if database service is available"""

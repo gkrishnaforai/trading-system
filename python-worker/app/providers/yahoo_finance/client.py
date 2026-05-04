@@ -480,11 +480,19 @@ class YahooFinanceClient:
             
             if cashflow is not None and not cashflow.empty:
                 latest_cashflow = cashflow.iloc[:, 0]
+                ocf = latest_cashflow.get("Operating Cash Flow")
+                capex = latest_cashflow.get("Capital Expenditure")
+                free_cash_flow = None
+                if ocf is not None and capex is not None:
+                    try:
+                        free_cash_flow = float(ocf) - float(capex)
+                    except Exception:
+                        free_cash_flow = None
                 details.update({
                     "operating_cash_flow": latest_cashflow.get("Operating Cash Flow"),
                     "investing_cash_flow": latest_cashflow.get("Investing Cash Flow"),
                     "financing_cash_flow": latest_cashflow.get("Financing Cash Flow"),
-                    "free_cash_flow": latest_cashflow.get("Operating Cash Flow") - latest_cashflow.get("Capital Expenditure"),
+                    "free_cash_flow": free_cash_flow,
                 })
                 logger.debug(f"Step 4c: Added cash flow data for {symbol}")
             

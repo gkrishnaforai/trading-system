@@ -1,0 +1,278 @@
+method_key: pe_technology_dynamic
+version: 1
+category: technology
+requires:
+  scalars:
+    - eps_ttm
+    - eps_growth_ttm
+    - revenue_growth_ttm
+    - market_cap
+    - operating_margin_ttm
+    - tnx_yield
+  optional_scalars:
+    - forward_growth
+  series: []
+params:
+  pe_floor: 10.0
+  pe_cap_base: 55.0
+  pe_cap_bull: 65.0
+  pe_cap_explosive: 75.0
+
+  mega_cap_threshold: 1000000000000.0
+  growth_cap_mega: 0.25
+  growth_cap_normal: 0.50
+  pe_cap_mega: 40.0
+  pe_cap_normal: 60.0
+  growth_w_mega: 2.0
+  growth_w_normal: 3.0
+
+  base_pe: 30.0
+
+  growth_unit: 0.10
+
+  # Note: `tnx_yield` is treated as a percent (e.g. 4.2), not a decimal (0.042).
+  rate_neutral: 4.0
+  rate_unit: 1.0
+  rate_w: -1.0
+
+  margin_neutral: 0.25
+  margin_unit: 0.10
+  margin_w: 3.0
+
+  bear_mult: 0.75
+  bull_mult: 1.15
+  explosive_mult: 1.30
+formula:
+  fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value:
+                add:
+                  - param: base_pe
+                  - mul:
+                      - if:
+                          cond:
+                            gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                          then: {param: growth_w_mega}
+                          else: {param: growth_w_normal}
+                      - log:
+                          add:
+                            - 1
+                            - div:
+                                - add:
+                                    - mul:
+                                        - 0.5
+                                        - coalesce:
+                                            - var: forward_growth
+                                            - var: revenue_growth_ttm
+                                    - mul: [0.3, {var: revenue_growth_ttm}]
+                                    - mul:
+                                        - 0.2
+                                        - min:
+                                            - var: eps_growth_ttm
+                                            - if:
+                                                cond:
+                                                  gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                                                then: {param: growth_cap_mega}
+                                                else: {param: growth_cap_normal}
+                                - param: growth_unit
+                  - mul:
+                      - param: rate_w
+                      - div:
+                          - sub: [{var: tnx_yield}, {param: rate_neutral}]
+                          - param: rate_unit
+                  - mul:
+                      - param: margin_w
+                      - div:
+                          - sub: [{var: operating_margin_ttm}, {param: margin_neutral}]
+                          - param: margin_unit
+              lo: {param: pe_floor}
+              hi:
+                if:
+                  cond:
+                    gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                  then: {param: pe_cap_mega}
+                  else: {param: pe_cap_normal}
+
+  bear_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value:
+                mul:
+                  - param: bear_mult
+                  - add:
+                      - param: base_pe
+                      - mul:
+                          - if:
+                              cond:
+                                gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                              then: {param: growth_w_mega}
+                              else: {param: growth_w_normal}
+                          - log:
+                              add:
+                                - 1
+                                - div:
+                                    - add:
+                                        - mul:
+                                            - 0.5
+                                            - coalesce:
+                                                - var: forward_growth
+                                                - var: revenue_growth_ttm
+                                        - mul: [0.3, {var: revenue_growth_ttm}]
+                                        - mul:
+                                            - 0.2
+                                            - min:
+                                                - var: eps_growth_ttm
+                                                - if:
+                                                    cond:
+                                                      gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                                                    then: {param: growth_cap_mega}
+                                                    else: {param: growth_cap_normal}
+                                    - param: growth_unit
+                      - mul:
+                          - param: rate_w
+                          - div:
+                              - sub: [{var: tnx_yield}, {param: rate_neutral}]
+                              - param: rate_unit
+                      - mul:
+                          - param: margin_w
+                          - div:
+                              - sub: [{var: operating_margin_ttm}, {param: margin_neutral}]
+                              - param: margin_unit
+              lo: {param: pe_floor}
+              hi:
+                if:
+                  cond:
+                    gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                  then: {param: pe_cap_mega}
+                  else: {param: pe_cap_normal}
+
+  bull_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value:
+                mul:
+                  - param: bull_mult
+                  - add:
+                      - param: base_pe
+                      - mul:
+                          - if:
+                              cond:
+                                gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                              then: {param: growth_w_mega}
+                              else: {param: growth_w_normal}
+                          - log:
+                              add:
+                                - 1
+                                - div:
+                                    - add:
+                                        - mul:
+                                            - 0.5
+                                            - coalesce:
+                                                - var: forward_growth
+                                                - var: revenue_growth_ttm
+                                        - mul: [0.3, {var: revenue_growth_ttm}]
+                                        - mul:
+                                            - 0.2
+                                            - min:
+                                                - var: eps_growth_ttm
+                                                - if:
+                                                    cond:
+                                                      gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                                                    then: {param: growth_cap_mega}
+                                                    else: {param: growth_cap_normal}
+                                    - param: growth_unit
+                      - mul:
+                          - param: rate_w
+                          - div:
+                              - sub: [{var: tnx_yield}, {param: rate_neutral}]
+                              - param: rate_unit
+                      - mul:
+                          - param: margin_w
+                          - div:
+                              - sub: [{var: operating_margin_ttm}, {param: margin_neutral}]
+                              - param: margin_unit
+              lo: {param: pe_floor}
+              hi:
+                if:
+                  cond:
+                    gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                  then: {param: pe_cap_mega}
+                  else: {param: pe_cap_normal}
+
+  explosive_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_ttm}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_ttm
+          - clamp:
+              value:
+                mul:
+                  - param: explosive_mult
+                  - add:
+                      - param: base_pe
+                      - mul:
+                          - if:
+                              cond:
+                                gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                              then: {param: growth_w_mega}
+                              else: {param: growth_w_normal}
+                          - log:
+                              add:
+                                - 1
+                                - div:
+                                    - add:
+                                        - mul:
+                                            - 0.5
+                                            - coalesce:
+                                                - var: forward_growth
+                                                - var: revenue_growth_ttm
+                                        - mul: [0.3, {var: revenue_growth_ttm}]
+                                        - mul:
+                                            - 0.2
+                                            - min:
+                                                - var: eps_growth_ttm
+                                                - if:
+                                                    cond:
+                                                      gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                                                    then: {param: growth_cap_mega}
+                                                    else: {param: growth_cap_normal}
+                                    - param: growth_unit
+                      - mul:
+                          - param: rate_w
+                          - div:
+                              - sub: [{var: tnx_yield}, {param: rate_neutral}]
+                              - param: rate_unit
+                      - mul:
+                          - param: margin_w
+                          - div:
+                              - sub: [{var: operating_margin_ttm}, {param: margin_neutral}]
+                              - param: margin_unit
+              lo: {param: pe_floor}
+              hi:
+                if:
+                  cond:
+                    gt: [{var: market_cap}, {param: mega_cap_threshold}]
+                  then: {param: pe_cap_mega}
+                  else: {param: pe_cap_normal}

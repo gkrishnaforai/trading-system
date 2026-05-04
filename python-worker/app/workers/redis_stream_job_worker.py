@@ -53,6 +53,16 @@ class PortfolioRebalanceJobPayload:
     max_attempts: int = 3
 
 
+@dataclass
+class TradingDecisionV3JobPayload:
+    run_id: str
+    portfolio_id: Optional[str]
+    symbol: str
+    as_of_date: str = ""
+    attempt: int = 1
+    max_attempts: int = 3
+
+
 class RedisStreamWorker:
     def __init__(
         self,
@@ -225,6 +235,17 @@ class RedisStreamWorker:
             portfolio_id=d.get("portfolio_id"),
             target_date=str(d.get("target_date") or ""),
             profile=str(d.get("profile") or ""),
+            attempt=int(d.get("attempt") or 1),
+            max_attempts=int(d.get("max_attempts") or 3),
+        )
+
+    def _parse_trading_decision_v3_payload(self, raw: str) -> TradingDecisionV3JobPayload:
+        d = json.loads(raw)
+        return TradingDecisionV3JobPayload(
+            run_id=d["run_id"],
+            portfolio_id=d.get("portfolio_id"),
+            symbol=d["symbol"],
+            as_of_date=str(d.get("as_of_date") or ""),
             attempt=int(d.get("attempt") or 1),
             max_attempts=int(d.get("max_attempts") or 3),
         )
@@ -419,6 +440,32 @@ class RedisStreamWorker:
             "status": "ok",
         }
 
+    def _run_trading_decision_v3(self, payload: TradingDecisionV3JobPayload) -> Dict[str, Any]:
+        sym = payload.symbol.strip().upper()
+        as_of_date = (payload.as_of_date or "").strip() or None
+
+        from app.services.trading_decision_v3_service import TradingDecisionV3Service
+
+        service = TradingDecisionV3Service()
+        decisions = service.run_and_persist([sym], as_of_date=as_of_date)
+        d = decisions[0] if decisions else None
+        if d is None:
+            raise RuntimeError("no_decision_generated")
+
+        return {
+            "symbol": d.symbol,
+            "as_of_date": d.as_of_date,
+            "state": d.state,
+            "phase": d.phase,
+            "extension": d.extension,
+            "action": d.action,
+            "confidence": d.confidence,
+            "price": d.price,
+            "opportunity_score": (d.features or {}).get("opportunity_score"),
+            "volume_context": (d.features or {}).get("volume_context"),
+            "reasons": d.reasons,
+        }
+
     def _maybe_reclaim_pending(self):
         now = time.time()
         if now - self._last_claim_at < self.pending_claim_interval_seconds:
@@ -571,19 +618,36 @@ class RedisStreamWorker:
             self.dlq_maxlen,
         )
 
+    def _send_trading_decision_v3_to_dlq(self, payload: TradingDecisionV3JobPayload, job_id: Optional[str], error: str, msg_id: str):
+        self._xadd_trim(
+            self.dlq_stream_key,
+            {
+                "job_id": job_id or "",
+                "source_msg_id": msg_id,
+                "job_type": "trading_decision_v3",
+                "payload": json.dumps(payload.__dict__),
+                "error": (error or "")[:500],
+                "failed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            },
+            self.dlq_maxlen,
+        )
+
     def _process_message(self, msg_id: str, fields: Dict[str, Any], reclaimed: bool = False):
         job_type = fields.get("job_type")
         raw_payload = fields.get("payload")
-        if job_type not in {"portfolio_data_load", "portfolio_analysis", "portfolio_rebalance"} or not raw_payload:
+        if job_type not in {"portfolio_data_load", "portfolio_analysis", "portfolio_rebalance", "trading_decision_v3"} or not raw_payload:
             self.r.xack(self.stream_key, self.group, msg_id)
             return
 
         is_analysis = job_type == "portfolio_analysis"
         is_rebalance = job_type == "portfolio_rebalance"
+        is_td_v3 = job_type == "trading_decision_v3"
         if is_analysis:
             payload: Any = self._parse_analysis_payload(raw_payload)
         elif is_rebalance:
             payload = self._parse_rebalance_payload(raw_payload)
+        elif is_td_v3:
+            payload = self._parse_trading_decision_v3_payload(raw_payload)
         else:
             payload = self._parse_payload(raw_payload)
 
@@ -655,6 +719,8 @@ class RedisStreamWorker:
                 result = self._run_portfolio_analysis(payload)
             elif is_rebalance:
                 result = self._run_portfolio_rebalance(payload)
+            elif is_td_v3:
+                result = self._run_trading_decision_v3(payload)
             else:
                 result = self._run_refresh(payload)
             dur_ms = int((time.time() - start) * 1000)
@@ -708,6 +774,8 @@ class RedisStreamWorker:
                         self._send_analysis_to_dlq(payload, fields.get("job_id"), str(e), msg_id)
                     elif is_rebalance:
                         self._send_rebalance_to_dlq(payload, fields.get("job_id"), str(e), msg_id)
+                    elif is_td_v3:
+                        self._send_trading_decision_v3_to_dlq(payload, fields.get("job_id"), str(e), msg_id)
                     else:
                         self._send_to_dlq(payload, fields.get("job_id"), str(e), msg_id)
                     self._metric_dlq += 1
@@ -718,6 +786,8 @@ class RedisStreamWorker:
                     self._requeue_analysis_with_backoff(payload, job_id or str(uuid.uuid4()), str(e))
                 elif is_rebalance:
                     self._requeue_rebalance_with_backoff(payload, job_id or str(uuid.uuid4()), str(e))
+                elif is_td_v3:
+                    self._requeue_trading_decision_v3_with_backoff(payload, job_id or str(uuid.uuid4()), str(e))
                 else:
                     self._requeue_with_backoff(payload, job_id or str(uuid.uuid4()), str(e))
 
@@ -849,6 +919,25 @@ class RedisStreamWorker:
             {
                 "job_id": job_id,
                 "job_type": "portfolio_analysis",
+                "payload": raw,
+                "enqueued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "requeued_from_error": last_error[:500],
+            },
+            self.stream_maxlen,
+        )
+
+    def _requeue_trading_decision_v3_with_backoff(self, payload: TradingDecisionV3JobPayload, job_id: str, last_error: str):
+        if payload.attempt >= payload.max_attempts:
+            return
+        payload.attempt += 1
+        raw = json.dumps(payload.__dict__)
+        backoff = min(60, 2 ** (payload.attempt - 1))
+        time.sleep(backoff)
+        self._xadd_trim(
+            self.stream_key,
+            {
+                "job_id": job_id,
+                "job_type": "trading_decision_v3",
                 "payload": raw,
                 "enqueued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "requeued_from_error": last_error[:500],

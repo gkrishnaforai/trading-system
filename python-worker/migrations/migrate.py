@@ -38,8 +38,23 @@ class MigrationManager:
                 execution_time_ms INTEGER
             );
             """
-            
-            db.execute_query(create_table_query)
+
+            db.execute_update(create_table_query)
+
+            # Backwards-compatible: older deployments may have an earlier version of
+            # schema_migrations without newer columns. Ensure columns exist.
+            db.execute_update(
+                """
+                ALTER TABLE schema_migrations
+                  ADD COLUMN IF NOT EXISTS checksum VARCHAR(64);
+                """
+            )
+            db.execute_update(
+                """
+                ALTER TABLE schema_migrations
+                  ADD COLUMN IF NOT EXISTS execution_time_ms INTEGER;
+                """
+            )
             logger.info("✅ Migration tracking table ready")
             
         except Exception as e:
@@ -78,8 +93,8 @@ class MigrationManager:
             INSERT INTO schema_migrations (migration_name, execution_time_ms) 
             VALUES (:migration_name, :execution_time_ms)
             """
-            
-            db.execute_query(insert_query, {
+
+            db.execute_update(insert_query, {
                 'migration_name': migration_name,
                 'execution_time_ms': int(execution_time)
             })

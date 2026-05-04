@@ -208,3 +208,41 @@ def send_schedule_error_notification(user_id: str, email: str, portfolio_id: str
     except Exception as e:
         logger.error(f"Failed to send schedule error notification: {str(e)}")
         return False
+
+
+async def send_alert_notification(alert: Dict[str, Any]) -> bool:
+    """
+    Send alert notification for fundamentals scheduler
+    
+    Args:
+        alert: Alert dictionary containing alert details
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # For now, just log the alert - in a full implementation this could send:
+        # - Email notifications
+        # - Slack notifications  
+        # - Database alert storage
+        # - Push notifications
+        
+        logger.info(f"🚨 ALERT GENERATED: {alert['title']}")
+        logger.info(f"   Symbol: {alert['symbol']}")
+        logger.info(f"   Type: {alert['alert_type']}")
+        logger.info(f"   Severity: {alert['severity']}")
+        logger.info(f"   Message: {alert['message']}")
+        logger.info(f"   Missing Data: {', '.join(alert['missing_data'])}")
+        logger.info(f"   Action Required: {alert['action_required']}")
+        logger.info(f"   Timestamp: {alert['timestamp']}")
+        
+        # TODO: Implement actual notification channels
+        # - Email: await send_email_alert(alert)
+        # - Slack: await send_slack_alert(alert) 
+        # - Database: await store_alert(alert)
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error sending alert notification: {e}")
+        return False

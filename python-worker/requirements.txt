@@ -11,7 +11,7 @@ grpcio-tools>=1.60.0
 protobuf>=4.25.0
 
 # LLM
-litellm>=1.30.0
+litellm @ https://github.com/BerriAI/litellm/archive/refs/tags/v1.30.0.tar.gz
 openai>=1.12.0
 anthropic>=0.18.0
 
@@ -50,7 +50,7 @@ tenacity>=8.2.0
 schedule>=1.2.0  # Task scheduling
 requests>=2.31.0  # HTTP requests for API calls
 psutil>=5.9.0  # System metrics for health endpoint
-
+pyyaml>=6.0.1
 
 # Testing
 pytest>=7.4.0

@@ -118,6 +118,31 @@ DATA_TYPE_TABLE_MAP: dict[DataType, DataTypeTableSpec] = {
         symbol_columns=("stock_symbol", "symbol"),
         date_columns=("filing_date", "period_end"),
     ),
+    # Grading and analyst data types
+    DataType.STOCK_GRADES: DataTypeTableSpec(
+        data_type=DataType.STOCK_GRADES,
+        table="stock_grades",
+        symbol_columns=("stock_symbol", "symbol"),
+        date_columns=("grade_date", "created_at", "published_at"),
+    ),
+    DataType.ANALYST_RATINGS: DataTypeTableSpec(
+        data_type=DataType.ANALYST_RATINGS,
+        table="analyst_ratings",
+        symbol_columns=("stock_symbol", "symbol"),
+        date_columns=("rating_date", "created_at", "published_at"),
+    ),
+    DataType.CONSENSUS_DATA: DataTypeTableSpec(
+        data_type=DataType.CONSENSUS_DATA,
+        table="consensus_data",
+        symbol_columns=("stock_symbol", "symbol"),
+        date_columns=("consensus_date", "created_at", "published_at"),
+    ),
+    DataType.PRICE_TARGETS: DataTypeTableSpec(
+        data_type=DataType.PRICE_TARGETS,
+        table="price_targets",
+        symbol_columns=("stock_symbol", "symbol"),
+        date_columns=("target_date", "created_at", "published_at"),
+    ),
 }
 
 

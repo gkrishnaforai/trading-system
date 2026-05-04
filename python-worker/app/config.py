@@ -93,6 +93,26 @@ class Settings(BaseSettings):
     fmp_rate_limit_calls: int = Field(default=60, description="FMP rate limit calls per window")
     fmp_rate_limit_window: float = Field(default=60.0, description="FMP rate limit window in seconds")
 
+    fmp_technical_indicators_enabled: bool = Field(
+        default=True,
+        description="If true, use FMP technical-indicators endpoints; if false, compute indicators locally from price data",
+    )
+
+    price_incremental_lookback_days: int = Field(
+        default=7,
+        description="When doing incremental daily OHLC refresh, re-fetch this many days before the latest stored bar to account for late adjustments",
+    )
+
+    symbol_validation_source: str = Field(
+        default="db",
+        description="Symbol validation source. 'db' validates using local stocks table; 'fmp' validates using FMP company profile endpoint.",
+    )
+
+    symbol_validation_fmp_fallback: bool = Field(
+        default=False,
+        description="If true and symbol_validation_source='db' fails, fallback to FMP profile validation (bandwidth heavy).",
+    )
+
 
 settings = Settings()
 

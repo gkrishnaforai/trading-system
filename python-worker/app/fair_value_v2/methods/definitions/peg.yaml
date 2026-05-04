@@ -1,0 +1,45 @@
+method_key: peg
+version: 1
+category: growth
+requires:
+  scalars:
+    - eps_forward
+    - forward_growth_pct_1y
+  optional_scalars:
+    - eps_ttm
+  series: []
+params:
+  peg_target: 1.2
+  pe_floor: 15.0
+  pe_cap: 45.0
+  growth_pct_cap: 60.0
+formula:
+  fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: eps_forward}, 0]
+          - lte: [{var: forward_growth_pct_1y}, 0]
+      then: null
+      else:
+        let:
+          bindings:
+            g:
+              clamp:
+                value: {var: forward_growth_pct_1y}
+                lo: 0
+                hi: {param: growth_pct_cap}
+            pe:
+              clamp:
+                value:
+                  mul:
+                    - {param: peg_target}
+                    - {var: g}
+                lo: {param: pe_floor}
+                hi: {param: pe_cap}
+          in:
+            mul: [{var: eps_forward}, {var: pe}]
+  bear_fair_price: null
+  bull_fair_price: null
+  explosive_fair_price: null
+validations: []

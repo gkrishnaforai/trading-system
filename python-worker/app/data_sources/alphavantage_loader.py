@@ -26,6 +26,10 @@ class LoadResult:
     message: str
     duration_seconds: float
 
+    @property
+    def duration(self) -> float:
+        return float(self.duration_seconds)
+
 class AlphaVantageDataLoader:
     """Comprehensive Alpha Vantage data loader for database tables"""
     

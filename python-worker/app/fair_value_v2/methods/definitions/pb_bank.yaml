@@ -1,0 +1,61 @@
+method_key: pb_bank
+version: 1
+category: financials
+requires:
+  scalars:
+    - book_value_per_share
+    - roe
+  series: []
+params:
+  r: 0.10
+  g: 0.03
+  pb_floor: 0.7
+  pb_cap: 2.2
+  bear_r: 0.12
+  bear_pb_cap: 1.8
+  bull_r: 0.09
+  bull_pb_cap: 2.6
+  explosive_r: 0.08
+  explosive_pb_cap: 3.2
+formula:
+  fair_price:
+    mul:
+      - var: book_value_per_share
+      - clamp:
+          value:
+            div:
+              - sub: [{var: roe}, {param: g}]
+              - sub: [{param: r}, {param: g}]
+          lo: {param: pb_floor}
+          hi: {param: pb_cap}
+  bear_fair_price:
+    mul:
+      - var: book_value_per_share
+      - clamp:
+          value:
+            div:
+              - sub: [{var: roe}, {param: g}]
+              - sub: [{param: bear_r}, {param: g}]
+          lo: {param: pb_floor}
+          hi: {param: bear_pb_cap}
+  bull_fair_price:
+    mul:
+      - var: book_value_per_share
+      - clamp:
+          value:
+            div:
+              - sub: [{var: roe}, {param: g}]
+              - sub: [{param: bull_r}, {param: g}]
+          lo: {param: pb_floor}
+          hi: {param: bull_pb_cap}
+  explosive_fair_price:
+    mul:
+      - var: book_value_per_share
+      - clamp:
+          value:
+            div:
+              - sub: [{var: roe}, {param: g}]
+              - sub: [{param: explosive_r}, {param: g}]
+          lo: {param: pb_floor}
+          hi: {param: explosive_pb_cap}
+validations: []
