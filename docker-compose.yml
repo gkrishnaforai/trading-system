@@ -72,7 +72,7 @@ services:
       - PORT=8000
       - GRPC_PORT=50051
       - ENVIRONMENT=${ENVIRONMENT:-development}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable}
       - MIGRATIONS_DIR=/app/supabase/migrations
       - SUPABASE_URL=${SUPABASE_URL:-}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
@@ -126,7 +126,7 @@ services:
       - ENABLE_JOB_QUEUE=${ENABLE_JOB_QUEUE:-false}
       - PYTHON_GRPC_URL=go-api:50051
       - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable}
       - SUPABASE_URL=${SUPABASE_URL:-}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
       - SUPABASE_DB_URL=${SUPABASE_DB_URL:-}
@@ -208,7 +208,7 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - PYTHON_GRPC_URL=go-api:50051
       - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable}
       - SUPABASE_URL=${SUPABASE_URL:-}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
       - SUPABASE_DB_URL=${SUPABASE_DB_URL:-}
@@ -250,7 +250,7 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - PYTHON_GRPC_URL=go-api:50051
       - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable}
       - PYTHONPATH=/app
       - JOB_DISABLE_POSTPROCESSING=${JOB_DISABLE_POSTPROCESSING:-true}
       - JOB_STREAM_KEY=ts:jobs
@@ -318,7 +318,7 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ENVIRONMENT=${ENVIRONMENT:-development}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable}
       - GO_API_URL=${GO_API_URL:-http://go-api:8000}
       - PYTHONPATH=/app
     depends_on:
@@ -359,7 +359,7 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ENVIRONMENT=${ENVIRONMENT:-development}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable}
       - GO_API_URL=${GO_API_URL:-http://go-api:8000}
       - PYTHON_WORKER_URL=${PYTHON_WORKER_URL:-http://python-worker:8001}
       - PYTHON_API_URL=${PYTHON_API_URL:-http://python-worker:8001}
