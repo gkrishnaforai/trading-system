@@ -1,7 +1,7 @@
 -- 068: per-symbol cyclicality for the LEAPS cycle engine.
 -- Cyclical names (memory/storage etc.) get full CALL→PUT→CALL
--- rotation; structural growers require fundamental deterioration
--- before a put is sanctioned. source: 'human' wins over 'agent';
+-- rotation— structural growers require fundamental deterioration
+-- before a put is sanctioned. source: 'human' wins over 'agent'—
 -- 'seed' rows are the original hand-picked set.
 CREATE TABLE IF NOT EXISTS leaps_cyclicality (
     symbol      text PRIMARY KEY,

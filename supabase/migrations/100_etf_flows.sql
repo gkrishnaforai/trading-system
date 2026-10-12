@@ -1,5 +1,5 @@
 -- ETF AUM snapshots → derived fund flows.
--- No vendor publishes free daily flow history; the mechanical truth is
+-- No vendor publishes free daily flow history— the mechanical truth is
 --   flow ≈ ΔAUM − (AUM_prev × daily_return)
 -- i.e. the AUM change NOT explained by market movement = net
 -- creations/redemptions. Snapshot AUM daily, flows accrue over time.

@@ -2,7 +2,7 @@
 -- The watermark is the newest timestamp observed across the data sources that
 -- feed valuation inputs (fundamentals snapshots, statements, consensus,
 -- estimates, category overrides, macro). A stored run is reused while no input
--- is newer than its watermark; live price never invalidates because fair value
+-- is newer than its watermark — live price never invalidates because fair value
 -- is price-independent.
 CREATE TABLE IF NOT EXISTS fair_value_v2_runs (
     run_id VARCHAR(64) PRIMARY KEY,

@@ -1,6 +1,6 @@
 -- 050_breakout_watch.sql
 -- Pre-breakout watchlist: symbols within ~5% of their 20d high, maintained
--- by each screener run; an intraday check fires an alert the hour price
+-- by each screener run— an intraday check fires an alert the hour price
 -- crosses the pivot — instead of discovering the breakout at next EOD scan.
 
 CREATE TABLE IF NOT EXISTS breakout_watch (

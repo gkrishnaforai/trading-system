@@ -1,9 +1,9 @@
 -- 069: promote cyclicality to a first-class symbol property on the
 -- `stocks` master table — the base every engine reads. Cyclical names
 -- (memory/storage, commodities, shipping, autos) get cycle-rotation
--- logic in LEAPS and cycle-aware interpretation in research; structural
+-- logic in LEAPS and cycle-aware interpretation in research— structural
 -- growers require fundamental deterioration before counter-trend
--- trades. source: 'human' always wins over 'agent'; 'seed' rows are
+-- trades. source: 'human' always wins over 'agent'— 'seed' rows are
 -- the hand-picked commodity-cycle set.
 ALTER TABLE stocks
     ADD COLUMN IF NOT EXISTS cyclical              boolean,

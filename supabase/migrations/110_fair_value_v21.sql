@@ -2,7 +2,7 @@
 -- Extends the append-only fair_value_v2_runs journal with the fields
 -- needed for training/calibration and downstream display:
 --   expected_fair_value — probability-weighted Σ p·scenario FV
---   spot_at_run         — price at run time (provenance for return labels;
+--   spot_at_run         — price at run time (provenance for return labels—
 --                         NOT a valuation input)
 --   quality_flags       — ordering_violation / scenarios_incomplete /
 --                         stale_input_rejected / extreme_gap / no_scenarios

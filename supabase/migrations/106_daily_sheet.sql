@@ -1,5 +1,5 @@
 -- 106_daily_sheet.sql — nightly "best expression per name" journal.
--- Conviction picks the names; this sheet picks the instrument
+-- Conviction picks the names— this sheet picks the instrument
 -- (stock zone / call LEAP / put LEAP / put watch), the armed entry
 -- zone from swing structure, and the priced contract — graded on
 -- zone_hit + ret_5d/20d vs SPY like the other journals.

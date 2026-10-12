@@ -1,6 +1,6 @@
 -- 066: pick_outcomes — forward returns/MFE/MAE per daily_picks row,
 -- plus which level (stop/target) was hit first. The edge board's
--- report card; feed alert_kind_stats-style learning later.
+-- report card— feed alert_kind_stats-style learning later.
 CREATE TABLE IF NOT EXISTS pick_outcomes (
     pick_date DATE NOT NULL,
     lane TEXT NOT NULL,

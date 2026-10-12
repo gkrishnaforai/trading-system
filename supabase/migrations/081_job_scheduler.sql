@@ -1,7 +1,7 @@
 -- Job registry — the AutoSys-style catalog. One row per job the
 -- system knows: what it is, when it should run, what must succeed
 -- first. The dispatcher (support/scheduler.py) reads this every
--- minute; enabled=false means manual-only (current behavior).
+-- minute— enabled=false means manual-only (current behavior).
 --
 -- AutoSys concepts mapped:
 --   cron           schedule expression (5-field, UTC)

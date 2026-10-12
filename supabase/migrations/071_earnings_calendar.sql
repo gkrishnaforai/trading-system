@@ -1,7 +1,7 @@
 -- Earnings calendar: extend the existing stocks.next_earnings_* property
 -- block (date/session/source already exist via earnings_index_service)
 -- with consensus estimates for the upcoming print. History lives in the
--- earnings_data event table; the alert scanner owns earnings alerts.
+-- earnings_data event table— the alert scanner owns earnings alerts.
 
 ALTER TABLE stocks
     ADD COLUMN IF NOT EXISTS next_earnings_eps_est DOUBLE PRECISION,

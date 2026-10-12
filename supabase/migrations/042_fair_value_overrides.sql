@@ -3,7 +3,7 @@
 -- context the model cannot see). Overrides win over engine runs everywhere:
 -- the resolver returns them, and symbol_fair_values projects them.
 --
--- Lifecycle: upsert per symbol; enabled=false or expires_at < now() deactivates
+-- Lifecycle: upsert per symbol— enabled=false or expires_at < now() deactivates
 -- without deleting history. The append-only run history is untouched — engine
 -- runs keep recording what the model would have said during the override.
 CREATE TABLE IF NOT EXISTS fair_value_overrides (

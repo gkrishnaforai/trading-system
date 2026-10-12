@@ -2,7 +2,7 @@
 -- calls with real simulated trades, then writes corrections back.
 --
 -- swing_pilot_trades : every paper trade (version log — never updated
---                      except mark/exit fields; the full lifecycle is
+--                      except mark/exit fields— the full lifecycle is
 --                      auditable: why entered, how it decayed, why out)
 -- engine_weights     : live correction layer the flag engine READS —
 --                      pilot-learn writes, daily_board applies

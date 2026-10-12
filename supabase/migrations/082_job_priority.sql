@@ -1,6 +1,6 @@
 -- Priority ordering + enable the daily cadence.
 -- Lower priority fires first when multiple jobs are due the same
--- minute; depends_on still gates correctness (a job waits for a clean
+-- minute— depends_on still gates correctness (a job waits for a clean
 -- predecessor run regardless of priority).
 ALTER TABLE job_definitions
     ADD COLUMN IF NOT EXISTS priority int NOT NULL DEFAULT 50;
@@ -23,7 +23,7 @@ UPDATE job_definitions SET priority = CASE name
     WHEN 'all'           THEN 90   -- box job, manual default
     ELSE 50 END;
 
--- Enable the daily set. 'all' stays manual (the big red button);
+-- Enable the daily set. 'all' stays manual (the big red button)—
 -- 'custodian' stays on its dedicated loop (a watchdog must not depend
 -- on the scheduler it watches).
 UPDATE job_definitions SET enabled = true, updated_at = now()

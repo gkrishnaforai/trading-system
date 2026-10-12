@@ -8,7 +8,7 @@
 ALTER TABLE screen_runs ADD COLUMN IF NOT EXISTS breadth jsonb;
 
 -- Persist the streak verdict on the snapshot row itself — computed post-save
--- today, so it lives only in the response; storing it makes the stats view
+-- today, so it lives only in the response— storing it makes the stats view
 -- and future diffs possible.
 ALTER TABLE mover_snapshots ADD COLUMN IF NOT EXISTS days_on_list integer;
 ALTER TABLE mover_snapshots ADD COLUMN IF NOT EXISTS accumulation boolean NOT NULL DEFAULT false;

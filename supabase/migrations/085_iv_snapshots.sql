@@ -1,6 +1,6 @@
 -- 085 — daily IV snapshots per screened symbol.
 -- The options screen already computes iv_hv (IV vs realized vol) per
--- contract; this table turns each screen into a stored daily ATM-IV
+-- contract— this table turns each screen into a stored daily ATM-IV
 -- print so a true IV RANK (today's IV percentile vs its own 1y history)
 -- accrues over time. Until history is thick, iv_rank falls back to
 -- the iv_hv ratio flag.

@@ -1,5 +1,5 @@
 -- LEAPS position book — the memory layer for the sequential-convexity
--- strategy. The signal engine (leaps.py) is deliberately stateless;
+-- strategy. The signal engine (leaps.py) is deliberately stateless—
 -- this table carries the state the regime rules need: entry level,
 -- 60d pre-stall high (put invalidation), ladder tiers already fired,
 -- and cooldown after a failed thesis. Human-in-the-loop: rows are

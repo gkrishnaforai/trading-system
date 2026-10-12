@@ -1,5 +1,5 @@
 -- Hidden Gems daily journal — the change column (NEW/↑/↓/REMOVED)
--- diff's today vs yesterday; forward grading joins make the spec's
+-- diff's today vs yesterday— forward grading joins make the spec's
 -- "does EPS acceleration actually predict returns" a testable query.
 CREATE TABLE IF NOT EXISTS hidden_gem_snapshots (
     id         bigserial PRIMARY KEY,

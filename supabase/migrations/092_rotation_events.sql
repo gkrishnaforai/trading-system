@@ -1,7 +1,7 @@
 -- Rotation events — journal each day the flow classifier fires a
 -- theme rotation (A→outflow while B flips rotating_in/inflow), so the
 -- forward edge gets graded per-pair instead of trusted on priors.
--- One row per event; the evaluator fills rel_10/20/40d and hit flags.
+-- One row per event— the evaluator fills rel_10/20/40d and hit flags.
 CREATE TABLE IF NOT EXISTS rotation_events (
     id            bigserial PRIMARY KEY,
     as_of         date NOT NULL,

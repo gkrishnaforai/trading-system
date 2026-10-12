@@ -1,6 +1,6 @@
 -- 129 — planner_books: journaled capital-planner proposals.
 -- The accepted book's positions live as trade_plans rows (thesis
--- carries [book#N]); this table is the provenance record — capital,
+-- carries [book#N])— this table is the provenance record — capital,
 -- target, regime stance, and the full proposal payload for replay.
 CREATE TABLE IF NOT EXISTS planner_books (
     id          serial PRIMARY KEY,

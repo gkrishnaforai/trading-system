@@ -1,6 +1,6 @@
 -- 067: 5x Scout — small-cap multibagger hunter ($1-30B zone).
 -- Separate engine from rule_breakers: RB catches names already
--- accelerating; this finds PLTR-2022 fingerprints — platform GM,
+-- accelerating— this finds PLTR-2022 fingerprints — platform GM,
 -- moderate-but-accelerating rev, hidden fast segment, fortress
 -- balance sheet, beaten-down price — BEFORE the repricing.
 

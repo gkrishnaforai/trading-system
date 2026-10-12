@@ -2,7 +2,7 @@
 -- One row per symbol per day per rules version: which rule matched,
 -- every condition's pass/fail/missing, annotations, gate outcomes,
 -- and the input snapshot. This is the audit + learning substrate —
--- outcomes join later on as_of + horizon; rule changes are judged
+-- outcomes join later on as_of + horizon— rule changes are judged
 -- against journaled evals, never on narrative.
 
 CREATE TABLE IF NOT EXISTS pulse_rule_evals (

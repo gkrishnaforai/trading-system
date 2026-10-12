@@ -1,6 +1,6 @@
 -- market_defensive_snapshots — daily defensive-state assessments, the
 -- bearish twin of market_transition_snapshots. The regime graph writes
--- one row per day (intraday reruns upsert); hysteresis streaks are
+-- one row per day (intraday reruns upsert)— hysteresis streaks are
 -- counted over consecutive as_of_date scores by defensive_store.
 
 CREATE TABLE IF NOT EXISTS market_defensive_snapshots (
@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_defensive_snap_asof
     ON market_defensive_snapshots (as_of DESC);
 
 -- recovery_deployments — journal of staged recovery-capital entries.
--- Capital itself is derived from realized hedge P&L; this table only
+-- Capital itself is derived from realized hedge P&L— this table only
 -- records what the human deployed, per stage.
 CREATE TABLE IF NOT EXISTS recovery_deployments (
     id          bigserial    PRIMARY KEY,

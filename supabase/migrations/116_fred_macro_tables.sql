@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_macro_snapshots_is_month_end
     ON macro_snapshots (is_month_end, as_of_date);
 
 -- scheduled job — before morning-regime so fresh module scores land
--- in the card; monthly FRED releases post ~8:30am ET (12:30 UTC)
+-- in the card— monthly FRED releases post ~8:30am ET (12:30 UTC)
 insert into job_definitions (name, label, purpose, kind, cron, enabled, depends_on, priority)
 values ('fred-macro', 'FRED structural layer',
         'Incremental FRED series (growth/labor/inflation/rates/credit/liquidity/housing/manufacturing) -> module scores -> macro_snapshots',

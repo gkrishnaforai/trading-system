@@ -2,7 +2,7 @@
 -- scores so the signals can be graded against realized tape:
 --   capitulation_score ≥ threshold  → did SPY bounce in 20d?
 --   put candidates flagged          → did those names underperform?
--- One row/day; the evaluator fills realized returns so meta can
+-- One row/day— the evaluator fills realized returns so meta can
 -- calibrate the thresholds instead of trusting the heuristic.
 CREATE TABLE IF NOT EXISTS crash_alpha_snapshots (
     id                bigserial PRIMARY KEY,

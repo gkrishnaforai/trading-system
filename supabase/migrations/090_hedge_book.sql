@@ -1,5 +1,5 @@
 -- Hedge book — the portfolio's insurance program. Index/ETF put
--- spreads journaled with structure + cost; marked daily; the
+-- spreads journaled with structure + cost— marked daily— the
 -- monetization ladder fires alerts as option value realizes.
 -- Advisory only — the human executes, the system remembers.
 CREATE TABLE IF NOT EXISTS hedge_positions (

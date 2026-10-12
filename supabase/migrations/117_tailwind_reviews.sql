@@ -1,7 +1,7 @@
 -- tailwind_reviews — weekly LLM classification of the deterministic
 -- tailwind screen's candidates: what KIND of tailwind is repricing the
 -- name (AI direct/indirect/adopter vs cyclical vs idiosyncratic).
--- Bounded-LLM rule: the screen's flags are the facts; the model only
+-- Bounded-LLM rule: the screen's flags are the facts— the model only
 -- attributes the driver, with rationale journaled for later grading.
 
 CREATE TABLE IF NOT EXISTS tailwind_reviews (

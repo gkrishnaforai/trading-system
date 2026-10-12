@@ -3,9 +3,9 @@
 -- pipeline), LLM-extracts "new revenue channel" claims per symbol,
 -- and journals them here. Tiers promote ONLY on corroboration —
 -- recurrence across independent headlines lifts rumor→announced→
--- shipping→revenue; one headline can never declare 'revenue'.
+-- shipping→revenue— one headline can never declare 'revenue'.
 -- Graded like every journal: when quarterly numbers confirm a
--- channel, status→confirmed; when it dies, →dead.
+-- channel, status→confirmed— when it dies, →dead.
 
 CREATE TABLE IF NOT EXISTS tailwinds (
     id          bigserial PRIMARY KEY,

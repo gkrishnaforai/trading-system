@@ -1,6 +1,6 @@
 -- 128_readiness_evals.sql — daily journal of the use-case readiness
 -- checklists (swing / invest / leap_call / leap_put), board-wide.
--- pulse_rule_evals covers only portfolio+watchlist symbols; this
+-- pulse_rule_evals covers only portfolio+watchlist symbols— this
 -- covers the full universe so transitions ("moved to ready",
 -- "dropped to blocked") are queryable — and, joined to outcomes
 -- later, the training/calibration substrate for the checklists.

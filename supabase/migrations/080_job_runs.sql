@@ -1,5 +1,5 @@
 -- job_runs — durable last-run ledger for the board refresh panel.
--- The in-memory _jobs dict dies with every worker restart; this table
+-- The in-memory _jobs dict dies with every worker restart— this table
 -- makes 'how stale is this layer' survive deploys.
 CREATE TABLE IF NOT EXISTS job_runs (
     id         serial PRIMARY KEY,

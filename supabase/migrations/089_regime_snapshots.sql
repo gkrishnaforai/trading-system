@@ -1,6 +1,6 @@
 -- Regime snapshots — version the board's daily regime read so it can
 -- be graded: forward probabilities, dip character, allocation stance.
--- One row/day; the evaluator fills realized SPY returns at 20/60d and
+-- One row/day— the evaluator fills realized SPY returns at 20/60d and
 -- whether the lead scenario matched reality.
 CREATE TABLE IF NOT EXISTS regime_snapshots (
     id            bigserial PRIMARY KEY,

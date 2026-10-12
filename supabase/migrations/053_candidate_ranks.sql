@@ -1,5 +1,5 @@
 -- Per-symbol ranks per run — normalized history of sector/theme candidate
--- rankings. sector_candidate_runs holds the JSONB blob; this table makes
+-- rankings. sector_candidate_runs holds the JSONB blob— this table makes
 -- rank movement queryable (who's climbing/falling between runs).
 
 CREATE TABLE IF NOT EXISTS candidate_ranks (

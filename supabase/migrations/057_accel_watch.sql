@@ -1,5 +1,5 @@
 -- Acceleration watch — per-run growth streaks for every scored symbol.
--- rev/eps_streak = consecutive quarters where the YoY growth rate improved;
+-- rev/eps_streak = consecutive quarters where the YoY growth rate improved—
 -- *_decel = consecutive declines. Snapshots let the API detect streak
 -- breaks (was >=2, now <2 = thesis dead) across candidate runs.
 

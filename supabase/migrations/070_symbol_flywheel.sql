@@ -3,7 +3,7 @@
 -- engine can join on: business acceleration, beat history, forward-
 -- estimate revisions, coverage thinness, valuation sanity, and the
 -- muted-reaction flag (big beat + small pop = market hasn't repriced).
--- gap_score = composite 0-100; gap_detail carries the components.
+-- gap_score = composite 0-100— gap_detail carries the components.
 
 CREATE TABLE IF NOT EXISTS symbol_flywheel (
     symbol             varchar(10) PRIMARY KEY REFERENCES stocks(symbol),
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS symbol_flywheel (
 );
 
 -- forward-estimate snapshots — revision drift needs history, so every
--- flywheel refresh appends a row; revisions are computed vs ~90d back
+-- flywheel refresh appends a row— revisions are computed vs ~90d back
 CREATE TABLE IF NOT EXISTS symbol_estimate_snapshots (
     id           bigserial,
     symbol       varchar(10) NOT NULL REFERENCES stocks(symbol),

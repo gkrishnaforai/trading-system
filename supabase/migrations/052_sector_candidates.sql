@@ -1,5 +1,5 @@
 -- Sector candidate rankings — latest ranked result stored as a JSONB blob.
--- Survives worker restarts (in-memory _cand_state is lost otherwise; the
+-- Survives worker restarts (in-memory _cand_state is lost otherwise— the
 -- job takes ~25 min cold so losing it on restart is expensive).
 
 CREATE TABLE IF NOT EXISTS sector_candidate_runs (

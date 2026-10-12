@@ -1,6 +1,6 @@
 -- 061: Rule Breakers — milestone-ladder tracking for emerging/confirmed
 -- high-conviction growers. Members carry the qualitative thesis
--- (checklist JSONB); snapshots carry the quantitative proof each
+-- (checklist JSONB)— snapshots carry the quantitative proof each
 -- evaluation run (rev growth, streak, margins, market cap).
 CREATE TABLE IF NOT EXISTS rule_breaker_members (
     symbol TEXT PRIMARY KEY,

@@ -1,5 +1,5 @@
 -- Daily AI-rotation environment score (signals/theme_rotation.py) —
--- permissions directional bear-alpha entries; replayable point-in-time.
+-- permissions directional bear-alpha entries— replayable point-in-time.
 CREATE TABLE IF NOT EXISTS theme_rotation_snapshots (
     as_of   date PRIMARY KEY,
     score   double precision,

@@ -1,5 +1,5 @@
 -- Posture journal + outcome grading. Evals journal each day's
--- trade posture (first write per day per rules_version wins);
+-- trade posture (first write per day per rules_version wins)—
 -- outcomes grade each eval against forward QQQ returns — the
 -- journal IS the backtest.
 CREATE TABLE IF NOT EXISTS posture_evals (

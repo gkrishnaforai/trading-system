@@ -1,5 +1,5 @@
 -- Alert inbox for catalyst-driven swing review triggers
--- Dedup via fingerprint; scan is replayable over a lookback window
+-- Dedup via fingerprint— scan is replayable over a lookback window
 CREATE TABLE IF NOT EXISTS alert_items (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     symbol varchar(32) NOT NULL,

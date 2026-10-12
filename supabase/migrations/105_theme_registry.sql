@@ -1,5 +1,5 @@
 -- Theme registry — the runtime source for Conviction's future-thesis
--- layer. Code FUTURE_THEMES seeds this; the quarterly theme-review job
+-- layer. Code FUTURE_THEMES seeds this— the quarterly theme-review job
 -- re-stages themes on evidence and the LLM discovery path inserts
 -- 'candidate' rows that must earn promotion. Code dict = fallback
 -- when the table is empty or a theme key is missing.

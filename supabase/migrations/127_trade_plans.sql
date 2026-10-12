@@ -4,7 +4,7 @@
 -- stop, and a snapshot of the inputs that produced the suggestion.
 -- Status is computed live by the same YAML rule engine (plan_status
 -- section) — transitions journal into trade_plan_events = the alert
--- feed. The system advises levels and flags transitions; the human
+-- feed. The system advises levels and flags transitions— the human
 -- decides and closes the plan.
 
 CREATE TABLE IF NOT EXISTS trade_plans (
