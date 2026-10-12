@@ -65,8 +65,8 @@ services:
     env_file:
       - .env
     ports:
-      - "8000:8000" # REST API
-      - "50051:50051" # gRPC
+      - "${GO_API_PORT:-8000}:8000" # REST API
+      - "${GO_API_GRPC_PORT:-50051}:50051" # gRPC
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PORT=8000
