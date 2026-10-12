@@ -1,0 +1,6 @@
+{"id":"falling_knife_avoid","description":"Falling knife is a hard safety veto","expected":{"action":"AVOID"}}
+{"id":"no_setup_wait","description":"No qualifying setup is not a buy or avoidable company verdict","expected":{"action":"WAIT"}}
+{"id":"risk_permission_wait","description":"Valid setup blocked by market permissions waits for environment improvement","expected":{"action":"WAIT"}}
+{"id":"high_setup_buy","description":"High setup, complete fundamentals, and passed risk can produce BUY pending approval","expected":{"action":"BUY","requires_approval":true}}
+{"id":"high_setup_incomplete_fundamentals","description":"High setup with incomplete fundamentals is reduced to BUY_SMALL","expected":{"action":"BUY_SMALL","requires_approval":true}}
+{"id":"missing_data_wait","description":"Insufficient technical or risk data waits","expected":{"action":"WAIT"}}

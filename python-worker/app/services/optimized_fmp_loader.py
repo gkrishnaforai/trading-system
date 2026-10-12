@@ -12,10 +12,12 @@ import pandas as pd
 from dataclasses import dataclass
 from enum import Enum
 
+from app.config import settings
 from app.providers.financial_modeling_prep.client import enhanced_fmp_client
 from app.database import db
 from app.observability.logging import get_logger
 from app.utils.cache import CacheManager
+from app.db_storage.fmp_data_storage import FMPDataStorage, CompanyProfile
 
 logger = get_logger("optimized_fmp_loader")
 
@@ -323,20 +325,91 @@ class OptimizedFMPLoader:
             logger.debug(f"🎯 Cache hit for company profile: {symbol}")
             return cached
         
+        symbol = (symbol or "").strip().upper()
+        if not symbol:
+            return {}
+
+        storage = FMPDataStorage()
+
+        # 1) DB-first (fast + persistent)
+        try:
+            ttl_days = int(getattr(settings, "company_profile_refresh_ttl_days", 7) or 7)
+            with storage.session_factory() as session:
+                existing = session.query(CompanyProfile).filter_by(symbol=symbol).first()
+                if existing:
+                    if ttl_days > 0 and getattr(existing, "updated_at", None):
+                        cutoff = datetime.utcnow() - timedelta(days=ttl_days)
+                        if existing.updated_at >= cutoff:
+                            db_profile = storage.get_company_profile(symbol) or {}
+                            if db_profile:
+                                self.cache.set(cache_key, db_profile, ttl=strategy.cache_ttl)
+                            return db_profile
+
+                    # Stale profile is still acceptable if refresh is disabled
+                    if not getattr(settings, "company_profile_refresh_enabled", True):
+                        db_profile = storage.get_company_profile(symbol) or {}
+                        if db_profile:
+                            self.cache.set(cache_key, db_profile, ttl=strategy.cache_ttl)
+                        return db_profile
+        except Exception as e:
+            logger.debug(f"Company profile DB cache check failed for {symbol}: {e}")
+
+        # 2) If refresh is globally disabled, do not call FMP
+        if not getattr(settings, "company_profile_refresh_enabled", True):
+            try:
+                db_profile = storage.get_company_profile(symbol) or {}
+                if db_profile:
+                    self.cache.set(cache_key, db_profile, ttl=strategy.cache_ttl)
+                return db_profile
+            except Exception:
+                return {}
+
+        # 3) Refresh from FMP and persist
         try:
             logger.info(f"🏢 Fetching company profile for: {symbol}")
             profile_data = self.client.get_company_profile(symbol)
-            
+
             if profile_data:
-                # Cache the result
+                try:
+                    record = {
+                        "symbol": profile_data.get("symbol") or symbol,
+                        "company_name": profile_data.get("companyName") or profile_data.get("company_name") or profile_data.get("name") or symbol,
+                        "sector": profile_data.get("sector"),
+                        "industry": profile_data.get("industry"),
+                        "market_cap": profile_data.get("mktCap") or profile_data.get("marketCap"),
+                        "website": profile_data.get("website"),
+                        "description": profile_data.get("description"),
+                        "country": profile_data.get("country"),
+                        "currency": profile_data.get("currency"),
+                        "exchange": profile_data.get("exchange"),
+                        "logo_url": profile_data.get("image"),
+                        "image_url": profile_data.get("image"),
+                        "phone": profile_data.get("phone"),
+                        "address": profile_data.get("address"),
+                        "city": profile_data.get("city"),
+                        "state": profile_data.get("state"),
+                        "zip": profile_data.get("zip"),
+                        "dcf_diff": profile_data.get("dcfDiff"),
+                        "dcf": profile_data.get("dcf"),
+                    }
+                    storage.store_company_profile(record)
+                except Exception as e:
+                    logger.debug(f"Failed to persist company profile for {symbol}: {e}")
+
                 self.cache.set(cache_key, profile_data, ttl=strategy.cache_ttl)
                 return profile_data
-            
+
             return {}
-            
+
         except Exception as e:
             logger.error(f"❌ Error fetching company profile for {symbol}: {e}")
-            return {}
+            try:
+                db_profile = storage.get_company_profile(symbol) or {}
+                if db_profile:
+                    self.cache.set(cache_key, db_profile, ttl=strategy.cache_ttl)
+                return db_profile
+            except Exception:
+                return {}
     
     def get_income_statement(self, symbol: str, period: str = None) -> Dict[str, Any]:
         """Get income statement data (on-demand)"""
@@ -710,7 +783,51 @@ class OptimizedFMPLoader:
             else:
                 logger.info(f"📊 Fetching consensus data for: {symbol}")
             
-            consensus_data = self.client.get_stock_grades_summary(symbol)
+            # FMP consensus-related data is split across endpoints:
+            # - /grades-consensus: rating + buy/hold/sell counts (no price target)
+            # - /price-target-consensus: price target consensus (no rating)
+            grades_consensus = self.client.get_stock_grades_summary(symbol) or []
+            price_target_consensus = self.client.get_price_target_consensus(symbol) or []
+
+            merged: List[Dict[str, Any]] = []
+            g0 = grades_consensus[0] if isinstance(grades_consensus, list) and grades_consensus else {}
+            pt0 = price_target_consensus[0] if isinstance(price_target_consensus, list) and price_target_consensus else {}
+
+            if isinstance(g0, dict) or isinstance(pt0, dict):
+                g0 = g0 if isinstance(g0, dict) else {}
+                pt0 = pt0 if isinstance(pt0, dict) else {}
+
+                try:
+                    analyst_count = int(
+                        (g0.get("strongBuy") or 0)
+                        + (g0.get("buy") or 0)
+                        + (g0.get("hold") or 0)
+                        + (g0.get("sell") or 0)
+                        + (g0.get("strongSell") or 0)
+                    )
+                except Exception:
+                    analyst_count = None
+
+                # Normalize to the canonical keys expected by our consensus_data repository.
+                merged.append(
+                    {
+                        "symbol": symbol,
+                        "consensusDate": datetime.now().date().isoformat(),
+                        "analystCount": analyst_count,
+                        "consensusRating": g0.get("consensus"),
+                        "buyRatings": g0.get("buy"),
+                        "holdRatings": g0.get("hold"),
+                        "sellRatings": g0.get("sell"),
+                        "strongBuy": g0.get("strongBuy"),
+                        "strongSell": g0.get("strongSell"),
+                        "consensusPriceTarget": pt0.get("targetConsensus") or pt0.get("targetMean") or pt0.get("targetMedian"),
+                        "priceTargetHigh": pt0.get("targetHigh"),
+                        "priceTargetLow": pt0.get("targetLow"),
+                        "priceTargetMedian": pt0.get("targetMedian") or pt0.get("medianTarget"),
+                    }
+                )
+
+            consensus_data = merged
             print(f"🔍 DEBUG: Fetched {len(consensus_data) if consensus_data else 0} consensus data records for {symbol}")
             if consensus_data:
                 print(f"🔍 DEBUG: Consensus data sample: {consensus_data[0] if consensus_data else 'None'}")
@@ -818,6 +935,76 @@ class OptimizedFMPLoader:
             for news_type, articles in news_summary.items():
                 if isinstance(articles, list):
                     all_news.extend(articles[:limit//6])  # Distribute limit across types
+
+            # Store in database (best-effort)
+            if all_news:
+                try:
+                    from app.db_storage.repositories import get_database_service
+
+                    def _normalize_article(a: Dict[str, Any]) -> Dict[str, Any]:
+                        title = a.get("title")
+                        text = a.get("text")
+                        if text is None:
+                            text = a.get("content")
+
+                        published = a.get("publishedDate")
+                        if published is None:
+                            published = a.get("date")
+
+                        url = a.get("url")
+                        if url is None:
+                            url = a.get("link")
+
+                        image = a.get("image")
+                        if image is None:
+                            image = a.get("image_url")
+
+                        source = a.get("source")
+                        if source is None:
+                            source = a.get("site")
+                        if source is None:
+                            source = a.get("publisher")
+
+                        symbols = a.get("symbols")
+                        if not symbols:
+                            tickers = a.get("tickers")
+                            if isinstance(tickers, str) and tickers.strip():
+                                parts = [t.strip() for t in tickers.split(",") if t.strip()]
+                                cleaned = []
+                                for p in parts:
+                                    if ":" in p:
+                                        p = p.split(":", 1)[-1]
+                                    if p:
+                                        cleaned.append(p)
+                                symbols = cleaned
+                        if not symbols:
+                            sym = a.get("symbol")
+                            if isinstance(sym, str) and sym.strip():
+                                symbols = [sym.strip()]
+
+                        return {
+                            "id": a.get("id") or a.get("article_id"),
+                            "title": title,
+                            "text": text,
+                            "url": url,
+                            "image": image,
+                            "source": source,
+                            "publishedDate": published,
+                            "symbols": symbols or [],
+                            "sentiment": a.get("sentiment"),
+                            "sentimentScore": a.get("sentimentScore") or a.get("sentiment_score"),
+                        }
+
+                    normalized = [_normalize_article(a) for a in all_news if isinstance(a, dict) and a.get("title")]
+                    db_service = get_database_service()
+                    if db_service.is_available() and normalized:
+                        success = db_service.market_news.store_articles(normalized)
+                        if success:
+                            logger.info(f"✅ Stored {len(normalized)} market news articles in database")
+                    else:
+                        logger.warning("⚠️  Database service not available - skipping market news storage")
+                except Exception as db_error:
+                    logger.warning(f"⚠️  Could not store market news in database: {db_error}")
             
             # Cache the result
             self.cache.set(cache_key, all_news, ttl=strategy.cache_ttl)

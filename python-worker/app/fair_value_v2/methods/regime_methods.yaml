@@ -24,7 +24,17 @@ selections:
       combine: weighted_average
       methods:
         - method_key: pe_technology_dynamic
-          weight: 1.0
+          weight: 0.85
+        - method_key: ev_fcf
+          weight: 0.15
+
+    cyclical:
+      combine: weighted_average
+      methods:
+        - method_key: pe_cyclical
+          weight: 0.7
+        - method_key: pe_forward
+          weight: 0.3
 
     mega_cap_high_growth:
       combine: weighted_average
@@ -54,11 +64,13 @@ selections:
       combine: weighted_average
       methods:
         - method_key: peg_40
-          weight: 0.3
+          weight: 0.25
         - method_key: peg_corrected
-          weight: 0.2
+          weight: 0.15
         - method_key: pe_technology_dynamic
-          weight: 0.5
+          weight: 0.45
+        - method_key: ev_fcf
+          weight: 0.15
 
   fintech:
     standard:
@@ -68,6 +80,13 @@ selections:
           weight: 0.6
         - method_key: pe_growth
           weight: 0.4
+    cyclical:
+      combine: weighted_average
+      methods:
+        - method_key: pe_cyclical
+          weight: 0.7
+        - method_key: pe_forward
+          weight: 0.3
 
     pre_earnings:
       combine: weighted_average
@@ -80,8 +99,16 @@ selections:
       combine: weighted_average
       methods:
         - method_key: pe_technology_dynamic
-          weight: 1.0
-
+          weight: 0.7
+        - method_key: ev_fcf
+          weight: 0.15
+    cyclical:
+      combine: weighted_average
+      methods:
+        - method_key: pe_cyclical
+          weight: 0.7
+        - method_key: pe_forward
+          weight: 0.3
     mega_cap_high_growth:
       combine: weighted_average
       methods:
@@ -110,21 +137,31 @@ selections:
       combine: weighted_average
       methods:
         - method_key: peg_40
-          weight: 0.3
+          weight: 0.25
         - method_key: peg_corrected
-          weight: 0.2
+          weight: 0.15
         - method_key: pe_technology_dynamic
-          weight: 0.5
+          weight: 0.45
+        - method_key: ev_fcf
+          weight: 0.15
 
   value:
     standard:
       combine: weighted_average
       methods:
         - method_key: pe_value
-          weight: 0.6
-        - method_key: pe_basic
           weight: 0.4
-
+        - method_key: pe_basic
+          weight: 0.3
+        - method_key: ev_fcf
+          weight: 0.15
+    cyclical:
+      combine: weighted_average
+      methods:
+        - method_key: pe_cyclical
+          weight: 0.85
+        - method_key: pe_forward
+          weight: 0.15
     pre_earnings:
       combine: weighted_average
       methods:
@@ -136,10 +173,18 @@ selections:
       combine: weighted_average
       methods:
         - method_key: pe_basic
-          weight: 0.5
+          weight: 0.35
         - method_key: pe_value
-          weight: 0.5
-
+          weight: 0.3
+        - method_key: ev_fcf
+          weight: 0.15
+    cyclical:
+      combine: weighted_average
+      methods:
+        - method_key: pe_cyclical
+          weight: 0.85
+        - method_key: pe_forward
+          weight: 0.15
     pre_earnings:
       combine: weighted_average
       methods:
@@ -151,10 +196,16 @@ selections:
       combine: weighted_average
       methods:
         - method_key: pe_growth
-          weight: 0.6
+          weight: 0.55
         - method_key: pe_forward
-          weight: 0.4
-
+          weight: 0.30
+    cyclical:
+      combine: weighted_average
+      methods:
+        - method_key: pe_cyclical
+          weight: 0.7
+        - method_key: pe_forward
+          weight: 0.3
     mega_cap_high_growth:
       combine: weighted_average
       methods:
@@ -183,28 +234,38 @@ selections:
       combine: weighted_average
       methods:
         - method_key: peg_40
-          weight: 0.4
-        - method_key: peg
           weight: 0.3
+        - method_key: peg
+          weight: 0.25
         - method_key: pe_growth
           weight: 0.3
+        - method_key: ev_fcf
+          weight: 0.15
 
+  # cyclicals are ALWAYS valued on normalized EPS — peak TTM earnings
+  # at a compounder multiple is the classic value trap
   cyclical:
     standard:
       combine: weighted_average
       methods:
-        - method_key: pe_basic
-          weight: 0.5
-        - method_key: pe_value
-          weight: 0.5
+        - method_key: pe_cyclical
+          weight: 0.85
+        - method_key: pe_forward
+          weight: 0.15
 
     mega_cap:
       combine: weighted_average
       methods:
-        - method_key: pe_basic
-          weight: 0.5
-        - method_key: pe_value
-          weight: 0.5
+        - method_key: pe_cyclical
+          weight: 0.85
+        - method_key: pe_forward
+          weight: 0.15
+
+    cyclical:
+      combine: weighted_average
+      methods:
+        - method_key: pe_cyclical
+          weight: 1.0
 
     pre_earnings:
       combine: weighted_average

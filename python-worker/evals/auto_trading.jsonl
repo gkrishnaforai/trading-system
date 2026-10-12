@@ -1,0 +1,6 @@
+{"id":"intent_rejects_day_on_daily_graph","description":"Daily swing graph cannot silently authorize day trading","expected":{"allowed":false}}
+{"id":"allocation_applies_capital_and_heat","description":"Allocator applies account size, available cash, position cap, and risk multiplier","expected":{"allowed":true,"shares_positive":true}}
+{"id":"allocation_blocks_nonbuy","description":"WAIT/AVOID decisions cannot receive capital","expected":{"allowed":false}}
+{"id":"order_plan_validates_levels","description":"Order plan contains approved quantity, entry, stop, target, and approval policy","expected":{"side":"BUY","stop_below_entry":true,"target_above_entry":true}}
+{"id":"paper_broker_requires_approval","description":"Paper broker rejects an approval-required order until explicitly approved","expected":{"status":"REJECTED"}}
+{"id":"paper_broker_fills_and_exits","description":"Paper broker fills a limit buy and triggers a target exit","expected":{"buy":"FILLED","exit":"FILLED","cash_positive":true}}

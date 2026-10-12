@@ -124,6 +124,39 @@ class StocksRepository:
         """
         return db.execute_query(query)
 
+    @staticmethod
+    def get_peers_by_sector_industry(
+        symbol: str,
+        sector: Optional[str],
+        industry: Optional[str],
+        limit: int = 25,
+    ) -> List[Dict[str, Any]]:
+        symbol = (symbol or "").strip().upper()
+        if not symbol:
+            return []
+
+        clauses = ["is_active = TRUE", "symbol <> %s"]
+        params: List[Any] = [symbol]
+
+        if industry:
+            clauses.append("industry = %s")
+            params.append(industry)
+        elif sector:
+            clauses.append("sector = %s")
+            params.append(sector)
+        else:
+            return []
+
+        params.append(int(limit))
+        query = f"""
+        SELECT symbol, sector, industry, market_cap
+        FROM stocks
+        WHERE {' AND '.join(clauses)}
+        ORDER BY market_cap DESC NULLS LAST
+        LIMIT %s
+        """
+        return db.execute_query(query, tuple(params))
+
 class MissingSymbolsRepository:
     """Repository for managing missing symbols queue."""
     

@@ -1,0 +1,6 @@
+{"id":"no_setup_blocked","description":"No setup cannot pass risk even when a price exists","expected":{"status":"blocked","allowed":false}}
+{"id":"falling_knife_blocked","description":"Falling knife is rejected before sizing","expected":{"status":"blocked","allowed":false}}
+{"id":"missing_account","description":"Valid setup without account equity cannot produce shares","expected":{"status":"insufficient_data","allowed":false}}
+{"id":"fixed_fractional_sizing","description":"Valid setup uses risk per trade, stop distance, position cap, and market multiplier","expected":{"status":"allowed_or_reduced","allowed":true,"position_size_positive":true}}
+{"id":"portfolio_heat_block","description":"Adding risk beyond portfolio heat is blocked","expected":{"status":"blocked","allowed":false}}
+{"id":"max_trades_block","description":"Maximum open trades blocks a new opportunity","expected":{"status":"blocked","allowed":false}}

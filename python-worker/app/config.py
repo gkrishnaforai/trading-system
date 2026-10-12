@@ -113,6 +113,31 @@ class Settings(BaseSettings):
         description="If true and symbol_validation_source='db' fails, fallback to FMP profile validation (bandwidth heavy).",
     )
 
+    company_profile_refresh_ttl_days: int = Field(
+        default=7,
+        description="Minimum age (days) before re-fetching /profile for a symbol when a cached profile exists in DB.",
+    )
+
+    company_profile_refresh_enabled: bool = Field(
+        default=True,
+        description="If false, skip company profile refresh entirely (prevents /profile calls from refresh manager).",
+    )
+
+    industry_peers_refresh_enabled: bool = Field(
+        default=False,
+        description="If true, refresh industry peers data; if false, skip peers refresh to save bandwidth.",
+    )
+
+    fundamentals_refresh_ttl_days: int = Field(
+        default=7,
+        description="Minimum age (days) before re-fetching fundamentals for a symbol when a cached snapshot exists.",
+    )
+
+    indicators_refresh_ttl_days: int = Field(
+        default=1,
+        description="Minimum age (days) before re-calculating/re-fetching daily indicators for a symbol.",
+    )
+
 
 settings = Settings()
 

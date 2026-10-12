@@ -632,7 +632,7 @@ class SwingTrendStrategy(BaseSwingStrategy):
 
 #### 3.1 Swing Risk Manager
 
-**File**: `python-worker/app/services/swing_risk_manager.py`
+**File**: `python-worker/app/risk/engine.py`
 
 ```python
 """
@@ -645,7 +645,7 @@ from datetime import datetime, timedelta
 from app.services.base import BaseService
 from app.database import db
 
-class SwingRiskManager(BaseService):
+class RiskEngine(BaseService):
     """Risk management for swing trading"""
     
     def __init__(self):

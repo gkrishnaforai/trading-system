@@ -21,6 +21,20 @@ rules:
         - field: operating_margin_ttm
           lte: 0
 
+  # profitable but the street forecasts a deep EPS decline — TTM
+  # earnings are peak/cycle and deserve a normalized base, not a
+  # zero-growth-floored multiple (FRO: -31% fwd growth clamped to 0
+  # produced a phantom +76% upside). Placed after pre_earnings (loss
+  # makers) and bank (P/B), before the growth regimes — a decliner
+  # can't satisfy gte:+25 anyway.
+  - name: cyclical
+    when:
+      all:
+        - field: eps_ttm
+          gte: 0.25
+        - field: forward_growth_pct_1y
+          lte: -15
+
   - name: mega_cap_high_growth
     when:
       all:

@@ -1,0 +1,6 @@
+{"id":"strong_pullback","description":"Stock remains in an uptrend, pulls toward EMA20, and retains benchmark/sector relative strength","expected":{"setup":"pullback_or_trend_continuation","falling_knife":false,"data_sufficient":true}}
+{"id":"volume_breakout","description":"Stock near recent high with expanding volume and positive relative strength","expected":{"setup":"breakout","falling_knife":false,"data_sufficient":true}}
+{"id":"falling_knife","description":"Stock below SMA50/SMA200 with material negative return and no higher low","expected":{"setup":"no_setup","falling_knife":true,"quality":"low"}}
+{"id":"breakout_blocked","description":"Valid technical breakout is blocked when market permissions prohibit breakouts","expected":{"setup":"not_breakout","data_sufficient":true}}
+{"id":"missing_sector","description":"Missing sector ETF data preserves stock analysis but lowers confidence and records provenance","expected":{"sector_alignment":"unknown","data_sufficient":true}}
+{"id":"insufficient_history","description":"Insufficient daily history cannot produce an actionable opportunity","expected":{"quality":"unavailable","next_step":"UNAVAILABLE"}}

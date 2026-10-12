@@ -34,7 +34,9 @@ Internal breadth proxy:
 
 ## Layered Model (Current)
 
-### Layer 1: Market Regime Detection (MarketContextService)
+### Layer 1: Market Regime Detection (canonical `app.market_regime`)
+
+This document describes the legacy signal-engine consumer. Market-regime detection is no longer implemented here; consumers receive a compatibility context delegated to `app.market_regime`.
 Inputs (from `macro_market_data`):
 - NASDAQ proxy trend: close vs SMA50/SMA200
 - VIX

@@ -114,12 +114,45 @@ func (r *PortfolioRepository) GetByUserID(userID string) ([]models.Portfolio, er
 	return portfolios, nil
 }
 
+// holdingsSelect is the shared holdings projection: position columns joined to
+// the symbol's latest fair-value run via the symbol_fair_values view.
+// fair_value_v2_runs stays the source of truth; the view is read-only.
+const holdingsSelect = `
+	SELECT pp.id, pp.portfolio_id, pp.stock_id, s.symbol, pp.quantity, pp.avg_price,
+	       pp.opened_at, pp.created_at, pp.updated_at,
+	       fv.fair_value, fv.regime, fv.as_of,
+	       CAST(fv.scenario_fair_values->>'bear' AS double precision),
+	       CAST(fv.scenario_fair_values->>'bull' AS double precision)
+	FROM portfolio_positions pp
+	JOIN stocks s ON s.id = pp.stock_id
+	LEFT JOIN symbol_fair_values fv ON fv.symbol = s.symbol
+`
+
+func scanHolding(row interface{ Scan(...interface{}) error }) (*models.PortfolioPosition, error) {
+	var h models.PortfolioPosition
+	if err := row.Scan(
+		&h.ID,
+		&h.PortfolioID,
+		&h.StockID,
+		&h.Symbol,
+		&h.Quantity,
+		&h.AvgPrice,
+		&h.OpenedAt,
+		&h.CreatedAt,
+		&h.UpdatedAt,
+		&h.FairValue,
+		&h.FairValueRegime,
+		&h.FairValueAsOf,
+		&h.FairValueBear,
+		&h.FairValueBull,
+	); err != nil {
+		return nil, err
+	}
+	return &h, nil
+}
+
 func (r *PortfolioRepository) GetHoldings(portfolioID string) ([]models.PortfolioPosition, error) {
-	query := `
-		SELECT pp.id, pp.portfolio_id, pp.stock_id, s.symbol, pp.quantity, pp.avg_price,
-		       pp.opened_at, pp.created_at, pp.updated_at
-		FROM portfolio_positions pp
-		JOIN stocks s ON s.id = pp.stock_id
+	query := holdingsSelect + `
 		WHERE pp.portfolio_id = $1
 		ORDER BY pp.created_at DESC
 	`
@@ -132,21 +165,11 @@ func (r *PortfolioRepository) GetHoldings(portfolioID string) ([]models.Portfoli
 
 	var holdings []models.PortfolioPosition
 	for rows.Next() {
-		var h models.PortfolioPosition
-		if err := rows.Scan(
-			&h.ID,
-			&h.PortfolioID,
-			&h.StockID,
-			&h.Symbol,
-			&h.Quantity,
-			&h.AvgPrice,
-			&h.OpenedAt,
-			&h.CreatedAt,
-			&h.UpdatedAt,
-		); err != nil {
+		h, err := scanHolding(rows)
+		if err != nil {
 			return nil, fmt.Errorf("failed to scan holding: %w", err)
 		}
-		holdings = append(holdings, h)
+		holdings = append(holdings, *h)
 	}
 
 	return holdings, nil
@@ -312,26 +335,11 @@ func (r *PortfolioRepository) DeleteHolding(holdingID string) error {
 
 // GetHoldingByID gets a holding by its ID
 func (r *PortfolioRepository) GetHoldingByID(holdingID string) (*models.PortfolioPosition, error) {
-	query := `
-		SELECT pp.id, pp.portfolio_id, pp.stock_id, s.symbol, pp.quantity, pp.avg_price,
-		       pp.opened_at, pp.created_at, pp.updated_at
-		FROM portfolio_positions pp
-		JOIN stocks s ON s.id = pp.stock_id
+	query := holdingsSelect + `
 		WHERE pp.id = $1
 	`
 
-	var holding models.PortfolioPosition
-	err := r.db.QueryRow(query, holdingID).Scan(
-		&holding.ID,
-		&holding.PortfolioID,
-		&holding.StockID,
-		&holding.Symbol,
-		&holding.Quantity,
-		&holding.AvgPrice,
-		&holding.OpenedAt,
-		&holding.CreatedAt,
-		&holding.UpdatedAt,
-	)
+	holding, err := scanHolding(r.db.QueryRow(query, holdingID))
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("holding not found")
@@ -339,5 +347,5 @@ func (r *PortfolioRepository) GetHoldingByID(holdingID string) (*models.Portfoli
 		return nil, fmt.Errorf("failed to get holding: %w", err)
 	}
 
-	return &holding, nil
+	return holding, nil
 }

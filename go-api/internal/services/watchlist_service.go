@@ -12,17 +12,20 @@ type WatchlistService struct {
 	watchlistRepo *repositories.WatchlistRepository
 	portfolioRepo *repositories.PortfolioRepository
 	cache         *CacheService
+	jobQueue      *RedisStreamJobQueue
 }
 
 func NewWatchlistService(
 	watchlistRepo *repositories.WatchlistRepository,
 	portfolioRepo *repositories.PortfolioRepository,
 	cache *CacheService,
+	jobQueue *RedisStreamJobQueue,
 ) *WatchlistService {
 	return &WatchlistService{
 		watchlistRepo: watchlistRepo,
 		portfolioRepo: portfolioRepo,
 		cache:         cache,
+		jobQueue:      jobQueue,
 	}
 }
 
@@ -269,6 +272,8 @@ func (s *WatchlistService) MoveToPortfolio(
 		s.cache.Delete(fmt.Sprintf("portfolio:%s:%s", portfolio.UserID, request.PortfolioID))
 		s.cache.Delete(fmt.Sprintf("portfolios:%s", portfolio.UserID))
 	}
+
+	EnqueueFairValueWarmup(s.jobQueue, request.PortfolioID, item.Symbol)
 
 	// Get watchlist to invalidate user's watchlist list cache
 	watchlist, err := s.watchlistRepo.GetByID(watchlistID)

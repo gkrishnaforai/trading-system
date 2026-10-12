@@ -6,11 +6,12 @@ Handles FMP-specific data fetching and normalization
 import asyncio
 import logging
 from typing import Dict, Any, List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from app.config import settings
 from app.providers.financial_modeling_prep.client import get_fmp_client
 from app.repositories.stocks_repository import StocksRepository
+from app.db_storage.fmp_data_storage import FMPDataStorage, CompanyProfile
 from app.services.data_sources.base import (
     BaseDataSource, DataSourceType, StockGrade, ConsensusData,
     DataSourceError, DataSourceUnavailableError, DataSourceRateLimitError
@@ -295,8 +296,24 @@ class FMPDataSource(BaseDataSource):
         try:
             logger.info(f"📊 Fetching fundamentals for {symbol}")
             
-            # Get company profile as fundamentals
-            profile = self.client.get_company_profile(symbol)
+            profile: Optional[Dict[str, Any]] = None
+
+            try:
+                ttl_days = int(getattr(settings, "company_profile_refresh_ttl_days", 7) or 7)
+                storage = FMPDataStorage()
+                with storage.session_factory() as session:
+                    existing = session.query(CompanyProfile).filter_by(symbol=symbol.upper()).first()
+                    if existing and getattr(existing, "updated_at", None) and ttl_days > 0:
+                        cutoff = datetime.utcnow() - timedelta(days=ttl_days)
+                        if existing.updated_at >= cutoff:
+                            profile = storage.get_company_profile(symbol.upper())
+                    elif existing:
+                        profile = storage.get_company_profile(symbol.upper())
+            except Exception:
+                profile = None
+
+            if not profile:
+                profile = self.client.get_company_profile(symbol)
             if not profile:
                 return None
             
@@ -405,23 +422,35 @@ class FMPDataSource(BaseDataSource):
         """Fetch industry peers for refresh manager"""
         try:
             logger.info(f"📊 Fetching industry peers for {symbol}")
-            
-            # Get company profile first to get sector/industry
-            profile = self.client.get_company_profile(symbol)
-            if not profile:
+
+            stock = StocksRepository.get_stock(symbol)
+            if not stock:
                 return []
-            
-            sector = profile.get("sector")
-            industry = profile.get("industry")
-            
-            if not sector and not industry:
-                return []
-            
-            # Get companies in the same sector/industry
-            # Note: FMP doesn't have a direct peers endpoint, so we'll use a simple approach
-            # For now, return empty list - this would need a more sophisticated implementation
-            logger.warning(f"Industry peers not fully implemented for {symbol} (sector: {sector}, industry: {industry})")
-            return []
+
+            sector = stock.get("sector")
+            industry = stock.get("industry")
+
+            peers = StocksRepository.get_peers_by_sector_industry(
+                symbol=symbol,
+                sector=sector,
+                industry=industry,
+                limit=25,
+            )
+
+            results: List[Dict[str, Any]] = []
+            for row in peers or []:
+                peer_symbol = row.get("symbol") if isinstance(row, dict) else None
+                if not peer_symbol:
+                    continue
+                results.append(
+                    {
+                        "symbol": peer_symbol,
+                        "sector": row.get("sector") if isinstance(row, dict) else sector,
+                        "industry": row.get("industry") if isinstance(row, dict) else industry,
+                    }
+                )
+
+            return results
             
         except Exception as e:
             logger.error(f"❌ Error fetching industry peers for {symbol}: {e}")

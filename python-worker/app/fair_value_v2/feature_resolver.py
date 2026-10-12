@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
+from app.fair_value_v2 import currency as fv_ccy
 from app.fair_value_v2.feature_store.postgres_point_in_time import PostgresPointInTimeFeatureStore
 
 
@@ -23,6 +24,47 @@ class FeatureResolver:
 
         self._allow_table_columns = (self._cfg or {}).get("allow_table_columns") or {}
         self._allow_macro_columns = (self._cfg or {}).get("allow_macro_columns") or {}
+        self._sym_currency_cache: Dict[str, Optional[str]] = {}
+
+    def _symbol_reported_currency(self, symbol: str, as_of_ts: datetime) -> Optional[str]:
+        """The currency the symbol's financial statements are reported
+        in (TSM → TWD). Read once from the fmp_fundamentals snapshot;
+        used to normalize unmarked money fields (key_metrics_ttm
+        marketCap etc.) and statement rows alike."""
+        cached = self._sym_currency_cache.get(symbol)
+        if cached is not None:
+            return cached or None
+        ccy = None
+        try:
+            payload, _ts = self._store.get_snapshot_payload(
+                symbol, as_of_ts, source="fmp_fundamentals")
+            if isinstance(payload, dict):
+                queue = [payload]
+                while queue and ccy is None:
+                    cur = queue.pop()
+                    if isinstance(cur, dict):
+                        rc = cur.get("reportedCurrency")
+                        if rc:
+                            ccy = str(rc).upper()
+                            break
+                        queue.extend(v for v in cur.values()
+                                     if isinstance(v, (dict, list)))
+                    elif isinstance(cur, list):
+                        queue.extend(v for v in cur[:3]
+                                     if isinstance(v, (dict, list)))
+        except Exception:
+            ccy = None
+        self._sym_currency_cache[symbol] = ccy or ""
+        return ccy
+
+    @staticmethod
+    def _row_currency(row: Any) -> Optional[str]:
+        """Declared currency of a payload row — reportedCurrency on
+        statement rows, currency on profile rows."""
+        if not isinstance(row, dict):
+            return None
+        c = row.get("reportedCurrency") or row.get("currency")
+        return str(c).upper() if c else None
 
     def resolve_scalars(self, symbol: str, as_of_ts: datetime, required_scalars: Any) -> Tuple[Dict[str, Any], Dict[str, str], Dict[str, Any]]:
         required = list(required_scalars or [])
@@ -48,24 +90,54 @@ class FeatureResolver:
 
         return scalars, sources, quality
 
+    @staticmethod
+    def _stale(d: Dict[str, Any], q: Dict[str, Any],
+               as_of_ts: datetime) -> bool:
+        """Reject a resolved source whose data is older than
+        `max_age_days` relative to as_of. A 6-month-old key-metrics
+        snapshot must not outrank a fresh fundamentals snapshot just
+        because it sits first in the coalesce list."""
+        max_age = d.get("max_age_days")
+        if not max_age:
+            return False
+        raw_ts = q.get("generated_at") or q.get("timestamp")
+        if not raw_ts:
+            return False
+        try:
+            ts = datetime.fromisoformat(str(raw_ts))
+        except Exception:
+            return False
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age = (as_of_ts - ts).days
+        if age > float(max_age):
+            q["stale_rejected"] = True
+            q["age_days"] = age
+            return True
+        return False
+
     def _resolve_one(self, symbol: str, as_of_ts: datetime, name: str, d: Dict[str, Any]) -> Tuple[Any, Optional[str], Dict[str, Any]]:
         t = (d or {}).get("type")
         if t == "feature_ref":
             return self._resolve_feature_ref(symbol, as_of_ts, d)
         if t == "snapshot_json":
-            return self._resolve_snapshot_json(symbol, as_of_ts, d)
-        if t == "snapshot_json_path":
-            return self._resolve_snapshot_json_path(symbol, as_of_ts, d)
-        if t == "table_column":
-            return self._resolve_table_column(symbol, as_of_ts, d)
-        if t == "macro_column":
-            return self._resolve_macro_column(as_of_ts, d)
-        if t == "derived":
+            v, s, q = self._resolve_snapshot_json(symbol, as_of_ts, d)
+        elif t == "snapshot_json_path":
+            v, s, q = self._resolve_snapshot_json_path(symbol, as_of_ts, d)
+        elif t == "table_column":
+            v, s, q = self._resolve_table_column(symbol, as_of_ts, d)
+        elif t == "macro_column":
+            v, s, q = self._resolve_macro_column(as_of_ts, d)
+        elif t == "derived":
             return self._resolve_derived(symbol, as_of_ts, d)
-        if t == "coalesce":
+        elif t == "coalesce":
             return self._resolve_coalesce(symbol, as_of_ts, d)
+        else:
+            return None, None, {"unsupported_type": t}
 
-        return None, None, {"unsupported_type": t}
+        if v is not None and self._stale(d, q, as_of_ts):
+            return None, None, q
+        return v, s, q
 
     def _resolve_feature_ref(self, symbol: str, as_of_ts: datetime, d: Dict[str, Any]) -> Tuple[Any, Optional[str], Dict[str, Any]]:
         ref = str((d or {}).get("name") or "")
@@ -151,6 +223,22 @@ class FeatureResolver:
             q["parse_error"] = True
             v = None
 
+        # Foreign-lister normalization: statement/key-metric rows carry
+        # reportedCurrency (e.g. TWD for TSM); scale money fields to USD.
+        # Rows without a marker fall back to the symbol's reported
+        # currency for known money keys (key_metrics_ttm marketCap).
+        if v is not None:
+            row_ccy = self._row_currency(root_obj)
+            if row_ccy:
+                v, fx_note = fv_ccy.scale(key_used, v, row_ccy, as_of=as_of_ts)
+            else:
+                v, fx_note = fv_ccy.scale(
+                    key_used, v,
+                    self._symbol_reported_currency(symbol, as_of_ts),
+                    require_known=True, as_of=as_of_ts)
+            if fx_note:
+                q["fx"] = fx_note
+
         src = None
         if key_used:
             src = f"stock_insights_snapshots.{source}.payload.{json_root}.{key_used}" if json_root else f"stock_insights_snapshots.{source}.payload.{key_used}"
@@ -171,12 +259,16 @@ class FeatureResolver:
             return None, None, q
 
         cur: Any = metrics
+        enc_cur: Optional[str] = None   # nearest enclosing row's reportedCurrency
         try:
             if not isinstance(path, list) or not path:
                 q["invalid_path"] = True
                 return None, None, q
 
             for seg in path:
+                row_ccy = self._row_currency(cur)
+                if row_ccy:
+                    enc_cur = row_ccy
                 if isinstance(seg, int):
                     if isinstance(cur, list) and 0 <= seg < len(cur):
                         cur = cur[seg]
@@ -197,6 +289,22 @@ class FeatureResolver:
             except Exception:
                 q["parse_error"] = True
                 v = None
+
+            # Foreign-lister normalization: leaf lives under a row whose
+            # reportedCurrency is non-USD → scale money fields to USD.
+            # No marker → symbol-level reported currency for known
+            # money keys only.
+            if v is not None:
+                leaf_key = path[-1] if path and not isinstance(path[-1], int) else None
+                if enc_cur:
+                    v, fx_note = fv_ccy.scale(leaf_key, v, enc_cur, as_of=as_of_ts)
+                else:
+                    v, fx_note = fv_ccy.scale(
+                        leaf_key, v,
+                        self._symbol_reported_currency(symbol, as_of_ts),
+                        require_known=True, as_of=as_of_ts)
+                if fx_note:
+                    q["fx"] = fx_note
 
             # Build a deterministic source string.
             src_path = ".".join([str(p) for p in path])
@@ -235,7 +343,7 @@ class FeatureResolver:
         if order_by != as_of:
             return None, None, {"rejected": True, "reason": "order_by_must_equal_as_of", "order_by": order_by, "as_of": as_of}
 
-        v, ts = self._store.get_table_scalar(
+        v, ts, row_ccy = self._store.get_table_scalar(
             symbol=symbol,
             as_of_ts=as_of_ts,
             table=table,
@@ -251,6 +359,12 @@ class FeatureResolver:
             "as_of_column": as_of,
             "timestamp": str(ts) if ts is not None else None,
         }
+        if row_ccy:
+            q["row_currency"] = row_ccy
+        if v is not None:
+            v, fx_note = fv_ccy.scale(column, v, row_ccy, as_of=as_of_ts)
+            if fx_note:
+                q["fx"] = fx_note
         if where and isinstance(where, dict):
             q["where"] = dict(where)
 
@@ -260,7 +374,13 @@ class FeatureResolver:
     def _resolve_coalesce(self, symbol: str, as_of_ts: datetime, d: Dict[str, Any]) -> Tuple[Any, Optional[str], Dict[str, Any]]:
         q: Dict[str, Any] = {}
         parts = d.get("sources") or []
+        feat_max_age = d.get("max_age_days")
         for i, part in enumerate(parts):
+            # feature-level max_age_days applies to every source that
+            # doesn't set its own bound
+            if feat_max_age and isinstance(part, dict) \
+                    and "max_age_days" not in part:
+                part = {**part, "max_age_days": feat_max_age}
             v, src, qq = self._resolve_one(symbol, as_of_ts, f"coalesce[{i}]", part)
             q[f"part_{i}.value"] = v
             if qq:

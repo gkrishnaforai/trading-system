@@ -47,9 +47,12 @@ class BaseRepository:
         from app.utils.json_sanitize import sanitize_json_value
 
         try:
-            from psycopg2.extras import Json as PsycopgJson  # type: ignore
+            from psycopg.types.json import Jsonb as PsycopgJson  # psycopg3
         except Exception:  # pragma: no cover
-            PsycopgJson = None  # type: ignore
+            try:
+                from psycopg2.extras import Json as PsycopgJson  # type: ignore
+            except Exception:
+                PsycopgJson = None  # type: ignore
 
         try:
             import numpy as np  # type: ignore

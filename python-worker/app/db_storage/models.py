@@ -267,3 +267,37 @@ class ConsensusData(Base):
     __table_args__ = (
         Index('idx_consensus_data_date', 'consensus_date'),
     )
+
+
+class MacroSeriesPoint(Base):
+    __tablename__ = "macro_series_points"
+
+    series_id = Column(Text, primary_key=True)
+    observation_date = Column(Date, primary_key=True)
+    value = Column(Numeric)
+    source = Column(Text, default="fred")
+    retrieved_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_macro_series_points_series_date", "series_id", "observation_date"),
+    )
+
+
+class MacroSnapshot(Base):
+    __tablename__ = "macro_snapshots"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    as_of_date = Column(Date, nullable=False, unique=True)
+    module_scores = Column(JSONB, default='{}')
+    overall_score = Column(Numeric)
+    regime_probs = Column(JSONB, default='{}')
+    portfolio_alloc = Column(JSONB, default='{}')
+    signals = Column(JSONB, default='{}')
+    inputs_used = Column(JSONB, default='{}')
+    is_month_end = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_macro_snapshots_as_of_date", "as_of_date"),
+        Index("idx_macro_snapshots_is_month_end", "is_month_end", "as_of_date"),
+    )

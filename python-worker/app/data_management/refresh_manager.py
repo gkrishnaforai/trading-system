@@ -618,6 +618,22 @@ class DataRefreshManager(BaseService):
                         try:
                             from app.services.indicator_service import IndicatorService
                             indicator_service = IndicatorService()
+
+                            try:
+                                from app.config import settings
+                                ttl_days = int(getattr(settings, "indicators_refresh_ttl_days", 1) or 1)
+                                if ttl_days > 0:
+                                    last = self._get_last_refresh(symbol, DataType.INDICATORS)
+                                    if last and (datetime.utcnow() - last).total_seconds() < ttl_days * 86400:
+                                        return DataTypeRefreshResult(
+                                            data_type=data_type.value,
+                                            status=RefreshStatus.SUCCESS,
+                                            message=f"Successfully fetched {rows} rows of historical price data",
+                                            rows_affected=rows,
+                                            timestamp=start_time,
+                                        )
+                            except Exception:
+                                pass
                             
                             # Always try FMP technical indicators API first for indicators
                             # This ensures we use professional-grade indicators from FMP
@@ -672,22 +688,53 @@ class DataRefreshManager(BaseService):
                     timestamp=start_time,
                 )
             elif data_type == DataType.COMPANY_PROFILE:
-                success = self._refresh_company_profile(symbol)
+                try:
+                    from app.config import settings
+
+                    if not getattr(settings, "company_profile_refresh_enabled", True):
+                        return DataTypeRefreshResult(
+                            data_type=data_type.value,
+                            status=RefreshStatus.SKIPPED,
+                            message="Company profile refresh disabled",
+                            rows_affected=0,
+                            timestamp=start_time,
+                        )
+                except Exception:
+                    pass
+
+                success = self._refresh_company_profile(symbol, force=force)
                 return DataTypeRefreshResult(
                     data_type=data_type.value,
                     status=RefreshStatus.SUCCESS if success else RefreshStatus.FAILED,
                     message="Company profile updated" if success else "Failed to fetch company profile",
-                    error=None if success else "No company profile data available",
+                    error=None if success else "No profile data available",
                     timestamp=start_time,
                 )
             elif data_type == DataType.FUNDAMENTALS:
+                try:
+                    from app.config import settings
+
+                    ttl_days = int(getattr(settings, "fundamentals_refresh_ttl_days", 7) or 7)
+                    if (not force) and ttl_days > 0:
+                        last = self._get_last_refresh(symbol, DataType.FUNDAMENTALS)
+                        if last and (datetime.utcnow() - last).total_seconds() < ttl_days * 86400:
+                            return DataTypeRefreshResult(
+                                data_type=data_type.value,
+                                status=RefreshStatus.SKIPPED,
+                                message="Fundamentals are fresh (TTL)",
+                                rows_affected=0,
+                                timestamp=start_time,
+                            )
+                except Exception:
+                    pass
+
                 success = self._refresh_fundamentals(symbol)
                 return DataTypeRefreshResult(
                     data_type=data_type.value,
                     status=RefreshStatus.SUCCESS if success else RefreshStatus.FAILED,
                     message="Fundamentals updated" if success else "Failed to fetch fundamentals",
                     error=None if success else "No fundamental data available",
-                    timestamp=start_time
+                    timestamp=start_time,
                 )
             elif data_type == DataType.NEWS:
                 rows = self._refresh_news(symbol)
@@ -727,13 +774,27 @@ class DataRefreshManager(BaseService):
                     timestamp=start_time
                 )
             elif data_type == DataType.INDUSTRY_PEERS:
+                try:
+                    from app.config import settings
+
+                    if not getattr(settings, "industry_peers_refresh_enabled", False):
+                        return DataTypeRefreshResult(
+                            data_type=data_type.value,
+                            status=RefreshStatus.SKIPPED,
+                            message="Industry peers refresh disabled",
+                            rows_affected=0,
+                            timestamp=start_time,
+                        )
+                except Exception:
+                    pass
+
                 success = self._refresh_industry_peers(symbol)
                 return DataTypeRefreshResult(
                     data_type=data_type.value,
                     status=RefreshStatus.SUCCESS if success else RefreshStatus.FAILED,
                     message="Industry peers updated" if success else "Failed to fetch industry peers",
                     error=None if success else "No industry/peer data available",
-                    timestamp=start_time
+                    timestamp=start_time,
                 )
             elif data_type == DataType.CORPORATE_ACTIONS:
                 rows = self._refresh_corporate_actions(symbol)
@@ -757,6 +818,23 @@ class DataRefreshManager(BaseService):
             elif data_type == DataType.INDICATORS:
                 from app.services.indicator_service import IndicatorService
                 from app.utils.database_helper import DatabaseQueryHelper
+
+                try:
+                    from app.config import settings
+
+                    ttl_days = int(getattr(settings, "indicators_refresh_ttl_days", 1) or 1)
+                    if ttl_days > 0:
+                        last = self._get_last_refresh(symbol, DataType.INDICATORS)
+                        if last and (datetime.utcnow() - last).total_seconds() < ttl_days * 86400:
+                            return DataTypeRefreshResult(
+                                data_type=data_type.value,
+                                status=RefreshStatus.SKIPPED,
+                                message="Indicators are fresh (TTL)",
+                                rows_affected=0,
+                                timestamp=start_time,
+                            )
+                except Exception:
+                    pass
                 
                 # Check if market data exists before calculating indicators
                 market_data = DatabaseQueryHelper.get_historical_data(symbol)
@@ -1826,9 +1904,42 @@ class DataRefreshManager(BaseService):
             self.logger.error(f"Error refreshing fundamentals for {symbol}: {e}")
             raise
 
-    def _refresh_company_profile(self, symbol: str) -> bool:
+    def _refresh_company_profile(self, symbol: str, *, force: bool = False) -> bool:
         try:
+            symbol = (symbol or "").strip().upper()
+            if not symbol:
+                return False
+
             self.logger.info(f"Refreshing company profile for {symbol}")
+
+            try:
+                from app.config import settings
+
+                if not getattr(settings, "company_profile_refresh_enabled", True):
+                    return True
+            except Exception:
+                pass
+
+            try:
+                from app.config import settings
+                from app.db_storage.fmp_data_storage import FMPDataStorage, CompanyProfile
+                from datetime import datetime, timedelta
+
+                ttl_days = int(getattr(settings, "company_profile_refresh_ttl_days", 7) or 7)
+                if (not force) and ttl_days > 0:
+                    storage = FMPDataStorage()
+                    with storage.session_factory() as session:
+                        existing = (
+                            session.query(CompanyProfile)
+                            .filter_by(symbol=symbol)
+                            .first()
+                        )
+                        if existing and getattr(existing, "updated_at", None):
+                            cutoff = datetime.utcnow() - timedelta(days=ttl_days)
+                            if existing.updated_at >= cutoff:
+                                return True
+            except Exception as e:
+                self.logger.debug(f"Company profile TTL check skipped for {symbol}: {e}")
 
             profile = None
             try:

@@ -350,6 +350,31 @@ func (h *AdminProxyHandler) RefreshEarningsForDate(c *gin.Context) {
 	h.proxy(c, http.MethodPost, "/admin/earnings-calendar/refresh-for-date")
 }
 
+// POST /api/v1/admin/factor-engine/risk -> python-worker POST /admin/factor-engine/risk
+func (h *AdminProxyHandler) FactorEngineRisk(c *gin.Context) {
+	h.proxy(c, http.MethodPost, "/admin/factor-engine/risk")
+}
+
+// POST /api/v1/admin/factor-engine/technical -> python-worker POST /admin/factor-engine/technical
+func (h *AdminProxyHandler) FactorEngineTechnical(c *gin.Context) {
+	h.proxy(c, http.MethodPost, "/admin/factor-engine/technical")
+}
+
+// POST /api/v1/admin/factor-engine/entry-score -> python-worker POST /admin/factor-engine/entry-score
+func (h *AdminProxyHandler) FactorEngineEntryScore(c *gin.Context) {
+	h.proxy(c, http.MethodPost, "/admin/factor-engine/entry-score")
+}
+
+// POST /api/v1/admin/factor-engine/catalyst-score -> python-worker POST /admin/factor-engine/catalyst-score
+func (h *AdminProxyHandler) FactorEngineCatalystScore(c *gin.Context) {
+	h.proxy(c, http.MethodPost, "/admin/factor-engine/catalyst-score")
+}
+
+// GET /api/v1/admin/factor-engine/screener-configs -> python-worker GET /admin/factor-engine/screener-configs
+func (h *AdminProxyHandler) FactorEngineScreenerConfigs(c *gin.Context) {
+	h.proxy(c, http.MethodGet, "/admin/factor-engine/screener-configs")
+}
+
 // POST /api/v1/admin/swing/signal -> python-worker POST /api/v1/swing/signal
 func (h *AdminProxyHandler) SwingSignal(c *gin.Context) {
 	h.proxy(c, http.MethodPost, "/api/v1/swing/signal")
@@ -597,4 +622,26 @@ func (h *AdminProxyHandler) RatingAlertsDelete(c *gin.Context) {
 // POST /api/v1/admin/fundamentals/fair-value -> python-worker POST /api/v1/fundamentals/fair-value
 func (h *AdminProxyHandler) FairValue(c *gin.Context) {
 	h.proxy(c, http.MethodPost, "/api/v1/fundamentals/fair-value")
+}
+
+// GET /api/v1/portfolios/:portfolio_id/weekly-health/changes -> python-worker GET /api/v1/weekly-health/changes
+func (h *AdminProxyHandler) WeeklyHealthChanges(c *gin.Context) {
+	portfolioID := c.Param("portfolio_id")
+	q := c.Request.URL.Query()
+	q.Set("portfolio_id", portfolioID)
+	// Go proxy preserves query string; we just ensure portfolio_id is present.
+	h.proxy(c, http.MethodGet, "/api/v1/weekly-health/changes?"+q.Encode())
+}
+
+// GET /api/v1/portfolios/:portfolio_id/weekly-health/latest -> python-worker GET /api/v1/weekly-health/latest
+func (h *AdminProxyHandler) WeeklyHealthLatest(c *gin.Context) {
+	portfolioID := c.Param("portfolio_id")
+	q := c.Request.URL.Query()
+	q.Set("portfolio_id", portfolioID)
+	h.proxy(c, http.MethodGet, "/api/v1/weekly-health/latest?"+q.Encode())
+}
+
+// POST /api/v1/portfolios/:portfolio_id/weekly-health/email -> python-worker POST /api/v1/weekly-health/email
+func (h *AdminProxyHandler) WeeklyHealthEmail(c *gin.Context) {
+	h.proxy(c, http.MethodPost, "/api/v1/weekly-health/email")
 }

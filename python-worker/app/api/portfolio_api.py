@@ -16,6 +16,7 @@ from app.config import settings
 from app.utils.auth import get_current_user, create_access_token, hash_password, verify_password
 from app.observability.logging import get_logger
 from app.services.portfolio_calculator import PortfolioCalculatorService
+from app.workers.job_producer import enqueue_fair_value_warmup
 
 logger = get_logger("portfolio_api")
 
@@ -94,6 +95,9 @@ class HoldingResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     notes: Optional[str] = None
+    fair_value: Optional[Decimal] = None
+    fair_value_regime: Optional[str] = None
+    fair_value_as_of: Optional[datetime] = None
 
 
 class FairValueSnapshot(BaseModel):
@@ -404,10 +408,15 @@ async def get_portfolio_holdings(
             pp.unrealized_gain_loss,
             pp.unrealized_gain_loss_percent,
             pp.created_at,
-            pp.updated_at
+            pp.updated_at,
+            fv.fair_value,
+            fv.regime AS fair_value_regime,
+            fv.as_of AS fair_value_as_of
         FROM portfolio_positions pp
         JOIN stocks s
           ON pp.stock_id = s.id
+        LEFT JOIN symbol_fair_values fv
+          ON fv.symbol = s.symbol
         WHERE pp.portfolio_id = :portfolio_id
         ORDER BY pp.created_at DESC
         """,
@@ -439,6 +448,11 @@ async def get_portfolio_holdings(
                 created_at=holding.get("created_at"),
                 updated_at=holding.get("updated_at") or holding.get("created_at"),
                 notes=None,
+                fair_value=(
+                    Decimal(str(holding.get("fair_value"))) if holding.get("fair_value") is not None else None
+                ),
+                fair_value_regime=holding.get("fair_value_regime"),
+                fair_value_as_of=holding.get("fair_value_as_of"),
             )
         )
 
@@ -700,6 +714,10 @@ async def add_holding(
         """,
         {"portfolio_id": portfolio_id, "stock_id": int(stock_id)},
     )[0]
+
+    # Best-effort: resolve/persist fair value in the background so the
+    # symbol_fair_values view is populated before the next scheduled warm-up.
+    enqueue_fair_value_warmup(symbol, portfolio_id=portfolio_id)
 
     return HoldingResponse(
         id=str(row.get("holding_id") or ""),

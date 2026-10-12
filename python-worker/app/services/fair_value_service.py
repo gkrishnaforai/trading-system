@@ -23,7 +23,7 @@ ENABLE_PEG_RULE_OF_40_FORWARD_CAGR = os.getenv("ENABLE_PEG_RULE_OF_40_FORWARD_CA
 ENABLE_FAIR_VALUE_GROWTH_PROXY = os.getenv("ENABLE_FAIR_VALUE_GROWTH_PROXY", "true").strip().lower() in _TRUE_VALUES
 ENABLE_FAIR_VALUE_FORWARD_EPS_CLAMP = os.getenv("ENABLE_FAIR_VALUE_FORWARD_EPS_CLAMP", "true").strip().lower() in _TRUE_VALUES
 ENABLE_FAIR_VALUE_REGIME_GATING = os.getenv("ENABLE_FAIR_VALUE_REGIME_GATING", "true").strip().lower() in _TRUE_VALUES
-ENABLE_FAIR_VALUE_LIVE_PRICE_FALLBACK = os.getenv("ENABLE_FAIR_VALUE_LIVE_PRICE_FALLBACK", "false").strip().lower() in _TRUE_VALUES
+ENABLE_FAIR_VALUE_LIVE_PRICE_FALLBACK = os.getenv("ENABLE_FAIR_VALUE_LIVE_PRICE_FALLBACK", "true").strip().lower() in _TRUE_VALUES
 try:
     FAIR_VALUE_DISCOUNT_RATE_SHIFT = float(os.getenv("FAIR_VALUE_DISCOUNT_RATE_SHIFT", "0.0") or 0.0)
 except Exception:
@@ -1425,6 +1425,11 @@ class FairValueService:
             valuation_metrics = self._calculate_valuation_metrics(weighted_fair_value, fundamentals)
             if extra_valuation_metrics:
                 valuation_metrics.update(extra_valuation_metrics)
+            valuation_metrics["valuation_rating"] = self._calibrate_rating(
+                valuation_metrics.get("valuation_rating"),
+                confidence_score=confidence_score,
+                high_dispersion=high_dispersion,
+            )
 
             valuation_metrics.update({
                 "regime": regime,
@@ -3222,7 +3227,28 @@ class FairValueService:
             return "Slightly Overvalued"
         else:
             return "Overvalued"
-    
+
+    def _calibrate_rating(
+        self,
+        rating: Optional[str],
+        *,
+        confidence_score: Optional[float],
+        high_dispersion: bool,
+    ) -> str:
+        """Annotate or soften extreme ratings when method evidence is weak.
+
+        A wide bear/bull method spread or a low confidence score means the
+        blended fair value is not trustworthy enough to justify a strong label.
+        """
+        if not rating or rating in {"Unknown", "Fair Value"}:
+            return rating or "Unknown"
+        if confidence_score is not None and confidence_score < 25:
+            return f"{rating} (unverified: low confidence)"
+        if high_dispersion or (confidence_score is not None and confidence_score < 40):
+            softened = rating.replace("Deeply ", "")
+            return f"{softened} (unverified: high method dispersion)"
+        return rating
+
     def _assess_quality(self, fundamentals: FundamentalData) -> float:
         """Calculate overall quality score (0-100)"""
         

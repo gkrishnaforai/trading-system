@@ -3,13 +3,18 @@ Enhanced FMP Client with Complete API Coverage
 Includes all FMP endpoints from the official documentation
 """
 import logging
+import re
 import time
 import requests
-from typing import Dict, Any, Optional, List
+import os
+import traceback
 from datetime import datetime, timedelta
+from decimal import Decimal
+from typing import Dict, Any, Optional, List, Union
 from dataclasses import dataclass
 
 import pandas as pd
+import redis
 
 from app.config import settings
 from app.utils.rate_limiter import RateLimiter
@@ -17,6 +22,18 @@ from app.utils.cache import CacheManager
 from app.observability.logging import get_logger
 
 logger = get_logger("fmp_enhanced_client")
+
+_APIKEY_RE = re.compile(r"apikey=[^&\s]+")
+
+
+def _redact_key(err: BaseException) -> str:
+    """Strip the apikey query param from request exception messages.
+
+    requests embeds the full URL (incl. apikey) in exception str() —
+    without this, every upstream `logger.error(f'...: {e}')` leaks the key.
+    """
+    return _APIKEY_RE.sub("apikey=***", str(err))
+
 
 @dataclass
 class FinancialModelingPrepConfig:
@@ -101,8 +118,9 @@ class EnhancedFMPClient:
                 # Make request with curl-like headers
                 response = self.session.get(url, params=params, timeout=self.config.timeout)
                 
-                # Log request details for debugging
-                logger.debug(f"📡 FMP Response: status={response.status_code}, url={response.url}")
+                # Log request details for debugging (path only — response.url
+                # embeds the apikey query param)
+                logger.debug(f"📡 FMP Response: status={response.status_code}, endpoint={endpoint}")
                 
                 if response.status_code == 200:
                     try:
@@ -157,23 +175,23 @@ class EnhancedFMPClient:
                     response.raise_for_status()
                 
             except requests.exceptions.Timeout as e:
-                logger.warning(f"⏰ FMP Request timeout (attempt {attempt + 1}/{self.config.max_retries}): {e}")
+                logger.warning(f"⏰ FMP Request timeout (attempt {attempt + 1}/{self.config.max_retries}): {_redact_key(e)}")
                 if attempt < self.config.max_retries - 1:
                     time.sleep(self.config.retry_delay * (2 ** attempt))
                     continue
-                raise
+                raise requests.exceptions.Timeout(_redact_key(e)) from e
             except requests.exceptions.ConnectionError as e:
-                logger.warning(f"🔌 FMP Connection error (attempt {attempt + 1}/{self.config.max_retries}): {e}")
+                logger.warning(f"🔌 FMP Connection error (attempt {attempt + 1}/{self.config.max_retries}): {_redact_key(e)}")
                 if attempt < self.config.max_retries - 1:
                     time.sleep(self.config.retry_delay * (2 ** attempt))
                     continue
-                raise
+                raise requests.exceptions.ConnectionError(_redact_key(e)) from e
             except requests.exceptions.RequestException as e:
-                logger.warning(f"🌐 FMP Request failed (attempt {attempt + 1}/{self.config.max_retries}): {e}")
+                logger.warning(f"🌐 FMP Request failed (attempt {attempt + 1}/{self.config.max_retries}): {_redact_key(e)}")
                 if attempt < self.config.max_retries - 1:
                     time.sleep(self.config.retry_delay * (2 ** attempt))
                     continue
-                raise
+                raise requests.exceptions.RequestException(_redact_key(e)) from e
             except ValueError as e:
                 # API error, don't retry
                 logger.error(f"❌ FMP API error (no retry): {e}")
@@ -523,19 +541,96 @@ class EnhancedFMPClient:
     def get_company_profile(self, symbol: str) -> Dict[str, Any]:
         """Get detailed company profile"""
         try:
+            symbol = (symbol or "").strip().upper()
+            if not symbol:
+                return {}
+
+            cache_key = f"profile:{symbol}"
+            cached = self.cache.get(cache_key)
+            if cached:
+                return cached
+
+            # Distributed singleflight lock to prevent multi-worker stampede on /profile
+            lock_key = f"ts:lock:fmp:profile:{symbol}"
+            lock_value = f"{os.getpid()}:{time.time()}"
+            lock_acquired = True
+            r = None
+            try:
+                redis_url = (getattr(settings, "redis_url", "") or "").strip()
+                if redis_url:
+                    r = redis.Redis.from_url(redis_url, decode_responses=True)
+                    lock_acquired = bool(r.set(lock_key, lock_value, nx=True, ex=60))
+            except Exception:
+                lock_acquired = True
+
+            if not lock_acquired:
+                cached_after = self.cache.get(cache_key)
+                return cached_after or {}
+
             endpoint = "/profile"
             params = {"symbol": symbol}
+
+            if str(os.getenv("FMP_LOG_PROFILE_CALLER", "")).strip().lower() in {"1", "true", "yes"}:
+                try:
+                    stack = traceback.format_stack(limit=12)
+                    logger.info(
+                        "FMP /profile caller trace (most recent call last):\n" + "".join(stack[:-1])
+                    )
+                except Exception:
+                    pass
+
             data = self._make_request(endpoint, params)
             
             if isinstance(data, list) and len(data) > 0:
-                return data[0]
+                profile = data[0]
             elif isinstance(data, dict):
-                return data
-            return {}
+                profile = data
+            else:
+                profile = {}
+
+            if profile:
+                try:
+                    ttl_days = int(getattr(settings, "company_profile_refresh_ttl_days", 7) or 7)
+                except Exception:
+                    ttl_days = 7
+                ttl_s = max(3600, ttl_days * 86400) if ttl_days > 0 else 86400
+                self.cache.set(cache_key, profile, ttl=ttl_s)
+
+            return profile
         except Exception as e:
             logger.error(f"❌ Error fetching company profile for {symbol}: {e}")
             return {}
+        finally:
+            try:
+                if 'lock_acquired' in locals() and lock_acquired and r is not None:
+                    if r.get(lock_key) == lock_value:
+                        r.delete(lock_key)
+            except Exception:
+                pass
     
+    def get_market_movers(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Market-wide movers: biggest gainers, losers, most active.
+
+        FMP stable endpoints refresh through the session. Short cache so
+        intraday re-polls reflect new moves without hammering the quota.
+        """
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for kind, endpoint in (
+            ("gainers", "/biggest-gainers"),
+            ("losers", "/biggest-losers"),
+            ("most_active", "/most-actives"),
+        ):
+            cache_key = f"market_movers:{kind}"
+            try:
+                data = self._make_request(endpoint)
+                rows = data if isinstance(data, list) else []
+                self.cache.set(cache_key, rows, ttl=900)
+                out[kind] = rows
+            except Exception as e:
+                logger.error(f"❌ Error fetching FMP {kind}: {e}")
+                out[kind] = self.cache.get(cache_key) or []
+        return out
+
     def get_stock_list(self) -> List[Dict[str, Any]]:
         """Get complete list of available stocks"""
         cache_key = "stock_list"
@@ -1251,6 +1346,44 @@ class EnhancedFMPClient:
             logger.error(f"❌ Error fetching price target consensus for {symbol}: {e}")
             return []
     
+    def get_grades_latest_news(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Market-wide analyst grade tape (upgrade/downgrade/initiate)."""
+        try:
+            data = self._make_request(
+                "/grades-latest-news", {"limit": limit, "page": 0})
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"❌ Error fetching grades latest news: {e}")
+            return []
+
+    def get_price_target_latest_news(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Market-wide analyst price-target tape (raise/lower/new target)."""
+        try:
+            data = self._make_request(
+                "/price-target-latest-news", {"limit": limit, "page": 0})
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"❌ Error fetching PT latest news: {e}")
+            return []
+
+    def get_grades_news(self, symbol: str) -> List[Dict[str, Any]]:
+        """Per-symbol grade-change history (structured action rows)."""
+        try:
+            data = self._make_request("/grades-news", {"symbol": symbol})
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"❌ Error fetching grades news for {symbol}: {e}")
+            return []
+
+    def get_price_target_news(self, symbol: str) -> List[Dict[str, Any]]:
+        """Per-symbol analyst PT history (per-firm target rows)."""
+        try:
+            data = self._make_request("/price-target-news", {"symbol": symbol})
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"❌ Error fetching PT news for {symbol}: {e}")
+            return []
+
     def get_stock_grades(self, symbol: str) -> List[Dict[str, Any]]:
         """Get stock grades (current year only, sorted by date descending)"""
         try:

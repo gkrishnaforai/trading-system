@@ -1,5 +1,5 @@
 method_key: ev_sales_growth
-version: 1
+version: 3
 category: growth
 requires:
   scalars:
@@ -8,12 +8,102 @@ requires:
     - total_debt
     - cash_and_equivalents
     - revenue_growth_ttm
+  optional_scalars:
+    - net_profit_margin_ttm
+    - operating_margin_ttm
+    - fcf_ttm
   series: []
 params:
-  base_multiple: 4.0
-  growth_weight: 20.0
-  multiple_cap: 25.0
+  # EV/S is anchored through the identity EV/S ≈ implied P/E × net margin:
+  # revenue growth only earns a sales multiple in proportion to the margin
+  # it can eventually convert to earnings. A 14x EV/S on a 2%-margin airline
+  # or a negative-margin pre-earnings name is a value trap, not a signal.
+  pe_base: 12.0
+  pe_g_weight: 40.0
+  pe_floor: 8.0
+  pe_cap: 45.0
+  pe_cap_bear: 30.0
+  pe_cap_bull: 50.0
+  pe_cap_explosive: 55.0
+  g_cap: 0.50
+  bear_g_mult: 0.5
+  bull_g_mult: 1.15
+  explosive_g_mult: 1.3
+  # quality anchor — net margin preferred (full economics incl. interest);
+  # operating margin is a fallback proxy haircut to approximate net.
+  # margin_floor is the "minimum viable margin" assumption for pre-earnings
+  # names: the method's premise is that revenue eventually converts at some
+  # positive margin — the net-debt bridge still kills unsustainable names.
+  margin_default: 0.10
+  margin_floor: 0.03
+  margin_cap: 0.60
+  op_margin_haircut: 0.75
 formula:
+  bindings:
+    g:
+      clamp:
+        value: {var: revenue_growth_ttm}
+        lo: 0
+        hi: {param: g_cap}
+    g_bear: {mul: [{var: g}, {param: bear_g_mult}]}
+    g_bull:
+      min: [{mul: [{var: g}, {param: bull_g_mult}]}, {param: g_cap}]
+    g_explosive:
+      min: [{mul: [{var: g}, {param: explosive_g_mult}]}, {param: g_cap}]
+    # take the BETTER of accrual vs cash margin: GAAP net margin understates
+    # high-SBC growers (ZS: net -3% but FCF +25%); a liquidating company can
+    # show inflated FCF but the net-debt bridge and multiple caps bound that
+    margin_net:
+      coalesce:
+        - {var: net_profit_margin_ttm}
+        - {mul: [{var: operating_margin_ttm}, {param: op_margin_haircut}]}
+        - {param: margin_default}
+    margin_fcf:
+      coalesce:
+        - {div: [{var: fcf_ttm}, {var: revenue_ttm}]}
+        - {param: margin_default}
+    margin_raw: {max: [{var: margin_net}, {var: margin_fcf}]}
+    # the floor is a pre-earnings benefit-of-doubt ONLY — a real positive
+    # margin, however thin, is kept as-is (flooring a 0.3% distributor to
+    # 3% would inflate its revenue-heavy base 10x)
+    margin_src:
+      if:
+        cond: {lt: [{var: margin_raw}, 0]}
+        then: {param: margin_floor}
+        else: {min: [{var: margin_raw}, {param: margin_cap}]}
+    pe_base_scenario:
+      clamp:
+        value:
+          add: [{param: pe_base}, {mul: [{param: pe_g_weight}, {var: g}]}]
+        lo: {param: pe_floor}
+        hi: {param: pe_cap}
+    pe_bear_scenario:
+      clamp:
+        value:
+          add:
+            - mul: [{param: pe_base}, 0.7]
+            - mul: [{param: pe_g_weight}, {var: g_bear}]
+        lo: {param: pe_floor}
+        hi: {param: pe_cap_bear}
+    pe_bull_scenario:
+      clamp:
+        value:
+          add: [{param: pe_base}, {mul: [{param: pe_g_weight}, {var: g_bull}]}]
+        lo: {param: pe_floor}
+        hi: {param: pe_cap_bull}
+    pe_explosive_scenario:
+      clamp:
+        value:
+          add:
+            - mul: [{param: pe_base}, 1.2]
+            - mul: [{param: pe_g_weight}, {var: g_explosive}]
+        lo: {param: pe_floor}
+        hi: {param: pe_cap_explosive}
+    evs_base: {mul: [{var: pe_base_scenario}, {var: margin_src}]}
+    evs_bear: {mul: [{var: pe_bear_scenario}, {var: margin_src}]}
+    evs_bull: {mul: [{var: pe_bull_scenario}, {var: margin_src}]}
+    evs_explosive: {mul: [{var: pe_explosive_scenario}, {var: margin_src}]}
+    net_debt: {sub: [{var: total_debt}, {var: cash_and_equivalents}]}
   fair_price:
     if:
       cond:
@@ -23,24 +113,39 @@ formula:
       then: null
       else:
         div:
-          - sub:
-              - mul:
-                  - var: revenue_ttm
-                  - clamp:
-                      value:
-                        add:
-                          - {param: base_multiple}
-                          - mul:
-                              - {param: growth_weight}
-                              - clamp:
-                                  value: {var: revenue_growth_ttm}
-                                  lo: 0
-                                  hi: 0.50
-                      lo: 0
-                      hi: {param: multiple_cap}
-              - sub: [{var: total_debt}, {var: cash_and_equivalents}]
+          - sub: [{mul: [{var: revenue_ttm}, {var: evs_base}]}, {var: net_debt}]
           - var: shares_outstanding
-  bear_fair_price: null
-  bull_fair_price: null
-  explosive_fair_price: null
+  bear_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub: [{mul: [{var: revenue_ttm}, {var: evs_bear}]}, {var: net_debt}]
+          - var: shares_outstanding
+  bull_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub: [{mul: [{var: revenue_ttm}, {var: evs_bull}]}, {var: net_debt}]
+          - var: shares_outstanding
+  explosive_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub: [{mul: [{var: revenue_ttm}, {var: evs_explosive}]}, {var: net_debt}]
+          - var: shares_outstanding
 validations: []

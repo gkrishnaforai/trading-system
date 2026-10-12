@@ -12,6 +12,7 @@ const (
 	AnalysisProfileDailySignals    AnalysisProfile = "daily_signals"
 	AnalysisProfileIntradaySignals AnalysisProfile = "intraday_signals"
 	AnalysisProfileWeeklyRebalance AnalysisProfile = "weekly_rebalance"
+	AnalysisProfileWeeklyHealth    AnalysisProfile = "weekly_health"
 )
 
 func AvailableAnalysisProfiles() []AnalysisProfile {
@@ -19,6 +20,7 @@ func AvailableAnalysisProfiles() []AnalysisProfile {
 		AnalysisProfileDailySignals,
 		AnalysisProfileIntradaySignals,
 		AnalysisProfileWeeklyRebalance,
+		AnalysisProfileWeeklyHealth,
 	}
 }
 
@@ -29,7 +31,7 @@ func ResolveAnalysisProfile(profile string) (AnalysisProfile, error) {
 	}
 
 	switch AnalysisProfile(p) {
-	case AnalysisProfileDailySignals, AnalysisProfileIntradaySignals, AnalysisProfileWeeklyRebalance:
+	case AnalysisProfileDailySignals, AnalysisProfileIntradaySignals, AnalysisProfileWeeklyRebalance, AnalysisProfileWeeklyHealth:
 		return AnalysisProfile(p), nil
 	default:
 		return "", fmt.Errorf("unknown profile: %s", p)

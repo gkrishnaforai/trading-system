@@ -6,6 +6,9 @@ allow_table_columns:
   financial_ratios:
     as_of_columns: [fiscal_date_ending]
     columns: [roe, operating_margin, net_profit_margin]
+  consensus_data:
+    as_of_columns: [consensus_date]
+    columns: [consensus_price_target, price_target_high, price_target_low, analyst_count]
   income_statements:
     as_of_columns: [fiscal_date_ending]
     columns: [total_revenue]
@@ -38,6 +41,7 @@ allow_macro_columns:
 features:
   book_value_per_share:
     type: coalesce
+    max_age_days: 400
     sources:
       - type: snapshot_json
         source: fmp_key_metrics_ttm
@@ -78,6 +82,7 @@ features:
 
   roe:
     type: coalesce
+    max_age_days: 400
     sources:
       - type: table_column
         table: financial_ratios
@@ -96,6 +101,7 @@ features:
 
   eps_ttm:
     type: coalesce
+    max_age_days: 150
     sources:
       - type: snapshot_json
         source: fmp_key_metrics_ttm
@@ -125,8 +131,10 @@ features:
         params:
           price:
             type: coalesce
+            max_age_days: 21
             sources:
               - type: table_column
+                max_age_days: 14
                 table: raw_market_data_intraday
                 column: close
                 as_of: ts
@@ -135,6 +143,7 @@ features:
                 where:
                   interval: last
               - type: table_column
+                max_age_days: 14
                 table: fmp_real_time_prices
                 column: price
                 as_of: created_at
@@ -146,6 +155,7 @@ features:
                 keys: [price]
           pe:
             type: coalesce
+            max_age_days: 21
             sources:
               - type: snapshot_json
                 source: fmp_key_metrics_ttm
@@ -162,16 +172,19 @@ features:
                 params:
                   earnings_yield:
                     type: snapshot_json
+                    max_age_days: 21
                     source: fmp_key_metrics_ttm
                     json_root: key_metrics_ttm
                     keys: [earningsYieldTTM]
 
   eps_ttm_implied:
     type: derived
+    max_age_days: 150
     name: price_div_pe
     params:
       price:
         type: coalesce
+        max_age_days: 21
         sources:
           - type: table_column
             table: raw_market_data_intraday
@@ -193,6 +206,7 @@ features:
             keys: [price]
       pe:
         type: coalesce
+        max_age_days: 21
         sources:
           - type: snapshot_json
             source: fmp_key_metrics_ttm
@@ -209,12 +223,14 @@ features:
             params:
               earnings_yield:
                 type: snapshot_json
+                max_age_days: 21
                 source: fmp_key_metrics_ttm
                 json_root: key_metrics_ttm
                 keys: [earningsYieldTTM]
 
   eps_forward:
     type: coalesce
+    max_age_days: 180
     sources:
       - type: snapshot_json_path
         source: fmp_fundamentals
@@ -230,6 +246,7 @@ features:
 
   eps_growth_ttm:
     type: snapshot_json
+    max_age_days: 150
     source: fmp_financial_growth
     json_root: financial_growth
     keys:
@@ -241,6 +258,7 @@ features:
 
   operating_margin_ttm:
     type: table_column
+    max_age_days: 400
     table: financial_ratios
     column: operating_margin
     as_of: fiscal_date_ending
@@ -249,6 +267,7 @@ features:
 
   net_profit_margin_ttm:
     type: table_column
+    max_age_days: 400
     table: financial_ratios
     column: net_profit_margin
     as_of: fiscal_date_ending
@@ -257,6 +276,7 @@ features:
 
   revenue_growth_ttm:
     type: snapshot_json
+    max_age_days: 150
     source: fmp_financial_growth
     json_root: financial_growth
     keys:
@@ -264,8 +284,45 @@ features:
       - revenueGrowthTTM
       - revenuegrowth
 
+  consensus_price_target:
+    type: table_column
+    max_age_days: 240
+    table: consensus_data
+    column: consensus_price_target
+    as_of: consensus_date
+    order_by: consensus_date
+    where_not_null: true
+
+  price_target_high:
+    type: table_column
+    max_age_days: 240
+    table: consensus_data
+    column: price_target_high
+    as_of: consensus_date
+    order_by: consensus_date
+    where_not_null: true
+
+  price_target_low:
+    type: table_column
+    max_age_days: 240
+    table: consensus_data
+    column: price_target_low
+    as_of: consensus_date
+    order_by: consensus_date
+    where_not_null: true
+
+  analyst_count:
+    type: table_column
+    max_age_days: 240
+    table: consensus_data
+    column: analyst_count
+    as_of: consensus_date
+    order_by: consensus_date
+    where_not_null: false
+
   market_cap:
     type: snapshot_json
+    max_age_days: 200
     source: fmp_key_metrics_ttm
     json_root: key_metrics_ttm
     keys:
@@ -274,6 +331,7 @@ features:
 
   shares_outstanding:
     type: coalesce
+    max_age_days: 400
     sources:
       - type: snapshot_json
         source: fmp_key_metrics_ttm
@@ -288,6 +346,7 @@ features:
 
   revenue_ttm:
     type: coalesce
+    max_age_days: 400
     sources:
       - type: snapshot_json_path
         source: fmp_fundamentals
@@ -304,6 +363,7 @@ features:
 
   fcf_ttm:
     type: coalesce
+    max_age_days: 400
     sources:
       - type: snapshot_json_path
         source: fmp_fundamentals
@@ -320,6 +380,7 @@ features:
 
   cash_and_equivalents:
     type: coalesce
+    max_age_days: 400
     sources:
       - type: snapshot_json_path
         source: fmp_fundamentals
@@ -336,6 +397,7 @@ features:
 
   total_debt:
     type: coalesce
+    max_age_days: 400
     sources:
       - type: snapshot_json_path
         source: fmp_fundamentals
@@ -352,6 +414,7 @@ features:
 
   forward_growth:
     type: coalesce
+    max_age_days: 180
     sources:
       - type: snapshot_json
         source: fmp_fundamentals
@@ -366,6 +429,7 @@ features:
         params:
           eps_forward:
             type: coalesce
+            max_age_days: 150
             sources:
               - type: snapshot_json_path
                 source: fmp_fundamentals
@@ -380,6 +444,7 @@ features:
                   - epsEstimatedNextYear
           eps_ttm:
             type: coalesce
+            max_age_days: 150
             sources:
               - type: snapshot_json
                 source: fmp_key_metrics_ttm
@@ -407,6 +472,7 @@ features:
 
   forward_growth_pct_1y:
     type: derived
+    max_age_days: 180
     name: growth_pct_from_forward_growth
     params:
       growth:
@@ -425,6 +491,7 @@ features:
             params:
               eps_forward:
                 type: coalesce
+                max_age_days: 150
                 sources:
                   - type: snapshot_json_path
                     source: fmp_fundamentals
@@ -439,6 +506,7 @@ features:
                       - epsEstimatedNextYear
               eps_ttm:
                 type: coalesce
+                max_age_days: 150
                 sources:
                   - type: snapshot_json
                     source: fmp_key_metrics_ttm
@@ -466,5 +534,6 @@ features:
 
   tnx_yield:
     type: macro_column
+    max_age_days: 45
     column: tnx_yield
     as_of: data_date

@@ -118,9 +118,6 @@ def _initialize_container(container: ServiceContainer):
         from app.services.multi_timeframe_service import MultiTimeframeService
         return MultiTimeframeService(data_source=c.get('data_source'))
     
-    def create_swing_risk_manager(c: ServiceContainer):
-        from app.services.swing_risk_manager import SwingRiskManager
-        return SwingRiskManager()
     
     container.register_factory('indicator_service', create_indicator_service)
     container.register_factory('strategy_service', create_strategy_service)
@@ -129,7 +126,6 @@ def _initialize_container(container: ServiceContainer):
     container.register_factory('composite_score_service', create_composite_score_service)
     container.register_factory('actionable_levels_service', create_actionable_levels_service)
     container.register_factory('multi_timeframe_service', create_multi_timeframe_service)
-    container.register_factory('swing_risk_manager', create_swing_risk_manager)
     
     logger.info("✅ Service container initialized")
 

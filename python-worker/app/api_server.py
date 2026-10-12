@@ -8,7 +8,7 @@ SOLID: Single Responsibility - API endpoints only
 CANONICAL ENTRYPOINT (Docker/Runtime):
 - The python-worker Docker image starts *this* module: `python app/api_server.py`
 - Register ALL routers/endpoints in THIS FILE via `app.include_router(...)`
-- Do NOT add new routers only in `app/api_app.py` (that file is not used by Docker)
+- This is the only supported runtime entrypoint; do not add routers to retired alternate apps
 """
 import logging
 import json
@@ -16,7 +16,7 @@ import asyncio
 import os
 import warnings
 from typing import List, Optional, Dict, Any
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -29,8 +29,8 @@ from app.services.stock_screener_service import StockScreenerService
 from app.services.fundamental_scorer import FundamentalScorer
 from app.services.indicator_service import IndicatorService
 from app.services.strategy_service import StrategyService
-from app.services.swing_risk_manager import SwingRiskManager
 from app.services.universal_scheduler import UniversalScheduler
+from app.services.macro_engine import MacroOrchestrator
 from app.strategies import DEFAULT_STRATEGY
 from app.di import get_container
 
@@ -115,6 +115,16 @@ from app.api.worker_run_api import router as worker_run_router
 from app.api.portfolio_schedule_api import router as portfolio_schedule_router
 from app.api.fundamentals_scheduler_api import router as fundamentals_scheduler_router
 from app.api.db_stats_api import router as db_stats_router
+from app.api.weekly_health_api import router as weekly_health_router
+from app.api.factor_engine_api import router as factor_engine_router
+from app.api.investment_scores_api import router as investment_scores_router
+from app.api.company_profile_scores_api import router as company_profile_scores_router
+from app.api.company_profile_scores_auto_api import router as company_profile_scores_auto_router
+from app.api.macro_engine_api import router as macro_engine_router
+from app.api.alerts_api import router as alerts_router
+from app.api.screener_api import router as screener_router
+from app.api.trades_api import router as trades_router
+from app.api.board_api import router as board_router
 
 # Include all routers with proper prefixes
 # ========================================
@@ -129,6 +139,7 @@ app.include_router(growth_quality_router, prefix="/api/v1/growth-quality")
 app.include_router(stocks_router, prefix="/api/v1/stocks")
 app.include_router(stock_symbols_router, prefix="/api/v1/symbols")
 app.include_router(admin_router, prefix="/admin")
+app.include_router(factor_engine_router, prefix="/admin")
 app.include_router(bulk_operations_router, prefix="/api/v1/bulk")
 app.include_router(generic_engine_router, prefix="/api/v1/generic")
 app.include_router(swing_engine_router, prefix="/api/v1/swing")
@@ -144,9 +155,18 @@ app.include_router(fundamentals_router, prefix="/api/v1/fundamentals")
 # DEPRECATED: Rating Alerts API - Migrated to Universal Alerts
 # app.include_router(rating_alert_router, prefix="/api/v1")
 app.include_router(universal_alert_router, prefix="/api/v1/universal-alerts")
+app.include_router(alerts_router, prefix="/api/v1/alerts")
+app.include_router(screener_router, prefix="/api/v1/screener")
+app.include_router(trades_router, prefix="/api/v1/trades")
+app.include_router(board_router, prefix="/api/v1/board")
 app.include_router(portfolio_schedule_router, prefix="/api/v1/portfolio-schedules")
 app.include_router(fundamentals_scheduler_router, prefix="/api/v1/fundamentals-scheduler")
 app.include_router(db_stats_router, prefix="/api/v1/db-stats")
+app.include_router(weekly_health_router, prefix="/api/v1/weekly-health")
+app.include_router(investment_scores_router, prefix="/api/v1")
+app.include_router(company_profile_scores_router, prefix="/api/v1")
+app.include_router(company_profile_scores_auto_router, prefix="/api/v1")
+app.include_router(macro_engine_router, prefix="/api/v1")
 app.include_router(audit_router)
 app.include_router(worker_run_router)
 
@@ -234,7 +254,159 @@ async def startup_event():
         asyncio.create_task(universal_alert_scheduler.start_scheduler())
     else:
         logger.info("⏭️ Universal alert scheduler disabled via ENABLE_UNIVERSAL_ALERT_SCHEDULER")
+
+    enable_macro_sched = os.getenv("ENABLE_MACRO_DAILY_SCHEDULER", "false").strip().lower() == "true"
+    if enable_macro_sched:
+        asyncio.create_task(_macro_daily_loop())
+        logger.info("✅ Macro daily scheduler enabled via ENABLE_MACRO_DAILY_SCHEDULER")
+    else:
+        logger.info("⏭️ Macro daily scheduler disabled via ENABLE_MACRO_DAILY_SCHEDULER")
+
+    enable_alert_scan = os.getenv("ENABLE_ALERT_SCAN_SCHEDULER", "true").strip().lower() == "true"
+    if enable_alert_scan:
+        asyncio.create_task(_alert_scan_loop())
+        logger.info("✅ Alert scan scheduler enabled via ENABLE_ALERT_SCAN_SCHEDULER")
+    else:
+        logger.info("⏭️ Alert scan scheduler disabled via ENABLE_ALERT_SCAN_SCHEDULER")
+
+    enable_analyst_tape = os.getenv("ENABLE_ANALYST_TAPE_SCHEDULER", "true").strip().lower() == "true"
+    if enable_analyst_tape:
+        asyncio.create_task(_analyst_tape_loop())
+        logger.info("✅ Analyst tape scheduler enabled via ENABLE_ANALYST_TAPE_SCHEDULER")
+    else:
+        logger.info("⏭️ Analyst tape scheduler disabled via ENABLE_ANALYST_TAPE_SCHEDULER")
+
+    if os.getenv("ENABLE_CUSTODIAN", "true").strip().lower() == "true":
+        asyncio.create_task(_custodian_loop())
+        logger.info("✅ Custodian (support agent) enabled via ENABLE_CUSTODIAN")
+
+    if os.getenv("ENABLE_JOB_SCHEDULER", "true").strip().lower() == "true":
+        asyncio.create_task(_scheduler_loop())
+        logger.info("✅ Job scheduler enabled via ENABLE_JOB_SCHEDULER")
     logger.info("✅ Python Worker API started")
+
+
+async def _scheduler_loop():
+    """AutoSys-style dispatcher — reads job_definitions every minute
+    and fires enabled+cron-due jobs through _run_job (same path as the
+    buttons). All definitions default enabled=false: manual until you
+    flip a schedule on."""
+    from app.support import scheduler
+    await asyncio.sleep(45)   # settle before first tick
+    try:
+        n = await asyncio.to_thread(scheduler.sync_registry)
+        logger.info("job registry synced: %s jobs", n)
+    except Exception as e:
+        logger.error(f"registry sync failed: {e}")
+    while True:
+        try:
+            res = await scheduler.tick()
+            if res.get("fired"):
+                logger.info("scheduler fired %s (skipped %s)",
+                            res["fired"], res["skipped"])
+        except Exception as e:
+            logger.error(f"scheduler tick failed: {e}")
+        await asyncio.sleep(60)
+
+
+async def _custodian_loop():
+    """Support-agent supervisor — sense/diagnose/remediate/verify every
+    ~10min. Bounded actions only (job re-kicks); escalates to the board
+    after 3 failed attempts. The layer that turns 'a job silently
+    errored' into 'the system noticed, retried, and told you'."""
+    from app.support.custodian import run_pass
+
+    await asyncio.sleep(90)   # settle: a restart storms false findings
+    while True:
+        try:
+            res = await run_pass()
+            if res.get("actions"):
+                logger.info("custodian: %s findings, actions %s",
+                            res.get("findings"), res.get("actions"))
+        except Exception as e:
+            logger.error(f"custodian pass failed: {e}")
+        await asyncio.sleep(
+            int(os.getenv("CUSTODIAN_INTERVAL_MINUTES", "10")) * 60)
+
+
+async def _alert_scan_loop():
+    """Periodic alert scan — the collectors (grade changes, EPS revisions,
+    catalysts, movers) only see data when a scan runs. Hourly during US
+    market hours (12:00–22:00 UTC covers pre-market through close in both
+    EST/EDT), sparse off-hours so overnight/weekend news still lands.
+    run_scan_job self-guards against overlap with a manual scan."""
+    from app.alerts import service as alert_service
+
+    interval_min = int(os.getenv("ALERT_SCAN_INTERVAL_MINUTES", "60"))
+    offhours_min = int(os.getenv("ALERT_SCAN_OFFHOURS_MINUTES", "360"))
+    await asyncio.sleep(30)  # let startup settle before the first scan
+    while True:
+        try:
+            res = await alert_service.run_scan_job()
+            lr = res.get("last_result") or {}
+            logger.info(
+                "alert scan: status=%s new=%s dupes=%s reviews=%s errors=%s",
+                res.get("status"), lr.get("new_alerts"),
+                lr.get("duplicates_skipped"), lr.get("reviews_triggered"),
+                lr.get("errors"))
+        except Exception as e:
+            logger.error(f"alert scan loop iteration failed: {e}")
+        now = datetime.now(timezone.utc)
+        market_window = now.weekday() < 5 and 12 <= now.hour < 22
+        await asyncio.sleep((interval_min if market_window else offhours_min) * 60)
+
+
+async def _analyst_tape_loop():
+    """Frequent lightweight poll of FMP's analyst firehoses — 2 API calls
+    total, so it doesn't need to ride the hourly full scan. Upgrades/
+    downgrades land in the inbox within ~15 min of the wire during
+    market hours; hourly off-hours (the ~8h firehose window means
+    nothing is lost overnight)."""
+    from app.screener.analyst_tape import run_analyst_tape
+
+    interval_min = int(os.getenv("ANALYST_TAPE_INTERVAL_MINUTES", "15"))
+    offhours_min = int(os.getenv("ANALYST_TAPE_OFFHOURS_MINUTES", "60"))
+    await asyncio.sleep(60)  # let startup settle; first scan-tail run covers
+    while True:
+        try:
+            res = await run_analyst_tape()
+            logger.info(
+                "analyst tape: status=%s feed=%s captured=%s alerts=%s",
+                res.get("status"), res.get("feed_rows"),
+                res.get("captured"), res.get("alerts"))
+        except Exception as e:
+            logger.error(f"analyst tape loop iteration failed: {e}")
+        now = datetime.now(timezone.utc)
+        market_window = now.weekday() < 5 and 11 <= now.hour < 22
+        await asyncio.sleep((interval_min if market_window else offhours_min) * 60)
+
+
+async def _macro_daily_loop():
+    """Lightweight daily loop to recompute macro snapshot when new FRED data is detected.
+
+    This is intentionally simple for MVP. It can be replaced later with the DB-driven scheduler_service.
+    """
+
+    # Run a few times/day to catch releases without needing precise calendars.
+    interval_seconds = int(os.getenv("MACRO_DAILY_LOOP_INTERVAL_SECONDS", str(6 * 60 * 60)))
+    orchestrator = MacroOrchestrator()
+    while True:
+        try:
+            res = orchestrator.run_daily()
+            logger.info(
+                f"Macro loop: ok={res.ok} snapshot_written={res.snapshot_written} updated_series={len(res.updated_series)}"
+            )
+        except Exception as e:
+            logger.error(f"Macro loop failed: {e}")
+        await asyncio.sleep(max(300, interval_seconds))
+
+
+def _alert_scan_health() -> dict:
+    try:
+        from app.alerts import service as alert_service
+        return alert_service.scan_status()
+    except Exception:
+        return {}
 
 
 # Health check
@@ -255,6 +427,7 @@ async def health_check():
                 "last_error": getattr(universal_alert_scheduler, "last_error", None),
                 "last_job_run": getattr(universal_alert_scheduler, "last_job_run", {}) or {},
             },
+            "alert_scan": _alert_scan_health(),
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -278,8 +451,12 @@ class RefreshDataRequest(BaseModel):
 
 class SwingSignalRequest(BaseModel):
     symbol: str
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None  # retained for API compatibility; portfolio inputs are explicit
     strategy_name: Optional[str] = "swing_trend"
+    account_equity: Optional[float] = None
+    current_portfolio_risk: float = 0.0
+    open_trades: int = 0
+    event_blocked: bool = False
 
 
 # Data fetching endpoints
@@ -743,11 +920,11 @@ async def generate_swing_signal(request: SwingSignalRequest):
             )
         
         # Market context + persisted indicators/fundamentals
-        from app.services.market_context_service import MarketContextService
+        from app.market_regime.compat import get_legacy_market_context
         from app.services.stock_insights_service import StockInsightsService
         from app.signal_engines.swing_regime_engine import SwingRegimeEngine
         
-        market_context = MarketContextService().get_market_context()
+        market_context = get_legacy_market_context()
         insights = StockInsightsService()
         indicators = insights._fetch_indicators(symbol, market_data)
         fundamentals = insights._fetch_fundamentals(symbol)
@@ -861,17 +1038,27 @@ async def generate_swing_signal(request: SwingSignalRequest):
 
 @app.post("/api/v1/swing/risk/check")
 async def check_swing_risk(request: SwingSignalRequest):
-    """Check swing trading risk for a symbol"""
+    """Run the canonical swing opportunity and deterministic risk engine."""
     try:
-        risk_manager = SwingRiskManager()
-        risk_assessment = risk_manager.assess_risk(
-            symbol=request.symbol.upper(),
-            user_id=request.user_id
-        )
-        return risk_assessment
+        from app.risk import PortfolioConstraints, RiskAssessment
+        from app.swing_opportunity import build_swing_opportunity_graph
+
+        final = await build_swing_opportunity_graph().ainvoke({
+            "symbol": request.symbol.upper(),
+            "risk_constraints": PortfolioConstraints(
+                account_equity=request.account_equity,
+                current_portfolio_risk=request.current_portfolio_risk,
+                open_trades=request.open_trades,
+            ).model_dump(),
+        })
+        if final.get("error"):
+            raise HTTPException(status_code=422, detail=final["error"])
+        return RiskAssessment.model_validate(final["risk"]).model_dump(mode="json")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error checking swing risk for {request.symbol}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error checking swing risk for %s: %s", request.symbol, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Swing risk assessment failed")
 
 
 # Register screener endpoints
@@ -1280,6 +1467,152 @@ async def get_data_source_config():
     except Exception as e:
         logger.error(f"Error getting data source config: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class AgentRunRequest(BaseModel):
+    agent: str
+    scope: str = "market"
+    symbol: Optional[str] = None
+    portfolio_id: Optional[str] = None
+    current_position: float = 0.0
+    current_weight: Optional[float] = None
+    target_weight: Optional[float] = None
+    reconciliation_safe: bool = True
+    horizon: str = "swing"
+    mode: str = "analysis"
+    persist: bool = False
+    explain: bool = True
+    account_equity: Optional[float] = None
+    settled_cash: Optional[float] = None
+    unsettled_cash: Optional[float] = None
+    buying_power: Optional[float] = None
+    portfolio_heat: Optional[float] = None
+    event: Optional[Dict[str, Any]] = None
+    event_reaction: Optional[Dict[str, Any]] = None
+
+
+@app.get("/api/v1/market-data/quote/{symbol}")
+async def get_canonical_live_quote(symbol: str):
+    from app.market_data.service import get_market_data_service
+    quote = await get_market_data_service().get_quote(symbol.upper())
+    if quote is None:
+        raise HTTPException(status_code=404, detail=f"No live quote available for {symbol.upper()}")
+    return {
+        "symbol": quote.symbol,
+        "price": quote.price,
+        "change": quote.change,
+        "change_percent": quote.change_percent,
+        "as_of": quote.as_of.isoformat() if quote.as_of else None,
+        "fetched_at": quote.fetched_at.isoformat(),
+        "provider": quote.provider,
+        "freshness": "LIVE_CACHE_OR_PROVIDER",
+        "cache_ttl_seconds": 60,
+    }
+
+
+@app.get("/api/v1/fundamental-momentum/{symbol}")
+async def get_fundamental_momentum(symbol: str):
+    from app.fundamental_intelligence import FundamentalMomentumStore
+    assessment = FundamentalMomentumStore().latest(symbol.upper())
+    return {
+        "symbol": symbol.upper(),
+        "available": assessment is not None,
+        "assessment": assessment.model_dump(mode="json") if assessment else None,
+    }
+
+
+@app.get("/api/v1/fundamental-momentum-screen")
+async def screen_fundamental_momentum(min_score: float = 55, label: Optional[str] = None, limit: int = 100):
+    rows = db.execute_query(
+        """
+        SELECT DISTINCT ON (symbol) symbol, as_of_date, score, label,
+               eps_revision_14d, eps_revision_30d, revenue_revision_30d,
+               growth_acceleration, revision_breadth, net_revision_breadth,
+               coverage, guidance_direction, reasons, source, rules_version
+        FROM fundamental_momentum_assessments
+        WHERE score IS NOT NULL AND score >= :min_score
+          AND (CAST(:label AS text) IS NULL OR label = :label)
+        ORDER BY symbol, as_of_date DESC
+        LIMIT :limit
+        """,
+        {"min_score": min_score, "label": label, "limit": min(1000, max(1, limit))},
+    )
+    return {"count": len(rows), "results": rows}
+
+
+@app.get("/api/v1/agents")
+async def list_canonical_agents():
+    return {"agents": [
+        {"id": "market_regime", "name": "Market Regime", "scopes": ["market"], "status": "available"},
+        {"id": "swing_review", "name": "Swing Review", "scopes": ["stock", "portfolio"], "status": "available"},
+        {"id": "fundamental_intelligence", "name": "Fundamental Intelligence", "scopes": ["stock"], "status": "available"},
+        {"id": "event_review", "name": "Event Review", "scopes": ["market", "stock"], "status": "available"},
+        {"id": "risk_assessment", "name": "Risk Assessment", "scopes": ["stock"], "status": "available"},
+        {"id": "portfolio_review", "name": "Portfolio Review", "scopes": ["portfolio"], "status": "manual_only"},
+        {"id": "day_trading", "name": "Day Trading", "scopes": ["market", "stock"], "status": "unavailable_intraday_contract"},
+        {"id": "live_execution", "name": "Live Execution", "scopes": ["portfolio", "stock"], "status": "disabled"},
+    ]}
+
+
+@app.post("/api/v1/agent-runs")
+async def run_canonical_agent(request: AgentRunRequest):
+    if request.mode == "live":
+        raise HTTPException(status_code=403, detail="live agent execution is disabled")
+    if request.agent in {"swing_review", "fundamental_intelligence", "risk_assessment"} and not request.symbol:
+        raise HTTPException(status_code=400, detail="symbol is required for this agent")
+    if request.agent == "portfolio_review" and not request.portfolio_id:
+        raise HTTPException(status_code=400, detail="portfolio_id is required for portfolio review")
+    try:
+        if request.agent == "market_regime":
+            from app.market_regime import build_market_regime_graph
+            result = await build_market_regime_graph(use_llm=False).ainvoke({
+                "market_event": request.event,
+                "event_reaction": request.event_reaction,
+            })
+        elif request.agent in {"swing_review", "risk_assessment"}:
+            from app.swing_opportunity import build_swing_opportunity_graph
+            result = await build_swing_opportunity_graph(use_llm=False).ainvoke({
+                "symbol": request.symbol.upper(),
+                "current_position": request.current_position,
+                "current_weight": request.current_weight,
+                "target_weight": request.target_weight,
+                "reconciliation_safe": request.reconciliation_safe,
+                "market_event": request.event,
+                "event_reaction": request.event_reaction,
+            })
+        elif request.agent == "fundamental_intelligence":
+            from app.fundamental_intelligence import build_fundamental_intelligence_graph
+            result = await build_fundamental_intelligence_graph().ainvoke({"symbol": request.symbol.upper()})
+        elif request.agent == "portfolio_review":
+            from app.portfolio_review import run_portfolio_review
+            review = await run_portfolio_review(
+                request.portfolio_id,
+                account_equity=request.account_equity,
+                settled_cash=request.settled_cash,
+                unsettled_cash=request.unsettled_cash,
+                buying_power=request.buying_power,
+                portfolio_heat=request.portfolio_heat,
+                persist=request.persist,
+            )
+            result = review.model_dump(mode="json")
+        elif request.agent == "event_review":
+            from app.market_events import resolve_current_market_event
+            event = resolve_current_market_event()
+            result = {"market_event": event.model_dump(mode="json") if event else None}
+        else:
+            raise HTTPException(status_code=400, detail=f"unsupported agent: {request.agent}")
+        if isinstance(result, dict) and result.get("error"):
+            raise HTTPException(status_code=422, detail=result["error"])
+        if request.explain and isinstance(result, dict):
+            from app.trading_explanation import TradingExplanationService
+            result["explanation"] = TradingExplanationService(use_llm=True).explain(
+                request.agent, result).model_dump(mode="json")
+        return {"status": "completed", "agent": request.agent, "result": result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("agent run failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="agent run failed")
 
 
 if __name__ == "__main__":

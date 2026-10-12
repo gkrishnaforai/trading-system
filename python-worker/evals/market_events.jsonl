@@ -1,0 +1,4 @@
+{"id":"fomc_extreme_pre_event","description":"Extreme scheduled FOMC event restricts new entries and breakouts","expected":{"policy":"PRE_EVENT_RESTRICTED","new_entries_allowed":false,"breakout":"avoid"}}
+{"id":"fomc_hawkish_risk_off","description":"Confirmed risk-off reaction further tightens strategy permissions","expected":{"policy":"REACTION_RISK_OFF","new_entries_allowed":false,"size_reduced":true}}
+{"id":"expected_event_not_auto_bearish","description":"Scheduled event policy restricts risk without changing market direction/regime","expected":{"regime_unchanged":true}}
+{"id":"risk_on_confirmation","description":"Confirmed risk-on reaction retains base permissions without boosting them","expected":{"policy":"REACTION_RISK_ON_CONFIRMED","no_boost":true}}

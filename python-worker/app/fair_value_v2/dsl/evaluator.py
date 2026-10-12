@@ -202,7 +202,14 @@ def eval_expr(expr: Any, ctx: EvalContext, path: str = "$") -> Any:
 
     if "coalesce" in expr:
         for candidate in _as_expr_list(expr["coalesce"]):
-            v = eval_expr(candidate, ctx, path=f"{path}.coalesce")
+            try:
+                v = eval_expr(candidate, ctx, path=f"{path}.coalesce")
+            except DslError as e:
+                # a candidate that can't evaluate on absent inputs is
+                # equivalent to a null — fall through to the next one
+                if e.code in {"missing", "missing_data", "invalid_number"}:
+                    continue
+                raise
             if v is None:
                 continue
             if isinstance(v, (int, float)) and _is_bad_number(v):

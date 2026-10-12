@@ -13,12 +13,16 @@ categories:
   ai_infra:
     methods:
       - method_key: pe_technology_dynamic
-        weight: 1.0
+        weight: 0.5
+      - method_key: ev_sales_growth
+        weight: 0.5
 
   growth:
     methods:
       - method_key: pe_growth
-        weight: 1.0
+        weight: 0.7
+      - method_key: ev_sales_growth
+        weight: 0.3
 
   cyclical:
     methods:
@@ -33,4 +37,6 @@ categories:
   technology:
     methods:
       - method_key: pe_technology_dynamic
-        weight: 1.0
+        weight: 0.7
+      - method_key: ev_sales_growth
+        weight: 0.3

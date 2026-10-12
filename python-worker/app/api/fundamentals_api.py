@@ -12,6 +12,7 @@ import os
 
 from app.services.fair_value_service import FairValueService
 from app.fair_value_v2.service import FairValueV2Service
+from app.fair_value_v2.resolver import FairValueV2Resolver
 from app.signal_engines.enhanced_adaptive_signal_engine import EnhancedAdaptiveSignalEngine
 from app.observability.logging import get_logger
 
@@ -25,6 +26,7 @@ ENABLE_FAIR_VALUE_V2 = os.getenv("ENABLE_FAIR_VALUE_V2", "false").strip().lower(
 class FairValueRequest(BaseModel):
     symbol: str
     date: Optional[str] = None  # For historical analysis
+    force_refresh: bool = False  # bypass stored v2 run reuse
 
 class FundamentalScreenRequest(BaseModel):
     symbols: list[str]
@@ -49,7 +51,35 @@ class FundamentalScreenResponse(BaseModel):
 # Initialize services
 fair_value_service = FairValueService()
 fair_value_v2_service = FairValueV2Service()
+fair_value_v2_resolver = FairValueV2Resolver(fair_value_v2_service)
 enhanced_engine = EnhancedAdaptiveSignalEngine()
+
+
+def _apply_v2_override(fair_value_result, v2) -> None:
+    """Replace the v1 result's fair value with the v2 value and recompute
+    ratio/rating so the response is internally consistent."""
+    fair_value_result.fair_value = float(v2.fair_value)
+    fair_value_result.individual_valuations = dict(fair_value_result.individual_valuations or {})
+    method_key = None
+    try:
+        if v2.method_results:
+            method_key = v2.method_results[0].method_key
+    except Exception:
+        method_key = None
+    fair_value_result.individual_valuations[f"{(method_key or 'v2')}_v2"] = float(v2.fair_value)
+    fair_value_result.valuation_metrics = dict(fair_value_result.valuation_metrics or {})
+    fair_value_result.valuation_metrics["fair_value_model"] = f"fair_value_v2.{(method_key or 'unknown')}"
+    if fair_value_result.current_price and fair_value_result.current_price > 0:
+        ratio = float(fair_value_result.current_price) / float(v2.fair_value)
+        fair_value_result.valuation_metrics["valuation_ratio"] = ratio
+        fair_value_result.valuation_metrics["undervaluation_pct"] = (1.0 - ratio) * 100.0
+        fair_value_result.valuation_metrics["valuation_rating"] = (
+            fair_value_service._get_valuation_rating(ratio)
+        )
+    if v2.scenario_fair_values:
+        fair_value_result.valuation_metrics["scenario_fair_values"] = dict(v2.scenario_fair_values)
+    if v2.regime:
+        fair_value_result.valuation_metrics["v2_regime"] = v2.regime
 
 
 @router.get("/fair-value", response_model=FairValueResponse)
@@ -94,20 +124,13 @@ async def get_fair_value_analysis(request: FairValueRequest):
     try:
         # Calculate fair value
         if ENABLE_FAIR_VALUE_V2:
-            v2 = fair_value_v2_service.calculate(request.symbol)
+            v2, run_meta = fair_value_v2_resolver.resolve(
+                request.symbol, force=request.force_refresh
+            )
             fair_value_result = fair_value_service.calculate_fair_value(request.symbol)
             if v2.fair_value and v2.fair_value > 0:
-                fair_value_result.fair_value = float(v2.fair_value)
-                fair_value_result.individual_valuations = dict(fair_value_result.individual_valuations or {})
-                method_key = None
-                try:
-                    if v2.method_results:
-                        method_key = v2.method_results[0].method_key
-                except Exception:
-                    method_key = None
-                fair_value_result.individual_valuations[f"{(method_key or 'v2')}_v2"] = float(v2.fair_value)
-                fair_value_result.valuation_metrics = dict(fair_value_result.valuation_metrics or {})
-                fair_value_result.valuation_metrics["fair_value_model"] = f"fair_value_v2.{(method_key or 'unknown')}"
+                _apply_v2_override(fair_value_result, v2)
+            fair_value_result.valuation_metrics["fair_value_run"] = run_meta
         else:
             fair_value_result = fair_value_service.calculate_fair_value(request.symbol)
         

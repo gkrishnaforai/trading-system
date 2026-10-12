@@ -71,6 +71,18 @@ class FairValueV2CategoryOverrideRequest(BaseModel):
     updated_by: Optional[str] = None
 
 
+class FairValueOverrideRequest(BaseModel):
+    symbol: str
+    fair_value: float
+    bear_fair_value: Optional[float] = None
+    bull_fair_value: Optional[float] = None
+    regime: Optional[str] = None
+    enabled: bool = True
+    expires_at: Optional[str] = None  # ISO-8601; null = persistent until disabled
+    reason: Optional[str] = None
+    updated_by: Optional[str] = None
+
+
 @router.post("/refresh", response_model=RefreshResponse)
 async def refresh_data(request: RefreshRequest, background_tasks: BackgroundTasks):
     """Trigger data refresh for specific symbols and data types"""
@@ -133,6 +145,7 @@ async def refresh_data(request: RefreshRequest, background_tasks: BackgroundTask
                     symbol_results[dt] = {
                         "success": success,
                         "message": msg,
+                        "error": (getattr(res, "error", None) if res else None) if not success else None,
                     }
 
                     audit.log_event(
@@ -1610,6 +1623,92 @@ async def disable_fair_value_v2_category_override(symbol: str, updated_by: Optio
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/fair-value/overrides")
+async def list_fair_value_overrides(enabled_only: bool = True):
+    """List user-supplied fair-value overrides."""
+    try:
+        where = "WHERE enabled = TRUE" if enabled_only else ""
+        rows = db.execute_query(
+            f"""
+            SELECT symbol, fair_value, bear_fair_value, bull_fair_value, regime,
+                   reason, updated_by, enabled, expires_at, created_at, updated_at
+            FROM fair_value_overrides
+            {where}
+            ORDER BY updated_at DESC
+            """
+        )
+        return {"success": True, "overrides": rows or []}
+    except Exception as e:
+        logger.error(f"Failed to list fair value overrides: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/fair-value/overrides")
+async def upsert_fair_value_override(req: FairValueOverrideRequest):
+    """Upsert a user fair-value override. Wins over engine runs everywhere."""
+    try:
+        if req.fair_value <= 0:
+            raise HTTPException(status_code=400, detail="fair_value must be positive")
+        symbol = req.symbol.strip().upper()
+        db.execute_update(
+            """
+            INSERT INTO fair_value_overrides
+                (symbol, fair_value, bear_fair_value, bull_fair_value, regime,
+                 reason, updated_by, enabled, expires_at, created_at, updated_at)
+            VALUES
+                (:symbol, :fair_value, :bear, :bull, :regime,
+                 :reason, :updated_by, :enabled,
+                 CAST(:expires_at AS timestamptz), now(), now())
+            ON CONFLICT (symbol) DO UPDATE SET
+                fair_value = EXCLUDED.fair_value,
+                bear_fair_value = EXCLUDED.bear_fair_value,
+                bull_fair_value = EXCLUDED.bull_fair_value,
+                regime = EXCLUDED.regime,
+                reason = EXCLUDED.reason,
+                updated_by = EXCLUDED.updated_by,
+                enabled = EXCLUDED.enabled,
+                expires_at = EXCLUDED.expires_at,
+                updated_at = now()
+            """,
+            {
+                "symbol": symbol,
+                "fair_value": float(req.fair_value),
+                "bear": req.bear_fair_value,
+                "bull": req.bull_fair_value,
+                "regime": req.regime,
+                "reason": req.reason,
+                "updated_by": req.updated_by,
+                "enabled": bool(req.enabled),
+                "expires_at": req.expires_at,
+            },
+        )
+        return {"success": True, "message": "✅ fair value override upserted", "symbol": symbol}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to upsert fair value override: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/fair-value/overrides/{symbol}/disable")
+async def disable_fair_value_override(symbol: str, updated_by: Optional[str] = None):
+    """Disable a fair-value override (soft delete — engine value takes over)."""
+    try:
+        sym = symbol.strip().upper()
+        db.execute_update(
+            """
+            UPDATE fair_value_overrides
+            SET enabled = FALSE, updated_by = COALESCE(:updated_by, updated_by), updated_at = now()
+            WHERE symbol = :symbol
+            """,
+            {"symbol": sym, "updated_by": updated_by},
+        )
+        return {"success": True, "message": "✅ fair value override disabled", "symbol": sym}
+    except Exception as e:
+        logger.error(f"Failed to disable fair value override: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/earnings-calendar")
 async def get_earnings_calendar(start_date: str = None, end_date: str = None):
     """Get earnings calendar data"""
@@ -1642,6 +1741,45 @@ async def get_earnings_calendar(start_date: str = None, end_date: str = None):
         
     except Exception as e:
         logger.error(f"Failed to get earnings calendar: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class EarningsCalendarRefreshRequest(BaseModel):
+    symbols: Optional[List[str]] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+@router.post("/earnings-calendar/refresh")
+async def refresh_earnings_calendar(request: EarningsCalendarRefreshRequest):
+    """Refresh earnings calendar data."""
+    try:
+        from app.services.earnings_calendar_service import EarningsCalendarService
+
+        svc = EarningsCalendarService()
+        res = svc.refresh_earnings_calendar(symbols=request.symbols, start_date=request.start_date, end_date=request.end_date)
+        return {"success": True, "result": res}
+    except Exception as e:
+        logger.error(f"Failed to refresh earnings calendar: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class EarningsCalendarRefreshForDateRequest(BaseModel):
+    earnings_date: str
+    symbols: Optional[List[str]] = None
+
+
+@router.post("/earnings-calendar/refresh-for-date")
+async def refresh_earnings_for_date(request: EarningsCalendarRefreshForDateRequest):
+    """Refresh earnings calendar data for a specific date."""
+    try:
+        from app.services.earnings_calendar_service import EarningsCalendarService
+
+        svc = EarningsCalendarService()
+        res = svc.refresh_earnings_for_date(request.earnings_date, symbols=request.symbols)
+        return {"success": True, "result": res}
+    except Exception as e:
+        logger.error(f"Failed to refresh earnings for date: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

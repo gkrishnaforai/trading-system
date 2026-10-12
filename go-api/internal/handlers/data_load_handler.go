@@ -428,7 +428,64 @@ func (h *DataLoadHandler) GetRun(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "run": run, "events": events, "events_count": len(events)})
+	failure := gin.H{}
+	if run != nil && strings.ToLower(strings.TrimSpace(run.Status)) == "failed" {
+		errorCount := 0
+		jobFailedCount := 0
+		var latest map[string]any
+
+		for _, e := range events {
+			isErr := strings.ToLower(strings.TrimSpace(e.Level)) == "error" || strings.TrimSpace(e.Operation) == "job_failed"
+			if !isErr {
+				continue
+			}
+			errorCount += 1
+			if strings.TrimSpace(e.Operation) == "job_failed" {
+				jobFailedCount += 1
+			}
+			if latest == nil {
+				latest = map[string]any{}
+				latest["operation"] = e.Operation
+				if e.Symbol != nil {
+					latest["symbol"] = *e.Symbol
+				}
+				if e.Provider != nil {
+					latest["provider"] = *e.Provider
+				}
+				if e.Message != nil {
+					latest["message"] = *e.Message
+				}
+				if e.ErrorMessage != nil {
+					latest["error_message"] = *e.ErrorMessage
+				}
+				if e.RootCauseType != nil {
+					latest["root_cause_type"] = *e.RootCauseType
+				}
+				if e.RootCauseMessage != nil {
+					latest["root_cause_message"] = *e.RootCauseMessage
+				}
+				if len(e.Context) > 0 {
+					var ctx map[string]any
+					if err := json.Unmarshal(e.Context, &ctx); err == nil {
+						latest["context"] = ctx
+					}
+				}
+			}
+		}
+
+		failure["error_events"] = errorCount
+		failure["job_failed_events"] = jobFailedCount
+		if latest != nil {
+			failure["latest_error"] = latest
+		}
+	}
+
+	resp := gin.H{"success": true, "run": run, "events": events, "events_count": len(events)}
+	if len(failure) > 0 {
+		resp["failure"] = failure
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // GET /api/v1/data-load/runs/:run_id/alert-events

@@ -1,64 +1,80 @@
 method_key: pe_technology
-version: 1
+version: 2
 category: technology
 requires:
   scalars:
     - eps_ttm
+  optional_scalars:
+    - forward_growth_pct_1y
   series: []
 params:
   pe_floor: 10.0
   pe_cap: 60.0
-  base_pe: 32.0
-  bear_pe: 24.0
-  bull_pe: 40.0
-  explosive_pe: 52.0
+  pe_at_zero_g: 20.0          # justified PE for a no-growth name
+  pe_per_g: 0.5              # +x per point of forward growth
+  g_default: 18.0             # used only when no fwd growth exists
+  g_cap: 55.0
+  bear_eps_shock: 0.85        # bear = EPS miss AND multiple compression
+  bear_pe_mult: 0.72
+  bull_eps_shock: 1.08
+  bull_pe_mult: 1.22
+  explosive_eps_shock: 1.18
+  explosive_pe_mult: 1.55
 formula:
+  bindings:
+    g:
+      clamp:
+        value:
+          coalesce: [{var: forward_growth_pct_1y}, {param: g_default}]
+        lo: 0
+        hi: {param: g_cap}
+    pe_base:
+      clamp:
+        value:
+          add: [{param: pe_at_zero_g}, {mul: [{param: pe_per_g}, {var: g}]}]
+        lo: {param: pe_floor}
+        hi: {param: pe_cap}
+    pe_bear:
+      clamp:
+        value: {mul: [{var: pe_base}, {param: bear_pe_mult}]}
+        lo: {param: pe_floor}
+        hi: {param: pe_cap}
+    pe_bull:
+      clamp:
+        value: {mul: [{var: pe_base}, {param: bull_pe_mult}]}
+        lo: {param: pe_floor}
+        hi: {param: pe_cap}
+    pe_explosive:
+      clamp:
+        value: {mul: [{var: pe_base}, {param: explosive_pe_mult}]}
+        lo: {param: pe_floor}
+        hi: {param: pe_cap}
   fair_price:
     if:
       cond:
         lte: [{var: eps_ttm}, 0]
       then: null
       else:
-        mul:
-          - var: eps_ttm
-          - clamp:
-              value: {param: base_pe}
-              lo: {param: pe_floor}
-              hi: {param: pe_cap}
+        mul: [{var: eps_ttm}, {var: pe_base}]
   bear_fair_price:
     if:
       cond:
         lte: [{var: eps_ttm}, 0]
       then: null
       else:
-        mul:
-          - var: eps_ttm
-          - clamp:
-              value: {param: bear_pe}
-              lo: {param: pe_floor}
-              hi: {param: pe_cap}
+        mul: [{var: eps_ttm}, {param: bear_eps_shock}, {var: pe_bear}]
   bull_fair_price:
     if:
       cond:
         lte: [{var: eps_ttm}, 0]
       then: null
       else:
-        mul:
-          - var: eps_ttm
-          - clamp:
-              value: {param: bull_pe}
-              lo: {param: pe_floor}
-              hi: {param: pe_cap}
+        mul: [{var: eps_ttm}, {param: bull_eps_shock}, {var: pe_bull}]
   explosive_fair_price:
     if:
       cond:
         lte: [{var: eps_ttm}, 0]
       then: null
       else:
-        mul:
-          - var: eps_ttm
-          - clamp:
-              value: {param: explosive_pe}
-              lo: {param: pe_floor}
-              hi: {param: pe_cap}
+        mul: [{var: eps_ttm}, {param: explosive_eps_shock}, {var: pe_explosive}]
 validations: []

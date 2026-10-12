@@ -70,10 +70,12 @@ func main() {
 	notificationQueueRepo := repositories.NewNotificationQueueRepository()
 	runRepo := repositories.NewRunRepository()
 	portfolioOverviewRepo := repositories.NewPortfolioOverviewRepository()
+	portfolioAgentHistoryRepo := repositories.NewPortfolioAgentHistoryRepository()
+	portfolioAccountStateRepo := repositories.NewPortfolioAccountStateRepository()
 	portfolioScheduleRepo := repositories.NewPortfolioScheduleRepository()
 
 	// Initialize services
-	portfolioService := services.NewPortfolioService(portfolioRepo, indicatorRepo, cacheService)
+	portfolioService := services.NewPortfolioService(portfolioRepo, indicatorRepo, cacheService, jobQueue)
 
 	// Get Python Worker URL from environment
 	pythonWorkerURL := os.Getenv("PYTHON_WORKER_URL")
@@ -82,7 +84,7 @@ func main() {
 	}
 
 	stockService := services.NewStockService(indicatorRepo, marketDataRepo, cacheService, pythonWorkerURL)
-	watchlistService := services.NewWatchlistService(watchlistRepo, portfolioRepo, cacheService)
+	watchlistService := services.NewWatchlistService(watchlistRepo, portfolioRepo, cacheService, jobQueue)
 	tickerService := services.NewTickerService(tickerRepo, cacheService)
 	pythonWorkerClient := services.NewPythonWorkerClient(pythonWorkerURL)
 	dataPreviewService := services.NewDataPreviewService(dataPreviewRepo)
@@ -107,12 +109,18 @@ func main() {
 	analysisProfilesHandler := handlers.NewAnalysisProfilesHandler()
 	portfolioRebalanceRunHandler := handlers.NewPortfolioRebalanceRunHandler(ingestionAuditRepo, jobQueue, useJobQueue)
 	runHandler := handlers.NewRunHandler(runRepo, pythonWorkerClient)
+	agentRunHandler := handlers.NewAgentRunHandler(runRepo, pythonWorkerClient)
+	marketDataHandler := handlers.NewMarketDataHandler(pythonWorkerClient)
 	portfolioOverviewHandler := handlers.NewPortfolioOverviewHandler(portfolioOverviewRepo)
+	portfolioAgentHistoryHandler := handlers.NewPortfolioAgentHistoryHandler(portfolioAgentHistoryRepo)
+	portfolioAccountStateHandler := handlers.NewPortfolioAccountStateHandler(portfolioAccountStateRepo)
 	portfolioScheduleHandler := handlers.NewPortfolioScheduleHandler(portfolioScheduleRepo)
+	fundamentalsCoverageHandler := handlers.NewFundamentalsCoverageHandler()
 
 	schedulerService := services.NewSchedulerService(scheduleRepo, ingestionAuditRepo, jobQueue, useJobQueue)
 	scheduleHandler := handlers.NewScheduleHandler(scheduleRepo, schedulerService, ingestionAuditRepo)
 	schedulerTickHandler := handlers.NewSchedulerTickHandler(schedulerService)
+	fundamentalsScreenerHandler := handlers.NewFundamentalsScreenerHandler(marketDataRepo, pythonWorkerClient)
 
 	// Initialize HTTP router
 	r := gin.Default()
@@ -188,6 +196,16 @@ func main() {
 		api.POST("/admin/earnings-calendar/refresh", adminProxyHandler.RefreshEarningsCalendar)
 		api.POST("/admin/earnings-calendar/refresh-for-date", adminProxyHandler.RefreshEarningsForDate)
 
+		// Factor Engine endpoints (Go API -> python-worker admin)
+		api.POST("/admin/factor-engine/risk", adminProxyHandler.FactorEngineRisk)
+		api.POST("/admin/factor-engine/technical", adminProxyHandler.FactorEngineTechnical)
+		api.POST("/admin/factor-engine/entry-score", adminProxyHandler.FactorEngineEntryScore)
+		api.POST("/admin/factor-engine/catalyst-score", adminProxyHandler.FactorEngineCatalystScore)
+		api.GET("/admin/factor-engine/screener-configs", adminProxyHandler.FactorEngineScreenerConfigs)
+
+		// Fundamentals coverage (Operator UX)
+		api.GET("/admin/fundamentals-coverage/summary", fundamentalsCoverageHandler.Summary)
+
 		// Swing endpoints (Go API -> python-worker)
 		api.POST("/admin/swing/signal", adminProxyHandler.SwingSignal)
 		api.POST("/admin/swing/risk/check", adminProxyHandler.SwingRiskCheck)
@@ -251,7 +269,15 @@ func main() {
 		api.GET("/portfolios/user/:user_id", portfolioHandler.GetPortfolios)
 		api.GET("/portfolio/:user_id/:portfolio_id", portfolioHandler.GetPortfolio)
 		api.POST("/portfolio/:user_id", portfolioHandler.CreatePortfolio)
+		api.POST("/portfolio/:user_id/:portfolio_id/holdings", portfolioHandler.CreateHolding)
+		api.PUT("/holdings/:holding_id", portfolioHandler.UpdateHolding)
+		api.DELETE("/holdings/:holding_id", portfolioHandler.DeleteHolding)
 		api.GET("/portfolios/:portfolio_id/overview", portfolioOverviewHandler.GetOverview)
+		api.GET("/portfolios/:portfolio_id/agent-snapshots", portfolioAgentHistoryHandler.ListSnapshots)
+		api.GET("/portfolios/:portfolio_id/agent-snapshots/:snapshot_id", portfolioAgentHistoryHandler.GetSnapshot)
+		api.GET("/portfolios/:portfolio_id/account-state", portfolioAccountStateHandler.Latest)
+		api.POST("/portfolios/:portfolio_id/account-state", portfolioAccountStateHandler.Save)
+		api.PUT("/portfolios/:portfolio_id/account-state", portfolioAccountStateHandler.Save)
 
 		// Portfolio data-load orchestration (Option B)
 		api.POST("/portfolios/:portfolio_id/data-load", dataLoadHandler.CreatePortfolioDataLoad)
@@ -270,6 +296,11 @@ func main() {
 		api.POST("/portfolios/:portfolio_id/analysis-run", portfolioAnalysisRunHandler.CreateRun)
 		api.POST("/portfolios/:portfolio_id/rebalance-run", portfolioRebalanceRunHandler.CreateRun)
 
+		// Weekly health (python-worker execution; Go API is BFF)
+		api.GET("/portfolios/:portfolio_id/weekly-health/changes", adminProxyHandler.WeeklyHealthChanges)
+		api.GET("/portfolios/:portfolio_id/weekly-health/latest", adminProxyHandler.WeeklyHealthLatest)
+		api.POST("/portfolios/:portfolio_id/weekly-health/email", adminProxyHandler.WeeklyHealthEmail)
+
 		// Symbol scope endpoints (UI helper)
 		api.GET("/symbol-scope/resolve", symbolScopeHandler.Resolve)
 
@@ -279,6 +310,7 @@ func main() {
 		api.GET("/tickers/:symbol", tickerHandler.GetTicker)
 
 		// Stock endpoints
+		api.GET("/market-data/quote/:symbol", marketDataHandler.LiveQuote)
 		api.GET("/stock/:symbol", stockHandler.GetStock)
 		api.GET("/stock/:symbol/alert-context", stockHandler.GetAlertContext)
 		api.GET("/stock/:symbol/advanced-analysis", stockHandler.GetAdvancedAnalysis)
@@ -287,6 +319,17 @@ func main() {
 		api.GET("/stock/:symbol/earnings", stockHandler.GetEarnings)
 		api.GET("/stock/:symbol/industry-peers", stockHandler.GetIndustryPeers)
 		api.GET("/signal/:symbol", stockHandler.GetSignal)
+
+		// Screeners
+		api.GET("/screeners/fundamentals/quality-compounders", fundamentalsScreenerHandler.ScreenQualityCompounders)
+		api.GET("/screeners/fundamentals/value", fundamentalsScreenerHandler.ScreenValue)
+		api.GET("/screeners/fundamentals/growth", fundamentalsScreenerHandler.ScreenGrowth)
+		api.GET("/screeners/fundamentals/garp", fundamentalsScreenerHandler.ScreenGarp)
+		api.GET("/screeners/fundamentals/inflection", fundamentalsScreenerHandler.ScreenInflection)
+
+		// Agent Workbench / canonical analysis runs
+		api.GET("/agents", agentRunHandler.Catalog)
+		api.POST("/agent-runs", agentRunHandler.Run)
 
 		// Runs endpoints (DRY orchestration)
 		api.POST("/runs", runHandler.CreateRun)

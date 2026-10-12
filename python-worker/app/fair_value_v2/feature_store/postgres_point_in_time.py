@@ -4,7 +4,7 @@ from datetime import datetime
 import re
 from typing import Any, Dict, Optional, Tuple
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import ProgrammingError
 
 from app.database import db
@@ -12,6 +12,42 @@ from app.fair_value_v2.schemas import FeatureRow
 
 
 class PostgresPointInTimeFeatureStore:
+    _symbol_column_cache: Dict[str, str] = {}
+    _currency_column_cache: Dict[str, bool] = {}
+
+    def _has_currency_column(self, session: Any, table: str) -> bool:
+        cached = self._currency_column_cache.get(table)
+        if cached is not None:
+            return cached
+        has = False
+        try:
+            insp = inspect(session.bind)
+            cols = {c.get("name") for c in (insp.get_columns(table) or []) if isinstance(c, dict)}
+            has = "currency" in cols
+        except Exception:
+            has = False
+        self._currency_column_cache[table] = has
+        return has
+
+    def _get_symbol_column(self, session: Any, table: str) -> str:
+        cached = self._symbol_column_cache.get(table)
+        if cached:
+            return cached
+
+        symbol_column = "symbol"
+        try:
+            insp = inspect(session.bind)
+            cols = {c.get("name") for c in (insp.get_columns(table) or []) if isinstance(c, dict)}
+            if "stock_symbol" in cols:
+                symbol_column = "stock_symbol"
+            elif "symbol" in cols:
+                symbol_column = "symbol"
+        except Exception:
+            symbol_column = "symbol"
+
+        self._symbol_column_cache[table] = symbol_column
+        return symbol_column
+
     def get_category_override(self, symbol: str) -> Tuple[Optional[str], Optional[str]]:
         """Return (category_override, reason) when an enabled override exists."""
         with db.get_session() as session:
@@ -230,26 +266,37 @@ class PostgresPointInTimeFeatureStore:
             if not ident_re.match(str(k or "")):
                 raise ValueError(f"invalid identifier for where column: {k}")
 
+        # DATE as-of columns should compare against a date.
         as_of_value: Any
-        if table == "financial_ratios":
+        if table == "financial_ratios" or as_of_column in {"fiscal_date_ending", "consensus_date", "target_date", "rating_date"}:
             as_of_value = as_of_ts.date()
         else:
             as_of_value = as_of_ts
 
         where_extra = f" AND {column} IS NOT NULL" if where_not_null else ""
         where_filters_sql = "".join([f" AND {k} = :w_{k}" for k in where.keys()])
-        sql = f"""
-        SELECT {column}, {as_of_column}
-        FROM {table}
-        WHERE symbol = :symbol
-          AND {as_of_column} <= :as_of
-          {where_extra}
-          {where_filters_sql}
-        ORDER BY {order_by_column} DESC
-        LIMIT 1
-        """
 
         with db.get_session() as session:
+            symbol_column = self._get_symbol_column(session, table)
+            if not ident_re.match(str(symbol_column or "")):
+                raise ValueError(f"invalid identifier for symbol column: {symbol_column}")
+
+            # Statement tables carry a `currency` column — selecting it
+            # lets the resolver FX-normalize non-USD rows (ADR listers).
+            has_ccy = self._has_currency_column(session, table)
+            cur_sel = ", currency" if has_ccy else ""
+
+            sql = f"""
+            SELECT {column}, {as_of_column}{cur_sel}
+            FROM {table}
+            WHERE {symbol_column} = :symbol
+              AND {as_of_column} <= :as_of
+              {where_extra}
+              {where_filters_sql}
+            ORDER BY {order_by_column} DESC
+            LIMIT 1
+            """
+
             params: Dict[str, Any] = {"symbol": symbol, "as_of": as_of_value}
             for k, v in where.items():
                 params[f"w_{k}"] = v
@@ -258,14 +305,15 @@ class PostgresPointInTimeFeatureStore:
                 params,
             ).fetchone()
             if not row:
-                return None, None
+                return None, None, None
             raw = row[0]
             ts = row[1]
+            ccy = str(row[2]).upper() if has_ccy and row[2] else None
             try:
                 v = float(raw) if raw is not None else None
             except Exception:
                 v = None
-            return v, ts
+            return v, ts, ccy
 
     def get_macro_scalar(
         self,

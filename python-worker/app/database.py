@@ -1,6 +1,7 @@
 """Database connection and utilities (Postgres-only)."""
 import logging
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import ResourceClosedError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from contextlib import contextmanager
@@ -80,7 +81,12 @@ class Database:
         with self.get_session() as session:
             sql, named = self._normalize_params(query, params)
             result = session.execute(text(sql), named)
-            rows = result.fetchall()
+            try:
+                rows = result.fetchall()
+            except ResourceClosedError:
+                # Some statements (DDL or driver-specific commands) don't return rows.
+                # Keep this method safe so callers that use execute_query for CREATE TABLE won't crash.
+                return []
             # Convert to list of dicts
             if rows:
                 columns = result.keys()
@@ -175,10 +181,19 @@ db = Database()
 
 def run_migrations():
     """Run database migrations from SQL files"""
-    project_root = Path(__file__).parent.parent.parent
+    project_root = Path(__file__).resolve().parent.parent.parent
     migrations_dir = project_root / "supabase" / "migrations"
     if not migrations_dir.exists():
         migrations_dir = project_root / "db" / "migrations_postgres"
+
+    if not migrations_dir.exists():
+        # Docker image layout: WORKDIR=/app, code in /app/app
+        docker_supabase = Path("/app/supabase/migrations")
+        docker_pg = Path("/app/db/migrations_postgres")
+        if docker_supabase.exists():
+            migrations_dir = docker_supabase
+        elif docker_pg.exists():
+            migrations_dir = docker_pg
 
     if not migrations_dir.exists():
         logger.warning(f"Postgres migrations directory not found: {migrations_dir}")

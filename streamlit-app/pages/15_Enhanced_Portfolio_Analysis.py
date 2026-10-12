@@ -335,6 +335,19 @@ def create_portfolio(name: str, description: str = "", portfolio_type: str = "cu
         st.error(f"Error creating portfolio: {str(e)}")
         return None
 
+def save_portfolio_account_state(portfolio_id: Optional[str], **fields: float) -> Optional[Dict[str, Any]]:
+    """Persist a versioned account-state record via the Go API."""
+    if not portfolio_id:
+        return None
+    try:
+        return go_client.post(
+            f"api/v1/portfolios/{portfolio_id}/account-state",
+            json_data={**fields, "source": "manual_ui"},
+        )
+    except Exception as e:
+        st.warning(f"Portfolio created but account state could not be saved: {e}")
+        return None
+
 def get_portfolio_holdings(portfolio_id: str) -> List[Dict[str, Any]]:
     """Get holdings for a portfolio with timeout handling"""
     try:
@@ -3131,13 +3144,29 @@ def show_create_portfolio_form(location: str = "main"):
         with col2:
             initial_capital = st.number_input("Initial Capital ($)", min_value=0.0, value=10000.0, step=1000.0)
             currency = st.selectbox("Currency", ["USD", "EUR", "GBP"])
-        
+
+        st.markdown("**Account State** — used for reconciliation and risk checks in portfolio review")
+        acct_col1, acct_col2 = st.columns(2)
+        with acct_col1:
+            account_equity = st.number_input("Account Equity ($)", min_value=0.0, value=initial_capital, step=1000.0)
+            settled_cash = st.number_input("Settled Cash ($)", min_value=0.0, value=0.0, step=1000.0)
+        with acct_col2:
+            buying_power = st.number_input("Buying Power ($)", min_value=0.0, value=0.0, step=1000.0)
+            portfolio_heat = st.number_input("Portfolio Heat (0–1)", min_value=0.0, max_value=1.0, value=0.0, step=0.01, format="%.2f")
+
         description = st.text_area("Description (Optional)", placeholder="Describe your portfolio strategy...")
-        
+
         if st.form_submit_button("➕ Create Portfolio", type="primary", width='stretch'):
             if name:
                 portfolio = create_portfolio(name, description, portfolio_type, initial_capital)
                 if portfolio:
+                    save_portfolio_account_state(
+                        portfolio.get("id"),
+                        account_equity=account_equity,
+                        settled_cash=settled_cash,
+                        buying_power=buying_power,
+                        portfolio_heat=portfolio_heat,
+                    )
                     st.success(f"✅ Portfolio '{name}' created successfully!")
                     st.rerun()
             else:
@@ -3537,7 +3566,7 @@ def show_portfolio_details(portfolio: Dict[str, Any]):
             df_display = df_holdings[display_columns]
             
             # Apply styling to P&L % column
-            styled_df = df_display.style.applymap(highlight_pnl, subset=['P&L %'])
+            styled_df = df_display.style.map(highlight_pnl, subset=['P&L %'])
             st.dataframe(styled_df, hide_index=True, width='stretch')
             
             # Add View Analysis buttons in a clean grid layout

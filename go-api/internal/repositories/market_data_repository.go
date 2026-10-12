@@ -4,13 +4,361 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/trading-system/go-api/internal/database"
 )
 
 type MarketDataRepository struct {
 	db *sql.DB
+}
+
+func (r *MarketDataRepository) ListBestFundamentalsSnapshotsForSymbolsPreferStatements(symbols []string, minPeriods int) ([]map[string]interface{}, error) {
+	if len(symbols) == 0 {
+		return []map[string]interface{}{}, nil
+	}
+
+	periods := minPeriods
+	if periods <= 0 {
+		periods = 3
+	}
+	if periods > 20 {
+		periods = 20
+	}
+
+	var hasSymbolCol bool
+	if err := r.db.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='fundamentals_snapshots' AND column_name='symbol')",
+	).Scan(&hasSymbolCol); err != nil {
+		return nil, fmt.Errorf("failed to check fundamentals_snapshots schema: %w", err)
+	}
+
+	var hasStockSymbolCol bool
+	if err := r.db.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='fundamentals_snapshots' AND column_name='stock_symbol')",
+	).Scan(&hasStockSymbolCol); err != nil {
+		return nil, fmt.Errorf("failed to check fundamentals_snapshots schema: %w", err)
+	}
+
+	col := ""
+	if hasSymbolCol {
+		col = "symbol"
+	} else if hasStockSymbolCol {
+		col = "stock_symbol"
+	} else {
+		return nil, fmt.Errorf("fundamentals_snapshots has no symbol column")
+	}
+
+	upperSyms := make([]string, 0, len(symbols))
+	seen := map[string]struct{}{}
+	for _, s := range symbols {
+		if s == "" {
+			continue
+		}
+		u := strings.ToUpper(strings.TrimSpace(s))
+		if u == "" {
+			continue
+		}
+		if _, ok := seen[u]; ok {
+			continue
+		}
+		seen[u] = struct{}{}
+		upperSyms = append(upperSyms, u)
+	}
+	if len(upperSyms) == 0 {
+		return []map[string]interface{}{}, nil
+	}
+
+	query := fmt.Sprintf(`
+        SELECT DISTINCT ON (UPPER(%s))
+               UPPER(%s) AS symbol,
+               as_of_date,
+               payload
+        FROM fundamentals_snapshots
+        WHERE payload IS NOT NULL
+          AND UPPER(%s) = ANY($1)
+        ORDER BY UPPER(%s),
+                 CASE
+                   WHEN COALESCE(jsonb_array_length(payload::jsonb->'income_statement'), 0) >= $2 THEN 0
+                   WHEN COALESCE(jsonb_array_length(payload::jsonb->'income_statement'), 0) > 0 THEN 1
+                   WHEN (
+                     COALESCE(jsonb_array_length(payload::jsonb->'income_statement_growth'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'balance_sheet'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'cash_flow'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'financial_ratios'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'key_metrics'), 0) > 0
+                   ) THEN 2
+                   WHEN (
+                     (payload::jsonb ? 'market_cap')
+                     OR (payload::jsonb ? 'pe_ratio')
+                     OR (payload::jsonb ? 'sector')
+                     OR (payload::jsonb ? 'industry')
+                   ) THEN 3
+                   ELSE 4
+                 END ASC,
+                 as_of_date DESC
+    `, col, col, col, col)
+
+	rows, err := r.db.Query(query, pq.Array(upperSyms), periods)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list fundamentals snapshots: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]map[string]interface{}, 0, len(upperSyms))
+	for rows.Next() {
+		var sym string
+		var asOf time.Time
+		var payloadBytes []byte
+		if err := rows.Scan(&sym, &asOf, &payloadBytes); err != nil {
+			return nil, fmt.Errorf("failed to scan fundamentals snapshot: %w", err)
+		}
+		var payload map[string]interface{}
+		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+			payload = map[string]interface{}{}
+		}
+		out = append(out, map[string]interface{}{
+			"symbol":     sym,
+			"as_of_date": asOf.UTC().Format("2006-01-02"),
+			"payload":    payload,
+		})
+	}
+
+	return out, nil
+}
+
+func (r *MarketDataRepository) ListLatestFundamentalsSnapshotsForSymbols(symbols []string) ([]map[string]interface{}, error) {
+	if len(symbols) == 0 {
+		return []map[string]interface{}{}, nil
+	}
+
+	var hasSymbolCol bool
+	if err := r.db.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='fundamentals_snapshots' AND column_name='symbol')",
+	).Scan(&hasSymbolCol); err != nil {
+		return nil, fmt.Errorf("failed to check fundamentals_snapshots schema: %w", err)
+	}
+
+	var hasStockSymbolCol bool
+	if err := r.db.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='fundamentals_snapshots' AND column_name='stock_symbol')",
+	).Scan(&hasStockSymbolCol); err != nil {
+		return nil, fmt.Errorf("failed to check fundamentals_snapshots schema: %w", err)
+	}
+
+	col := ""
+	if hasSymbolCol {
+		col = "symbol"
+	} else if hasStockSymbolCol {
+		col = "stock_symbol"
+	} else {
+		return nil, fmt.Errorf("fundamentals_snapshots has no symbol column")
+	}
+
+	upperSyms := make([]string, 0, len(symbols))
+	seen := map[string]struct{}{}
+	for _, s := range symbols {
+		if s == "" {
+			continue
+		}
+		u := strings.ToUpper(strings.TrimSpace(s))
+		if u == "" {
+			continue
+		}
+		if _, ok := seen[u]; ok {
+			continue
+		}
+		seen[u] = struct{}{}
+		upperSyms = append(upperSyms, u)
+	}
+	if len(upperSyms) == 0 {
+		return []map[string]interface{}{}, nil
+	}
+
+	query := fmt.Sprintf(`
+        SELECT DISTINCT ON (UPPER(%s))
+               UPPER(%s) AS symbol,
+               as_of_date,
+               payload
+        FROM fundamentals_snapshots
+        WHERE payload IS NOT NULL
+          AND UPPER(%s) = ANY($1)
+        ORDER BY UPPER(%s),
+                 CASE
+                   WHEN (
+                     (
+                       (payload::jsonb ? 'revenue_growth')
+                       OR (payload::jsonb ? 'revenue_growth_yoy')
+                       OR (payload::jsonb ? 'revenue_growth_yoy_pct')
+                       OR (payload::jsonb ? 'revenueGrowthYoY')
+                       OR (payload::jsonb ? 'revenueGrowth')
+                     )
+                     AND (
+                       (payload::jsonb ? 'operating_margin')
+                       OR (payload::jsonb ? 'operatingMargin')
+                     )
+                     AND (
+                       (payload::jsonb ? 'debt_to_equity')
+                       OR (payload::jsonb ? 'debtToEquity')
+                     )
+                   ) THEN 0
+                   WHEN (
+                     COALESCE(jsonb_array_length(payload::jsonb->'income_statement'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'income_statement_growth'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'balance_sheet'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'cash_flow'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'financial_ratios'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'key_metrics'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'financial_scores'), 0) > 0
+                   ) THEN 1
+                   WHEN (
+                     (payload::jsonb ? 'market_cap')
+                     OR (payload::jsonb ? 'pe_ratio')
+                     OR (payload::jsonb ? 'pb_ratio')
+                     OR (payload::jsonb ? 'sector')
+                     OR (payload::jsonb ? 'industry')
+                   ) THEN 2
+                   ELSE 3
+                 END ASC,
+                 as_of_date DESC
+    `, col, col, col, col)
+
+	rows, err := r.db.Query(query, pq.Array(upperSyms))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list fundamentals snapshots: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]map[string]interface{}, 0, len(upperSyms))
+	for rows.Next() {
+		var sym string
+		var asOf time.Time
+		var payloadBytes []byte
+		if err := rows.Scan(&sym, &asOf, &payloadBytes); err != nil {
+			return nil, fmt.Errorf("failed to scan fundamentals snapshot: %w", err)
+		}
+		var payload map[string]interface{}
+		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+			payload = map[string]interface{}{}
+		}
+		out = append(out, map[string]interface{}{
+			"symbol":     sym,
+			"as_of_date": asOf.UTC().Format("2006-01-02"),
+			"payload":    payload,
+		})
+	}
+
+	return out, nil
+}
+
+func (r *MarketDataRepository) ListLatestFundamentalsSnapshots(limit int) ([]map[string]interface{}, error) {
+	var hasSymbolCol bool
+	if err := r.db.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='fundamentals_snapshots' AND column_name='symbol')",
+	).Scan(&hasSymbolCol); err != nil {
+		return nil, fmt.Errorf("failed to check fundamentals_snapshots schema: %w", err)
+	}
+
+	var hasStockSymbolCol bool
+	if err := r.db.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='fundamentals_snapshots' AND column_name='stock_symbol')",
+	).Scan(&hasStockSymbolCol); err != nil {
+		return nil, fmt.Errorf("failed to check fundamentals_snapshots schema: %w", err)
+	}
+
+	col := ""
+	if hasSymbolCol {
+		col = "symbol"
+	} else if hasStockSymbolCol {
+		col = "stock_symbol"
+	} else {
+		return nil, fmt.Errorf("fundamentals_snapshots has no symbol column")
+	}
+
+	lim := limit
+	if lim <= 0 {
+		lim = 500
+	}
+	if lim > 5000 {
+		lim = 5000
+	}
+
+	query := fmt.Sprintf(`
+        SELECT DISTINCT ON (UPPER(%s))
+               UPPER(%s) AS symbol,
+               as_of_date,
+               payload
+        FROM fundamentals_snapshots
+        WHERE payload IS NOT NULL
+        ORDER BY UPPER(%s),
+                 CASE
+                   WHEN (
+                     (
+                       (payload::jsonb ? 'revenue_growth')
+                       OR (payload::jsonb ? 'revenue_growth_yoy')
+                       OR (payload::jsonb ? 'revenue_growth_yoy_pct')
+                       OR (payload::jsonb ? 'revenueGrowthYoY')
+                       OR (payload::jsonb ? 'revenueGrowth')
+                     )
+                     AND (
+                       (payload::jsonb ? 'operating_margin')
+                       OR (payload::jsonb ? 'operatingMargin')
+                     )
+                     AND (
+                       (payload::jsonb ? 'debt_to_equity')
+                       OR (payload::jsonb ? 'debtToEquity')
+                     )
+                   ) THEN 0
+                   WHEN (
+                     COALESCE(jsonb_array_length(payload::jsonb->'income_statement'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'income_statement_growth'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'balance_sheet'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'cash_flow'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'financial_ratios'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'key_metrics'), 0) > 0
+                     OR COALESCE(jsonb_array_length(payload::jsonb->'financial_scores'), 0) > 0
+                   ) THEN 1
+                   WHEN (
+                     (payload::jsonb ? 'market_cap')
+                     OR (payload::jsonb ? 'pe_ratio')
+                     OR (payload::jsonb ? 'pb_ratio')
+                     OR (payload::jsonb ? 'sector')
+                     OR (payload::jsonb ? 'industry')
+                   ) THEN 2
+                   ELSE 3
+                 END ASC,
+                 as_of_date DESC
+        LIMIT $1
+    `, col, col, col)
+
+	rows, err := r.db.Query(query, lim)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list fundamentals snapshots: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]map[string]interface{}, 0, lim)
+	for rows.Next() {
+		var sym string
+		var asOf time.Time
+		var payloadBytes []byte
+		if err := rows.Scan(&sym, &asOf, &payloadBytes); err != nil {
+			return nil, fmt.Errorf("failed to scan fundamentals snapshot: %w", err)
+		}
+		var payload map[string]interface{}
+		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+			payload = map[string]interface{}{}
+		}
+		out = append(out, map[string]interface{}{
+			"symbol":     sym,
+			"as_of_date": asOf.UTC().Format("2006-01-02"),
+			"payload":    payload,
+		})
+	}
+
+	return out, nil
 }
 
 func (r *MarketDataRepository) GetLatestFundamentalsSnapshot(symbol string) (map[string]interface{}, error) {

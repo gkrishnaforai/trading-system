@@ -59,7 +59,7 @@ files=(
     "python-worker/requirements.txt"
     "go-api/Dockerfile"
     "streamlit-app/Dockerfile.admin"
-    "python-worker/app/api_app.py"
+    "python-worker/app/api_server.py"
     "python-worker/app/api/admin.py"
     "python-worker/app/api/main.py"
 )
@@ -132,20 +132,20 @@ fi
 # Test 7: Check API endpoints configuration
 echo ""
 echo "7. Checking API endpoints configuration..."
-if [ -f "python-worker/app/api_app.py" ]; then
-    if grep -q "app.include_router(admin.router)" python-worker/app/api_app.py; then
+if [ -f "python-worker/app/api_server.py" ]; then
+    if grep -q "app.include_router(admin_router" python-worker/app/api_server.py; then
         print_status 0 "Admin API routes configured"
     else
         print_status 1 "Admin API routes not configured"
     fi
     
-    if grep -q "app.include_router(main.router)" python-worker/app/api_app.py; then
+    if grep -q "app.include_router(main_router" python-worker/app/api_server.py; then
         print_status 0 "Main API routes configured"
     else
         print_status 1 "Main API routes not configured"
     fi
 else
-    print_status 1 "API app not found"
+    print_status 1 "Canonical API server not found"
 fi
 
 # Test 8: Check Go API Python Worker client

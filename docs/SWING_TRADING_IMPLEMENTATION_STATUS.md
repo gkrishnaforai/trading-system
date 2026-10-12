@@ -79,9 +79,9 @@ Swing trading system has been implemented following DRY, SOLID principles with r
 
 **Status**: ✅ Complete, registered in strategy registry
 
-### 6. ✅ Swing Risk Manager
+### 6. ✅ Canonical Risk Engine
 
-**File**: `python-worker/app/services/swing_risk_manager.py`
+**File**: `python-worker/app/risk/engine.py`
 
 **Features**:
 - ✅ Fixed fractional position sizing
@@ -158,7 +158,7 @@ Swing trading system has been implemented following DRY, SOLID principles with r
    - Test exit conditions
    - Test multi-timeframe analysis
 
-4. **Swing Risk Manager** (`tests/test_swing_risk_manager.py`)
+4. **Canonical Risk Engine** (`test_risk_engine.py`)
    - Test position sizing
    - Test portfolio heat limits
    - Test account balance calculation
@@ -226,38 +226,29 @@ print(f"Position Size: {result.position_size*100:.1f}%")
 print(f"Confidence: {result.confidence:.1%}")
 ```
 
-### Calculate Position Size
+### Canonical Risk Assessment
 
 ```python
-from app.services.swing_risk_manager import SwingRiskManager
+from app.risk import PortfolioConstraints, assess_risk
 
-risk_manager = SwingRiskManager()
-
-position = risk_manager.calculate_position_size(
-    user_id='user123',
-    entry_price=50.0,
-    stop_loss=49.0,
-    risk_per_trade=0.01  # 1% risk
+risk = assess_risk(
+    opportunity,
+    regime,
+    PortfolioConstraints(
+        account_equity=100000,
+        current_portfolio_risk=0.01,
+        open_trades=1,
+    ),
 )
 
-print(f"Position Size: {position['position_size_pct']*100:.1f}%")
-print(f"Shares: {position['shares']}")
-print(f"Risk Amount: ${position['risk_amount']:.2f}")
+print(risk.status)
+print(risk.allowed)
+print(risk.position_size_pct)
+print(risk.shares)
+print(risk.blocking_reasons)
 ```
 
-### Check Portfolio Heat
-
-```python
-heat = risk_manager.check_portfolio_heat(
-    user_id='user123',
-    new_trade_risk=500.0
-)
-
-if heat['allowed']:
-    print("✅ Trade allowed")
-else:
-    print(f"❌ Trade rejected: {heat['reason']}")
-```
+The risk engine is deterministic and receives portfolio/account values explicitly. It does not query the database or emit the final trade action.
 
 ## Summary
 

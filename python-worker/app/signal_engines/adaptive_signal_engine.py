@@ -11,7 +11,7 @@ from datetime import datetime
 import logging
 
 from app.signal_engines.signal_calculator_core import SignalType, SignalResult, MarketConditions
-from app.services.market_regime_service import MarketRegimeService, MarketRegime
+from app.market_regime.compat import CanonicalMarketRegimeService, LegacyMarketRegime as MarketRegime
 from app.services.volatility_profiler_service import VolatilityProfilerService, VolatilityProfile
 from app.services.relative_strength_service import RelativeStrengthService, RelativeStrengthTier
 from app.services.component_normalizer_service import ComponentNormalizer
@@ -54,7 +54,7 @@ class AdaptiveSignalEngine:
     """
     
     def __init__(self):
-        self.regime_service = MarketRegimeService()
+        self.regime_service = CanonicalMarketRegimeService()
         self.volatility_service = VolatilityProfilerService()
         self.rs_service = RelativeStrengthService()
         self.config_matrix = ConfigMatrix()

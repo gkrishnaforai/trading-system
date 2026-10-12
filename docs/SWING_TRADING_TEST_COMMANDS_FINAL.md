@@ -14,7 +14,7 @@ python -m pytest tests/test_swing_*.py -v -s
 1. **test_swing_indicators.py** - ADX, Stochastic, Williams %R, VWAP, Fibonacci
 2. **test_multi_timeframe_service.py** - Multi-timeframe data service
 3. **test_swing_trend_strategy.py** - Swing trend strategy
-4. **test_swing_risk_manager.py** - Risk management
+4. **test_risk_engine.py** - Risk management
 5. **test_swing_trading_integration.py** - End-to-end integration
 
 ## Commands
@@ -43,7 +43,7 @@ python -m pytest tests/test_swing_trend_strategy.py -v -s
 
 # Risk Manager
 cd /Users/krishnag/tools/trading-system/python-worker
-python -m pytest tests/test_swing_risk_manager.py -v -s
+python -m pytest tests/test_risk_engine.py -v -s
 
 # Integration
 cd /Users/krishnag/tools/trading-system/python-worker

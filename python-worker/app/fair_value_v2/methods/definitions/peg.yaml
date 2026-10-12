@@ -1,5 +1,5 @@
 method_key: peg
-version: 1
+version: 2
 category: growth
 requires:
   scalars:
@@ -12,8 +12,35 @@ params:
   peg_target: 1.2
   pe_floor: 15.0
   pe_cap: 45.0
+  pe_cap_bear: 35.0
+  pe_cap_bull: 55.0
+  pe_cap_explosive: 65.0
   growth_pct_cap: 60.0
+  growth_mult_bear: 0.70
+  growth_mult_bull: 1.10
+  growth_mult_explosive: 1.25
 formula:
+  bindings:
+    g:
+      clamp:
+        value: {var: forward_growth_pct_1y}
+        lo: 0
+        hi: {param: growth_pct_cap}
+    g_bear:
+      clamp:
+        value: {mul: [{var: g}, {param: growth_mult_bear}]}
+        lo: 0
+        hi: {param: growth_pct_cap}
+    g_bull:
+      clamp:
+        value: {mul: [{var: g}, {param: growth_mult_bull}]}
+        lo: 0
+        hi: {param: growth_pct_cap}
+    g_explosive:
+      clamp:
+        value: {mul: [{var: g}, {param: growth_mult_explosive}]}
+        lo: 0
+        hi: {param: growth_pct_cap}
   fair_price:
     if:
       cond:
@@ -22,24 +49,52 @@ formula:
           - lte: [{var: forward_growth_pct_1y}, 0]
       then: null
       else:
-        let:
-          bindings:
-            g:
-              clamp:
-                value: {var: forward_growth_pct_1y}
-                lo: 0
-                hi: {param: growth_pct_cap}
-            pe:
-              clamp:
-                value:
-                  mul:
-                    - {param: peg_target}
-                    - {var: g}
-                lo: {param: pe_floor}
-                hi: {param: pe_cap}
-          in:
-            mul: [{var: eps_forward}, {var: pe}]
-  bear_fair_price: null
-  bull_fair_price: null
-  explosive_fair_price: null
+        mul:
+          - var: eps_forward
+          - clamp:
+              value: {mul: [{param: peg_target}, {var: g}]}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap}
+  bear_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: eps_forward}, 0]
+          - lte: [{var: forward_growth_pct_1y}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_forward
+          - clamp:
+              value: {mul: [{param: peg_target}, {var: g_bear}]}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap_bear}
+  bull_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: eps_forward}, 0]
+          - lte: [{var: forward_growth_pct_1y}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_forward
+          - clamp:
+              value: {mul: [{param: peg_target}, {var: g_bull}]}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap_bull}
+  explosive_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: eps_forward}, 0]
+          - lte: [{var: forward_growth_pct_1y}, 0]
+      then: null
+      else:
+        mul:
+          - var: eps_forward
+          - clamp:
+              value: {mul: [{param: peg_target}, {var: g_explosive}]}
+              lo: {param: pe_floor}
+              hi: {param: pe_cap_explosive}
 validations: []

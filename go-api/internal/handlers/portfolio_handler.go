@@ -190,12 +190,13 @@ func (h *PortfolioHandler) CreateHolding(c *gin.Context) {
 		AvgPrice:    req.AvgEntryPrice,
 	}
 
-	if err := h.portfolioService.CreateHolding(portfolioID, pos); err != nil {
+	created, err := h.portfolioService.CreateHolding(portfolioID, pos)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, pos)
+	c.JSON(http.StatusCreated, created)
 }
 
 // UpdateHolding handles PUT /api/v1/holdings/:holding_id

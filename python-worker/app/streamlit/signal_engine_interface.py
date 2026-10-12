@@ -12,7 +12,7 @@ from app.signal_engines.factory import SignalEngineFactory
 from app.signal_engines.swing_engine_factory import get_swing_engine_for_symbol, SwingEngineType
 from app.signal_engines.aggregation_service import SignalAggregationService
 from app.repositories.signal_repository import SignalRepository
-from app.services.market_context_service import MarketContextService
+from app.market_regime.compat import get_legacy_market_context
 from app.services.stock_insights_service import StockInsightsService
 from app.observability.logging import get_logger
 from app.observability import audit
@@ -113,12 +113,12 @@ def _run_signal_analysis(symbol: str, engine: str, run_multi: bool, timeframe: s
     
     try:
         with st.spinner(f"Running signal analysis for {symbol}..."):
-            market_context_service = MarketContextService()
+            market_context_service = None
             insights_service = StockInsightsService()
             aggregation_service = SignalAggregationService()
             
             # Get market context
-            market_context = market_context_service.get_market_context()
+            market_context = get_legacy_market_context()
             
             # Get market data
             market_data = insights_service._fetch_market_data(symbol)

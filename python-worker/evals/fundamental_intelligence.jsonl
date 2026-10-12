@@ -1,0 +1,5 @@
+{"id":"complete_quality_profile","description":"Available growth, profitability, cash flow, liquidity, and valuation metrics produce separate dimensions without collapsing them","expected":{"quality_score_present":true,"moat":"unavailable","earnings_revision":"unavailable","dcf_available":false}}
+{"id":"coin_financial_cyclicality","description":"A financial/crypto-sensitive business is classified with explicit risk flags rather than generic growth only","expected":{"business_type":"financial","risk_flags_present":true}}
+{"id":"negative_eps","description":"Negative EPS does not make P/E a valid valuation anchor","expected":{"valuation_not_buy_signal":true}}
+{"id":"missing_fundamentals","description":"Missing provider fundamentals remain unavailable and do not receive neutral defaults","expected":{"data_quality":"insufficient","quality_score":null}}
+{"id":"premium_growth","description":"Growth and premium valuation remain orthogonal dimensions","expected":{"growth_high":true,"valuation_premium":true}}

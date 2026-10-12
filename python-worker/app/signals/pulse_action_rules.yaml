@@ -1,0 +1,818 @@
+# Portfolio Pulse — deterministic action bucketing rules, v3
+# ==========================================================
+# Architecture contract:
+#
+#   STAGE 0 (computed inputs): single-assignment derived values —
+#     fv_valid, flag classes, instrument routing. Computed ONCE by the
+#     evaluator from explicit precedence, never by competing rules.
+#
+#   STAGE 1 (annotations): order-independent annotations — confidence
+#     notes, data-quality state, risk flags. Can veto rule inputs,
+#     never fires an action.
+#
+#   STAGE 2 (actions): first-match-wins, ordered reduce → trim →
+#     watch → add → hold. `add` additionally must pass the global
+#     add_policy gate — enforced by the evaluator, not by rules.
+#
+# Missing-data semantics (uniform): a condition on a missing input is
+# FALSE, never vacuous-true; journals `missing:<field>`. `in`/`not_in`
+# on a null scalar are both FALSE — "not in D" is not the same as
+# "is C". Comparators are exactly as named (gt strict, gte inclusive).
+
+version: 3.8
+
+# ---------------------------------------------------------------------
+# STAGE 0 — computed inputs (single-assignment, explicit precedence)
+# ---------------------------------------------------------------------
+computed:
+  # fv_upside convention — DEFINED: (fair_value/spot − 1) × 100.
+  #   fv = +20  → FV 20% above spot (upside)
+  #   fv = −25  → FV 25% below spot ≡ spot trades at a 33% PREMIUM to
+  #   FV — "trading {fv}% above fair value" would be WRONG, so `why`
+  #   strings must say "FV gap {fv}%" and let the sign speak.
+  fv_valid:
+    # evaluated in THIS order — first applies, no competing writes.
+    # Boundaries: exactly ±75 is VALID (gt/lt are strict). Non-numeric
+    # values — NaN, inf, strings, bools — are invalid before any range
+    # check; NaN comparisons must never leak through.
+    precedence:
+      - {if: "fv_upside is not a finite number", result: false,
+         note: "missing/non-numeric/NaN/inf — no usable FV"}
+      - {if: "fv_upside > 75 or fv_upside < -75",
+         result: false, note: "suspect — model blind on this input"}
+      - {default: true}
+    # every `fv_*` condition in STAGE 2 implicitly requires fv_valid;
+    # on invalid fv they evaluate MISSING, never true/false on garbage
+
+  instrument:
+    # routing happens BEFORE action rules — an ETF never enters the
+    # equity rule chain at all. TRI-STATE: true→etf, false→equity,
+    # null→unknown. An unresolved instrument NEVER defaults to
+    # equity — it routes to unknown_policy (review only). Detecting
+    # `is_etf` upstream is allowed to be null when no profile row
+    # and no identifying fields exist.
+    source: fmp_company_profiles.is_etf + name/industry heuristic
+    values: [etf, equity, unknown]
+
+  rev_class:
+    # normalize the letter grade into a policy class once.
+    # Input normalization (evaluator): strip whitespace, uppercase,
+    # missing-tokens {"", "n/a", "na", "none", "-", "—", "unknown",
+    # "null"} matched case-insensitively → null. Three outcomes:
+    # a class, `missing` (null input), or
+    # `malformed` (non-null, unmapped — feed defect, satisfies NO
+    # rule, annotated by malformed_revision_grade)
+    unmapped_non_null: malformed      # explicit fallback, not inferred
+    map:
+      A: [A+, A, A-]
+      B: [B+, B, B-]
+      C: [C+, C, C-]
+      D: [D, F]
+      missing: [null]
+
+groups:
+  tape_broken:       [knife, capitulation, breakdown, downtrend]
+  tape_weak:         [knife, capitulation, breakdown, downtrend, rolling_over]
+  tape_constructive: [pullback, basing, recovery, uptrend, breakout]
+  tape_extensible:   [uptrend, breakout, climax]
+  fund_good:         [accelerating, growing]
+  fund_neutral:      [cyclical, watch]
+  fund_soft_bad:     [slowing, pressured]
+  fund_bad_hard:     [deteriorating, declining]
+  swing_constructive: [pullback, uptrend, recovery, basing]
+                     # swing readiness is stricter than the action
+                     # layer — breakout is NOT a dip-buy state
+  tape_hostile_entry: [knife, capitulation, breakdown, downtrend,
+                       climax]
+                     # tape_broken + euphoria — states where price
+                     # itself argues against a fresh long-hold entry:
+                     # don't catch the knife, don't chase the climax
+  # `turnaround` is a valid upstream fundamental_state handled by its
+  # own rules (turnaround_watch / add_value_recovery) — deliberately
+  # absent from every group above so it can't qualify as good/neutral/
+  # bad by accident
+
+# ---------------------------------------------------------------------
+# STAGE 1 — annotations & gates (all evaluate; none return actions)
+# ---------------------------------------------------------------------
+annotations:
+
+  # blocking data quality — presence of ANY = `dq_block` true.
+  # Contract (enforced evaluator-side, not per-rule):
+  #   add     → vetoed outright via add_policy → watch/add_blocked
+  #   reduce/trim → still FIRES, confidence capped at `low`. Stale
+  #                 data must never force holding a risk position —
+  #                 it downgrades certainty, not the action.
+  #   watch/hold → annotated only.
+  blocking:
+    - name: stale_fundamentals
+      when: {flywheel_age_days_gt: 21}
+    - name: stale_tape
+      when: {momentum_age_days_gt: 3}
+    - name: earnings_unknown
+      # equity-only concept — ETFs have no earnings date by design
+      when: {earn_days_is: null, instrument: equity}
+    - name: mandatory_input_missing
+      # fund=null is a classification FACT for ETFs, not missing data
+      when: {any_missing: [tape, fund], instrument: equity}
+
+  # confidence annotations — journal + display, never block alone
+  confidence:
+    - name: thin_coverage
+      when: {num_analysts_lt: 3}
+      note: "thin coverage ({n} analysts) — revision grade low-confidence"
+    - name: malformed_revision_grade
+      # a grade that isn't null but maps to no class — feed defect,
+      # NOT 'no coverage'. rev_class=malformed satisfies nothing.
+      when: {rev_class: malformed}
+      note: "revision grade '{rev}' unmapped — check upstream feed"
+    - name: fv_unusable
+      when: {fv_valid: false}
+      note: "FV leg ignored ({reason from Stage 0})"
+    - name: metrics_contradict_state
+      when: {extended_metrics: true, tape_not_in: tape_extensible}
+      note: "extension reads off a non-constructive state — likely a
+             collapsed-average or stale-input artifact"
+
+  # normalized risk flags — executable contract per flag:
+  #   true           confirmed risk
+  #   false          sufficient valid data confirms the risk absent
+  #   unknown        active source + insufficient data → blocks `add`,
+  #                  never invents severity
+  #   not_applicable sector_exempt match → excluded from BOTH
+  #                  risk_unverifiable and hard_risk_active; an exempt
+  #                  flag can never block an add
+  #   pending        uncalibrated calc → journaled for calibration,
+  #                  exempt from the add gate until promoted to active
+  risk_flags:
+    fcf_negative:
+      source: "gq_flags contains 'fcf_negative'"
+      sector_exempt: []            # gq upstream is already sector-aware
+      status: active
+    dilution_severe:
+      source: "share_count_growth_3y from quarterly journal"
+      definition: "shares_outstanding growth > 15%/yr for 2y AND not
+                   acquisition-attributed"
+      sector_exempt: []            # SBC-heavy sectors ok
+      missing_input: "share count history absent → flag = unknown"
+      status: pending_calibration
+    leverage_critical:
+      source: "fundamental journal balance sheet"
+      definition: "sector-aware — net_debt/ebitda > sector_p90 AND
+                   interest_coverage < 2"
+      sector_exempt: [financials, "financial services", banks,
+                      insurance, reit, "real estate"]
+                     # leverage IS the business model for financials;
+                     # REITs need FFO coverage (separate calc) — exempt
+                     # until it exists
+      missing_input: "debt or ebitda absent → flag = unknown"
+      status: pending_calibration
+
+  # two distinct computed predicates — conflating them would force a
+  # `review` on every row while pending flags are uncalibrated:
+  hard_risk_active:  "any ACTIVE-source flag evaluates true (exempt
+                     excluded). A pending flag can NEVER produce true
+                     — it stays 'pending' until promoted, so an
+                     unvalidated signal can't trigger severe-risk" # review trigger
+  risk_unverifiable: "any flag evaluates unknown — pending and
+                     not_applicable do NOT count" # add-gate input only
+
+# ---------------------------------------------------------------------
+# Global gates — enforced by the evaluator OUTSIDE the rule chain
+# ---------------------------------------------------------------------
+add_policy:
+  # applies to BOTH add rules identically — evaluated ONLY after a
+  # rule has selected `add` as the candidate, never earlier. A
+  # matched reduce/trim/watch is untouched by this gate. A failed gate
+  # returns watch/add_blocked naming the gate, not hold.
+  #
+  # TERMINATION CONTRACT: the FIRST matching action rule wins. If
+  # that rule's candidate is `add` and the gate fails, evaluation
+  # ENDS at watch/add_blocked — it does NOT continue to the next add
+  # rule and never falls through to hold. matched_rule still records
+  # the rule that selected the candidate.
+  require:
+    - dq_block: false
+    - earn_days_gt: 7
+    - fv_valid: true
+    - priced_not_in: [full, beyond_lt_avg]
+    - hard_risk_active: false
+    - risk_unverifiable: false      # can't verify critical risk →
+                                    # no add until flags calibrate
+  on_fail: watch
+  on_fail_label: add_blocked
+  on_fail_why: "add blocked — {gate}"
+
+etf_policy:
+  # company-fundamental rules never apply; tape + context only.
+  # fund=unknown here is a classification fact, not missing data.
+  rules:
+    - name: etf_broken
+      when: {tape_in: tape_broken}
+      action: reduce
+      confidence: medium          # only leg is tape — honest label
+      why: "{tape} — no fundamental leg exists; tape is the whole thesis"
+    - name: etf_extended
+      when: {tape_in: tape_extensible, any: [{rsi_gte: 75}, {vs50_gt: 0.30}]}
+      action: trim
+      why: "extended — {tape}"
+    - name: etf_unclassifiable
+      # missing tape on an ETF is a data gap, not a silent hold
+      when: {tape_is: null}
+      action: watch
+      label: review
+      why: "ETF with no tape classification — data gap, review"
+    - name: etf_hold
+      when: {default: true}
+      action: hold
+      why: "ETF exposure — ride the allocation, review at rebalancing"
+  # TODO(phase-2): commodity/crypto ETFs (SLV/FETH/FSOL) get
+  # structure-aware variants — contango/fee drag, spot-vs-NAV, regime
+  # sleeve context. Broad equity ETFs vs leveraged vs commodity are
+  # not one class.
+
+unknown_policy:
+  # instrument can't be determined — no stock-level action may be
+  # issued. Review only, always.
+  rules:
+    - name: instrument_unclassifiable
+      when: {default: true}
+      action: watch
+      label: review
+      why: "instrument type unresolved (no profile, no identifying fields) — review, never auto-classify"
+
+# ---------------------------------------------------------------------
+# STAGE 2 — equity action rules (first match wins)
+# ---------------------------------------------------------------------
+rules:
+
+  # ==================== REDUCE ====================
+
+  - name: both_legs_failing
+    when:
+      tape_in: tape_broken
+      fund_in: {union: [fund_soft_bad, fund_bad_hard]}
+    action: reduce
+    confidence: high
+    why: "tape {tape} + fundamentals {fund} — both legs failing"
+
+  - name: broken_rev_cutting
+    when: {tape_in: tape_broken, rev_class: D}
+    action: reduce
+    confidence: high
+    why: "tape {tape} + revisions {rev} — the street is cutting into a broken tape"
+
+  - name: broken_premium_valid_fv
+    # a valid premium must be CORROBORATED by the expectation model —
+    # or unverifiable — before reduce-on-valuation. priced=partial/
+    # not_priced means the two valuation engines disagree → that's a
+    # warning (valuation_risk watch), not a conviction.
+    when:
+      tape_in: tape_broken
+      fv_gte: -75        # fv_* implicitly requires fv_valid
+      fv_lte: -25
+      any:
+        - {priced_in: [substantial, full, beyond_lt_avg]}
+        - {priced_is: null}
+    action: reduce
+    why: "tape {tape} + FV gap {fv}% (spot above model FV), priced={priced}"
+
+  - name: broken_no_support
+    # position + broken tape + neutral-or-worse fund + street not
+    # upgrading. Missing FV lowers CONFIDENCE — it is never negative
+    # evidence. fund=unknown is NOT neutral — it routes to review.
+    when:
+      tape_in: tape_broken
+      fund_in: {union: [fund_neutral, fund_soft_bad, fund_bad_hard]}
+      rev_class_in: [B, C, D, missing]
+        # explicit, not `not: A` — under null-condition semantics a
+        # `not_in` on a missing grade is FALSE, which would wrongly
+        # exclude names with no coverage. Missing revision IS 'no
+        # upgrade evidence' and belongs in this rule.
+      all:
+        - {any: [{fv_lte: 0},        # valid + no upside
+                 {fv_valid: false}]}  # no usable FV → low confidence
+        # …but not INTO a confirmed repair — dip_phase (inside
+        # momentum_detail) is finer-grained than the mom_state label:
+        # `confirmed` means the wash resolved; turning_up alone isn't
+        # enough to defer the reduce, and neither is a confirmed dip
+        # while the street is still cutting (C/D stay reduces).
+        - {any: [{dip_phase_is: null},
+                 {dip_phase_not_in: [confirmed]},
+                 {rev_class_in: [C, D]}]}
+    action: reduce
+    confidence: "{high if fv_valid else low}"
+    why: "tape {tape}, fundamentals {fund}, revisions {rev} — no leg supporting the position"
+
+  - name: deteriorating_first_crack
+    when: {fund_in: fund_bad_hard, tape_in: [rolling_over]}
+    action: reduce
+    why: "fundamentals {fund} + first tape crack — reduce while liquidity is still there"
+
+  # ==================== TRIM ====================
+
+  - name: climax_corroborated
+    when:
+      tape_in: [climax]
+      any: [{rsi_gt: 65}, {vs50_gt: 0.10}]
+    action: trim
+    why: "climax + absolute extension (RSI {rsi}, {vs50} vs 50dma)"
+
+  - name: rolling_over_extended
+    when:
+      tape_in: [rolling_over]
+      any: [{vs50_gt: 0.10}, {rsi_gt: 62}]
+    action: trim
+    why: "rolling_over — first crack after extension"
+
+  - name: euphoric_constructive_tape
+    # extension only meaningful on constructive tape — a downtrend
+    # row with RSI 78 is a collapsed-average artifact, annotated in
+    # Pass 1, never trimmed
+    when:
+      tape_in: tape_extensible
+      any: [{rsi_gte: 75}, {vs50_gt: 0.30}]
+    action: trim
+    why: "{tape} at euphoric levels (RSI {rsi}, {vs50} vs 50dma)"
+
+  - name: trend_stretch
+    when:
+      tape_in: [uptrend, breakout]
+      rsi_gt: 70
+      vs50_gt: 0.15
+    action: trim
+    why: "{tape} stretched on both legs (RSI {rsi}, {vs50} vs 50dma)"
+
+  - name: sell_strength
+    when:
+      fund_in: fund_bad_hard
+      tape_in: [uptrend, breakout, climax]
+    action: trim
+    why: "fundamentals {fund} while tape {tape} — sell into strength"
+
+  # ==================== WATCH ====================
+
+  - name: risk_review
+    # hard risk on ANY tape — broken tape reaches reduce rules first
+    # anyway; this covers constructive/weak/unknown states
+    when: {hard_risk_active: true}
+    action: watch
+    label: review
+    why: "risk flags {flags} — review before action"
+
+  - name: fundamentals_unknown_review
+    # fund can't be classified — broken tape + unknown isn't
+    # automatically reduce (that's a classification failure, not a
+    # thesis failure). Human eyes required.
+    when: {tape_in: tape_broken, fund_is: null}
+    action: watch
+    label: review
+    why: "tape {tape} + unclassified fundamentals — review, don't auto-act"
+
+  - name: unclassifiable_inputs_review
+    # missing tape or fund on an equity row → review outranks any
+    # watch inference below it (degraded_leg would otherwise fire on
+    # the surviving input and hide the classification gap). Reduce/
+    # trim rules above still win — e.g. tape=null can't satisfy them
+    # anyway; fund=null + broken tape matched the specific rule above.
+    when:
+      any: [{tape_is: null}, {fund_is: null}]
+    action: watch
+    label: review
+    why: "classification input missing — review before acting, don't assume hold"
+
+  - name: valuation_risk
+    # FV engine says rich, expectation engine says not — the signals
+    # disagree, so this is a warning not a verdict. Reached only by
+    # names the reduce chain couldn't convict (fund good / rev A
+    # cyclicals / turnarounds — neutral+weak funds still reduce via
+    # broken_no_support).
+    when:
+      tape_in: tape_broken
+      fv_gte: -75
+      fv_lte: -25
+      priced_in: [not_priced, partial]
+    action: watch
+    label: valuation_risk
+    why: "tape {tape} + FV gap {fv}% but priced={priced} — valuation models disagree"
+
+  - name: accumulation_setup
+    when:
+      tape_in: tape_weak
+      fund_in: fund_good
+      fv_gte: 0          # requires fv_valid implicitly
+    action: watch
+    label: accumulation
+    why: "fundamentals {fund} while tape {tape}; FV upside {fv}% — stalk the base, don't chase"
+
+  - name: cycle_turn
+    when:
+      tape_in: tape_broken
+      fund_in: [cyclical]
+      rev_class: A
+    action: watch
+    label: cycle_turn
+    why: "cyclical trough — tape {tape} but revisions {rev}; the turn is in the estimates, not the tape yet"
+
+  - name: base_repairing
+    # confirmed/turning-up dip structure under a still-broken
+    # mom_state — reached only by rows broken_no_support deferred on
+    # the dip leg (or fund-good names with unusable FV). The street
+    # must not be cutting — C/D revisions stay reduces.
+    when:
+      tape_in: tape_broken
+      dip_phase_in: [confirmed, turning_up]
+      fund_in: {union: [fund_neutral, fund_good]}
+      rev_class_in: [A, B]
+    action: watch
+    label: base_repair
+    why: "tape {tape} but dip phase {dip_phase} — structure repairing under a {fund} business, revisions {rev}"
+
+  - name: turnaround_watch
+    # every non-constructive tape, not just weak — a turnaround at
+    # climax/unclassified tape still needs eyes, not a silent hold
+    when:
+      fund_in: [turnaround]
+      tape_not_in: tape_constructive
+    action: watch
+    label: turnaround
+    why: "turnaround thesis with tape {tape} — needs the next print to confirm"
+
+  - name: fundamentals_cooling
+    when:
+      fund_in: fund_soft_bad
+      tape_in: tape_constructive
+    action: watch
+    label: cooling
+    why: "fundamentals {fund} on a healthy tape — early warning, tighten the leash"
+
+  - name: degraded_leg
+    when:
+      any: [{tape_in: tape_weak}, {fund_in: fund_soft_bad},
+            {fund_in: fund_bad_hard}, {tape_dir: degrading},
+            {priced_in: [full, beyond_lt_avg]}]
+    action: watch
+    why: "{notes}"
+
+  # ==================== ADD ====================
+  # Both rules run INSIDE add_policy — a fail lands here, not hold.
+
+  - name: add_growth
+    when:
+      tape_in: tape_constructive
+      fund_in: fund_good
+      fv_gte: 5
+      rsi_lte: 60
+      pct_b_lte: 0.7
+      vs50_lte: 0.15
+      any:
+        - {rev_class_in: [A, B]}
+        - {rev_class: missing, num_analysts_lt: 3, fv_gte: 15}
+          # underfollowed exception — thin coverage is a CONFIDENCE
+          # annotation, not a block; compensated by deeper FV evidence
+    action: add
+    why: "tape {tape} + fundamentals {fund} + FV upside {fv}% + revisions {rev}"
+
+  - name: add_value_recovery
+    # explicit grade policy — A/B/C qualify, D/F reject, missing = own
+    # exception requiring deeper FV (+25%)
+    when:
+      tape_in: tape_constructive
+      fund_in: [turnaround, cyclical]
+      rsi_lte: 60
+      vs50_lte: 0.15
+      any:
+        - {rev_class_in: [A, B, C], fv_gte: 15}
+        - {rev_class: missing, fv_gte: 25}
+    action: add
+    label: recovery
+    why: "{fund} + FV upside {fv}% + revisions {rev} — value recovery setup"
+
+  # ==================== HOLD ====================
+
+  - name: hold
+    # reached only after every rule + the unclassifiable-review
+    # net — "no rule fired" ≠ "evidence endorses holding"
+    when: {default: true}
+    action: hold
+    why: "no action rule triggered — check annotations before assuming all-clear"
+
+# ---------------------------------------------------------------------
+# USE-CASE READINESS — Stock page checklists (swing / invest /
+# leap_call). Same interpreter, same missing-data semantics, same
+# groups and fv_valid contract as the action rules. leap_put stays in
+# put_entry — it's a scoring engine with its own factor model, not a
+# checklist. State: all-pass → ready, n-1 → close, else no.
+# ---------------------------------------------------------------------
+use_cases:
+  swing:                            # 🎯 dip-buy entry
+    checks:
+      - when:
+          any:
+            - {tape_in: swing_constructive}
+            - {dip_phase_in: [stabilizing, turning_up, confirmed]}
+        line: "constructive tape — `{tape}`, dip phase `{dip_phase}` (want pullback/stabilizing)"
+      - when: {vs50_gt: 0}
+        line: "above the 50dma ({vs50}) — the trend filter"
+      - when:
+          all:
+            - {any: [{pct_b_is: null}, {pct_b_lt: 0.7}]}
+            - {any: [{rsi_is: null}, {rsi_lt: 65}]}
+        line: "not stretched — %B {pct_b}, RSI {rsi} (want %B<0.7, RSI<65)"
+      - when: {any: [{hist_dir_is: null}, {hist_dir_gt: -0.5}]}
+        line: "momentum not fading — MACD hist dir {hist_dir} (want >-0.5)"
+      - when: {swing_struct: true}
+        line: "swing structure mapped — phase `{swing_phase}`, confirm {confirm}"
+
+  invest:                           # 🏦 long-hold entry
+    checks:
+      - when: {fund_in: fund_good}
+        line: "fundamentals `{fund}` — want accelerating/growing"
+      - when: {any: [{rev_growth_gt: 0}, {eps_growth_gt: 0}]}
+        line: "growth legs positive — rev {rev_growth} / eps {eps_growth}"
+      - when: {any: [{tape_is: null}, {tape_not_in: tape_hostile_entry}]}
+        # price must be ready too — a climax isn't broken tape but it
+        # isn't an entry either; euphoria waits for the stall
+        line: "price not hostile — tape `{tape}` (no knife-catching, no climax-chasing)"
+      - when:
+          any:
+            - {fv_gte: -20}
+            - all:
+                - {fv_valid: false}
+                - {any: [{priced_is: null},
+                         {priced_not_in: [substantial, full, beyond_lt_avg]}]}
+        # suspect/missing FV reads UNAVAILABLE and passes ONLY when the
+        # expectation model can't corroborate a premium — a blind FV
+        # plus priced=full is not a free pass (same corroboration
+        # vocabulary as broken_premium_valid_fv)
+        line: "valuation not extreme — FV {fv}, priced `{priced}` (want ≥ -20%, or unavailable uncorroborated)"
+      - when: {any: [{future_score_gte: 45}, {lane_in: [deploy, watch]}]}
+        line: "thesis support — future score {future_score}/95, lane `{lane}`"
+      - when: {any: [{gq_score_gte: 45}, {structural_proof_gte: 60}]}
+        line: "growth quality — score {gq_score}/100 (structural {structural_proof})"
+
+  leap_call:                        # 📞 12-18mo bullish
+    checks:
+      - when: {tape_in: [pullback, uptrend, recovery]}
+        line: "trend supports calls — `{tape}` (want pullback/uptrend/recovery, not climax or knife)"
+      - when: {fund_in: fund_good}
+        line: "fundamentals gate — `{fund}` (leaps CALL gate wants accelerating/growing)"
+      - when: {dip_phase_in: [stabilizing, turning_up, confirmed]}
+        line: "wash resolving — dip phase `{dip_phase}` (buy the resolved wash, not mid-air)"
+      - when:
+          all:
+            - {any: [{tape_is: null}, {tape_not_in: [climax]}]}
+            - {any: [{pct_b_is: null}, {pct_b_lt: 0.7}]}
+        line: "room to run — %B {pct_b}, not euphoria (want %B<0.7)"
+      - when: {default: true}
+        line: "IV rank unknown — engine screen prices the chain live"
+
+# ---------------------------------------------------------------------
+# TRADE PLAN STATUS — first-match-wins, worst→best. `when` consumes
+# normalized ctx booleans computed by the trade-plan adapter — plan-
+# relative arithmetic (direction, R multiples, level distances, days
+# in trade) is adapter-side so the rule language stays declarative.
+# Ordered so the strongest signals can't be masked by weaker ones:
+# thesis death > hard stop > full target > extension > staleness >
+# trail opportunity > partial target > on-track.
+# ---------------------------------------------------------------------
+plan_status:
+  - name: thesis_invalidated
+    when: {pulse_action_in: [reduce, avoid]}
+    status: invalidated
+    action_hint: exit
+    why: "pulse → {pulse_action} — the thesis that opened this trade is dead"
+  - name: stop_hit
+    when: {risk_hit: true}
+    status: stop_hit
+    action_hint: exit
+    why: "price broke the plan stop {stop} — structure invalidated, honor the stop"
+  - name: target2_hit
+    when: {t2_hit: true}
+    status: target2_hit
+    action_hint: take_profits
+    why: "target 2 ({t2}) reached — {r}R, take the profits the plan promised"
+  - name: extended
+    when: {pulse_action_in: [trim]}
+    status: extended
+    action_hint: scale_out
+    why: "pulse → trim — extended, scale into strength per plan"
+  - name: stalled
+    when: {stalled: true}
+    status: stalled
+    action_hint: review
+    why: "{days}d in and follow-through never confirmed — the setup is stale"
+  - name: trail_up
+    when: {trail_up: true}
+    status: trail_up
+    action_hint: raise_stop
+    why: "new higher low {trail_to} — ratchet the stop up behind the structure"
+  - name: target1_hit
+    when: {t1_hit: true}
+    status: target1_hit
+    action_hint: partial
+    why: "target 1 ({t1}) reached — take partial, move stop to breakeven"
+  - name: on_track
+    when: {default: true}
+    status: on_track
+    action_hint: hold
+    why: "inside the plan — {r}R, {days}d in, {dist_stop}% above stop"
+
+# ---------------------------------------------------------------------
+# tape_dir (corroboration only, never a trigger):
+#   degrading + broken state       → strengthens reduce why
+#   degrading + constructive       → watch note
+#   improving  + pullback/recovery → strengthens add why
+# ---------------------------------------------------------------------
+# rank_weights — continuous ordering INSIDE each use-case's `ready`
+# set. The checklist is the binary GATE (eligible); rank is the
+# ORDER (which ready name is best). The planner sorts by it.
+#
+# Contract:
+#   - weights renormalize over PRESENT components only — a missing
+#     input drops its weight, never scores zero (same contract as
+#     fv_unusable)
+#   - negative w = flat penalty applied to the final score
+#   - caps reuse the same `when:` condition vocabulary — a matching
+#     cap clamps the final score
+#   - normalizer per component key lives in pulse_engine._RANK_NORM —
+#     engine semantics, unit-tested; this file owns the WEIGHTS
+#   - leap_put stays score-driven — put_entry.score() IS its rank
+rank_weights:
+  swing:
+    weights:
+      - {k: rs_pct,       w: 25}   # universe relative strength (IBD #1)
+      - {k: dip_phase,    w: 20}   # confirmed > turning_up > stabilizing
+      - {k: risk_atr,     w: 15}   # stop geometry — tighter stop, better R
+      - {k: tape_dir,     w: 15}   # state transition improving
+      - {k: vol_dip,      w: 10}   # volume dry-up on the pullback
+      - {k: sector_score, w: 10}   # industry-group capital flow
+      - {k: earn_risk,    w: -15}  # flat penalty — earnings ≤7d
+    caps:
+      - {when: {fund_in: fund_bad_hard}, cap: 40}
+
+  invest:
+    weights:
+      - {k: gq_pct,         w: 25} # growth-quality percentile
+      - {k: revision_grade, w: 20} # estimate momentum — strongest fund factor
+      - {k: priced_status,  w: 15} # expectation gap (inverted)
+      - {k: fv_upside,      w: 15} # value leg — valid FV only
+      - {k: fwd_flags,      w: 10} # emerging_growth + beat_streak
+      - {k: rs_pct,         w: 10} # confirmation, not leadership
+      - {k: dip_phase,      w: 5}  # prefer buying the dip
+    caps:
+      - {when: {fund_in: fund_bad_hard}, cap: 35}
+
+  leap_call:
+    weights:
+      - {k: gq_pct,         w: 20}
+      - {k: revision_grade, w: 15}
+      - {k: rs_pct,         w: 15}
+      - {k: trend_intact,   w: 15} # above 50dma, not climax
+      - {k: room_to_run,    w: 10} # %B/RSI headroom left
+      - {k: priced_status,  w: 10}
+      - {k: fv_upside,      w: 10}
+      - {k: tape_dir,       w: 5}
+    caps:
+      - {when: {fund_in: fund_bad_hard}, cap: 35}
+
+# ---------------------------------------------------------------------
+# posture_rules — the daily trade POSTURE: 'should we initiate
+# anything today?' Not a day predictor — a permission layer over
+# the regime card's breadth / forward-prob / stance fields.
+# First-match-wins. Evaluated in posture.py, journaled to
+# posture_evals, graded vs forward index returns in
+# posture_outcomes — the journal IS the backtest.
+#
+# Condition vocabulary (mini-evaluator in posture._pcond):
+#   <key>_lt / <key>_gt / <key>_in / <key> == value
+# ctx keys: breadth_score, hl_broken, pct_above_50, pct_20d_low,
+# pct_up_5d, p_deeper, stance, regime, hedge_tier
+# Missing ctx value → condition fails → falls to `default`.
+posture_rules:
+  rules:
+    - name: breadth_collapse
+      when: {breadth_score_lt: 22}
+      posture: defensive
+      new_longs: false
+      shorts: true
+      hedge_on: true
+      note: "breadth collapsed — capital preservation only; tactical short or put spreads"
+
+    - name: thin_tape
+      when: {breadth_score_lt: 32, hl_broken_gt: 35}
+      posture: caution
+      new_longs: false
+      shorts: false
+      hedge_on: true
+      note: "fragile tape — rally narrow, structure breaking; no new longs until breadth re-expands"
+
+    - name: deep_correction
+      when: {p_deeper_gt: 55}
+      posture: caution
+      new_longs: false
+      shorts: true
+      hedge_on: true
+      note: "deeper-dip odds elevated — sit tight, let the dip confirm"
+
+    - name: defensive_stance
+      when: {stance_in: [DEFENSIVE]}
+      posture: defensive
+      new_longs: false
+      shorts: true
+      hedge_on: true
+      note: "regime defensive — put sleeve only, hedge on"
+
+    - name: deploy_regime
+      when: {stance_in: ["FEAR—DEPLOY"]}
+      posture: aggressive
+      new_longs: true
+      shorts: false
+      hedge_on: false
+      note: "fear regime — deploy into staged dips aggressively"
+
+    - name: broad_strength
+      when: {breadth_score_gt: 55, pct_above_50_gt: 55}
+      posture: constructive
+      new_longs: true
+      shorts: true
+      hedge_on: false
+      note: "broad tape — play the setups; put slice open for score≥60 names"
+
+  default:
+    posture: neutral
+    new_longs: true
+    shorts: true
+    hedge_on: false
+    note: "no extreme either way — standard playbook"
+
+  # what the posture permits TACTICALLY — instruments, not orders
+  instruments:
+    short:
+      etf: SQQQ
+      max_hold_days: 3
+      note: "daily-reset leverage decay — days, not weeks; put spreads are the better multi-week hedge"
+    hedge:
+      structure: qqq_put_spread
+      note: "monetize at underlying -8% to -15%; see hedge card for live strikes"
+
+# ---------------------------------------------------------------------
+
+telemetry:
+  journal:
+    table: pulse_rule_evals
+    per_row:
+      - matched_rule, action, label, confidence
+      - stage0: computed values (fv_valid, instrument, rev_class)
+      - stage1: annotations fired (blocking / confidence / risk flags)
+      - stage2: rules evaluated in order — pass/fail/missing per
+                condition, gate results for add candidates
+      - input_snapshot: tape, tape_dir, fund, rev, priced, fv, rsi,
+                        vs50, pct_b, earn_days, num_analysts, ages,
+                        gq_flags, risk_flags
+      - engine_version, rules_version
+  review_loop:
+    - "LLM may propose rule changes from journaled failures — never
+       writes actions or edits this file"
+    - "candidate changes backtest on journaled evals + replay
+       out-of-sample before promotion"
+
+acceptance_tests:              # all must pass before deploy
+  - "fv=+732 → fv_valid=false regardless of rule order; no rule sees it"
+  - "add_growth and add_value_recovery both fail identical gates"
+  - "num_analysts=2 + rev missing + fv +20 → add_growth fires
+     (underfollowed exception reaches the gate)"
+  - "ETF + downtrend + fund null → etf_policy, never broken_no_support"
+  - "ACTIVE flag unknown → blocks add, counts as unverifiable"
+  - "pending-calibration flag → journaled 'pending', never blocks add,
+     never produces true, never activates hard_risk"
+  - "sector-exempt flag → not_applicable; can't block add or trigger
+     risk_review"
+  - "downtrend + RSI 78 → annotated contradiction, never trim"
+  - "boundary: fv exactly ±75 valid; rsi exactly 75 on uptrend trims"
+  - "every row journals matched_rule + all evaluated conditions"
+  - "rev missing → rev_class=missing; rev_class_in [B,C,D,missing]
+     matches broken_no_support; a bare not_in would not"
+  - "each risk flag tested true/false/unknown incl sector-exempt"
+  - "fundamental age exactly 21 vs 22 days; tape age 3 vs 4"
+  - "earn_days exactly 7 fails add, exactly 8 passes"
+  - "broken tape + fund null → fundamentals_unknown_review, never
+     broken_no_support"
+  - "ETF + tape null → etf_unclassifiable review, not etf_hold"
+  - "fv null / 'abc' / NaN / +inf / -inf → all invalid"
+  - "annotation order can't change the action (first-match invariance)"
+  - "same snapshot + same rules_version → identical action (replay)"
+  - "add candidate failing gate → watch/add_blocked, never overrides
+     an already-matched reduce or trim"
+  - "instrument unresolved (is_etf null) → unknown_policy review,
+     never equity rules, never a stock-level action"
+  - "malformed grade ('N/A', 'garbage') → rev_class=malformed,
+     annotated, satisfies nothing; 'n/a'/'-'/'' → missing"
+  - "tape null + fund slowing → unclassifiable review, NOT degraded_leg"
+  - "dq_block + reduce/trim → action still fires, confidence=low
+     (cap overrides literal confidence: high)"
+  - "REIT / financials + leverage_critical → not_applicable"
+
+# portfolio sizing lives outside this file — a stock-level `add` never
+# implies the book has room (position size, sector cap, correlated
+# exposure, cash, regime multiplier = separate gate)

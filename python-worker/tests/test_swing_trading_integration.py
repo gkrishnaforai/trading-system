@@ -16,9 +16,61 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import pandas as pd
 from app.services.multi_timeframe_service import MultiTimeframeService
 from app.strategies.swing.trend_strategy import SwingTrendStrategy
-from app.services.swing_risk_manager import SwingRiskManager
 from app.database import init_database, db
+from app.market_regime.models import MarketPermissions, MarketRegime, RegimeLabel
+from app.risk import PortfolioConstraints, assess_risk
+from app.swing_opportunity.models import (
+    OpportunityQuality, SetupAssessment, SetupType, StockAnalysis,
+    StockDataQuality, StockTechnicals, SwingOpportunity,
+)
 from app.exceptions import ValidationError, DatabaseError
+
+
+def assess_signal_risk(result, symbol: str):
+    """Adapt the legacy strategy result into the canonical risk contract."""
+    entry = float(result.entry_price)
+    stop = float(result.stop_loss)
+    opportunity = SwingOpportunity(
+        symbol=symbol,
+        market_regime="bullish",
+        market_condition="trend",
+        swing_environment="medium",
+        swing_size_multiplier=0.5,
+        stock=StockAnalysis(
+            symbol=symbol,
+            technicals=StockTechnicals(
+                price=entry,
+                atr_pct=max((entry - stop) / entry / 2, 0.001),
+            ),
+            data_quality=StockDataQuality(
+                bars=200, required_bars=200, sufficient=True),
+        ),
+        setup=SetupAssessment(
+            type=SetupType.TREND_CONTINUATION,
+            quality=OpportunityQuality.HIGH,
+            score=80,
+            confirmation="confirmed",
+        ),
+        opportunity_quality=OpportunityQuality.HIGH,
+        opportunity_score=80,
+        next_step="RISK_ASSESSMENT",
+    )
+    regime = MarketRegime(
+        regime=RegimeLabel.BULL_LOW_VOL,
+        direction="bullish",
+        condition="trend",
+        confidence=0.8,
+        market_permissions=MarketPermissions(
+            normal_long=True, size_multiplier=0.5),
+    )
+    return assess_risk(
+        opportunity,
+        regime,
+        PortfolioConstraints(account_equity=100000),
+        entry=entry,
+        stop=stop,
+        target=float(result.take_profit),
+    )
 
 
 class TestSwingTradingIntegration(unittest.TestCase):
@@ -39,7 +91,6 @@ class TestSwingTradingIntegration(unittest.TestCase):
         
         cls.mtf_service = MultiTimeframeService()
         cls.strategy = SwingTrendStrategy()
-        cls.risk_manager = SwingRiskManager()
         cls.test_symbols = ["AAPL", "GOOGL", "NVDA", "TQQQ"]
         cls.test_user_id = f"test_user_{int(datetime.now().timestamp() * 1000000)}"
         
@@ -73,7 +124,6 @@ class TestSwingTradingIntegration(unittest.TestCase):
         """Set up test fixtures"""
         self.mtf_service = self.__class__.mtf_service
         self.strategy = self.__class__.strategy
-        self.risk_manager = self.__class__.risk_manager
         self.test_symbols = self.__class__.test_symbols
         self.test_user_id = self.__class__.test_user_id
     
@@ -116,32 +166,14 @@ class TestSwingTradingIntegration(unittest.TestCase):
                 print(f"      ✅ Take Profit: ${result.take_profit:.2f}")
                 print(f"      ✅ Risk-Reward: {result.risk_reward_ratio:.2f}")
                 
-                # Step 3: Calculate position size
-                print(f"\n   Step 3: Calculating position size...")
-                position = self.risk_manager.calculate_position_size(
-                    user_id=self.test_user_id,
-                    entry_price=result.entry_price,
-                    stop_loss=result.stop_loss,
-                    risk_per_trade=0.01  # 1%
-                )
-                
-                print(f"      ✅ Position Size: {position['position_size_pct']*100:.1f}%")
-                print(f"      ✅ Shares: {position['shares']}")
-                print(f"      ✅ Risk Amount: ${position['risk_amount']:,.2f}")
-                
-                # Step 4: Check portfolio heat
-                print(f"\n   Step 4: Checking portfolio heat...")
-                heat = self.risk_manager.check_portfolio_heat(
-                    user_id=self.test_user_id,
-                    new_trade_risk=position['risk_amount']
-                )
-                
-                print(f"      ✅ Allowed: {heat['allowed']}")
-                print(f"      ✅ Current Risk: {heat['current_risk_pct']:.1f}%")
-                print(f"      ✅ Max Risk: {heat['max_risk_pct']:.1f}%")
-                print(f"      ✅ Open Trades: {heat['open_trades']}/{heat['max_open_trades']}")
-                
-                self.assertIsInstance(heat['allowed'], bool, "Should return boolean")
+                # Step 3: Run canonical deterministic risk assessment
+                print(f"\n   Step 3: Running risk assessment...")
+                risk = assess_signal_risk(result, symbol)
+                self.assertIsInstance(risk.allowed, bool, "Should return boolean")
+                print(f"      ✅ Status: {risk.status.value}")
+                print(f"      ✅ Position Size: {risk.position_size_pct*100:.1f}%")
+                print(f"      ✅ Shares: {risk.shares}")
+                print(f"      ✅ Risk Amount: ${risk.risk_amount or 0:,.2f}")
             
             print("\n✅ End-to-end workflow test passed")
             
@@ -208,27 +240,15 @@ class TestSwingTradingIntegration(unittest.TestCase):
         )
         
         if result.signal == 'BUY':
-            # Calculate position size
-            position = self.risk_manager.calculate_position_size(
-                user_id=self.test_user_id,
-                entry_price=result.entry_price,
-                stop_loss=result.stop_loss,
-                risk_per_trade=0.01
-            )
+            # Run canonical deterministic risk assessment
+            risk = assess_signal_risk(result, symbol)
+            self.assertLessEqual(risk.position_size_pct, 0.10, "Position size should be <= 10%")
+            if risk.portfolio_heat_after is not None:
+                self.assertLessEqual(risk.portfolio_heat_after, 0.05)
             
-            # Check portfolio heat
-            heat = self.risk_manager.check_portfolio_heat(
-                user_id=self.test_user_id,
-                new_trade_risk=position['risk_amount']
-            )
-            
-            # Verify risk management
-            self.assertLessEqual(position['position_size_pct'], 0.10, "Position size should be <= 10%")
-            self.assertLessEqual(heat['total_risk_pct'], heat['max_risk_pct'], "Total risk should be <= max risk")
-            
-            print(f"   ✅ Position size: {position['position_size_pct']*100:.1f}%")
-            print(f"   ✅ Total risk: {heat['total_risk_pct']:.1f}% (max: {heat['max_risk_pct']:.1f}%)")
-            print(f"   ✅ Trade allowed: {heat['allowed']}")
+            print(f"   ✅ Position size: {risk.position_size_pct*100:.1f}%")
+            print(f"   ✅ Portfolio heat: {(risk.portfolio_heat_after or 0)*100:.1f}%")
+            print(f"   ✅ Trade allowed: {risk.allowed}")
         
         print("\n✅ Risk management integration test passed")
     

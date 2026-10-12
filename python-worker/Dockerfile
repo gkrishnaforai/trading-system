@@ -37,6 +37,9 @@ COPY python-worker/tests ./tests
 # Copy Supabase migrations so python-worker can run them on startup
 COPY supabase/migrations/ ./supabase/migrations/
 
+# Copy legacy Postgres migrations directory used by init_database()
+COPY db/migrations_postgres/ ./db/migrations_postgres/
+
 # Copy python-worker migrations for admin API
 COPY python-worker/migrations/ ./migrations/
 

@@ -1,0 +1,85 @@
+method_key: pe_cyclical
+version: 2
+category: value
+requires:
+  scalars:
+    - eps_ttm
+  optional_scalars:
+    - eps_forward
+    - forward_growth_pct_1y
+  series: []
+params:
+  pe_mid: 11.0              # mid-cycle multiple — a cyclical earns
+                            # neither the compounder's 14x on peak EPS
+                            # nor the trough's depressed share price
+  pe_floor: 5.0
+  pe_cap: 18.0
+  w_forward: 0.6            # normalized EPS tilts toward the forward
+                            # print — TTM is the cyclical peak
+  bear_eps_shock: 0.85
+  bear_pe_mult: 0.75
+  bull_eps_shock: 1.05
+  bull_pe_mult: 1.15
+  explosive_eps_shock: 1.12
+  explosive_pe_mult: 1.4
+formula:
+  bindings:
+    eps_fwd_use:
+      coalesce: [{var: eps_forward}, {var: eps_ttm}]
+    eps_norm:               # mid-cycle EPS — blends the peak (TTM)
+                            # toward the street's normalized year
+      add:
+        - mul: [{var: eps_fwd_use}, {param: w_forward}]
+        - mul:
+            - {var: eps_ttm}
+            - sub: [1.0, {param: w_forward}]
+    pe_base:
+      clamp:
+        value: {param: pe_mid}
+        lo: {param: pe_floor}
+        hi: {param: pe_cap}
+    pe_bear:
+      clamp:
+        value: {mul: [{var: pe_base}, {param: bear_pe_mult}]}
+        lo: {param: pe_floor}
+        hi: {param: pe_cap}
+    pe_bull:
+      clamp:
+        value: {mul: [{var: pe_base}, {param: bull_pe_mult}]}
+        lo: {param: pe_floor}
+        hi: {param: pe_cap}
+    pe_explosive:
+      clamp:
+        value: {mul: [{var: pe_base}, {param: explosive_pe_mult}]}
+        lo: {param: pe_floor}
+        hi: {param: pe_cap}
+  fair_price:
+    if:
+      cond:
+        lte: [{var: eps_norm}, 0]
+      then: null
+      else:
+        mul: [{var: eps_norm}, {var: pe_base}]
+  bear_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_norm}, 0]
+      then: null
+      else:
+        mul: [{var: eps_norm}, {param: bear_eps_shock}, {var: pe_bear}]
+  bull_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_norm}, 0]
+      then: null
+      else:
+        mul: [{var: eps_norm}, {param: bull_eps_shock}, {var: pe_bull}]
+  explosive_fair_price:
+    if:
+      cond:
+        lte: [{var: eps_norm}, 0]
+      then: null
+      else:
+        mul: [{var: eps_norm}, {param: explosive_eps_shock},
+              {var: pe_explosive}]
+validations: []

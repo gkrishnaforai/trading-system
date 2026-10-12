@@ -110,7 +110,7 @@ class APIClient:
                 error_msg = f"{method} {url} returned {response.status_code}"
                 try:
                     error_data = response.json()
-                    error_msg = error_data.get('error', error_data.get('message', error_msg))
+                    error_msg = error_data.get('error', error_data.get('message', error_data.get('detail', error_msg)))
                 except:
                     error_msg = response.text[:200] if response.text else error_msg
                 
@@ -157,8 +157,39 @@ class APIClient:
         """GET request"""
         return self._make_request("GET", endpoint, params=params, timeout=timeout, headers=headers)
     
+    def list_agents(self) -> Dict[str, Any]:
+        """List Go-owned canonical agent workflows."""
+        return self.get("api/v1/agents")
+
+    def list_portfolio_agent_snapshots(self, portfolio_id: str, limit: int = 30) -> Dict[str, Any]:
+        """Load persisted portfolio review snapshots through Go API."""
+        return self.get(
+            f"api/v1/portfolios/{portfolio_id}/agent-snapshots",
+            params={"limit": limit},
+        )
+
+    def get_portfolio_agent_snapshot(self, portfolio_id: str, snapshot_id: str) -> Dict[str, Any]:
+        """Load one persisted portfolio review snapshot with positions/decisions."""
+        return self.get(f"api/v1/portfolios/{portfolio_id}/agent-snapshots/{snapshot_id}")
+
+    def get_agent_run(self, run_id: str) -> Dict[str, Any]:
+        """Load a durable run record and persisted agent result."""
+        return self.get(f"api/v1/runs/{run_id}")
+
+    def list_agent_runs(self, limit: int = 25) -> Dict[str, Any]:
+        """List recent durable agent/data runs."""
+        return self.get("api/v1/runs", params={"limit": limit})
+
+    def run_agent(self, payload: Dict[str, Any], timeout: Optional[int] = None) -> Dict[str, Any]:
+        """Run a canonical analysis workflow through the Go API BFF."""
+        return self.post("api/v1/agent-runs", json_data=payload, timeout=timeout or 900)
+
+    def get_live_quote(self, symbol: str) -> Dict[str, Any]:
+        """Get canonical freshness-aware live quote through Go API."""
+        return self.get(f"api/v1/market-data/quote/{symbol.upper()}")
+
     def get_stock(self, symbol: str) -> Dict[str, Any]:
-        """Get stock basic info"""
+        """Get legacy stock data; price fields are historical/cached unless separately refreshed."""
         return self.get(f"stock/{symbol}")
     
     def get_news(self, symbol: str, limit: int = 20) -> Dict[str, Any]:

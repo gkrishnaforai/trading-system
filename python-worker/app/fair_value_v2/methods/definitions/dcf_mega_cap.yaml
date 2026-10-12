@@ -1,5 +1,5 @@
 method_key: dcf_mega_cap
-version: 1
+version: 2
 category: general
 requires:
   scalars:
@@ -9,12 +9,15 @@ requires:
     - cash_and_equivalents
   optional_scalars:
     - market_cap
+    - revenue_growth_ttm
+    - forward_growth_pct_1y
   series: []
 params:
   wacc: 0.10
   terminal_growth: 0.03
-  growth: 0.08
+  growth: 0.08              # fallback when revenue_growth_ttm absent
   growth_cap: 0.20
+  growth_floor: 0.02
   fade_years: 5
   explicit_years: 10
   terminal_value_cap_share_of_ev: 0.75
@@ -28,6 +31,34 @@ params:
   growth_explosive_add: 0.04
   terminal_growth_explosive_add: 0.01
 formula:
+  bindings:
+    g_dyn:
+      clamp:
+        value:
+          coalesce:
+            - var: revenue_growth_ttm
+            - div: [{var: forward_growth_pct_1y}, 100]
+            - {param: growth}
+        lo: {param: growth_floor}
+        hi: {param: growth_cap}
+    g_dyn_bear:
+      clamp:
+        value:
+          add: [{var: g_dyn}, {param: growth_bear_add}]
+        lo: 0
+        hi: {param: growth_cap}
+    g_dyn_bull:
+      clamp:
+        value:
+          add: [{var: g_dyn}, {param: growth_bull_add}]
+        lo: 0
+        hi: {param: growth_cap}
+    g_dyn_explosive:
+      clamp:
+        value:
+          add: [{var: g_dyn}, {param: growth_explosive_add}]
+        lo: 0
+        hi: {param: growth_cap}
   fair_price:
     if:
       cond:
@@ -42,7 +73,7 @@ formula:
         dcf_mega_cap_price:
           wacc: {param: wacc}
           terminal_growth: {param: terminal_growth}
-          growth: {param: growth}
+          growth: {var: g_dyn}
           growth_cap: {param: growth_cap}
           fade_years: {param: fade_years}
           explicit_years: {param: explicit_years}
@@ -63,7 +94,7 @@ formula:
         dcf_mega_cap_price:
           wacc: {add: [{param: wacc}, {param: wacc_bear_add}]}
           terminal_growth: {add: [{param: terminal_growth}, {param: terminal_growth_bear_add}]}
-          growth: {add: [{param: growth}, {param: growth_bear_add}]}
+          growth: {var: g_dyn_bear}
           growth_cap: {param: growth_cap}
           fade_years: {param: fade_years}
           explicit_years: {param: explicit_years}
@@ -84,7 +115,7 @@ formula:
         dcf_mega_cap_price:
           wacc: {add: [{param: wacc}, {param: wacc_bull_add}]}
           terminal_growth: {add: [{param: terminal_growth}, {param: terminal_growth_bull_add}]}
-          growth: {add: [{param: growth}, {param: growth_bull_add}]}
+          growth: {var: g_dyn_bull}
           growth_cap: {param: growth_cap}
           fade_years: {param: fade_years}
           explicit_years: {param: explicit_years}
@@ -105,7 +136,7 @@ formula:
         dcf_mega_cap_price:
           wacc: {add: [{param: wacc}, {param: wacc_explosive_add}]}
           terminal_growth: {add: [{param: terminal_growth}, {param: terminal_growth_explosive_add}]}
-          growth: {add: [{param: growth}, {param: growth_explosive_add}]}
+          growth: {var: g_dyn_explosive}
           growth_cap: {param: growth_cap}
           fade_years: {param: fade_years}
           explicit_years: {param: explicit_years}

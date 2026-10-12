@@ -1,0 +1,4 @@
+{"id":"technical_high_fundamental_incomplete","description":"Technical setup may remain visible while incomplete fundamentals reduce context confidence and are recorded","expected":{"setup_preserved":true,"fundamental_data_quality":"partial_or_insufficient","no_fabricated_moat":true}}
+{"id":"financial_business_context","description":"Financial/crypto-sensitive symbol carries explicit business type and risk context into the swing case","expected":{"business_type":"financial","risk_flag_present":true}}
+{"id":"market_permission_veto","description":"A valid technical/fundamental case remains blocked when market permissions disallow normal longs","expected":{"risk_allowed":false,"veto_source":"market_permissions"}}
+{"id":"parallel_namespace_ownership","description":"Technical and fundamental branches write separate namespaces before setup reads both","expected":{"stock_present":true,"fundamentals_present":true}}

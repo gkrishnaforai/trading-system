@@ -92,6 +92,10 @@ class UniversalScheduler:
             'system_health_check': {
                 'interval_minutes': 10,
                 'enabled': True
+            },
+            'trade_plan_digest': {
+                'interval_minutes': 30,
+                'enabled': True
             }
         }
     
@@ -184,6 +188,8 @@ class UniversalScheduler:
                 result = await self._execute_notification_delivery(config)
             elif job_name == 'system_health_check':
                 result = await self._execute_system_health_check(config)
+            elif job_name == 'trade_plan_digest':
+                result = await self._execute_trade_plan_digest(config)
             else:
                 raise ValueError(f"Unknown job: {job_name}")
             
@@ -458,7 +464,31 @@ class UniversalScheduler:
         except Exception as e:
             logger.error(f"❌ Error in system health check job: {e}")
             raise
-    
+
+    async def _execute_trade_plan_digest(self, config: Dict[str, Any]) -> JobResult:
+        """Trade-plan digest — re-evaluate open plans, sweep unseen
+        status transitions into one email, mark seen."""
+        try:
+            from app.signals import trade_plans
+            res = await asyncio.to_thread(trade_plans.email_digest)
+            emailed = res.get("emailed") or 0
+            if emailed:
+                logger.info(f"📧 trade-plan digest sent "
+                            f"({emailed} events → {res.get('to')})")
+            return JobResult(
+                job_name='trade_plan_digest',
+                status=JobStatus.COMPLETED,
+                started_at=datetime.now(),
+                completed_at=datetime.now(),
+                duration_ms=0,
+                records_processed=res.get("events") or 0,
+                alerts_generated=emailed,
+                metadata={"digest": res}
+            )
+        except Exception as e:
+            logger.error(f"❌ Error in trade_plan_digest job: {e}")
+            raise
+
     async def _log_job_completion(self, job_name: str, result: JobResult):
         """Log job completion to database"""
         try:

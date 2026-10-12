@@ -1,0 +1,54 @@
+method_key: analyst_consensus
+version: 1
+category: general
+requires:
+  scalars:
+    - consensus_price_target
+  optional_scalars:
+    - price_target_high
+    - price_target_low
+    - analyst_count
+  series: []
+params:
+  default_band_pct: 0.12
+formula:
+  fair_price:
+    if:
+      cond:
+        lte: [{var: consensus_price_target}, 0]
+      then: null
+      else: {var: consensus_price_target}
+  bear_fair_price:
+    if:
+      cond:
+        and:
+          - gt: [{var: price_target_low}, 0]
+          - lte: [{var: price_target_low}, {var: consensus_price_target}]
+      then: {var: price_target_low}
+      else:
+        if:
+          cond:
+            lte: [{var: consensus_price_target}, 0]
+          then: null
+          else:
+            mul:
+              - {var: consensus_price_target}
+              - sub: [1, {param: default_band_pct}]
+  bull_fair_price:
+    if:
+      cond:
+        and:
+          - gt: [{var: price_target_high}, 0]
+          - gte: [{var: price_target_high}, {var: consensus_price_target}]
+      then: {var: price_target_high}
+      else:
+        if:
+          cond:
+            lte: [{var: consensus_price_target}, 0]
+          then: null
+          else:
+            mul:
+              - {var: consensus_price_target}
+              - add: [1, {param: default_band_pct}]
+  explosive_fair_price: null
+validations: []

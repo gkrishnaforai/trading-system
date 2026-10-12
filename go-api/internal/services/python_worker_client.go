@@ -183,6 +183,112 @@ func (c *PythonWorkerClient) PostJSON(endpoint string, payload any) error {
 	return nil
 }
 
+// GetCanonicalLiveQuote gets the freshness-aware canonical quote from Python.
+func (c *PythonWorkerClient) GetCanonicalLiveQuote(ctx context.Context, symbol string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.getJSONDecodeContext(ctx, "/api/v1/market-data/quote/"+symbol, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// getJSONDecodeContext sends a JSON GET request and decodes its response.
+func (c *PythonWorkerClient) getJSONDecodeContext(ctx context.Context, endpoint string, out any) error {
+	url := fmt.Sprintf("%s%s", c.BaseURL, endpoint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+	return nil
+}
+
+// RunAgent executes a canonical analysis agent through the internal Python worker.
+func (c *PythonWorkerClient) RunAgent(ctx context.Context, req map[string]interface{}) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.postJSONDecodeContext(ctx, "/api/v1/agent-runs", req, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// postJSONDecodeContext sends a JSON POST request and decodes its response.
+func (c *PythonWorkerClient) postJSONDecodeContext(ctx context.Context, endpoint string, payload any, out any) error {
+	url := fmt.Sprintf("%s%s", c.BaseURL, endpoint)
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+	return nil
+}
+
+// PostJSONDecode sends a JSON POST request and decodes the JSON response into out.
+func (c *PythonWorkerClient) PostJSONDecode(ctx context.Context, endpoint string, payload any, out any) error {
+	url := fmt.Sprintf("%s%s", c.BaseURL, endpoint)
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	if out == nil {
+		return nil
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return nil
+}
+
 // SignalRequest represents a request to generate signals
 type SignalRequest struct {
 	Symbols  []string `json:"symbols"`

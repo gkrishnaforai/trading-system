@@ -411,6 +411,75 @@ func (s *SchedulerService) runSchedule(schedule models.Schedule) (runID string, 
 		_ = s.auditRepo.CreateEvent(runID, "info", "queue_enqueue_finished", nil, nil, &fin, nil, map[string]any{"symbols_count": len(symbols)}, nil)
 		return runID, nil
 
+	case "fair_value_warmup":
+		force := false
+		if cfg.Force != nil {
+			force = *cfg.Force
+		}
+
+		symbols := cfg.Symbols
+		if len(symbols) == 0 {
+			resolved, err := s.auditRepo.SymbolsForPortfolio(portfolioID)
+			if err != nil {
+				return "", err
+			}
+			symbols = resolved
+		}
+		if len(symbols) == 0 {
+			return "", fmt.Errorf("no symbols resolved")
+		}
+
+		runID = uuid.New().String()
+		_ = s.auditRepo.CreateRun(runID, "running", map[string]any{
+			"operation":    "fair_value_warmup",
+			"portfolio_id": portfolioID,
+			"symbols":      symbols,
+			"force":        force,
+			"requested_at": time.Now().UTC().Format(time.RFC3339),
+			"triggered_by": "scheduler",
+			"schedule_id":  schedule.ScheduleID,
+		})
+
+		parentCtx := context.Background()
+		ctx, cancel := context.WithTimeout(parentCtx, 15*time.Second)
+		defer cancel()
+
+		_ = s.jobQueue.SetRunRemaining(ctx, runID, len(symbols))
+
+		enqueueFailed := 0
+		for _, sym := range symbols {
+			symCopy := strings.TrimSpace(strings.ToUpper(sym))
+			if symCopy == "" {
+				enqueueFailed += 1
+				continue
+			}
+			if _, err := s.jobQueue.EnqueueFairValueWarmupJob(ctx, FairValueWarmupJobPayload{
+				RunID:       runID,
+				PortfolioID: portfolioID,
+				Symbol:      symCopy,
+				Force:       force,
+				Attempt:     1,
+				MaxAttempts: 3,
+			}); err != nil {
+				enqueueFailed += 1
+				errMsg := err.Error()
+				_ = s.auditRepo.CreateEvent(runID, "error", "queue_enqueue_failed", &symCopy, nil, nil, &errMsg, nil, nil)
+				continue
+			}
+			m := "job enqueued"
+			_ = s.auditRepo.CreateEvent(runID, "info", "queue_job_enqueued", &symCopy, nil, &m, nil, map[string]any{"job_type": "fair_value_warmup"}, nil)
+		}
+		if enqueueFailed > 0 {
+			failMsg := "some jobs failed to enqueue"
+			_ = s.auditRepo.CreateEvent(runID, "error", "queue_enqueue_partial_failure", nil, nil, nil, &failMsg, map[string]any{"failed": enqueueFailed}, nil)
+			_ = s.auditRepo.UpdateRunStatus(runID, "failed", map[string]any{"go_error": failMsg, "enqueue_failed": enqueueFailed})
+			return runID, fmt.Errorf(failMsg)
+		}
+
+		fin := "enqueue completed"
+		_ = s.auditRepo.CreateEvent(runID, "info", "queue_enqueue_finished", nil, nil, &fin, nil, map[string]any{"symbols_count": len(symbols)}, nil)
+		return runID, nil
+
 	case "rebalance_run":
 		resolvedProfile := string(AnalysisProfileWeeklyRebalance)
 		if strings.TrimSpace(profile) != "" {

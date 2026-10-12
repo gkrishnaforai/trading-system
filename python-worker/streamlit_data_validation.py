@@ -104,7 +104,8 @@ def display_analysis_section(section_name: str, section_data: Dict[str, Any]):
     # Details expander
     if details:
         with st.expander(f"📊 {section_name.replace('_', ' ').title()} Details"):
-            details_df = pd.DataFrame(list(details.items()), columns=["Metric", "Value"])
+            details_data = [(k, str(v) if v is not None else None) for k, v in details.items()]
+            details_df = pd.DataFrame(details_data, columns=["Metric", "Value"])
             st.dataframe(details_df, width='stretch')
 
 def display_strategy_comparison(strategy_results: List[Dict[str, Any]]):

@@ -1,0 +1,120 @@
+method_key: ev_fcf
+version: 1
+category: growth
+# EV / FCF — the cash-reality check. EV/S credits revenue quality it
+# hasn't earned yet; EV/FCF only prices cash the business already
+# generates. Growth-linked multiple (faster FCF growers deserve more
+# turns), scenario FCF shocks — a bear case on a cash multiple IS a
+# cash shortfall, not just a lower multiple.
+requires:
+  scalars:
+    - fcf_ttm
+    - shares_outstanding
+    - total_debt
+    - cash_and_equivalents
+    - revenue_growth_ttm        # growth proxy for the multiple (fcf_growth is lumpier)
+  series: []
+params:
+  base_multiple: 14.0           # mature, low-growth EV/FCF anchor
+  growth_weight: 60.0           # +0.3 growth → +18 turns of FCF
+  multiple_cap: 40.0
+  multiple_cap_bear: 28.0
+  multiple_cap_bull: 46.0
+  multiple_cap_explosive: 52.0
+  g_cap: 0.50
+  bear_g_mult: 0.5
+  bull_g_mult: 1.15
+  explosive_g_mult: 1.3
+  # scenario FCF shocks — bear prices the cash shortfall itself
+  fcf_bear_mult: 0.85
+  fcf_bull_mult: 1.10
+  fcf_explosive_mult: 1.25
+formula:
+  bindings:
+    g:
+      clamp:
+        value: {var: revenue_growth_ttm}
+        lo: 0
+        hi: {param: g_cap}
+    g_bear: {mul: [{var: g}, {param: bear_g_mult}]}
+    g_bull:
+      min: [{mul: [{var: g}, {param: bull_g_mult}]}, {param: g_cap}]
+    g_explosive:
+      min: [{mul: [{var: g}, {param: explosive_g_mult}]}, {param: g_cap}]
+    fcf_bear: {mul: [{var: fcf_ttm}, {param: fcf_bear_mult}]}
+    fcf_bull: {mul: [{var: fcf_ttm}, {param: fcf_bull_mult}]}
+    fcf_explosive: {mul: [{var: fcf_ttm}, {param: fcf_explosive_mult}]}
+    mult_base:
+      clamp:
+        value:
+          add: [{param: base_multiple}, {mul: [{param: growth_weight}, {var: g}]}]
+        lo: 0
+        hi: {param: multiple_cap}
+    mult_bear:
+      clamp:
+        value:
+          add:
+            - mul: [{param: base_multiple}, 0.75]
+            - mul: [{param: growth_weight}, {var: g_bear}]
+        lo: 0
+        hi: {param: multiple_cap_bear}
+    mult_bull:
+      clamp:
+        value:
+          add: [{param: base_multiple}, {mul: [{param: growth_weight}, {var: g_bull}]}]
+        lo: 0
+        hi: {param: multiple_cap_bull}
+    mult_explosive:
+      clamp:
+        value:
+          add:
+            - mul: [{param: base_multiple}, 1.15]
+            - mul: [{param: growth_weight}, {var: g_explosive}]
+        lo: 0
+        hi: {param: multiple_cap_explosive}
+    net_debt: {sub: [{var: total_debt}, {var: cash_and_equivalents}]}
+  fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub: [{mul: [{var: fcf_ttm}, {var: mult_base}]}, {var: net_debt}]
+          - var: shares_outstanding
+  bear_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub: [{mul: [{var: fcf_bear}, {var: mult_bear}]}, {var: net_debt}]
+          - var: shares_outstanding
+  bull_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub: [{mul: [{var: fcf_bull}, {var: mult_bull}]}, {var: net_debt}]
+          - var: shares_outstanding
+  explosive_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - sub: [{mul: [{var: fcf_explosive}, {var: mult_explosive}]}, {var: net_debt}]
+          - var: shares_outstanding
+validations: []

@@ -57,7 +57,7 @@ All required architectural gaps have been resolved. The system now fully follows
   - `GET /screener/results/{id}` - Get screener results
 
 #### FastAPI Application
-- **File**: `app/api_app.py`
+- **File**: `app/api_server.py`
 - **Features**:
   - Complete FastAPI setup with CORS
   - Lifespan management for startup/shutdown
@@ -131,9 +131,9 @@ Go API (queries data)
 ### Start Python Worker API
 ```bash
 cd python-worker
-python app/api_app.py
+python app/api_server.py
 # or
-uvicorn app.api_app:app --host 0.0.0.0 --port 8001
+uvicorn app.api_server:app --host 0.0.0.0 --port 8001
 ```
 
 ### Start StreamLit Admin Dashboard

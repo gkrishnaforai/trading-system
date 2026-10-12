@@ -15,7 +15,7 @@ All tests use **real data only** (no mocks). Tests fetch actual market data from
 1. `test_swing_indicators.py` - Unit tests for swing indicators
 2. `test_multi_timeframe_service.py` - Unit tests for multi-timeframe service
 3. `test_swing_trend_strategy.py` - Unit tests for swing trend strategy
-4. `test_swing_risk_manager.py` - Unit tests for swing risk manager
+4. `test_risk_engine.py` - Unit tests for swing risk manager
 5. `test_swing_trading_integration.py` - Integration tests for end-to-end workflow
 
 ## Running Tests
@@ -40,7 +40,7 @@ python -m pytest tests/test_multi_timeframe_service.py -v
 python -m pytest tests/test_swing_trend_strategy.py -v
 
 # Swing risk manager
-python -m pytest tests/test_swing_risk_manager.py -v
+python -m pytest tests/test_risk_engine.py -v
 
 # Integration tests
 python -m pytest tests/test_swing_trading_integration.py -v
@@ -56,7 +56,7 @@ python -m pytest tests/test_swing_indicators.py::TestSwingIndicators::test_adx_c
 python -m pytest tests/test_swing_trend_strategy.py::TestSwingTrendStrategy::test_signal_generation -v
 
 # Test position sizing
-python -m pytest tests/test_swing_risk_manager.py::TestSwingRiskManager::test_position_sizing -v
+python -m pytest tests/test_risk_engine.py::test_risk_engine::test_position_sizing -v
 
 # Test end-to-end workflow
 python -m pytest tests/test_swing_trading_integration.py::TestSwingTradingIntegration::test_end_to_end_swing_trading -v
@@ -79,7 +79,7 @@ python -m pytest tests/test_swing_*.py -vv
 pip install pytest-cov
 
 # Run with coverage
-python -m pytest tests/test_swing_*.py --cov=app.indicators.swing --cov=app.services.multi_timeframe_service --cov=app.strategies.swing --cov=app.services.swing_risk_manager --cov-report=html
+python -m pytest tests/test_swing_*.py --cov=app.indicators.swing --cov=app.services.multi_timeframe_service --cov=app.strategies.swing --cov=app.risk --cov-report=html
 ```
 
 ## Quick Test Commands
@@ -103,7 +103,7 @@ cd /Users/krishnag/tools/trading-system/python-worker && python -m pytest tests/
 cd /Users/krishnag/tools/trading-system/python-worker && python -m pytest tests/test_swing_trend_strategy.py -v -s
 
 # Risk Manager
-cd /Users/krishnag/tools/trading-system/python-worker && python -m pytest tests/test_swing_risk_manager.py -v -s
+cd /Users/krishnag/tools/trading-system/python-worker && python -m pytest tests/test_risk_engine.py -v -s
 
 # Integration
 cd /Users/krishnag/tools/trading-system/python-worker && python -m pytest tests/test_swing_trading_integration.py -v -s
@@ -127,8 +127,8 @@ test_multi_timeframe_service.py::TestMultiTimeframeService::test_get_timeframe_d
 test_swing_trend_strategy.py::TestSwingTrendStrategy::test_signal_generation ... ✅ PASSED
 test_swing_trend_strategy.py::TestSwingTrendStrategy::test_entry_conditions ... ✅ PASSED
 
-test_swing_risk_manager.py::TestSwingRiskManager::test_position_sizing ... ✅ PASSED
-test_swing_risk_manager.py::TestSwingRiskManager::test_portfolio_heat ... ✅ PASSED
+test_risk_engine.py::test_risk_engine::test_position_sizing ... ✅ PASSED
+test_risk_engine.py::test_risk_engine::test_portfolio_heat ... ✅ PASSED
 
 test_swing_trading_integration.py::TestSwingTradingIntegration::test_end_to_end_swing_trading ... ✅ PASSED
 test_swing_trading_integration.py::TestSwingTradingIntegration::test_multi_symbol_analysis ... ✅ PASSED

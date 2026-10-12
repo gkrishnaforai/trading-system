@@ -8,6 +8,8 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone
 import logging
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,23 +107,39 @@ class ScheduledRefreshStrategy(BaseRefreshStrategy):
         data_type: DataType,
         last_refresh: Optional[datetime] = None
     ) -> bool:
-        """Refresh if scheduled time has passed since last refresh"""
+        """Refresh if interval has passed and scheduled time window has been reached."""
         if last_refresh is None:
             return True
-        
-        # Check if we're past the scheduled time today
-        now = datetime.now()
+
+        # Normalize to timezone-aware UTC to avoid naive/aware comparison issues.
+        if getattr(last_refresh, "tzinfo", None) is None:
+            last_refresh_utc = last_refresh.replace(tzinfo=timezone.utc)
+        else:
+            last_refresh_utc = last_refresh.astimezone(timezone.utc)
+
+        now_utc = datetime.now(timezone.utc)
+        interval = self.get_refresh_interval(data_type)
+        if now_utc - last_refresh_utc < interval:
+            return False
+
+        # Also respect the schedule time (run once the schedule window passes).
+        now_local = datetime.now()
         schedule_hour, schedule_minute = map(int, self.schedule_time.split(":"))
-        schedule_today = now.replace(hour=schedule_hour, minute=schedule_minute, second=0, microsecond=0)
-        
-        # If scheduled time hasn't passed today, check yesterday
-        if now < schedule_today:
+        schedule_today = now_local.replace(hour=schedule_hour, minute=schedule_minute, second=0, microsecond=0)
+        if now_local < schedule_today:
             schedule_today = schedule_today - timedelta(days=1)
-        
+
+        # Compare using local time semantics for the schedule window.
         return last_refresh < schedule_today
     
     def get_refresh_interval(self, data_type: DataType) -> timedelta:
-        """Scheduled refresh happens daily"""
+        """Scheduled refresh intervals by data type (TTL-based)."""
+        if data_type == DataType.COMPANY_PROFILE:
+            return timedelta(days=int(getattr(settings, "company_profile_refresh_ttl_days", 30) or 30))
+        if data_type == DataType.FUNDAMENTALS:
+            return timedelta(days=int(getattr(settings, "fundamentals_refresh_ttl_days", 7) or 7))
+        if data_type == DataType.INDICATORS:
+            return timedelta(days=int(getattr(settings, "indicators_refresh_ttl_days", 1) or 1))
         return timedelta(days=1)
     
     def get_priority(self, data_type: DataType) -> int:
@@ -226,8 +244,8 @@ class PeriodicRefreshStrategy(BaseRefreshStrategy):
             # Regular market data
             DataType.NEWS: timedelta(hours=1),
             DataType.EARNINGS: timedelta(hours=6),
-            DataType.FUNDAMENTALS: timedelta(hours=12),
-            DataType.INDICATORS: timedelta(hours=12),
+            DataType.FUNDAMENTALS: timedelta(days=int(getattr(settings, "fundamentals_refresh_ttl_days", 7) or 7)),
+            DataType.INDICATORS: timedelta(days=int(getattr(settings, "indicators_refresh_ttl_days", 1) or 1)),
             
             # Financial statements (less frequent)
             DataType.INCOME_STATEMENTS: timedelta(hours=24),

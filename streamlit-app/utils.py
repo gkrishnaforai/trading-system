@@ -84,26 +84,6 @@ def render_sidebar():
         
         st.divider()
         
-        # Navigation
-        st.markdown("### Navigation")
-        pages = {
-            "🏠 Dashboard": "pages/1_Home.py",
-            "📊 Trading Dashboard": "pages/9_Trading_Dashboard.py",
-            "📊 Stock Overview": "pages/8_Stock_Overview.py",
-            "📈 Stock Analysis": "pages/2_Stock_Analysis.py",
-            "📈 Swing Trading": "pages/6_Swing_Trading.py",
-            "📋 Watchlist Management": "pages/4_Watchlist.py",
-            "💼 Portfolio Management": "pages/3_Portfolio.py",
-            "📰 Market News": "pages/8_Market_Features.py",
-        }
-
-        for page_name, page_path in pages.items():
-            # Use st.button with navigation instead of st.page_link for compatibility
-            if st.button(page_name, key=f"nav_{page_path}", use_container_width=True):
-                st.switch_page(page_path)
-        
-        st.divider()
-        
         # Subscription level selector
         st.markdown("### Subscription")
         subscription_level = st.selectbox(
@@ -160,6 +140,97 @@ def render_sidebar():
         # Store selected ticker in session state for other pages to use
         if ticker:
             st.session_state.selected_ticker = ticker
-        
-        return subscription_level
+
+        subscription = subscription_level
+
+    # TipRanks-style horizontal nav — cross-links the cockpit pages
+    # at the top of every screen (renders in the main area, not the
+    # sidebar block above).
+    render_top_nav()
+    return subscription
+
+
+# The 10 cockpit pages — must stay registered in app.py's "🎯 Cockpit"
+# section for page_link to resolve. Short labels so the strip fits.
+COCKPIT_NAV = [
+    ("pages/0_Alerts_Briefing.py", "Briefing", "🔔"),
+    ("pages/00_Daily_Board.py", "Board", "📋"),
+    ("pages/3_Portfolio_Manager.py", "Portfolio", "💼"),
+    ("pages/28_Portfolio_Strategy.py", "Strategy", "🧭"),
+    ("pages/1_Swing_Screener.py", "Swing", "🔍"),
+    ("pages/29_Hidden_Gems.py", "Gems", "💎"),
+    ("pages/30_Conviction.py", "Conviction", "🏆"),
+    ("pages/32_Daily_Sheet.py", "Sheet", "📄"),
+    ("pages/33_Readiness.py", "Ready", "✅"),
+    ("pages/25_GARP_Screen.py", "GARP", "⚖️"),
+    ("pages/9_Options.py", "Options", "🎲"),
+    ("pages/24_Agent_Workbench.py", "Agents", "🤖"),
+    ("pages/27_Learning_Lab.py", "Lab", "🧠"),
+]
+
+
+def sym_md(sym: str) -> str:
+    """Inline markdown link → the Stock Health page (31_Stock.py →
+    the /Stock route — filename-derived, not title). Embed inside
+    st.markdown / st.caption strings: f"…{sym_md(s)}…" """
+    s = (sym or "").upper().strip()
+    return f"[{s}](Stock?sym={s})" if s else ""
+
+
+def sym_link(sym: str) -> None:
+    """Clickable symbol → the Stock Health detail page (?sym=...).
+    Plain markdown link — theme-colored, visible in any theme.
+    (st.page_link inherits the dark top-nav chip CSS → unreadable.)"""
+    s = sym_md(sym)
+    if s:
+        st.markdown(s)
+
+
+def sym_df_url(sym: str) -> str:
+    """URL for a symbol — used to build a link column in a df."""
+    s = (sym or "").upper().strip()
+    return f"Stock?sym={s}"
+
+
+def health_col(df, sym_col: str = "symbol"):
+    """Add a 🩺 link column to a dataframe that has a symbol column —
+    pair with `HEALTH_CFG` in the dataframe's column_config."""
+    if sym_col in df.columns:
+        df = df.copy()
+        df["🩺"] = df[sym_col].map(sym_df_url)
+    return df
+
+
+HEALTH_CFG = None  # filled lazily — needs streamlit context
+
+
+def health_cfg():
+    """column_config entry: renders the 🩺 column cells as links."""
+    return st.column_config.LinkColumn("🩺", display_text="open")
+
+
+def render_top_nav():
+    """Horizontal cross-nav strip — links every cockpit page to every
+    other, like a real site's header. Compact pill styling; active
+    page is highlighted via .cockpit-active."""
+    st.markdown(
+        """<style>
+        div[data-testid="stHorizontalBlock"]:has(div[data-testid="stPageLink"]) {
+            gap:.4rem;padding:.45rem .6rem;background:#0e1117;
+            border-radius:10px;border:1px solid #262730;
+            margin:-.6rem 0 .4rem}
+        section[data-testid="stMain"] div[data-testid="stPageLink"] a {
+            padding:.28rem .55rem !important;border-radius:999px;
+            border:1px solid #2b2d3a;background:#16181f}
+        section[data-testid="stMain"] div[data-testid="stPageLink"] a p {
+            font-size:.8rem !important;margin:0}
+        </style>""",
+        unsafe_allow_html=True)
+    cols = st.columns(len(COCKPIT_NAV))
+    for col, (path, label, icon) in zip(cols, COCKPIT_NAV):
+        with col:
+            try:
+                st.page_link(path, label=f"{icon} {label}")
+            except Exception:
+                pass
 

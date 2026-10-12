@@ -4,7 +4,7 @@ Separates data access from business logic
 """
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import logging
 
 from app.observability.logging import get_logger
@@ -139,9 +139,15 @@ class StockGradesRepository(DatabaseRepository):
         """Get stock grades for a specific year"""
         def query_grades(session):
             # Import models here to avoid circular imports
-            from app.db_storage.models import StockGrades
+            from app.db_storage.models import (
+                StockGrades,
+                MarketNews,
+                StockNews,
+                AnalystRatings,
+                PriceTargets,
+                ConsensusData,
+            )
             
-            # Filter by symbol and year
             start_date = datetime(year, 1, 1)
             end_date = datetime(year + 1, 1, 1)
             
@@ -531,6 +537,28 @@ class ConsensusDataRepository(DatabaseRepository):
             # Import models here to avoid circular imports
             from app.db_storage.models import ConsensusData
             from datetime import datetime
+
+            def _first_value(d: Dict[str, Any], keys: List[str]):
+                for k in keys:
+                    if k in d and d.get(k) is not None:
+                        return d.get(k)
+                return None
+
+            def _to_int(v: Any):
+                try:
+                    if v is None or v == "":
+                        return None
+                    return int(v)
+                except Exception:
+                    return None
+
+            def _to_float(v: Any):
+                try:
+                    if v is None or v == "":
+                        return None
+                    return float(v)
+                except Exception:
+                    return None
             
             stored_count = 0
             for consensus_data in consensus_data_list:
@@ -544,10 +572,9 @@ class ConsensusDataRepository(DatabaseRepository):
                 
                 # Check if consensus record exists
                 try:
-                    existing = session.query(ConsensusData).filter_by(
-                        symbol=symbol,
-                        consensus_date=consensus_date
-                    ).first()
+                    # consensus_data table uses `symbol` as the primary key.
+                    # Always upsert by symbol to avoid duplicate key violations.
+                    existing = session.query(ConsensusData).filter_by(symbol=symbol).first()
                     print(f"🔍 REPO DEBUG: Existing record found: {existing is not None}")
                 except Exception as query_error:
                     print(f"🔍 REPO DEBUG: Query error: {query_error}")
@@ -556,34 +583,90 @@ class ConsensusDataRepository(DatabaseRepository):
                 if existing:
                     print(f"🔍 REPO DEBUG: Updating existing record")
                     # Update existing record
-                    existing.analyst_count = consensus_data.get("analystCount")
-                    existing.consensus_rating = consensus_data.get("consensusRating")
-                    existing.consensus_price_target = consensus_data.get("priceTarget")
-                    existing.price_target_high = consensus_data.get("targetHigh")
-                    existing.price_target_low = consensus_data.get("targetLow")
-                    existing.buy_ratings = consensus_data.get("buy")
-                    existing.hold_ratings = consensus_data.get("hold")
-                    existing.sell_ratings = consensus_data.get("sell")
+                    existing.consensus_date = consensus_date
+                    existing.analyst_count = _to_int(
+                        _first_value(consensus_data, ["analystCount", "analyst_count", "totalAnalysts", "total_analysts"])
+                    )
+                    existing.consensus_rating = _first_value(
+                        consensus_data,
+                        ["consensusRating", "consensus_rating", "rating", "consensus", "consensus_rating_text"],
+                    )
+                    existing.consensus_price_target = _to_float(
+                        _first_value(
+                            consensus_data,
+                            [
+                                "consensusPriceTarget",
+                                "consensus_price_target",
+                                "priceTarget",
+                                "price_target",
+                                "targetMean",
+                                "target_mean",
+                                "medianTarget",
+                                "median_target",
+                            ],
+                        )
+                    )
+                    existing.price_target_high = _to_float(
+                        _first_value(consensus_data, ["priceTargetHigh", "price_target_high", "targetHigh", "target_high"])
+                    )
+                    existing.price_target_low = _to_float(
+                        _first_value(consensus_data, ["priceTargetLow", "price_target_low", "targetLow", "target_low"])
+                    )
+                    existing.buy_ratings = _to_int(_first_value(consensus_data, ["buyRatings", "buy_ratings", "buy"]))
+                    existing.hold_ratings = _to_int(_first_value(consensus_data, ["holdRatings", "hold_ratings", "hold"]))
+                    existing.sell_ratings = _to_int(_first_value(consensus_data, ["sellRatings", "sell_ratings", "sell"]))
                     existing.published_at = published_at
                     existing.updated_at = datetime.utcnow()
                 else:
                     print(f"🔍 REPO DEBUG: Creating new record")
                     # Create new record
                     import json
+
+                    analyst_count = _to_int(
+                        _first_value(consensus_data, ["analystCount", "analyst_count", "totalAnalysts", "total_analysts"])
+                    )
+                    consensus_rating = _first_value(
+                        consensus_data,
+                        ["consensusRating", "consensus_rating", "rating", "consensus", "consensus_rating_text"],
+                    )
+                    consensus_price_target = _to_float(
+                        _first_value(
+                            consensus_data,
+                            [
+                                "consensusPriceTarget",
+                                "consensus_price_target",
+                                "priceTarget",
+                                "price_target",
+                                "targetMean",
+                                "target_mean",
+                                "medianTarget",
+                                "median_target",
+                            ],
+                        )
+                    )
+                    price_target_high = _to_float(
+                        _first_value(consensus_data, ["priceTargetHigh", "price_target_high", "targetHigh", "target_high"])
+                    )
+                    price_target_low = _to_float(
+                        _first_value(consensus_data, ["priceTargetLow", "price_target_low", "targetLow", "target_low"])
+                    )
+                    buy_ratings = _to_int(_first_value(consensus_data, ["buyRatings", "buy_ratings", "buy"]))
+                    hold_ratings = _to_int(_first_value(consensus_data, ["holdRatings", "hold_ratings", "hold"]))
+                    sell_ratings = _to_int(_first_value(consensus_data, ["sellRatings", "sell_ratings", "sell"]))
                     
                     record_data = {
                         "symbol": symbol,
                         "consensus_date": consensus_date,
-                        "analyst_count": consensus_data.get("analystCount"),
-                        "consensus_rating": consensus_data.get("consensusRating"),
-                        "consensus_price_target": consensus_data.get("priceTarget"),
-                        "price_target_high": consensus_data.get("targetHigh"),
-                        "price_target_low": consensus_data.get("targetLow"),
-                        "buy_ratings": consensus_data.get("buy"),
-                        "hold_ratings": consensus_data.get("hold"),
-                        "sell_ratings": consensus_data.get("sell"),
+                        "analyst_count": analyst_count,
+                        "consensus_rating": consensus_rating,
+                        "consensus_price_target": consensus_price_target,
+                        "price_target_high": price_target_high,
+                        "price_target_low": price_target_low,
+                        "buy_ratings": buy_ratings,
+                        "hold_ratings": hold_ratings,
+                        "sell_ratings": sell_ratings,
                         "published_at": published_at,
-                        "payload": json.dumps(consensus_data) if consensus_data else "{}"
+                        "payload": consensus_data if consensus_data else {},
                     }
                     
                     print(f"🔍 REPO DEBUG: Record data: {record_data}")
@@ -613,6 +696,209 @@ class ConsensusDataRepository(DatabaseRepository):
     
     def _get_fallback_result(self):
         return {}
+
+
+class MacroRepository(DatabaseRepository):
+    def upsert_series_points(self, series_id: str, points: List[Dict[str, Any]]) -> int:
+        """Upsert macro series points.
+
+        points: [{"observation_date": date, "value": number, "source": "fred", "retrieved_at": datetime}]
+        """
+
+        if not self.is_available:
+            return 0
+
+        if not series_id or not points:
+            return 0
+
+        series_id = str(series_id)
+
+        def store_in_session(session):
+            from app.db_storage.models import MacroSeriesPoint
+
+            stored = 0
+            for p in points:
+                obs_date = p.get("observation_date")
+                if obs_date is None:
+                    continue
+
+                existing = session.query(MacroSeriesPoint).filter_by(series_id=series_id, observation_date=obs_date).first()
+                if existing:
+                    existing.value = p.get("value")
+                    existing.source = p.get("source") or "fred"
+                    existing.retrieved_at = p.get("retrieved_at") or datetime.utcnow()
+                else:
+                    session.add(
+                        MacroSeriesPoint(
+                            series_id=series_id,
+                            observation_date=obs_date,
+                            value=p.get("value"),
+                            source=p.get("source") or "fred",
+                            retrieved_at=p.get("retrieved_at") or datetime.utcnow(),
+                        )
+                    )
+                stored += 1
+            session.commit()
+            return stored
+
+        return self._execute_query(store_in_session)
+
+    def get_latest_observation_date(self, series_id: str) -> Optional[date]:
+        if not self.is_available:
+            return None
+
+        def query_in_session(session):
+            from app.db_storage.models import MacroSeriesPoint
+
+            row = (
+                session.query(MacroSeriesPoint.observation_date)
+                .filter(MacroSeriesPoint.series_id == series_id)
+                .order_by(MacroSeriesPoint.observation_date.desc())
+                .first()
+            )
+            return row[0] if row else None
+
+        return self._execute_query(query_in_session)
+
+    def get_series_points(self, series_id: str, start_date: date, end_date: date) -> List[Dict[str, Any]]:
+        if not self.is_available:
+            return []
+
+        def query_in_session(session):
+            from app.db_storage.models import MacroSeriesPoint
+
+            rows = (
+                session.query(MacroSeriesPoint)
+                .filter(MacroSeriesPoint.series_id == series_id)
+                .filter(MacroSeriesPoint.observation_date >= start_date)
+                .filter(MacroSeriesPoint.observation_date <= end_date)
+                .order_by(MacroSeriesPoint.observation_date.asc())
+                .all()
+            )
+            out: List[Dict[str, Any]] = []
+            for r in rows:
+                out.append(
+                    {
+                        "series_id": r.series_id,
+                        "observation_date": r.observation_date.isoformat() if r.observation_date else None,
+                        "value": float(r.value) if r.value is not None else None,
+                        "source": r.source,
+                        "retrieved_at": r.retrieved_at.isoformat() if r.retrieved_at else None,
+                    }
+                )
+            return out
+
+        return self._execute_query(query_in_session)
+
+    def _get_fallback_result(self):
+        return []
+
+
+class MacroSnapshotsRepository(DatabaseRepository):
+    def upsert_snapshot(
+        self,
+        as_of_date: date,
+        module_scores: Dict[str, Any],
+        overall_score: Optional[float],
+        regime_probs: Dict[str, Any],
+        portfolio_alloc: Dict[str, Any],
+        signals: Dict[str, Any],
+        inputs_used: Dict[str, Any],
+        is_month_end: bool,
+    ) -> bool:
+        if not self.is_available:
+            return False
+
+        def store_in_session(session):
+            from app.db_storage.models import MacroSnapshot
+
+            existing = session.query(MacroSnapshot).filter_by(as_of_date=as_of_date).first()
+            if existing:
+                existing.module_scores = module_scores or {}
+                existing.overall_score = overall_score
+                existing.regime_probs = regime_probs or {}
+                existing.portfolio_alloc = portfolio_alloc or {}
+                existing.signals = signals or {}
+                existing.inputs_used = inputs_used or {}
+                existing.is_month_end = bool(is_month_end)
+                existing.created_at = datetime.utcnow()
+            else:
+                session.add(
+                    MacroSnapshot(
+                        as_of_date=as_of_date,
+                        module_scores=module_scores or {},
+                        overall_score=overall_score,
+                        regime_probs=regime_probs or {},
+                        portfolio_alloc=portfolio_alloc or {},
+                        signals=signals or {},
+                        inputs_used=inputs_used or {},
+                        is_month_end=bool(is_month_end),
+                    )
+                )
+            session.commit()
+            return True
+
+        return bool(self._execute_query(store_in_session))
+
+    def get_latest_snapshot(self) -> Optional[Dict[str, Any]]:
+        if not self.is_available:
+            return None
+
+        def query_in_session(session):
+            from app.db_storage.models import MacroSnapshot
+
+            row = session.query(MacroSnapshot).order_by(MacroSnapshot.as_of_date.desc()).first()
+            if not row:
+                return None
+            return {
+                "as_of_date": row.as_of_date.isoformat() if row.as_of_date else None,
+                "module_scores": row.module_scores or {},
+                "overall_score": float(row.overall_score) if row.overall_score is not None else None,
+                "regime_probs": row.regime_probs or {},
+                "portfolio_alloc": row.portfolio_alloc or {},
+                "signals": row.signals or {},
+                "inputs_used": row.inputs_used or {},
+                "is_month_end": bool(row.is_month_end),
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+
+        return self._execute_query(query_in_session)
+
+    def get_snapshots(self, start_date: date, end_date: date) -> List[Dict[str, Any]]:
+        if not self.is_available:
+            return []
+
+        def query_in_session(session):
+            from app.db_storage.models import MacroSnapshot
+
+            rows = (
+                session.query(MacroSnapshot)
+                .filter(MacroSnapshot.as_of_date >= start_date)
+                .filter(MacroSnapshot.as_of_date <= end_date)
+                .order_by(MacroSnapshot.as_of_date.asc())
+                .all()
+            )
+            out: List[Dict[str, Any]] = []
+            for row in rows:
+                out.append(
+                    {
+                        "as_of_date": row.as_of_date.isoformat() if row.as_of_date else None,
+                        "module_scores": row.module_scores or {},
+                        "overall_score": float(row.overall_score) if row.overall_score is not None else None,
+                        "regime_probs": row.regime_probs or {},
+                        "portfolio_alloc": row.portfolio_alloc or {},
+                        "signals": row.signals or {},
+                        "inputs_used": row.inputs_used or {},
+                        "is_month_end": bool(row.is_month_end),
+                        "created_at": row.created_at.isoformat() if row.created_at else None,
+                    }
+                )
+            return out
+
+        return self._execute_query(query_in_session)
+
+    def _get_fallback_result(self):
+        return None
 
 
 # Factory for creating repositories - follows Factory Pattern
@@ -649,6 +935,14 @@ class RepositoryFactory:
         """Create consensus data repository"""
         return ConsensusDataRepository(session_factory)
 
+    @staticmethod
+    def create_macro_repository(session_factory=None) -> 'MacroRepository':
+        return MacroRepository(session_factory)
+
+    @staticmethod
+    def create_macro_snapshots_repository(session_factory=None) -> 'MacroSnapshotsRepository':
+        return MacroSnapshotsRepository(session_factory)
+
 
 # Service layer - follows Single Responsibility Principle
 class DatabaseService:
@@ -659,6 +953,8 @@ class DatabaseService:
         self._stock_grades_repo = RepositoryFactory.create_stock_grades_repository(session_factory)
         self._market_news_repo = RepositoryFactory.create_market_news_repository(session_factory)
         self._stock_news_repo = RepositoryFactory.create_stock_news_repository(session_factory)
+        self._macro_repo = RepositoryFactory.create_macro_repository(session_factory)
+        self._macro_snapshots_repo = RepositoryFactory.create_macro_snapshots_repository(session_factory)
         # Add missing analyst data repositories
         self._analyst_ratings_repo = RepositoryFactory.create_analyst_ratings_repository(session_factory)
         self._price_targets_repo = RepositoryFactory.create_price_targets_repository(session_factory)
@@ -693,6 +989,14 @@ class DatabaseService:
     def consensus_data(self) -> 'ConsensusDataRepository':
         """Get consensus data repository"""
         return self._consensus_data_repo
+
+    @property
+    def macro(self) -> 'MacroRepository':
+        return self._macro_repo
+
+    @property
+    def macro_snapshots(self) -> 'MacroSnapshotsRepository':
+        return self._macro_snapshots_repo
     
     def is_available(self) -> bool:
         """Check if database service is available"""

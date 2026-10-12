@@ -1,9 +1,12 @@
 package services
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/trading-system/go-api/internal/models"
 	"github.com/trading-system/go-api/internal/repositories"
 )
@@ -12,17 +15,20 @@ type PortfolioService struct {
 	portfolioRepo *repositories.PortfolioRepository
 	indicatorRepo *repositories.IndicatorRepository
 	cache         *CacheService
+	jobQueue      *RedisStreamJobQueue
 }
 
 func NewPortfolioService(
 	portfolioRepo *repositories.PortfolioRepository,
 	indicatorRepo *repositories.IndicatorRepository,
 	cache *CacheService,
+	jobQueue *RedisStreamJobQueue,
 ) *PortfolioService {
 	return &PortfolioService{
 		portfolioRepo: portfolioRepo,
 		indicatorRepo: indicatorRepo,
 		cache:         cache,
+		jobQueue:      jobQueue,
 	}
 }
 
@@ -169,10 +175,10 @@ func (s *PortfolioService) DeletePortfolio(userID string, portfolioID string) er
 }
 
 // CreateHolding creates a new portfolio position in a portfolio (by symbol).
-func (s *PortfolioService) CreateHolding(portfolioID string, holding *models.PortfolioPosition) error {
-	_, err := s.portfolioRepo.AddPositionBySymbol(portfolioID, holding.Symbol, holding.Quantity, holding.AvgPrice)
+func (s *PortfolioService) CreateHolding(portfolioID string, holding *models.PortfolioPosition) (*models.PortfolioPosition, error) {
+	created, err := s.portfolioRepo.AddPositionBySymbol(portfolioID, holding.Symbol, holding.Quantity, holding.AvgPrice)
 	if err != nil {
-		return fmt.Errorf("failed to create portfolio position: %w", err)
+		return nil, fmt.Errorf("failed to create portfolio position: %w", err)
 	}
 
 	// Get portfolio to find userID for cache invalidation
@@ -183,7 +189,35 @@ func (s *PortfolioService) CreateHolding(portfolioID string, holding *models.Por
 		s.cache.Delete(fmt.Sprintf("portfolios:%s", portfolio.UserID))
 	}
 
-	return nil
+	EnqueueFairValueWarmup(s.jobQueue, portfolioID, holding.Symbol)
+
+	// Re-read through the holdings projection so the response carries
+	// fair_value_* fields when a stored run already exists.
+	if joined, err := s.portfolioRepo.GetHoldingByID(created.ID); err == nil {
+		return joined, nil
+	}
+
+	return created, nil
+}
+
+// EnqueueFairValueWarmup kicks a background fair-value resolve for a newly
+// added symbol so the valuation is computed before the next scheduled
+// warm-up. Best-effort: failures never block the caller's write path.
+func EnqueueFairValueWarmup(jobQueue *RedisStreamJobQueue, portfolioID, symbol string) {
+	if jobQueue == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := jobQueue.EnqueueFairValueWarmupJob(ctx, FairValueWarmupJobPayload{
+		RunID:       uuid.New().String(),
+		PortfolioID: portfolioID,
+		Symbol:      symbol,
+		Attempt:     1,
+		MaxAttempts: 3,
+	}); err != nil {
+		log.Printf("WARN: fair-value warm-up enqueue failed for %s: %v", symbol, err)
+	}
 }
 
 // UpdateHolding updates an existing holding

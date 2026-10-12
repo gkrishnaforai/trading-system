@@ -7,7 +7,7 @@ from typing import Dict, Any, Tuple
 from enum import Enum
 import logging
 
-from app.services.market_regime_service import MarketRegime
+from app.market_regime.compat import LegacyMarketRegime as MarketRegime
 from app.services.volatility_profiler_service import VolatilityProfile
 from app.services.relative_strength_service import RelativeStrengthTier
 from app.observability.logging import get_logger

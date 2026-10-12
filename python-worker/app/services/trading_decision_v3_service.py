@@ -701,7 +701,21 @@ class TradingDecisionV3Service(BaseService):
               AND interval = '1d'
               AND LOWER(indicator_name) IN ('rsi_14','ema_20','sma_50')
         """
-        rows = db.execute_query(q, {"symbol": symbol, "as_of_date": as_of_date})
+        try:
+            rows = db.execute_query(q, {"symbol": symbol, "as_of_date": as_of_date})
+        except Exception as e:
+            msg = str(e).lower()
+            if "undefinedcolumn" in msg and "interval" in msg:
+                q2 = """
+                    SELECT indicator_name, indicator_value
+                    FROM indicators_daily
+                    WHERE symbol = :symbol
+                      AND date = CAST(:as_of_date AS date)
+                      AND LOWER(indicator_name) IN ('rsi_14','ema_20','sma_50')
+                """
+                rows = db.execute_query(q2, {"symbol": symbol, "as_of_date": as_of_date})
+            else:
+                raise
         if not rows:
             return None
         out: Dict[str, Any] = {}

@@ -98,17 +98,35 @@ class SignalPrerequisitesService:
         logger.info(f"🔍 DEBUG: Checking indicators for {symbol} on {target_date}, required: {required}")
         try:
             # First check narrow format (fmp_api data source)
-            rows = db.execute_query(
-                """
+            q_narrow = """
                 SELECT indicator_name
                 FROM indicators_daily
                 WHERE symbol = :symbol
                   AND date = CAST(:date AS date)
                   AND interval = '1d'
                   AND indicator_name = ANY(:names)
-                """,
-                {"symbol": symbol, "date": target_date, "names": required},
-            )
+            """
+            try:
+                rows = db.execute_query(
+                    q_narrow,
+                    {"symbol": symbol, "date": target_date, "names": required},
+                )
+            except Exception as e:
+                msg = str(e).lower()
+                if "undefinedcolumn" in msg and "interval" in msg:
+                    q_narrow2 = """
+                        SELECT indicator_name
+                        FROM indicators_daily
+                        WHERE symbol = :symbol
+                          AND date = CAST(:date AS date)
+                          AND indicator_name = ANY(:names)
+                    """
+                    rows = db.execute_query(
+                        q_narrow2,
+                        {"symbol": symbol, "date": target_date, "names": required},
+                    )
+                else:
+                    raise
             logger.info(f"🔍 DEBUG: Narrow format query returned {len(rows or [])} rows")
             for r in rows or []:
                 name = str(r.get("indicator_name") or "").strip().lower()
@@ -121,17 +139,35 @@ class SignalPrerequisitesService:
             wide_required = [k for k in required if k in wide_format_indicators]
             logger.info(f"🔍 DEBUG: Wide format indicators to check: {wide_required}")
             if wide_required:
-                wide_rows = db.execute_query(
-                    """
+                q_wide = """
                     SELECT macd, macd_signal, rsi_14, sma_50, ema_20
                     FROM indicators_daily
                     WHERE symbol = :symbol
                       AND date = CAST(:date AS date)
                       AND interval = '1d'
                       AND data_source = 'calculated'
-                    """,
-                    {"symbol": symbol, "date": target_date},
-                )
+                """
+                try:
+                    wide_rows = db.execute_query(
+                        q_wide,
+                        {"symbol": symbol, "date": target_date},
+                    )
+                except Exception as e:
+                    msg = str(e).lower()
+                    if "undefinedcolumn" in msg and "interval" in msg:
+                        q_wide2 = """
+                            SELECT macd, macd_signal, rsi_14, sma_50, ema_20
+                            FROM indicators_daily
+                            WHERE symbol = :symbol
+                              AND date = CAST(:date AS date)
+                              AND data_source = 'calculated'
+                        """
+                        wide_rows = db.execute_query(
+                            q_wide2,
+                            {"symbol": symbol, "date": target_date},
+                        )
+                    else:
+                        raise
                 logger.info(f"🔍 DEBUG: Wide format query returned {len(wide_rows or [])} rows")
                 if wide_rows:
                     row = wide_rows[0]

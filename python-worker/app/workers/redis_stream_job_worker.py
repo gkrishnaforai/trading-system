@@ -15,6 +15,8 @@ from app.observability.logging import get_logger
 from app.data_management.refresh_manager import DataRefreshManager
 from app.data_management.refresh_strategy import RefreshMode, DataType
 from app.services.stock_grades.service import get_stock_grades_service
+from app.services.optimized_fmp_loader import optimized_fmp_loader
+from app.services.investment_health_service import investment_health_service
 
 
 logger = get_logger("redis_stream_job_worker")
@@ -61,6 +63,38 @@ class TradingDecisionV3JobPayload:
     as_of_date: str = ""
     attempt: int = 1
     max_attempts: int = 3
+
+
+@dataclass
+class FairValueWarmupJobPayload:
+    run_id: str
+    portfolio_id: Optional[str]
+    symbol: str
+    force: bool = False
+    attempt: int = 1
+    max_attempts: int = 3
+
+
+# Data types whose refresh can move valuation inputs (fundamentals, estimates,
+# statements, consensus). Price/news types are excluded — fair value is
+# price-independent, so price refreshes must not trigger recomputation.
+_FV_INPUT_DATA_TYPES = {
+    "fundamentals",
+    "earnings",
+    "income_statements",
+    "balance_sheets",
+    "cash_flow_statements",
+    "financial_ratios",
+    "financial_growth",
+    "income_statement_growth",
+    "balance_sheet_growth",
+    "cash_flow_growth",
+    "consensus_data",
+    "analyst_ratings",
+    "price_targets",
+    "financial_scores",
+    "company_profile",
+}
 
 
 class RedisStreamWorker:
@@ -250,6 +284,17 @@ class RedisStreamWorker:
             max_attempts=int(d.get("max_attempts") or 3),
         )
 
+    def _parse_fair_value_warmup_payload(self, raw: str) -> FairValueWarmupJobPayload:
+        d = json.loads(raw)
+        return FairValueWarmupJobPayload(
+            run_id=d["run_id"],
+            portfolio_id=d.get("portfolio_id"),
+            symbol=d["symbol"],
+            force=bool(d.get("force")),
+            attempt=int(d.get("attempt") or 1),
+            max_attempts=int(d.get("max_attempts") or 3),
+        )
+
     def _map_data_types(self, data_types: List[str]) -> List[DataType]:
         mapping = {dt.value: dt for dt in DataType}
         mapping["market_news"] = DataType.NEWS
@@ -283,29 +328,113 @@ class RedisStreamWorker:
                     mode=refresh_mode,
                     force=payload.force,
                 )
-                results["main"] = {
-                    "total_requested": r.total_requested,
-                    "total_successful": r.total_successful,
-                    "total_failed": r.total_failed,
-                    "total_skipped": r.total_skipped,
-                }
+                results["main"] = self._to_jsonable(r.to_dict())
 
         if grades_requested:
             self._rate_limit("fmp")
-            grades_service = get_stock_grades_service()
-            # service is async; run via event loop-free sync call using asyncio
-            import asyncio
 
-            async def _do():
-                from app.services.data_sources.base import DataSourceType
+            requested_grades_types = [x for x in dt if self._is_grades_type(x)]
 
-                return await grades_service.refresh_symbol_data(
-                    sym,
-                    DataSourceType.FMP,
-                    include_consensus=True,
-                )
+            grades_result: Dict[str, Any] = {
+                "symbol": sym,
+                "requested": requested_grades_types,
+                "results": {},
+                "errors": [],
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
 
-            results["grades"] = asyncio.run(_do())
+            # Backward compatible: keep calling the async grades service when any grades-type is requested.
+            # NOTE: this service historically covered grades + consensus, but not necessarily price_targets.
+            try:
+                grades_service = get_stock_grades_service()
+                import asyncio
+
+                async def _do():
+                    from app.services.data_sources.base import DataSourceType
+
+                    return await grades_service.refresh_symbol_data(
+                        sym,
+                        DataSourceType.FMP,
+                        include_consensus=True,
+                    )
+
+                service_resp = asyncio.run(_do())
+                grades_result["service"] = service_resp
+            except Exception as e:
+                grades_result["errors"].append(f"stock_grades_service_failed: {e}")
+
+            # Explicitly fetch/store each requested analyst data type so runs are not silently missing.
+            try:
+                if "analyst_ratings" in requested_grades_types:
+                    ratings = optimized_fmp_loader.get_analyst_ratings(sym, force=payload.force)
+                    grades_result["results"]["analyst_ratings"] = {"status": "success", "rows": len(ratings or [])}
+            except Exception as e:
+                grades_result["results"]["analyst_ratings"] = {"status": "failed", "error": str(e)}
+                grades_result["errors"].append(f"analyst_ratings_failed: {e}")
+
+            try:
+                if "consensus_data" in requested_grades_types:
+                    consensus = optimized_fmp_loader.get_consensus_data(sym, force=payload.force)
+                    grades_result["results"]["consensus_data"] = {"status": "success", "rows": len(consensus or [])}
+            except Exception as e:
+                grades_result["results"]["consensus_data"] = {"status": "failed", "error": str(e)}
+                grades_result["errors"].append(f"consensus_data_failed: {e}")
+
+            try:
+                if "price_targets" in requested_grades_types:
+                    pts = optimized_fmp_loader.get_price_targets(sym, force=payload.force)
+                    grades_result["results"]["price_targets"] = {"status": "success", "rows": len(pts or [])}
+            except Exception as e:
+                grades_result["results"]["price_targets"] = {"status": "failed", "error": str(e)}
+                grades_result["errors"].append(f"price_targets_failed: {e}")
+
+            try:
+                if "stock_grades" in requested_grades_types:
+                    grades = optimized_fmp_loader.get_stock_grades(sym, force=payload.force)
+                    grades_result["results"]["stock_grades"] = {"status": "success", "rows": len(grades or [])}
+            except Exception as e:
+                grades_result["results"]["stock_grades"] = {"status": "failed", "error": str(e)}
+                grades_result["errors"].append(f"stock_grades_failed: {e}")
+
+            results["grades"] = grades_result
+
+        # Event-driven fair-value recompute: if this refresh landed
+        # fundamentals-feeding data, resolve the symbol's fair value after the
+        # refresh completes. The resolver's inputs-watermark check makes this
+        # a cheap no-op when inputs did not actually change; price-only
+        # refreshes never reach this point (price is not a fair-value input).
+        fv_types = [x for x in dt if str(x).strip().lower() in _FV_INPUT_DATA_TYPES]
+        if fv_types:
+            try:
+                from app.fair_value_v2.resolver import FairValueV2Resolver
+                fv_result, fv_meta = FairValueV2Resolver().resolve(sym)
+                results["fair_value"] = {
+                    "triggered_by": sorted(fv_types),
+                    "fair_value": fv_result.fair_value,
+                    "regime": fv_result.regime,
+                    "reused": bool(fv_meta.get("reused")),
+                    "reason": fv_meta.get("reason"),
+                    "run_id": fv_meta.get("run_id"),
+                }
+            except Exception as e:
+                results["fair_value"] = {"error": str(e), "triggered_by": sorted(fv_types)}
+
+        # Same trigger: fresh fundamentals ⇒ derived signals (expectation-gap
+        # flywheel + earnings calendar) are stale. compute_flywheel cascades
+        # into refresh_earnings_calendar, so the Saturday
+        # weekly_fundamentals_enhanced load picks up new quarterly prints.
+        if fv_types:
+            try:
+                from app.providers.financial_modeling_prep.client import EnhancedFMPClient
+                from app.signals.expectation_gap import compute_flywheel
+                fly = compute_flywheel(EnhancedFMPClient.from_settings(), sym)
+                results["flywheel"] = {
+                    "triggered_by": sorted(fv_types),
+                    "gap_score": fly.get("gap_score"),
+                    "next_earnings": str((fly.get("earnings") or {}).get("next_earnings_date") or "") or None,
+                }
+            except Exception as e:
+                results["flywheel"] = {"error": str(e), "triggered_by": sorted(fv_types)}
 
         return results
 
@@ -315,6 +444,29 @@ class RedisStreamWorker:
         target_date = (payload.target_date or "").strip()
         if not target_date:
             target_date = time.strftime("%Y-%m-%d", time.gmtime())
+
+        profile = (getattr(payload, "profile", None) or "").strip().lower()
+        if profile == "weekly_health":
+            score = investment_health_service.compute_for_symbol(
+                portfolio_id=str(payload.portfolio_id or "").strip(),
+                symbol=sym,
+                as_of_date_str=target_date,
+            )
+            investment_health_service.upsert_score(
+                portfolio_id=str(payload.portfolio_id or "").strip(),
+                score=score,
+            )
+            changes = investment_health_service.compute_changes(
+                portfolio_id=str(payload.portfolio_id or "").strip(),
+                as_of_date_str=target_date,
+            )
+            return {
+                "symbol": sym,
+                "profile": profile,
+                "as_of_date": target_date,
+                "score": score.__dict__,
+                "changes_preview": changes[:20],
+            }
 
         # Generate universal signal (python-worker internal call)
         import asyncio
@@ -464,6 +616,21 @@ class RedisStreamWorker:
             "opportunity_score": (d.features or {}).get("opportunity_score"),
             "volume_context": (d.features or {}).get("volume_context"),
             "reasons": d.reasons,
+        }
+
+    def _run_fair_value_warmup(self, payload: FairValueWarmupJobPayload) -> Dict[str, Any]:
+        sym = payload.symbol.strip().upper()
+        from app.fair_value_v2.resolver import FairValueV2Resolver
+        result, meta = FairValueV2Resolver().resolve(sym, force=payload.force)
+        return {
+            "symbol": sym,
+            "fair_value": result.fair_value,
+            "scenario_fair_values": result.scenario_fair_values or {},
+            "regime": result.regime,
+            "reused": bool(meta.get("reused")),
+            "reason": meta.get("reason"),
+            "run_id": meta.get("run_id"),
+            "run_as_of": meta.get("run_as_of"),
         }
 
     def _maybe_reclaim_pending(self):
@@ -632,22 +799,39 @@ class RedisStreamWorker:
             self.dlq_maxlen,
         )
 
+    def _send_fair_value_warmup_to_dlq(self, payload: FairValueWarmupJobPayload, job_id: Optional[str], error: str, msg_id: str):
+        self._xadd_trim(
+            self.dlq_stream_key,
+            {
+                "job_id": job_id or "",
+                "source_msg_id": msg_id,
+                "job_type": "fair_value_warmup",
+                "payload": json.dumps(payload.__dict__),
+                "error": (error or "")[:500],
+                "failed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            },
+            self.dlq_maxlen,
+        )
+
     def _process_message(self, msg_id: str, fields: Dict[str, Any], reclaimed: bool = False):
         job_type = fields.get("job_type")
         raw_payload = fields.get("payload")
-        if job_type not in {"portfolio_data_load", "portfolio_analysis", "portfolio_rebalance", "trading_decision_v3"} or not raw_payload:
+        if job_type not in {"portfolio_data_load", "portfolio_analysis", "portfolio_rebalance", "trading_decision_v3", "fair_value_warmup"} or not raw_payload:
             self.r.xack(self.stream_key, self.group, msg_id)
             return
 
         is_analysis = job_type == "portfolio_analysis"
         is_rebalance = job_type == "portfolio_rebalance"
         is_td_v3 = job_type == "trading_decision_v3"
+        is_fv = job_type == "fair_value_warmup"
         if is_analysis:
             payload: Any = self._parse_analysis_payload(raw_payload)
         elif is_rebalance:
             payload = self._parse_rebalance_payload(raw_payload)
         elif is_td_v3:
             payload = self._parse_trading_decision_v3_payload(raw_payload)
+        elif is_fv:
+            payload = self._parse_fair_value_warmup_payload(raw_payload)
         else:
             payload = self._parse_payload(raw_payload)
 
@@ -721,6 +905,8 @@ class RedisStreamWorker:
                 result = self._run_portfolio_rebalance(payload)
             elif is_td_v3:
                 result = self._run_trading_decision_v3(payload)
+            elif is_fv:
+                result = self._run_fair_value_warmup(payload)
             else:
                 result = self._run_refresh(payload)
             dur_ms = int((time.time() - start) * 1000)
@@ -776,6 +962,8 @@ class RedisStreamWorker:
                         self._send_rebalance_to_dlq(payload, fields.get("job_id"), str(e), msg_id)
                     elif is_td_v3:
                         self._send_trading_decision_v3_to_dlq(payload, fields.get("job_id"), str(e), msg_id)
+                    elif is_fv:
+                        self._send_fair_value_warmup_to_dlq(payload, fields.get("job_id"), str(e), msg_id)
                     else:
                         self._send_to_dlq(payload, fields.get("job_id"), str(e), msg_id)
                     self._metric_dlq += 1
@@ -788,6 +976,8 @@ class RedisStreamWorker:
                     self._requeue_rebalance_with_backoff(payload, job_id or str(uuid.uuid4()), str(e))
                 elif is_td_v3:
                     self._requeue_trading_decision_v3_with_backoff(payload, job_id or str(uuid.uuid4()), str(e))
+                elif is_fv:
+                    self._requeue_fair_value_warmup_with_backoff(payload, job_id or str(uuid.uuid4()), str(e))
                 else:
                     self._requeue_with_backoff(payload, job_id or str(uuid.uuid4()), str(e))
 
@@ -938,6 +1128,25 @@ class RedisStreamWorker:
             {
                 "job_id": job_id,
                 "job_type": "trading_decision_v3",
+                "payload": raw,
+                "enqueued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "requeued_from_error": last_error[:500],
+            },
+            self.stream_maxlen,
+        )
+
+    def _requeue_fair_value_warmup_with_backoff(self, payload: FairValueWarmupJobPayload, job_id: str, last_error: str):
+        if payload.attempt >= payload.max_attempts:
+            return
+        payload.attempt += 1
+        raw = json.dumps(payload.__dict__)
+        backoff = min(60, 2 ** (payload.attempt - 1))
+        time.sleep(backoff)
+        self._xadd_trim(
+            self.stream_key,
+            {
+                "job_id": job_id,
+                "job_type": "fair_value_warmup",
                 "payload": raw,
                 "enqueued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "requeued_from_error": last_error[:500],

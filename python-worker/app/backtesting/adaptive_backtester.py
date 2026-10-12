@@ -11,7 +11,7 @@ import logging
 
 from sqlalchemy import text
 from app.signal_engines.adaptive_signal_engine import AdaptiveSignalEngine, SignalScore
-from app.services.market_regime_service import MarketRegimeService, MarketRegime
+from app.market_regime.compat import CanonicalMarketRegimeService, LegacyMarketRegime as MarketRegime
 from app.database import db
 from app.observability.logging import get_logger
 
@@ -58,7 +58,7 @@ class AdaptiveBacktester:
     
     def __init__(self):
         self.adaptive_engine = AdaptiveSignalEngine()
-        self.regime_service = MarketRegimeService()
+        self.regime_service = CanonicalMarketRegimeService()
         
         # Test periods covering different market conditions
         self.test_periods = [

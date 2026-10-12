@@ -9,6 +9,45 @@ from app.database import db
 
 class EarningsCalendarRepository:
     """Repository for earnings calendar data."""
+
+    @staticmethod
+    def _has_column(table: str, column: str) -> bool:
+        q = """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name = :table
+              AND column_name = :column
+            LIMIT 1
+        """
+        rows = db.execute_query(q, {"table": table, "column": column})
+        return bool(rows)
+
+    @staticmethod
+    def _has_unique_constraint(table: str, columns: List[str]) -> bool:
+        """Return True if a UNIQUE constraint/index exists on exactly the given ordered column list.
+
+        Postgres matches ON CONFLICT targets against a UNIQUE index/constraint on the same column set.
+        """
+        q = """
+            SELECT 1
+            FROM pg_catalog.pg_constraint c
+            JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+            JOIN LATERAL (
+              SELECT array_agg(a.attname::text ORDER BY x.ordinality) AS cols
+              FROM unnest(c.conkey) WITH ORDINALITY AS x(attnum, ordinality)
+              JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = x.attnum
+            ) k ON true
+            WHERE n.nspname = 'public'
+              AND t.relname = :table
+              AND c.contype = 'u'
+              AND k.cols = :cols
+            LIMIT 1
+        """
+
+        rows = db.execute_query(q, {"table": table, "cols": columns})
+        return bool(rows)
     
     @staticmethod
     def create_table():
@@ -46,59 +85,178 @@ class EarningsCalendarRepository:
         """Insert or update earnings data using our standard pattern."""
         if not earnings_data:
             return 0
-        
-        # Prepare data for insertion
+
+        # Schema normalization: earnings_calendar has multiple variants across environments.
+        date_col = "earnings_date" if EarningsCalendarRepository._has_column("earnings_calendar", "earnings_date") else None
+        if date_col is None and EarningsCalendarRepository._has_column("earnings_calendar", "report_date"):
+            date_col = "report_date"
+        if date_col is None:
+            print("earnings_calendar: no supported date column found (expected earnings_date or report_date)")
+            return 0
+
+        time_col = None
+        if EarningsCalendarRepository._has_column("earnings_calendar", "earnings_time"):
+            time_col = "earnings_time"
+        elif EarningsCalendarRepository._has_column("earnings_calendar", "time"):
+            time_col = "time"
+
+        quarter_col = None
+        if EarningsCalendarRepository._has_column("earnings_calendar", "quarter"):
+            quarter_col = "quarter"
+        elif EarningsCalendarRepository._has_column("earnings_calendar", "fiscal_quarter"):
+            quarter_col = "fiscal_quarter"
+
+        year_col = None
+        if EarningsCalendarRepository._has_column("earnings_calendar", "year"):
+            year_col = "year"
+        elif EarningsCalendarRepository._has_column("earnings_calendar", "fiscal_year"):
+            year_col = "fiscal_year"
+
+        has_company = EarningsCalendarRepository._has_column("earnings_calendar", "company_name")
+        has_market_cap = EarningsCalendarRepository._has_column("earnings_calendar", "market_cap")
+        has_sector = EarningsCalendarRepository._has_column("earnings_calendar", "sector")
+        has_industry = EarningsCalendarRepository._has_column("earnings_calendar", "industry")
+        has_rev_est = EarningsCalendarRepository._has_column("earnings_calendar", "revenue_estimate")
+        has_rev_act = EarningsCalendarRepository._has_column("earnings_calendar", "revenue_actual")
+        has_eps_est = EarningsCalendarRepository._has_column("earnings_calendar", "eps_estimate")
+        has_eps_act = EarningsCalendarRepository._has_column("earnings_calendar", "eps_actual")
+        has_created_at = EarningsCalendarRepository._has_column("earnings_calendar", "created_at")
+        has_updated_at = EarningsCalendarRepository._has_column("earnings_calendar", "updated_at")
+
+        insert_cols: List[str] = ["symbol"]
+        if has_company:
+            insert_cols.append("company_name")
+        insert_cols.append(date_col)
+        if has_eps_est:
+            insert_cols.append("eps_estimate")
+        if has_eps_act:
+            insert_cols.append("eps_actual")
+        if has_rev_est:
+            insert_cols.append("revenue_estimate")
+        if has_rev_act:
+            insert_cols.append("revenue_actual")
+        if quarter_col is not None:
+            insert_cols.append(quarter_col)
+        if year_col is not None:
+            insert_cols.append(year_col)
+        if time_col is not None:
+            insert_cols.append(time_col)
+        if has_market_cap:
+            insert_cols.append("market_cap")
+        if has_sector:
+            insert_cols.append("sector")
+        if has_industry:
+            insert_cols.append("industry")
+        if has_created_at:
+            insert_cols.append("created_at")
+        if has_updated_at:
+            insert_cols.append("updated_at")
+
+        # Determine a conflict target that matches an existing UNIQUE constraint.
+        # Environments differ: some have UNIQUE(symbol, earnings_date, quarter, year), others have
+        # UNIQUE(symbol, report_date, fiscal_quarter, fiscal_year), and some only UNIQUE(symbol, <date>). 
+        conflict_cols: List[str] = []
+        candidate_conflicts: List[List[str]] = []
+        if quarter_col is not None and year_col is not None:
+            candidate_conflicts.append(["symbol", date_col, quarter_col, year_col])
+        candidate_conflicts.append(["symbol", date_col])
+
+        for cols in candidate_conflicts:
+            if EarningsCalendarRepository._has_unique_constraint("earnings_calendar", cols):
+                conflict_cols = cols
+                break
+
+        if conflict_cols:
+            update_cols = [c for c in insert_cols if c not in conflict_cols and c != "created_at"]
+            if not update_cols:
+                update_clause = "DO NOTHING"
+            else:
+                sets = ",\n                      ".join([f"{c} = EXCLUDED.{c}" for c in update_cols])
+                update_clause = f"DO UPDATE SET\n                      {sets}"
+        else:
+            # No matching UNIQUE constraint found. Many environments have only a PK(id) and indexes.
+            # In that case ON CONFLICT cannot work, so we will do a manual upsert (delete+insert).
+            update_clause = ""
+
+        cols_sql = ", ".join(insert_cols)
+        vals_sql = ", ".join([f":{c}" for c in insert_cols])
+        if conflict_cols:
+            conflict_sql = ", ".join(conflict_cols)
+            query = f"""
+                        INSERT INTO earnings_calendar
+                        ({cols_sql})
+                        VALUES ({vals_sql})
+                        ON CONFLICT ({conflict_sql})
+                        {update_clause}
+                    """
+        else:
+            query = f"""
+                        INSERT INTO earnings_calendar
+                        ({cols_sql})
+                        VALUES ({vals_sql})
+                    """
+
+        delete_query = None
+        if not conflict_cols:
+            # Natural key delete: always symbol + date; also include fiscal identifiers if present.
+            # We only add predicates for fiscal fields when we have a non-null value, to avoid
+            # deleting unrelated rows.
+            delete_query = f"DELETE FROM earnings_calendar WHERE symbol = :symbol AND {date_col} = :{date_col}"
+
         inserted_count = 0
         for earnings in earnings_data:
             try:
-                query = """
-                    INSERT INTO earnings_calendar
-                    (symbol, company_name, earnings_date, eps_estimate, eps_actual,
-                     revenue_estimate, revenue_actual, quarter, year, time,
-                     market_cap, sector, industry, created_at, updated_at)
-                    VALUES (:symbol, :company_name, :earnings_date, :eps_estimate, :eps_actual,
-                            :revenue_estimate, :revenue_actual, :quarter, :year, :time,
-                            :market_cap, :sector, :industry, :created_at, :updated_at)
-                    ON CONFLICT (symbol, earnings_date, quarter, year)
-                    DO UPDATE SET
-                      company_name = EXCLUDED.company_name,
-                      eps_estimate = EXCLUDED.eps_estimate,
-                      eps_actual = EXCLUDED.eps_actual,
-                      revenue_estimate = EXCLUDED.revenue_estimate,
-                      revenue_actual = EXCLUDED.revenue_actual,
-                      time = EXCLUDED.time,
-                      market_cap = EXCLUDED.market_cap,
-                      sector = EXCLUDED.sector,
-                      industry = EXCLUDED.industry,
-                      updated_at = EXCLUDED.updated_at
-                """
-                
-                params = {
-                    "symbol": earnings.get("symbol"),
-                    "company_name": earnings.get("company_name"),
-                    "earnings_date": earnings.get("earnings_date"),
-                    "eps_estimate": earnings.get("eps_estimate"),
-                    "eps_actual": earnings.get("eps_actual"),
-                    "revenue_estimate": earnings.get("revenue_estimate"),
-                    "revenue_actual": earnings.get("revenue_actual"),
-                    "quarter": earnings.get("quarter"),
-                    "year": earnings.get("year"),
-                    "time": earnings.get("time"),
-                    "market_cap": earnings.get("market_cap"),
-                    "sector": earnings.get("sector"),
-                    "industry": earnings.get("industry"),
-                    "created_at": datetime.now(),
-                    "updated_at": datetime.now()
-                }
-                
+                now = datetime.now()
+                params: Dict[str, Any] = {}
+                sym = earnings.get("symbol")
+                params["symbol"] = sym.upper() if isinstance(sym, str) else sym
+                if has_company:
+                    params["company_name"] = earnings.get("company_name")
+                params[date_col] = earnings.get("earnings_date") or earnings.get("report_date")
+                if params.get(date_col) is None:
+                    continue
+                if has_eps_est:
+                    params["eps_estimate"] = earnings.get("eps_estimate")
+                if has_eps_act:
+                    params["eps_actual"] = earnings.get("eps_actual")
+                if has_rev_est:
+                    params["revenue_estimate"] = earnings.get("revenue_estimate")
+                if has_rev_act:
+                    params["revenue_actual"] = earnings.get("revenue_actual")
+                if quarter_col is not None:
+                    qv = earnings.get("quarter") or earnings.get("fiscal_quarter")
+                    if quarter_col == "fiscal_quarter" and qv is not None:
+                        qv = str(qv)
+                    params[quarter_col] = qv
+                if year_col is not None:
+                    params[year_col] = earnings.get("year") or earnings.get("fiscal_year")
+                if time_col is not None:
+                    params[time_col] = earnings.get("earnings_time") or earnings.get("time")
+                if has_market_cap:
+                    params["market_cap"] = earnings.get("market_cap")
+                if has_sector:
+                    params["sector"] = earnings.get("sector")
+                if has_industry:
+                    params["industry"] = earnings.get("industry")
+                if has_created_at:
+                    params["created_at"] = now
+                if has_updated_at:
+                    params["updated_at"] = now
+
+                if delete_query is not None:
+                    dq = delete_query
+                    # Only constrain on fiscal fields when value is present.
+                    if quarter_col is not None and params.get(quarter_col) is not None:
+                        dq += f" AND {quarter_col} = :{quarter_col}"
+                    if year_col is not None and params.get(year_col) is not None:
+                        dq += f" AND {year_col} = :{year_col}"
+                    db.execute_update(dq, params)
                 db.execute_update(query, params)
                 inserted_count += 1
-                
             except Exception as e:
-                # Log error but continue with other records
                 print(f"Failed to upsert earnings for {earnings.get('symbol')}: {e}")
                 continue
-        
+
         return inserted_count
     
     @staticmethod

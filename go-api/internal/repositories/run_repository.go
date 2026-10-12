@@ -54,6 +54,23 @@ func (r *RunRepository) UpdateRunStatus(runID string, status string, finishedAt 
 	return nil
 }
 
+// UpdateRunMetadata merges a JSON object into the durable run metadata.
+func (r *RunRepository) UpdateRunMetadata(runID string, patch map[string]any) error {
+	metaBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal run metadata: %w", err)
+	}
+	query := `
+		UPDATE data_ingestion_runs
+		SET metadata = COALESCE(metadata, '{}'::jsonb) || CAST($2 AS jsonb)
+		WHERE run_id = CAST($1 AS uuid)
+	`
+	if _, err := r.db.Exec(query, runID, string(metaBytes)); err != nil {
+		return fmt.Errorf("failed to update run metadata: %w", err)
+	}
+	return nil
+}
+
 // GetRun returns the run record (metadata, status, timestamps).
 func (r *RunRepository) GetRun(runID string) (*models.DataIngestionRun, error) {
 	query := `

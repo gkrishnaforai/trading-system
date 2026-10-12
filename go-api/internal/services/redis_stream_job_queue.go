@@ -18,6 +18,7 @@ const (
 	JobTypePortfolioAnalysis  JobType = "portfolio_analysis"
 	JobTypePortfolioRebalance JobType = "portfolio_rebalance"
 	JobTypeTradingDecisionV3  JobType = "trading_decision_v3"
+	JobTypeFairValueWarmup    JobType = "fair_value_warmup"
 )
 
 type DataLoadJobPayload struct {
@@ -55,6 +56,15 @@ type TradingDecisionV3JobPayload struct {
 	PortfolioID string `json:"portfolio_id"`
 	Symbol      string `json:"symbol"`
 	AsOfDate    string `json:"as_of_date"`
+	Attempt     int    `json:"attempt"`
+	MaxAttempts int    `json:"max_attempts"`
+}
+
+type FairValueWarmupJobPayload struct {
+	RunID       string `json:"run_id"`
+	PortfolioID string `json:"portfolio_id"`
+	Symbol      string `json:"symbol"`
+	Force       bool   `json:"force"`
 	Attempt     int    `json:"attempt"`
 	MaxAttempts int    `json:"max_attempts"`
 }
@@ -312,6 +322,36 @@ func (q *RedisStreamJobQueue) EnqueueTradingDecisionV3Job(ctx context.Context, p
 		Values: map[string]any{
 			"job_id":      jobID,
 			"job_type":    string(JobTypeTradingDecisionV3),
+			"payload":     string(b),
+			"enqueued_at": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}).Result()
+	if err != nil {
+		return "", fmt.Errorf("failed to enqueue job: %w", err)
+	}
+	return id, nil
+}
+
+func (q *RedisStreamJobQueue) EnqueueFairValueWarmupJob(ctx context.Context, payload FairValueWarmupJobPayload) (string, error) {
+	if payload.Attempt <= 0 {
+		payload.Attempt = 1
+	}
+	if payload.MaxAttempts <= 0 {
+		payload.MaxAttempts = 3
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal job payload: %w", err)
+	}
+
+	jobID := uuid.New().String()
+	id, err := q.client.XAdd(ctx, &redis.XAddArgs{
+		Stream: q.streamKey,
+		MaxLen: 10000,
+		Approx: true,
+		Values: map[string]any{
+			"job_id":      jobID,
+			"job_type":    string(JobTypeFairValueWarmup),
 			"payload":     string(b),
 			"enqueued_at": time.Now().UTC().Format(time.RFC3339Nano),
 		},

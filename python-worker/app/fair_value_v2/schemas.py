@@ -46,8 +46,10 @@ class FairValueV2Result(BaseModel):
     as_of_ts: datetime
     fair_value: Optional[float] = None
     scenario_fair_values: Dict[str, Optional[float]] = Field(default_factory=dict)
+    expected_fair_value: Optional[float] = None
+    quality_flags: List[str] = Field(default_factory=list)
     regime: Optional[str] = None
     method_results: List[MethodResult] = Field(default_factory=list)
     features_hash: Optional[str] = None
     warnings: List[Dict[str, Any]] = Field(default_factory=list)
-    model_version: str = "fair_value_v2"
+    model_version: str = "fair_value_v2.1"

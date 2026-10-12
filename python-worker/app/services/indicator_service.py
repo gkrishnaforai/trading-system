@@ -193,6 +193,53 @@ class IndicatorService(BaseService):
         except Exception as e:
             self.logger.error(f"❌ Failed to log fallback usage for {symbol}: {e}")
             # Don't fail the operation if audit logging fails
+
+    def _indicators_daily_has_column(self, column_name: str) -> bool:
+        try:
+            rows = db.execute_query(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'indicators_daily'
+                  AND column_name = :col
+                LIMIT 1
+                """,
+                {"col": column_name},
+            )
+            return bool(rows)
+        except Exception:
+            return False
+
+    def _store_indicator_point_narrow(
+        self,
+        *,
+        symbol: str,
+        point_date: date,
+        indicator_name: str,
+        indicator_value: float,
+        data_source: str,
+    ) -> None:
+        delete_query = """
+            DELETE FROM indicators_daily
+            WHERE symbol = $1 AND date = $2 AND indicator_name = $3 AND data_source = $4
+        """
+        db.execute_update_positional(
+            delete_query,
+            [symbol.upper(), point_date, indicator_name, data_source],
+        )
+
+        insert_query = """
+            INSERT INTO indicators_daily (
+                symbol, date, indicator_name, indicator_value, data_source
+            ) VALUES (
+                $1, $2, $3, $4, $5
+            )
+        """
+        db.execute_update_positional(
+            insert_query,
+            [symbol.upper(), point_date, indicator_name, float(indicator_value), data_source],
+        )
     
     def _store_fmp_indicators(self, symbol: str, indicators_data: Dict[str, List[Dict[str, Any]]]) -> bool:
         """
@@ -207,6 +254,9 @@ class IndicatorService(BaseService):
         """
         try:
             stored_count = 0
+
+            has_interval = self._indicators_daily_has_column("interval")
+            has_as_of_ts = self._indicators_daily_has_column("as_of_ts")
             
             for indicator_name, data_points in indicators_data.items():
                 if not data_points:
@@ -279,34 +329,42 @@ class IndicatorService(BaseService):
                         else:
                             # Simple format: "2026-01-21"
                             point_date = datetime.strptime(point_date, '%Y-%m-%d').date()
-                    
-                    # Delete existing records and insert new ones (to update data_source)
-                    delete_query = """
-                        DELETE FROM indicators_daily 
-                        WHERE symbol = $1 AND date = $2 AND indicator_name = $3
-                          AND interval = '1d'
-                    """
-                    db.execute_update_positional(delete_query, [symbol.upper(), point_date, indicator_name])
-                    
-                    # Insert new record
-                    insert_query = """
-                        INSERT INTO indicators_daily (
-                            symbol, date, interval, as_of_ts, indicator_name, indicator_value, data_source, 
-                            created_at, updated_at
-                        ) VALUES (
-                            $1, $2, '1d', $3::timestamptz, $4, $5, 'fmp_api',
-                            NOW(), NOW()
+
+                    if has_interval and has_as_of_ts:
+                        delete_query = """
+                            DELETE FROM indicators_daily 
+                            WHERE symbol = $1 AND date = $2 AND indicator_name = $3
+                              AND interval = '1d'
+                        """
+                        db.execute_update_positional(delete_query, [symbol.upper(), point_date, indicator_name])
+
+                        insert_query = """
+                            INSERT INTO indicators_daily (
+                                symbol, date, interval, as_of_ts, indicator_name, indicator_value, data_source, 
+                                created_at, updated_at
+                            ) VALUES (
+                                $1, $2, '1d', $3::timestamptz, $4, $5, 'fmp_api',
+                                NOW(), NOW()
+                            )
+                        """
+                        db.execute_update_positional(
+                            insert_query,
+                            [
+                                symbol.upper(),
+                                point_date,
+                                datetime.combine(point_date, datetime.min.time()).isoformat(),
+                                indicator_name,
+                                float(point_value),
+                            ],
                         )
-                    """
-                    
-                    # Use positional parameters for INSERT
-                    result = db.execute_update_positional(insert_query, [
-                        symbol.upper(), 
-                        point_date, 
-                        datetime.combine(point_date, datetime.min.time()).isoformat(),
-                        indicator_name,  # Use the indicator name directly
-                        float(point_value)
-                    ])
+                    else:
+                        self._store_indicator_point_narrow(
+                            symbol=symbol,
+                            point_date=point_date,
+                            indicator_name=indicator_name,
+                            indicator_value=float(point_value),
+                            data_source="fmp_api",
+                        )
                     stored_count += 1
             
             self.logger.info(f"✅ Stored {stored_count} FMP indicator data points for {symbol}")
@@ -601,8 +659,8 @@ class IndicatorService(BaseService):
                 delete_query = """
                     DELETE FROM indicators_daily 
                     WHERE symbol = :symbol AND date = :date
-                      AND interval = '1d'
-                    AND (sma_50 IS NOT NULL OR ema_20 IS NOT NULL OR rsi_14 IS NOT NULL OR macd IS NOT NULL)
+                      AND indicator_name IS NULL
+                      AND (sma_50 IS NOT NULL OR ema_20 IS NOT NULL OR rsi_14 IS NOT NULL OR macd IS NOT NULL)
                 """
                 
                 try:
@@ -614,15 +672,14 @@ class IndicatorService(BaseService):
                 # Create INSERT query for wide format
                 wide_query = f"""
                     INSERT INTO indicators_daily 
-                    (symbol, date, interval, as_of_ts, {', '.join(update_columns)}, data_source, created_at, updated_at)
-                    VALUES (:symbol, :date, '1d', :as_of_ts, {', '.join([f':{col}' for col in update_columns])}, :data_source, NOW(), NOW())
+                    (symbol, date, {', '.join(update_columns)}, data_source, created_at, updated_at)
+                    VALUES (:symbol, :date, {', '.join([f':{col}' for col in update_columns])}, :data_source, NOW(), NOW())
                 """
                 
                 # Prepare parameters for wide format
                 wide_params = {
                     "symbol": symbol,
                     "date": trade_date,
-                    "as_of_ts": datetime.combine(trade_date, datetime.min.time()),
                     "data_source": "calculated"
                 }
                 
@@ -658,14 +715,27 @@ class IndicatorService(BaseService):
     
     def get_latest_indicators(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get latest indicators for a symbol"""
+        has_interval = self._indicators_daily_has_column("interval")
+        has_as_of_ts = self._indicators_daily_has_column("as_of_ts")
+
+        if has_interval and has_as_of_ts:
+            query = """
+                SELECT * FROM indicators_daily
+                WHERE symbol = :symbol
+                  AND interval = '1d'
+                ORDER BY as_of_ts DESC
+                LIMIT 1
+            """
+            results = db.execute_query(query, {"symbol": symbol})
+            return results[0] if results else None
+
         query = """
             SELECT * FROM indicators_daily
             WHERE symbol = :symbol
-              AND interval = '1d'
-            ORDER BY as_of_ts DESC
+              AND indicator_name IS NULL
+            ORDER BY date DESC, updated_at DESC
             LIMIT 1
         """
-        
         results = db.execute_query(query, {"symbol": symbol})
         return results[0] if results else None
 
