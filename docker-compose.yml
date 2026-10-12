@@ -361,6 +361,8 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable
       - GO_API_URL=${GO_API_URL:-http://go-api:8000}
+      - PYTHON_WORKER_URL=${PYTHON_WORKER_URL:-http://python-worker:8001}
+      - PYTHON_API_URL=${PYTHON_API_URL:-http://python-worker:8001}
       - PYTHONPATH=/app
     depends_on:
       postgres:
