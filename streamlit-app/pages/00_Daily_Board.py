@@ -31,7 +31,7 @@ _BOARD_PATHS = [
     "api/v1/board/defense",
     "api/v1/board/hl-triggers",
     "api/v1/board/fund-momentum",
-    "api/v1/board/incidents",
+    # incidents is served by the dedicated Custodian page, not here
     "api/v1/board/focus/members",
     "api/v1/board/track-record",
     "api/v1/board/jobs/catalog",
@@ -1152,35 +1152,6 @@ try:
                            "confirming): " + ", ".join(
                                f"{sym_md(r['symbol'])} `{r['tape']}`"
                                for r in _early[:6]))
-except Exception:
-    pass
-
-# --- 🩺 custodian strip — the support agent's ledger --------------------------
-try:
-    _inc = _cget("api/v1/board/incidents") or {}
-    _open = _inc.get("open") or []
-    if _open:
-        _esc = [i for i in _open if i.get("status") == "escalated"]
-        _mit = [i for i in _open if i.get("status") == "mitigated"]
-        _new = [i for i in _open if i.get("status") == "open"]
-        with st.expander(
-                f"🩺 Custodian — {len(_esc)} escalated · "
-                f"{len(_mit)} auto-mitigated · {len(_new)} new",
-                expanded=bool(_esc)):
-            for i in _open:
-                _ic = {"escalated": "🔴", "mitigated": "🟡",
-                       "open": "⚪"}.get(i["status"], "⚪")
-                st.caption(
-                    f"{_ic} `{i['signature']}` ×{i['occurrences']} — "
-                    f"{i.get('diagnosis') or '—'} · attempts "
-                    f"{i['attempts']}/3"
-                    + (f" · {i['remediation']}" if i.get('remediation')
-                       else ""))
-            _acts = _inc.get("actions") or []
-            if _acts:
-                st.caption("recent self-fixes: " + " · ".join(
-                    f"{a['action']} ({a['result'][:60]})"
-                    for a in _acts[:3]))
 except Exception:
     pass
 

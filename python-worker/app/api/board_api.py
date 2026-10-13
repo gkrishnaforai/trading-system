@@ -1757,6 +1757,20 @@ async def custodian_incidents():
     return await asyncio.to_thread(custodian.incidents)
 
 
+@router.post("/incidents/{signature}/resolve")
+async def incident_resolve(signature: str):
+    """Human acknowledgement — mark an incident resolved. If the
+    signature fires again the sensor reopens it with occurrences+1
+    and a fresh alert gate."""
+    from app.database import db
+    n = await asyncio.to_thread(
+        db.execute_update,
+        "UPDATE custodian_incidents SET status='resolved',"
+        " resolved_at=now() WHERE signature=:s",
+        {"s": signature})
+    return {"resolved": n}
+
+
 @router.get("/refresh/status")
 async def refresh_status():
     """Last-run state per job — in-memory first, then the durable

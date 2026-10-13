@@ -18,11 +18,76 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-COOLDOWN_MIN = 120          # min between remediation attempts/incident
+COOLDOWN_MIN = 15           # min between remediation attempts/incident
 MAX_ATTEMPTS = 3            # per incident before escalate
 STALE_H = {"momentum": 30,  # flag freshness SLA (h) — weekend-safe is
            "fundamental": 36,   # handled by occurrence counting
            "flywheel": 36}
+
+# signature prefix → concrete human steps when auto-remediation is out
+_MANUAL_STEPS = [
+    ("db:unreachable",
+     "1. docker ps — postgres/pgbouncer up?  2. Check DATABASE_URL env "
+     "on worker.  3. pgbouncer pool saturated → restart pgbouncer.  "
+     "4. Postgres down → check volume/logs, restart, verify SELECT 1."),
+    ("stale:momentum",
+     "1. job_runs → momentum last error.  2. Verify intraday_prices_only "
+     "schedule is landing fresh bars (daily_bars recent dates).  "
+     "3. Kick momentum from Job Scheduler.  4. If provider throttled, "
+     "check FMP/Yahoo keys."),
+    ("stale:fundamental",
+     "1. job_runs → fund-flags last error.  2. FMP key valid? (401s in "
+     "worker log = bad key).  3. Kick fund-flags manually.  "
+     "4. Check flywheel feed isn't stuck upstream."),
+    ("stale:flywheel",
+     "1. job_runs → flywheel/refresh errors.  2. FMP fundamentals "
+     "endpoint health.  3. Kick the refresh job; watch job_runs for "
+     "a clean completion."),
+    ("scan:alerts",
+     "1. Worker log → alert scan traceback.  2. Provider connectivity "
+     "from inside the worker container.  3. Re-run the scan; if it "
+     "fails same way, the bug is in the scan path not the data."),
+    ("job:",
+     "1. Job Scheduler page → run the job manually, read its "
+     "job_runs.error.  2. Check the job handler + provider keys "
+     "(FMP/FINNHUB/FRED/ALPHAVANTAGE).  3. Fix, re-run, resolve here."),
+]
+
+
+def _manual_steps(sig: str) -> str:
+    for pre, steps in _MANUAL_STEPS:
+        if sig.startswith(pre):
+            return steps
+    return ("Unknown signature — inspect custodian_actions and the "
+            "worker logs for the failing component, fix the root "
+            "cause, then mark resolved.")
+
+
+def _raise_technical_alert(sig: str, diagnosis: str, severity: str,
+                           attempts: int, detail: dict) -> None:
+    """Escalation = a technical alert into universal_events — the alert
+    engine can notify on 'custodian_escalation' events; the Custodian
+    page surfaces it regardless."""
+    from app.database import db
+    steps = _manual_steps(sig)
+    try:
+        db.execute_update(
+            """INSERT INTO universal_events
+                   (event_id, event_type, entity_type, entity_id,
+                    event_data, event_timestamp, data_source,
+                    processing_status)
+               VALUES (gen_random_uuid(), 'custodian_escalation',
+                       'system', :sig, CAST(:d AS jsonb), now(),
+                       'custodian', 'pending')""",
+            {"sig": sig,
+             "d": _j({"signature": sig, "diagnosis": diagnosis,
+                      "severity": severity, "attempts": attempts,
+                      "detail": detail, "manual_steps": steps,
+                      "requires_manual_intervention": True})})
+    except Exception as exc:
+        logger.warning("custodian alert emit failed for %s: %s", sig, exc)
+    logger.warning("CUSTODIAN ESCALATION %s — %s | manual: %s",
+                   sig, diagnosis, steps)
 
 # ── sensors ────────────────────────────────────────────────────────────
 
@@ -172,6 +237,25 @@ async def run_pass() -> dict[str, Any]:
         " AND signature != ALL(:s) AND signature NOT LIKE 'db:%'",
         {"s": list(seen) or [""]})
 
+    def _escalate(sig: str, diag: str, f: dict, attempts: int) -> None:
+        """Terminal state — mark escalated, stamp manual steps, raise
+        the technical alert exactly once per incident."""
+        row = db.execute_query(
+            "SELECT status, alerted_at FROM custodian_incidents"
+            " WHERE signature=:s", {"s": sig})
+        was_esc = row and row[0]["status"] == "escalated"
+        db.execute_update(
+            "UPDATE custodian_incidents SET status='escalated',"
+            " manual_steps=:ms WHERE signature=:s",
+            {"s": sig, "ms": _manual_steps(sig)})
+        if not was_esc and not (row and row[0]["alerted_at"]):
+            _raise_technical_alert(sig, diag, f["severity"],
+                                   attempts, f["detail"])
+            db.execute_update(
+                "UPDATE custodian_incidents SET alerted_at=now()"
+                " WHERE signature=:s", {"s": sig})
+            acts.append(f"{sig} → ESCALATED (technical alert raised)")
+
     for f in findings:
         sig = f["signature"]
         diag, rem, tier = _diagnose(f)
@@ -181,8 +265,9 @@ async def run_pass() -> dict[str, Any]:
         if existing:
             row = existing[0]
             # recurring after a 'resolved' → reopen + count occurrence
-            occ_bump = ", occurrences = occurrences + 1" \
-                if row["status"] == "resolved" else ""
+            occ_bump = ", occurrences = occurrences + 1," \
+                " alerted_at = NULL" if row["status"] == "resolved" \
+                else ""
             db.execute_update(
                 "UPDATE custodian_incidents SET status='open',"
                 " last_seen=now(), detail=CAST(:d AS jsonb),"
@@ -195,10 +280,11 @@ async def run_pass() -> dict[str, Any]:
             db.execute_update(
                 "INSERT INTO custodian_incidents"
                 " (signature, source, severity, detail, diagnosis,"
-                "  remediation) VALUES (:s,:src,:sv,CAST(:d AS jsonb),"
-                " :dg,:rm)",
+                "  remediation, manual_steps) VALUES (:s,:src,:sv,"
+                " CAST(:d AS jsonb),:dg,:rm,:ms)",
                 {"s": sig, "src": f["source"], "sv": f["severity"],
-                 "d": _j(f["detail"]), "dg": diag, "rm": rem})
+                 "d": _j(f["detail"]), "dg": diag, "rm": rem,
+                 "ms": _manual_steps(sig)})
             attempts, last = 0, None
 
         # tier gate + cooldown + attempt cap — the disposal layer.
@@ -211,20 +297,22 @@ async def run_pass() -> dict[str, Any]:
         mins = ((datetime.now(timezone.utc)
                  - la_t.replace(tzinfo=timezone.utc)).total_seconds() / 60
                 if la_t else 9999)
-        if tier <= 2 and attempts < MAX_ATTEMPTS \
+        if tier >= 3:
+            _escalate(sig, diag, f, attempts)
+        elif attempts < MAX_ATTEMPTS \
                 and mins >= COOLDOWN_MIN * (attempts > 0):
             res = await _remediate(sig, rem, tier)
+            hit_cap = attempts + 1 >= MAX_ATTEMPTS
             db.execute_update(
                 "UPDATE custodian_incidents SET attempts=attempts+1,"
                 " status=CASE WHEN attempts+1>=:cap THEN 'escalated'"
                 " ELSE 'mitigated' END WHERE signature=:s",
                 {"s": sig, "cap": MAX_ATTEMPTS})
             acts.append(f"{sig} → {rem} ({res})")
+            if hit_cap:
+                _escalate(sig, diag, f, attempts + 1)
         elif attempts >= MAX_ATTEMPTS:
-            db.execute_update(
-                "UPDATE custodian_incidents SET status='escalated'"
-                " WHERE signature=:s AND status != 'escalated'",
-                {"s": sig})
+            _escalate(sig, diag, f, attempts)
     return {"findings": len(findings), "actions": acts,
             "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
 
@@ -240,5 +328,13 @@ def incidents() -> dict[str, Any]:
         "SELECT * FROM custodian_incidents WHERE status != 'resolved'"
         " ORDER BY last_seen DESC")
     actions = db.execute_query(
-        "SELECT * FROM custodian_actions ORDER BY id DESC LIMIT 20")
-    return {"open": open_i, "actions": actions}
+        "SELECT * FROM custodian_actions ORDER BY id DESC LIMIT 40")
+    resolved = db.execute_query(
+        "SELECT signature, severity, attempts, occurrences,"
+        " resolved_at, last_seen FROM custodian_incidents"
+        " WHERE status = 'resolved' ORDER BY resolved_at DESC"
+        " LIMIT 10")
+    return {"open": open_i, "actions": actions,
+            "resolved": resolved,
+            "config": {"cooldown_min": COOLDOWN_MIN,
+                       "max_attempts": MAX_ATTEMPTS}}
