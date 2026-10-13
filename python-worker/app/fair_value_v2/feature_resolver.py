@@ -130,6 +130,8 @@ class FeatureResolver:
             v, s, q = self._resolve_macro_column(as_of_ts, d)
         elif t == "forward_estimate":
             v, s, q = self._resolve_forward_estimate(symbol, as_of_ts, d)
+        elif t == "eps_estimate_series":
+            v, s, q = self._resolve_eps_series(symbol, as_of_ts, d)
         elif t == "derived":
             return self._resolve_derived(symbol, as_of_ts, d)
         elif t == "coalesce":
@@ -388,6 +390,25 @@ class FeatureResolver:
             "fiscal_year": fy,
         }
         src = (f"fundamental_estimate_snapshots.{column}[FY{fy}]"
+               if v is not None else None)
+        return v, src, q
+
+    def _resolve_eps_series(self, symbol: str, as_of_ts: datetime, d: Dict[str, Any]) -> Tuple[Any, Optional[str], Dict[str, Any]]:
+        field = str(d.get("field") or "start_eps")
+        if field not in ("start_eps", "end_eps", "years", "analysts"):
+            return None, None, {"rejected": True,
+                                "reason": "field_not_allowed",
+                                "field": field}
+        s = self._store.get_eps_estimate_series(symbol, as_of_ts)
+        v = (s or {}).get(field)
+        window = (f"FY{s['start_fy']}-FY{s['end_fy']}"
+                  if s else None)
+        q: Dict[str, Any] = {
+            "row_found": s is not None,
+            "timestamp": str(s["as_of"]) if s and s.get("as_of") else None,
+            "window": window,
+        }
+        src = (f"fundamental_estimate_snapshots.eps_estimate[{window}]"
                if v is not None else None)
         return v, src, q
 

@@ -371,6 +371,28 @@ features:
       - type: forward_estimate
         column: revenue_estimate
 
+  # multi-year analyst EPS estimate window (point-in-time) —
+  # feeds the peg_r40_cagr method ported from v1
+  eps_est_start:
+    type: eps_estimate_series
+    field: start_eps
+    max_age_days: 200
+
+  eps_est_end:
+    type: eps_estimate_series
+    field: end_eps
+    max_age_days: 200
+
+  eps_est_years:
+    type: eps_estimate_series
+    field: years
+    max_age_days: 200
+
+  eps_est_analysts:
+    type: eps_estimate_series
+    field: analysts
+    max_age_days: 200
+
   fcf_ttm:
     type: coalesce
     max_age_days: 400

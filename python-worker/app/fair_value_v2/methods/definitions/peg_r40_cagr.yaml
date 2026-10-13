@@ -1,0 +1,315 @@
+method_key: peg_r40_cagr
+version: 1
+category: growth
+# port of v1 peg_rule_of_40_forward_cagr — prices the multi-year
+# analyst EPS curve (the "future product ramp" input), not just next-
+# year growth. rule_of_40 picks the PEG tier; forward EPS CAGR picks
+# the multiple. Requires a >=2-point estimate window (PIT).
+requires:
+  scalars:
+    - eps_est_start
+    - eps_est_end
+    - eps_est_years
+    - revenue_ttm
+    - revenue_growth_ttm
+    - net_profit_margin_ttm
+  optional_scalars:
+    - eps_forward
+    - eps_est_analysts
+  series: []
+params:
+  cagr_cap: 0.30            # v1: cap growth at 30% — no hyperbole
+  cagr_cap_bull: 0.40
+  pe_cap: 60.0              # v1 target_pe cap
+  pe_cap_bear: 45.0
+  pe_cap_bull: 70.0
+  pe_cap_explosive: 85.0
+  min_revenue: 100000000    # v1 eligibility floor
+  growth_cap_pct: 150.0     # clamp rule_of_40 inputs
+  margin_cap_pct: 80.0
+  bear_growth_mult: 0.80
+  bull_growth_mult: 1.15
+  explosive_growth_mult: 1.30
+formula:
+  fair_price:
+    let:
+      bindings:
+        # eligibility: >=$100M revenue (v1 gate); low-revenue names
+        # don't get a rule-of-40 multiple
+        eligible:
+          require:
+            value:
+              if:
+                cond: {gte: [{var: revenue_ttm}, {param: min_revenue}]}
+                then: 1
+                else: null
+            reason: rule_of_40_ineligible_low_revenue
+        cagr_raw:
+          sub:
+            - pow:
+                - div: [{var: eps_est_end}, {var: eps_est_start}]
+                - div: [1, {var: eps_est_years}]
+            - 1
+        g:
+          mul:
+            - 100
+            - clamp:
+                value: {var: cagr_raw}
+                lo: 0
+                hi: {param: cagr_cap}
+        r40:
+          add:
+            - clamp:
+                value: {mul: [100, {var: revenue_growth_ttm}]}
+                lo: -50
+                hi: {param: growth_cap_pct}
+            - clamp:
+                value: {mul: [100, {var: net_profit_margin_ttm}]}
+                lo: -50
+                hi: {param: margin_cap_pct}
+        peg:
+          if:
+            cond: {lt: [{var: r40}, 40]}
+            then: 1.0
+            else:
+              if:
+                cond: {lt: [{var: r40}, 60]}
+                then: 1.2
+                else:
+                  if:
+                    cond: {lt: [{var: r40}, 80]}
+                    then: 1.5
+                    else:
+                      if:
+                        cond: {lt: [{var: r40}, 100]}
+                        then: 2.0
+                        else: 2.5
+        pe:
+          clamp:
+            value: {mul: [{var: peg}, {var: g}]}
+            lo: 0
+            hi: {param: pe_cap}
+        eps_base:
+          # v1: min(eps_forward, estimate-window start) — take the
+          # more conservative of two forward EPS views
+          if:
+            cond:
+              gt: [{coalesce: [{var: eps_forward}, 0]}, 0]
+            then: {min: [{var: eps_forward}, {var: eps_est_start}]}
+            else: {var: eps_est_start}
+      in:
+        if:
+          cond: {lte: [{var: g}, 0]}
+          then: null            # non-positive forward CAGR → no value
+          else: {mul: [{var: eps_base}, {var: pe}]}
+  bear_fair_price:
+    let:
+      bindings:
+        eligible:
+          require:
+            value:
+              if:
+                cond: {gte: [{var: revenue_ttm}, {param: min_revenue}]}
+                then: 1
+                else: null
+            reason: rule_of_40_ineligible_low_revenue
+        cagr_raw:
+          mul:
+            - {param: bear_growth_mult}
+            - sub:
+                - pow:
+                    - div: [{var: eps_est_end}, {var: eps_est_start}]
+                    - div: [1, {var: eps_est_years}]
+                - 1
+        g:
+          mul:
+            - 100
+            - clamp:
+                value: {var: cagr_raw}
+                lo: 0
+                hi: {param: cagr_cap}
+        r40:
+          add:
+            - clamp:
+                value: {mul: [100, {var: revenue_growth_ttm}]}
+                lo: -50
+                hi: {param: growth_cap_pct}
+            - clamp:
+                value:
+                  mul:
+                    - 100
+                    - min: [{var: net_profit_margin_ttm}, 0]
+                lo: -50
+                hi: {param: margin_cap_pct}
+        peg:
+          if:
+            cond: {lt: [{var: r40}, 40]}
+            then: 1.0
+            else:
+              if:
+                cond: {lt: [{var: r40}, 60]}
+                then: 1.2
+                else:
+                  if:
+                    cond: {lt: [{var: r40}, 80]}
+                    then: 1.5
+                    else:
+                      if:
+                        cond: {lt: [{var: r40}, 100]}
+                        then: 2.0
+                        else: 2.5
+        pe:
+          clamp:
+            value: {mul: [{var: peg}, {var: g}]}
+            lo: 0
+            hi: {param: pe_cap_bear}
+        eps_base:
+          if:
+            cond:
+              gt: [{coalesce: [{var: eps_forward}, 0]}, 0]
+            then: {min: [{var: eps_forward}, {var: eps_est_start}]}
+            else: {var: eps_est_start}
+      in:
+        if:
+          cond: {lte: [{var: g}, 0]}
+          then: null
+          else: {mul: [{var: eps_base}, {var: pe}]}
+  bull_fair_price:
+    let:
+      bindings:
+        eligible:
+          require:
+            value:
+              if:
+                cond: {gte: [{var: revenue_ttm}, {param: min_revenue}]}
+                then: 1
+                else: null
+            reason: rule_of_40_ineligible_low_revenue
+        cagr_raw:
+          mul:
+            - {param: bull_growth_mult}
+            - sub:
+                - pow:
+                    - div: [{var: eps_est_end}, {var: eps_est_start}]
+                    - div: [1, {var: eps_est_years}]
+                - 1
+        g:
+          mul:
+            - 100
+            - clamp:
+                value: {var: cagr_raw}
+                lo: 0
+                hi: {param: cagr_cap}
+        r40:
+          add:
+            - clamp:
+                value: {mul: [100, {var: revenue_growth_ttm}]}
+                lo: -50
+                hi: {param: growth_cap_pct}
+            - clamp:
+                value: {mul: [100, {var: net_profit_margin_ttm}]}
+                lo: -50
+                hi: {param: margin_cap_pct}
+        peg:
+          if:
+            cond: {lt: [{var: r40}, 40]}
+            then: 1.0
+            else:
+              if:
+                cond: {lt: [{var: r40}, 60]}
+                then: 1.2
+                else:
+                  if:
+                    cond: {lt: [{var: r40}, 80]}
+                    then: 1.5
+                    else:
+                      if:
+                        cond: {lt: [{var: r40}, 100]}
+                        then: 2.0
+                        else: 2.5
+        pe:
+          clamp:
+            value: {mul: [{var: peg}, {var: g}]}
+            lo: 0
+            hi: {param: pe_cap_bull}
+        eps_base:
+          if:
+            cond:
+              gt: [{coalesce: [{var: eps_forward}, 0]}, 0]
+            then: {min: [{var: eps_forward}, {var: eps_est_start}]}
+            else: {var: eps_est_start}
+      in:
+        if:
+          cond: {lte: [{var: g}, 0]}
+          then: null
+          else: {mul: [{var: eps_base}, {var: pe}]}
+  explosive_fair_price:
+    let:
+      bindings:
+        eligible:
+          require:
+            value:
+              if:
+                cond: {gte: [{var: revenue_ttm}, {param: min_revenue}]}
+                then: 1
+                else: null
+            reason: rule_of_40_ineligible_low_revenue
+        cagr_raw:
+          mul:
+            - {param: explosive_growth_mult}
+            - sub:
+                - pow:
+                    - div: [{var: eps_est_end}, {var: eps_est_start}]
+                    - div: [1, {var: eps_est_years}]
+                - 1
+        g:
+          mul:
+            - 100
+            - clamp:
+                value: {var: cagr_raw}
+                lo: 0
+                hi: {param: cagr_cap_bull}
+        r40:
+          add:
+            - clamp:
+                value: {mul: [100, {var: revenue_growth_ttm}]}
+                lo: -50
+                hi: {param: growth_cap_pct}
+            - clamp:
+                value: {mul: [100, {var: net_profit_margin_ttm}]}
+                lo: -50
+                hi: {param: margin_cap_pct}
+        peg:
+          if:
+            cond: {lt: [{var: r40}, 40]}
+            then: 1.0
+            else:
+              if:
+                cond: {lt: [{var: r40}, 60]}
+                then: 1.2
+                else:
+                  if:
+                    cond: {lt: [{var: r40}, 80]}
+                    then: 1.5
+                    else:
+                      if:
+                        cond: {lt: [{var: r40}, 100]}
+                        then: 2.0
+                        else: 2.5
+        pe:
+          clamp:
+            value: {mul: [{var: peg}, {var: g}]}
+            lo: 0
+            hi: {param: pe_cap_explosive}
+        eps_base:
+          if:
+            cond:
+              gt: [{coalesce: [{var: eps_forward}, 0]}, 0]
+            then: {min: [{var: eps_forward}, {var: eps_est_start}]}
+            else: {var: eps_est_start}
+      in:
+        if:
+          cond: {lte: [{var: g}, 0]}
+          then: null
+          else: {mul: [{var: eps_base}, {var: pe}]}
+validations: []

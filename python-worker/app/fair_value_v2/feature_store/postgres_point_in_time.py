@@ -355,6 +355,63 @@ class PostgresPointInTimeFeatureStore:
                 v = None
             return v, row[1], int(row[2]) if row[2] is not None else None
 
+    def get_eps_estimate_series(
+        self,
+        symbol: str,
+        as_of_ts: datetime,
+        preferred_years: int = 3,
+    ) -> Optional[Dict[str, Any]]:
+        """Forward EPS estimate window, point-in-time.
+
+        Per fiscal_year the latest snapshot on or before as_of wins
+        (DISTINCT ON). start = nearest unreported year; end = furthest
+        within preferred_years of start, else furthest available.
+        Returns {start_eps, end_eps, years, analysts, start_fy,
+        end_fy, as_of} or None when fewer than 2 forward points exist.
+        """
+        sql = """
+        SELECT DISTINCT ON (fiscal_year)
+            fiscal_year, eps_estimate, analyst_count, as_of_date
+        FROM fundamental_estimate_snapshots
+        WHERE symbol = :symbol
+          AND fiscal_period = 'annual'
+          AND fiscal_year >= EXTRACT(YEAR FROM CAST(:as_of AS date))::int
+          AND as_of_date <= CAST(:as_of AS date)
+          AND eps_estimate IS NOT NULL
+        ORDER BY fiscal_year, as_of_date DESC
+        """
+        with db.get_session() as session:
+            rows = session.execute(
+                text(sql), {"symbol": symbol, "as_of": as_of_ts.date()}
+            ).fetchall()
+        if len(rows) < 2:
+            return None
+        start = rows[0]
+        start_fy = int(start[0])
+        end = rows[-1]
+        for r in rows[1:]:
+            if int(r[0]) - start_fy <= preferred_years:
+                end = r
+        years = int(end[0]) - start_fy
+        if years < 1:
+            return None
+        try:
+            start_eps = float(start[1])
+            end_eps = float(end[1])
+        except (TypeError, ValueError):
+            return None
+        if start_eps <= 0 or end_eps <= 0:
+            return None
+        return {
+            "start_eps": start_eps,
+            "end_eps": end_eps,
+            "years": years,
+            "analysts": int(start[2]) if start[2] is not None else None,
+            "start_fy": start_fy,
+            "end_fy": int(end[0]),
+            "as_of": start[3] or end[3],
+        }
+
     def get_macro_scalar(
         self,
         as_of_ts: datetime,
