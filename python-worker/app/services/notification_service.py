@@ -579,11 +579,11 @@ class NotificationService:
         """Update notification status"""
         try:
             query = """
-                UPDATE universal_notification_queue 
-                SET status = :status,
-                    attempts = CASE WHEN :status = 'processing' THEN attempts + 1 ELSE attempts END,
-                    last_attempt_at = CASE WHEN :status IN ('sent', 'failed') THEN NOW() ELSE last_attempt_at END,
-                    sent_at = CASE WHEN :status = 'sent' THEN NOW() ELSE sent_at END
+                UPDATE universal_notification_queue
+                SET status = CAST(:status AS varchar),
+                    attempts = CASE WHEN CAST(:status AS varchar) = 'processing' THEN attempts + 1 ELSE attempts END,
+                    last_attempt_at = CASE WHEN CAST(:status AS varchar) IN ('sent', 'failed') THEN NOW() ELSE last_attempt_at END,
+                    sent_at = CASE WHEN CAST(:status AS varchar) = 'sent' THEN NOW() ELSE sent_at END
                 WHERE queue_id = :queue_id
             """
             
