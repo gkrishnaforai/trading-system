@@ -6,6 +6,7 @@ COPY frontend/package*.json ./
 RUN npm ci
 
 COPY frontend/ ./
+RUN mkdir -p public
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
