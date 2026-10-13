@@ -1725,6 +1725,19 @@ async def set_job_schedule(name: str, body: dict):
         bool(body.get("enabled")))
 
 
+@router.get("/jobs/runs")
+async def job_runs(limit: int = 50):
+    """Recent dispatcher executions — the durable ledger the scheduler
+    page shows under the catalog."""
+    from app.database import db
+    rows = await asyncio.to_thread(
+        db.execute_query,
+        "SELECT name, ran_at, duration_s, error, result"
+        " FROM job_runs ORDER BY ran_at DESC LIMIT :n",
+        {"n": min(limit, 200)})
+    return {"runs": rows}
+
+
 @router.get("/incidents")
 async def custodian_incidents():
     """Open incidents + recent custodian actions — the support agent's
