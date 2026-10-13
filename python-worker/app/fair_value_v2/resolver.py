@@ -226,6 +226,8 @@ class FairValueV2Resolver:
         except Exception as exc:
             logger.warning("fv decision layer failed for %s: %s",
                            result.symbol, exc)
+        if decision is not None and result.classification:
+            decision["classification"] = result.classification
         try:
             result.decision = decision
         except Exception:

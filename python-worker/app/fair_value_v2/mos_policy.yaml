@@ -11,6 +11,9 @@ default_base: 0.25
 categories:
   financials:      {base: 0.15}   # regulated, audited book values
   value:           {base: 0.15}
+  consumer:        {base: 0.20}   # steady demand, brand moats
+  healthcare:      {base: 0.20}   # defensive, but trial/patent risk
+  fintech:         {base: 0.30}   # platform economics, volatile revenue
   growth:          {base: 0.25}
   technology:      {base: 0.25}
   ai_infra:        {base: 0.35}   # capital-intensive, capex-cycle risk

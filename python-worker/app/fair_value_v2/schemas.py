@@ -53,4 +53,5 @@ class FairValueV2Result(BaseModel):
     features_hash: Optional[str] = None
     warnings: List[Dict[str, Any]] = Field(default_factory=list)
     decision: Optional[Dict[str, Any]] = None
+    classification: Optional[Dict[str, Any]] = None
     model_version: str = "fair_value_v2.1"

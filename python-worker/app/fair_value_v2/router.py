@@ -21,14 +21,21 @@ class CategoryRouter:
     def _contains(self, text: str, needle: str) -> bool:
         return needle.lower() in (text or "").lower()
 
-    def category_for(
+    def categories_for(
         self,
         symbol: Optional[str],
         sector: Optional[str],
         industry: Optional[str],
         company_name: Optional[str] = None,
         description: Optional[str] = None,
-    ) -> str:
+    ) -> List[str]:
+        """Every category whose rules match, in rule-precedence order.
+
+        A company can legitimately belong to several archetypes (NVDA is
+        both ai_infra and technology). The first match remains the
+        primary category used for method selection; the full list is
+        emitted as the classification profile.
+        """
         ctx = {
             "symbol": symbol or "",
             "sector": sector or "",
@@ -39,28 +46,31 @@ class CategoryRouter:
         rules = (self._router_cfg or {}).get("rules") or []
         default_category = (self._router_cfg or {}).get("default_category") or "value"
 
+        def _match_term(t: Dict[str, Any]) -> bool:
+            if not isinstance(t, dict):
+                return False
+
+            if "any" in t:
+                group_terms = t.get("any") or []
+                return any(_match_term(gt) for gt in group_terms)
+            if "all" in t:
+                group_terms = t.get("all") or []
+                return all(_match_term(gt) for gt in group_terms)
+
+            field = t.get("field")
+            needle = t.get("contains")
+            if not field or needle is None:
+                return False
+            return self._contains(str(ctx.get(field) or ""), str(needle))
+
+        matched: List[str] = []
         for rule in rules:
             category = rule.get("category")
+            if not category:
+                continue
             when = rule.get("when") or {}
             any_terms = when.get("any") or []
             all_terms = when.get("all") or []
-
-            def _match_term(t: Dict[str, Any]) -> bool:
-                if not isinstance(t, dict):
-                    return False
-
-                if "any" in t:
-                    group_terms = t.get("any") or []
-                    return any(_match_term(gt) for gt in group_terms)
-                if "all" in t:
-                    group_terms = t.get("all") or []
-                    return all(_match_term(gt) for gt in group_terms)
-
-                field = t.get("field")
-                needle = t.get("contains")
-                if not field or needle is None:
-                    return False
-                return self._contains(str(ctx.get(field) or ""), str(needle))
 
             any_ok = True
             if any_terms:
@@ -69,10 +79,23 @@ class CategoryRouter:
             if all_terms:
                 all_ok = all(_match_term(t) for t in all_terms)
 
-            if category and any_ok and all_ok:
-                return str(category)
+            if any_ok and all_ok and str(category) not in matched:
+                matched.append(str(category))
 
-        return str(default_category)
+        return matched or [str(default_category)]
+
+    def category_for(
+        self,
+        symbol: Optional[str],
+        sector: Optional[str],
+        industry: Optional[str],
+        company_name: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> str:
+        return self.categories_for(
+            symbol, sector, industry,
+            company_name=company_name, description=description,
+        )[0]
 
     def methods_for_category(self, category: str) -> List[MethodWeight]:
         categories = (self._methods_cfg or {}).get("categories") or {}

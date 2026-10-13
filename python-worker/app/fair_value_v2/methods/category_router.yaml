@@ -154,6 +154,31 @@ rules:
           contains: bank
         - field: industry
           contains: banks
+        - field: industry
+          contains: insurance
+        - field: industry
+          contains: capital markets
+        - field: industry
+          contains: asset management
+        - field: industry
+          contains: mortgage finance
+
+  - category: fintech
+    when:
+      all:
+        - field: sector
+          contains: financial
+        - any:
+            - field: industry
+              contains: financial data
+            - field: industry
+              contains: stock exchanges
+            - field: industry
+              contains: exchanges
+            - field: industry
+              contains: payment
+            - field: industry
+              contains: fintech
 
   - category: fintech
     when:
@@ -213,11 +238,69 @@ rules:
         - field: industry
           contains: chemicals
 
+  - category: cyclical
+    when:
+      any:
+        - field: sector
+          contains: industrials
+        - field: sector
+          contains: basic materials
+        - field: sector
+          contains: energy
+        - field: industry
+          contains: oil
+        - field: industry
+          contains: gas
+        - field: industry
+          contains: steel
+        - field: industry
+          contains: aerospace
+        - field: industry
+          contains: defense
+        - field: industry
+          contains: machinery
+        - field: industry
+          contains: railroads
+        - field: industry
+          contains: trucking
+        - field: industry
+          contains: metals
+        - field: industry
+          contains: construction
+
+  - category: consumer
+    when:
+      any:
+        - field: sector
+          contains: consumer
+        - field: industry
+          contains: restaurants
+        - field: industry
+          contains: retail
+        - field: industry
+          contains: apparel
+        - field: industry
+          contains: footwear
+
+  - category: healthcare
+    when:
+      any:
+        - field: sector
+          contains: health
+        - field: industry
+          contains: drug
+        - field: industry
+          contains: medical
+
   - category: value
     when:
       any:
         - field: sector
-          contains: consumer defensive
+          contains: utilities
+        - field: sector
+          contains: real estate
+        - field: industry
+          contains: reit
         - field: industry
           contains: household
         - field: industry

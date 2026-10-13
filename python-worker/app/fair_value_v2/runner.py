@@ -320,6 +320,20 @@ class FairValueRunner:
         else:
             category, method_weights = self.router.route(symbol, sector, industry, company_name=company_name, description=description)
 
+        # Multi-archetype profile: a company can legitimately match
+        # several categories (NVDA is ai_infra + technology). Primary
+        # drives method selection; the full list is the archetype set.
+        all_categories = self.router.categories_for(
+            symbol, sector, industry,
+            company_name=company_name, description=description,
+        )
+        classification = {
+            "primary": category,
+            "secondary": [c for c in all_categories if c != category],
+            "all": all_categories,
+            "source": "override" if override_category else "rules",
+        }
+
         # Determine regime using a small, explicit scalar set.
         regime_features = self._get_features_for_requires(symbol, ts, self._regime_selection_scalars)
         regime, regime_method_weights = self.regime_router.route(
@@ -419,6 +433,7 @@ class FairValueRunner:
             expected_fair_value=expected if any_ok else None,
             quality_flags=quality_flags,
             regime=f"{category}:{regime}",
+            classification=classification,
             method_results=method_results,
             features_hash=combined_hash,
             warnings=warnings,

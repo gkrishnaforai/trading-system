@@ -40,3 +40,24 @@ categories:
         weight: 0.7
       - method_key: ev_sales_growth
         weight: 0.3
+
+  fintech:
+    methods:
+      - method_key: ev_sales_fintech
+        weight: 0.6
+      - method_key: pe_forward
+        weight: 0.4
+
+  consumer:
+    methods:
+      - method_key: pe_value
+        weight: 0.6
+      - method_key: pe_basic
+        weight: 0.4
+
+  healthcare:
+    methods:
+      - method_key: pe_value
+        weight: 0.5
+      - method_key: pe_growth
+        weight: 0.5
