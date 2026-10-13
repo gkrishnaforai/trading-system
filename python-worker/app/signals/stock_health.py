@@ -238,7 +238,7 @@ def card(sym: str) -> dict[str, Any]:
         r = db.execute_query(
             "SELECT symbol, fair_value, scenario_fair_values,"
             " expected_fair_value,"
-            " quality_flags, regime, method_results, as_of"
+            " quality_flags, regime, method_results, decision, as_of"
             " FROM fair_value_v2_runs WHERE symbol=:s"
             " ORDER BY as_of DESC LIMIT 1", {"s": s})
         p = db.execute_query(
@@ -418,6 +418,7 @@ def _fv_detail(run_row: dict, spot) -> dict:
         "spot": spot,
         "methods": methods,
         "analyst": analyst,
+        "decision": run_row.get("decision"),
     }
 
 

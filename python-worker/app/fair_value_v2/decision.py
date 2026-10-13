@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 _POLICY_PATH = os.path.join(os.path.dirname(__file__), "mos_policy.yaml")
+_SCEN_PATH = os.path.join(os.path.dirname(__file__),
+                          "archetype_scenarios.yaml")
 
 
 def _load_policy() -> Dict[str, Any]:
@@ -22,6 +24,66 @@ def _load_policy() -> Dict[str, Any]:
             return yaml.safe_load(f) or {}
     except Exception:
         return {}
+
+
+def _load_scenarios() -> Dict[str, Any]:
+    try:
+        with open(_SCEN_PATH) as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+
+def _mos_base_for(cats: Dict[str, Any],
+                  archetypes: List[str],
+                  default_base: float) -> float:
+    """Strictest applicable base across the matched archetype set — a
+    name that is partly ai_infra shouldn't earn the cheaper technology
+    discount. Single-archetype names reduce to their category base."""
+    base = default_base
+    for a in archetypes or []:
+        spec = cats.get(a)
+        if spec is not None:
+            base = max(base, float(spec.get("base", default_base)))
+    return base
+
+
+def _macro_scenarios(scen_cfg: Dict[str, Any],
+                     archetypes: List[str],
+                     fv_ref: Optional[float],
+                     buy_below: Optional[float],
+                     spot: Optional[float]) -> Dict[str, Any]:
+    """Stress overlay: expected FV and buy_below re-priced under each
+    AI-capex macro scenario. Primary archetype carries weight
+    1 - secondary_blend; matched secondaries share the rest."""
+    if not fv_ref or not archetypes:
+        return {}
+    sens = scen_cfg.get("sensitivities") or {}
+    blend_w = float(scen_cfg.get("secondary_blend", 0.3))
+    primary, secondaries = archetypes[0], archetypes[1:]
+
+    out: Dict[str, Any] = {}
+    for key, spec in (scen_cfg.get("scenarios") or {}).items():
+        p = float((sens.get(primary) or {}).get(key) or
+                  (sens.get("unknown") or {}).get(key) or 0)
+        secs = [float((sens.get(s) or {}).get(key) or 0)
+                for s in secondaries]
+        impact = ((1 - blend_w) * p +
+                  (blend_w * sum(secs) / len(secs) if secs else 0))
+        entry = {"impact": round(impact, 4), "label": spec.get("label")}
+        stressed_fv = fv_ref * (1 + impact)
+        entry["stressed_fv"] = round(stressed_fv, 2)
+        if buy_below:
+            entry["stressed_buy_below"] = round(buy_below * (1 + impact), 2)
+        if spot and spot > 0:
+            entry["stressed_vs_spot"] = round(stressed_fv / spot - 1, 4)
+        out[key] = entry
+    if out:
+        worst = min(out.items(), key=lambda kv: kv[1]["impact"])
+        out["_worst"] = {"scenario": worst[0],
+                         "impact": worst[1]["impact"],
+                         "label": worst[1].get("label")}
+    return out
 
 
 def _scalars_from_methods(method_results: list) -> Dict[str, Any]:
@@ -43,12 +105,16 @@ def decide(category: Optional[str],
            scenarios: Dict[str, Any],
            quality_flags: List[str],
            spot: Optional[float],
-           method_results: list) -> Dict[str, Any]:
+           method_results: list,
+           archetypes: Optional[List[str]] = None) -> Dict[str, Any]:
     """Return the decision payload for one run.
 
     fv_* fields describe worth; buy_below is the gate. risk_flags are
-    the blockers/penalties a consumer must respect."""
+    the blockers/penalties a consumer must respect. `archetypes` is the
+    full matched classification set — its strictest member sets the
+    margin-of-safety base and its blend sets scenario sensitivities."""
     policy = _load_policy()
+    scen_cfg = _load_scenarios()
     cats = policy.get("categories") or {}
     adders = policy.get("adders") or {}
     cap = float(policy.get("cap", 0.60))
@@ -56,8 +122,11 @@ def decide(category: Optional[str],
 
     scalars = _scalars_from_methods(method_results)
     cat = (category or "unknown").split(":")[0] or "unknown"
-    base = float((cats.get(cat) or {}).get("base",
-                 policy.get("default_base", 0.25)))
+    archs = list(archetypes) if archetypes else [cat]
+    if cat not in archs:
+        archs.insert(0, cat)
+    base = _mos_base_for(cats, archs,
+                         float(policy.get("default_base", 0.25)))
 
     # uncertainty adders — each a measurable risk the scenario may miss
     applied: List[str] = []
@@ -129,4 +198,6 @@ def decide(category: Optional[str],
         "valuation_confidence": confidence,
         "risk_flags": risk_flags,
         "fv_reference": "expected" if expected_fv else "base",
+        "macro_scenarios": _macro_scenarios(
+            scen_cfg, archs, fv_ref, buy_below, spot),
     }

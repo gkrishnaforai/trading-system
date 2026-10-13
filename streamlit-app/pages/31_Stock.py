@@ -348,6 +348,53 @@ if fvd.get("scenarios") and fvd.get("spot"):
                "(bear 25% · base 50% · bull 20% · explosive 5%) — "
                "a probability-weighted value, not just the base case")
 
+    # decision layer — fair value prices worth; buy_below prices safety
+    _dec = fvd.get("decision") or {}
+    _cls = _dec.get("classification") or {}
+    if _cls.get("primary"):
+        _arch = "`" + _cls["primary"] + "`" + "".join(
+            f" · `{a}`" for a in (_cls.get("secondary") or []))
+        st.caption("🏷 archetypes: " + _arch +
+                   (f"  ·  src: {_cls.get('source')}"
+                    if _cls.get("source") == "override" else ""))
+    if _dec.get("buy_below"):
+        _bb = float(_dec["buy_below"])
+        _gate = "🟢 **below gate — accumulable**" if _sp <= _bb \
+            else "🔴 above gate — wait for discount"
+        _bits = [f"buy below **${_bb:.2f}** "
+                 f"(MoS {_dec.get('mos_pct', 0):.0%})"]
+        if _dec.get("expected_return_2y") is not None:
+            _bits.append(f"2y exp **{_dec['expected_return_2y']:+.1%}**/yr")
+        if _dec.get("valuation_confidence"):
+            _bits.append(f"conf `{_dec['valuation_confidence']}`")
+        _bits.append(_gate)
+        st.markdown("**🛡 decision** — " + " · ".join(_bits))
+        if _dec.get("risk_flags"):
+            st.caption("⛔ risk flags: " +
+                       ", ".join(f"`{f}`" for f in _dec["risk_flags"]))
+        if _dec.get("mos_adders"):
+            st.caption("MoS adders: " +
+                       ", ".join(f"`{a}`" for a in _dec["mos_adders"]))
+
+    # macro-scenario stress — what happens to THIS name if the AI
+    # capex cycle turns each way (archetype-weighted, not base FV)
+    _msc = _dec.get("macro_scenarios") or {}
+    if _msc:
+        with st.expander("🌪 AI-capex stress — FV under each macro path"):
+            for sk, sv in _msc.items():
+                if sk.startswith("_"):
+                    continue
+                _imp = sv.get("impact") or 0
+                _line = (f"**{sk.replace('_', ' ')}** — {sv.get('label')}: "
+                         f"{_imp:+.0%} → fv **${sv.get('stressed_fv', 0):.2f}**")
+                if sv.get("stressed_buy_below"):
+                    _line += f" · buy ≤ ${sv['stressed_buy_below']:.2f}"
+                st.caption(_line)
+            _w = _msc.get("_worst") or {}
+            if _w:
+                st.caption(f"worst path: `{_w.get('scenario')}` "
+                           f"{(_w.get('impact') or 0):+.0%}")
+
     # deterministic per-scenario math — method contributions recomputed
     # from the run's own inputs, no narrative
     with st.expander("why these numbers — method breakdown"):
@@ -406,6 +453,56 @@ if fvd.get("scenarios") and fvd.get("spot"):
             + (f" · {_an['analyst_count']} analysts"
                if _an.get("analyst_count") else "")
             + " — reference only, not blended into our number")
+
+# ---------------------- 🧠 classification assistant (LLM proposes,
+# human applies via the category-override path — rules stay default)
+with st.expander("🧠 classification — archetype review"):
+    _cur = ((H.get("fv") or {}).get("decision") or {}).get(
+        "classification") or {}
+    st.caption("current: " +
+               ("`" + _cur.get("primary", "?") + "`" +
+                "".join(f" · `{a}`" for a in (_cur.get("secondary") or []))
+                if _cur.get("primary") else "no run yet"))
+    if st.button("suggest (LLM)", key="cls_suggest"):
+        _r = client.post("admin/fair-value-v2/classify-suggest",
+                         json_data={"symbol": sym})
+        st.session_state["cls_sug"] = _r
+    _sug = st.session_state.get("cls_sug") or {}
+    if _sug.get("success") and _sug.get("suggestion"):
+        _s = _sug["suggestion"]
+        _p = _s.get("proposed") or {}
+        st.caption(f"proposed: `{_p.get('primary')}`" +
+                   "".join(f" · `{a}`" for a in (_p.get("secondary") or []))
+                   + f"  ·  conf {_s.get('confidence') or '—'}"
+                   + ("  ·  ⚠️ differs from rules" if _s.get("changed")
+                      else "  ·  agrees with rules"))
+        if _s.get("rationale"):
+            st.caption("why: " + _s["rationale"])
+        for _e in (_s.get("evidence") or [])[:3]:
+            st.caption("· " + _e)
+        if _s.get("changed") and st.button("apply as category override",
+                                           key="cls_apply"):
+            _w = client.post("admin/fair-value-v2/category-overrides",
+                             json_data={
+                                 "symbol": sym,
+                                 "category_override": _p.get("primary"),
+                                 "enabled": True,
+                                 "reason": ("llm-suggested: "
+                                            + (_s.get("rationale") or "")
+                                            )[:400],
+                                 "updated_by": "llm-assist",
+                             })
+            if _w.get("success"):
+                st.success("override stored — next FV run uses it")
+                st.session_state.pop("cls_sug", None)
+            else:
+                st.error(str(_w.get("error") or "apply failed"))
+    elif _sug and not _sug.get("success"):
+        st.caption("⚠️ " + (_sug.get("error") or "LLM tier unavailable — "
+                            "set OPENAI_API_KEY / ANTHROPIC_API_KEY"))
+    st.caption("rules are the default; an LLM proposal becomes an "
+               "override only after you apply it — deterministic "
+               "routing is never auto-changed")
 
 # --------------------------- ⏳ long-duration repricing lens (lt_power)
 # Separate from the fair-value ladder on purpose: the FV engine values

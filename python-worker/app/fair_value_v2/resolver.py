@@ -222,7 +222,8 @@ class FairValueV2Resolver:
             decision = decide(
                 cat, result.fair_value, result.expected_fair_value,
                 result.scenario_fair_values, quality_flags, spot,
-                result.method_results)
+                result.method_results,
+                archetypes=(result.classification or {}).get("all"))
         except Exception as exc:
             logger.warning("fv decision layer failed for %s: %s",
                            result.symbol, exc)

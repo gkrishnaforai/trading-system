@@ -71,6 +71,10 @@ class FairValueV2CategoryOverrideRequest(BaseModel):
     updated_by: Optional[str] = None
 
 
+class FairValueV2ClassifySuggestRequest(BaseModel):
+    symbol: str
+
+
 class FairValueOverrideRequest(BaseModel):
     symbol: str
     fair_value: float
@@ -1586,6 +1590,24 @@ async def list_fair_value_v2_category_overrides(enabled_only: bool = True):
         return {"success": True, "overrides": rows or []}
     except Exception as e:
         logger.error(f"Failed to list fair value v2 category overrides: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/fair-value-v2/classify-suggest")
+async def suggest_fair_value_v2_classification(req: FairValueV2ClassifySuggestRequest):
+    """LLM-proposed archetype classification — returns a proposal for
+    human review; applying it is a separate explicit call to
+    POST /fair-value-v2/category-overrides."""
+    try:
+        from app.fair_value_v2.llm_classify import suggest
+        out = suggest(req.symbol.strip().upper())
+        if out is None:
+            return {"success": False,
+                    "error": "LLM tier unavailable or insufficient "
+                             "company profile text"}
+        return {"success": True, "suggestion": out}
+    except Exception as e:
+        logger.error(f"classify-suggest failed for {req.symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

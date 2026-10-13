@@ -1,0 +1,90 @@
+version: 1
+
+# Macro-scenario stress overlay — per-archetype fair-value sensitivity
+# to the AI-capex cycle. Answers "what happens to THIS name if the AI
+# buildout turns this way" without changing the base fair value.
+#
+# Sensitivity = fractional FV impact when the scenario plays out
+# (-0.35 → stressed_fv = expected_fv * 0.65). Multi-archetype names
+# blend: primary weight (1 - secondary_blend) + mean(secondaries) *
+# secondary_blend — CRDO inherits most of its ai_infra exposure but
+# its technology identity cushions the hit.
+
+secondary_blend: 0.3
+
+scenarios:
+  capex_slows_usage_strong:
+    label: "capex slows, AI usage stays strong"
+    note: "hyperscaler orders pause but inference demand holds —
+           efficient operators + contracted capacity hold value,
+           order-driven suppliers take the hit"
+  capex_slows_util_falls:
+    label: "capex slows AND utilization falls"
+    note: "the bust case — levered compute providers, uncommitted
+           capacity, deferred hardware orders all compress"
+  capex_grows_efficiency:
+    label: "capex grows but efficiency improves"
+    note: "more inference per watt enablers win — optics, power,
+           cooling, networking content per system rises"
+  monetization_disappoints:
+    label: "AI monetization disappoints"
+    note: "hyperscaler ROI questioned — extends beyond suppliers to
+           AI-software conversion and platform valuations"
+
+# per-archetype fractional FV impact per scenario (None → 0)
+sensitivities:
+  ai_infra:
+    capex_slows_usage_strong:  -0.15   # order book pauses, contracts hold
+    capex_slows_util_falls:    -0.35   # the epicenter
+    capex_grows_efficiency:     0.10   # content-per-system tailwind
+    monetization_disappoints:  -0.15
+  technology:
+    capex_slows_usage_strong:  -0.10
+    capex_slows_util_falls:    -0.20
+    capex_grows_efficiency:     0.05
+    monetization_disappoints:  -0.10
+  growth:
+    capex_slows_usage_strong:  -0.05
+    capex_slows_util_falls:    -0.15
+    capex_grows_efficiency:     0.05
+    monetization_disappoints:  -0.10   # AI-monetization names live here
+  pre_earnings:
+    capex_slows_usage_strong:  -0.10
+    capex_slows_util_falls:    -0.30   # negative-FCF + funding winter
+    capex_grows_efficiency:     0.10
+    monetization_disappoints:  -0.15
+  fintech:
+    capex_slows_usage_strong:  -0.05   # risk-appetite beta, not direct capex
+    capex_slows_util_falls:    -0.10
+    capex_grows_efficiency:     0.00
+    monetization_disappoints:  -0.10
+  cyclical:
+    capex_slows_usage_strong:  -0.05   # industrial capex adjacency
+    capex_slows_util_falls:    -0.15
+    capex_grows_efficiency:     0.05   # power/cooling equipment demand
+    monetization_disappoints:  -0.05
+  financials:
+    capex_slows_usage_strong:   0.00
+    capex_slows_util_falls:    -0.05   # credit tightening adjacency
+    capex_grows_efficiency:     0.00
+    monetization_disappoints:   0.00
+  consumer:
+    capex_slows_usage_strong:   0.00   # defensive — AI cycle agnostic
+    capex_slows_util_falls:    -0.05   # only via broad risk-off
+    capex_grows_efficiency:     0.00
+    monetization_disappoints:   0.00
+  healthcare:
+    capex_slows_usage_strong:   0.00
+    capex_slows_util_falls:     0.00   # truly uncorrelated
+    capex_grows_efficiency:     0.00
+    monetization_disappoints:   0.00
+  value:
+    capex_slows_usage_strong:   0.00
+    capex_slows_util_falls:    -0.05
+    capex_grows_efficiency:     0.00
+    monetization_disappoints:   0.00
+  unknown:
+    capex_slows_usage_strong:  -0.05   # unclassified → assume market beta
+    capex_slows_util_falls:    -0.10
+    capex_grows_efficiency:     0.00
+    monetization_disappoints:  -0.05
