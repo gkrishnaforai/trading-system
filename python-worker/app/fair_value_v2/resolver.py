@@ -177,7 +177,7 @@ class FairValueV2Resolver:
                     SELECT run_id, symbol, as_of, inputs_watermark, features_hash,
                            fair_value, scenario_fair_values, expected_fair_value,
                            quality_flags, regime,
-                           method_results, warnings, model_version
+                           method_results, warnings, model_version, decision
                     FROM fair_value_v2_runs
                     WHERE symbol = :symbol
                     ORDER BY as_of DESC
@@ -211,16 +211,40 @@ class FairValueV2Resolver:
             if gap > 1.5 and "extreme_gap" not in quality_flags:
                 quality_flags.append("extreme_gap")
 
+        # decision layer — fair value → buy price. mos_policy.yaml sets
+        # the per-category discount; company-level uncertainty adds on
+        # top. Persisted alongside the run so consumers gate on
+        # buy_below, not raw upside.
+        decision = None
+        try:
+            from app.fair_value_v2.decision import decide
+            cat = (result.regime or "").split(":")[0] or None
+            decision = decide(
+                cat, result.fair_value, result.expected_fair_value,
+                result.scenario_fair_values, quality_flags, spot,
+                result.method_results)
+        except Exception as exc:
+            logger.warning("fv decision layer failed for %s: %s",
+                           result.symbol, exc)
+        try:
+            result.decision = decision
+        except Exception:
+            pass
+
         db.execute_update(
             """
             INSERT INTO fair_value_v2_runs
             (run_id, symbol, as_of, inputs_watermark, features_hash, fair_value,
              scenario_fair_values, expected_fair_value, spot_at_run,
-             quality_flags, regime, method_results, warnings, model_version)
+             quality_flags, regime, method_results, warnings, model_version,
+             decision, buy_below, valuation_confidence, expected_return_2y,
+             fv_upside_pct)
             VALUES
             (:run_id, :symbol, :as_of, :inputs_watermark, :features_hash, :fair_value,
              :scenario_fair_values, :expected_fair_value, :spot_at_run,
-             :quality_flags, :regime, :method_results, :warnings, :model_version)
+             :quality_flags, :regime, :method_results, :warnings, :model_version,
+             :decision, :buy_below, :valuation_confidence, :expected_return_2y,
+             :fv_upside_pct)
             """,
             {
                 "run_id": result.run_id,
@@ -237,6 +261,14 @@ class FairValueV2Resolver:
                 "method_results": json.dumps(method_results, default=str),
                 "warnings": json.dumps(warnings, default=str),
                 "model_version": "fair_value_v2.1",
+                "decision": json.dumps(decision, default=str)
+                            if decision else None,
+                "buy_below": (decision or {}).get("buy_below"),
+                "valuation_confidence": (decision or {}).get(
+                    "valuation_confidence"),
+                "expected_return_2y": (decision or {}).get(
+                    "expected_return_2y"),
+                "fv_upside_pct": (decision or {}).get("fv_upside_pct"),
             },
         )
 
@@ -257,6 +289,7 @@ class FairValueV2Resolver:
             method_results=method_results,
             features_hash=row.get("features_hash"),
             warnings=row.get("warnings") or [],
+            decision=row.get("decision"),
             model_version=row.get("model_version") or "fair_value_v2",
         )
 

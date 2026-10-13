@@ -1,0 +1,41 @@
+version: 1
+
+# Margin-of-safety policy — converts probability-weighted fair value
+# into a buy price. Fair value estimates what the business is worth;
+# buy_below accounts for uncertainty, downside risk, required return.
+# Base discounts follow the category's cash-flow predictability; adders
+# price the company-level risks the scenario can't fully capture.
+
+default_base: 0.25
+
+categories:
+  financials:      {base: 0.15}   # regulated, audited book values
+  value:           {base: 0.15}
+  growth:          {base: 0.25}
+  technology:      {base: 0.25}
+  ai_infra:        {base: 0.35}   # capital-intensive, capex-cycle risk
+  cyclical:        {base: 0.30}
+  pre_earnings:    {base: 0.45}   # negative-FCF, dilution-prone
+  unknown:         {base: 0.30}
+
+# uncertainty adders — stacked on the category base, capped
+adders:
+  negative_fcf:        0.10   # fcf_ttm <= 0 — survival depends on financing
+  high_leverage:       0.05   # total_debt > 2x cash_and_equivalents
+  scenarios_partial:   0.05   # some methods refused to emit bear/bull
+  no_scenarios:        0.10   # no method produced a scenario set
+  extreme_gap:         0.05   # |fv/spot - 1| > 1.5 — model or data smells
+  no_analyst_coverage: 0.05   # analyst_count missing — thin external check
+
+cap: 0.60                       # beyond this the name is uninvestable,
+                                # not cheap — the gate flags it instead
+
+# confidence roll — how much trust the fv itself deserves
+confidence:
+  high_needs:   {min_ok_methods: 2, forbid_flags: [no_scenarios, extreme_gap]}
+  medium_needs: {min_ok_methods: 1, forbid_flags: [no_scenarios]}
+
+# decision gates on top of buy_below
+gates:
+  bear_loss_severe: -0.40       # bear_fv/price - 1 below this → flag
+  uninvestable_mos: 0.60        # mos hits cap → uninvestable, not cheap
