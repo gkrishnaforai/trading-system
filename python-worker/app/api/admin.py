@@ -85,6 +85,7 @@ class DemandEvidenceClaimRequest(BaseModel):
     source_ref: Optional[str] = None
     source_date: Optional[str] = None
     confidence: str = "medium"
+    status: str = "draft"
     reviewed_by: Optional[str] = None
 
 
@@ -1647,15 +1648,27 @@ async def get_demand_profile(symbol: str, fresh: bool = False):
         if fresh:
             from app.fair_value_v2.demand import build_profile
             from app.fair_value_v2.demand_evidence import (
-                claims_for, derive_axes)
+                claims_for, derive_axes, market_claims)
+            from app.fair_value_v2.demand_score import (
+                ai_capex_regime, cycle_warning_score, demand_gate,
+                demand_scenarios, durability_score)
             rows = db.execute_query(
                 "SELECT decision->'classification' AS cls "
                 "FROM fair_value_v2_runs WHERE symbol = :s "
                 "ORDER BY as_of DESC LIMIT 1", {"s": sym})
             archs = (((rows or [{}])[0].get("cls") or {}).get("all")
                      if rows else []) or []
+            evidence = derive_axes(claims_for(sym))
             profile = build_profile(
-                sym, archs, {}, evidence=derive_axes(claims_for(sym)))
+                sym, archs, {}, evidence=evidence)
+            mc = market_claims()
+            regime = ai_capex_regime(mc)
+            dur = durability_score(profile, evidence)
+            profile["durability"] = dur
+            profile["ai_capex_regime"] = regime
+            profile["ai_cycle_warning"] = cycle_warning_score(mc)
+            profile["scenarios"] = demand_scenarios(profile, {})
+            profile["gate"] = demand_gate(profile, regime, dur)
             return {"success": True, "symbol": sym, "profile": profile,
                     "persisted": False}
         rows = db.execute_query(
@@ -1730,6 +1743,67 @@ async def extract_demand_evidence(req: DemandExtractRequest):
                 "drafts": out, "persisted": False}
     except Exception as e:
         logger.error(f"demand-evidence extract failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ai-capex-regime")
+async def get_ai_capex_regime(fresh: bool = False):
+    """Market-level AI capex regime + cycle-warning score — weighted
+    consensus across all approved demand_evidence claims."""
+    try:
+        if fresh:
+            from app.fair_value_v2.demand_evidence import market_claims
+            from app.fair_value_v2.demand_score import (
+                ai_capex_regime, cycle_warning_score)
+            mc = market_claims()
+            return {"success": True,
+                    "regime": ai_capex_regime(mc),
+                    "warning": cycle_warning_score(mc),
+                    "n_claims": len(mc), "persisted": False}
+        rows = db.execute_query(
+            "SELECT * FROM market_ai_regime "
+            "ORDER BY as_of_date DESC LIMIT 7")
+        return {"success": True, "history": rows or []}
+    except Exception as e:
+        logger.error(f"ai-capex-regime failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ai-capex-regime/recompute")
+async def recompute_ai_capex_regime():
+    """Recompute today's regime + warning from approved evidence and
+    persist to market_ai_regime."""
+    try:
+        from app.fair_value_v2.demand_evidence import market_claims
+        from app.fair_value_v2.demand_score import (
+            ai_capex_regime, cycle_warning_score)
+        mc = market_claims()
+        regime, warning = ai_capex_regime(mc), cycle_warning_score(mc)
+        import json as _json
+        db.execute_update(
+            """
+            INSERT INTO market_ai_regime
+                (as_of_date, regime, warning_score, groups,
+                 down_groups, up_groups, computed_by, updated_at)
+            VALUES (CURRENT_DATE, :r, :w, :g, :dg, :ug,
+                    'manual_recompute', now())
+            ON CONFLICT (as_of_date) DO UPDATE SET
+                regime = EXCLUDED.regime,
+                warning_score = EXCLUDED.warning_score,
+                groups = EXCLUDED.groups,
+                down_groups = EXCLUDED.down_groups,
+                up_groups = EXCLUDED.up_groups,
+                computed_by = 'manual_recompute',
+                updated_at = now()
+            """,
+            {"r": regime.get("regime"), "w": warning.get("score"),
+             "g": _json.dumps(regime.get("groups") or {}),
+             "dg": _json.dumps(regime.get("down_groups") or []),
+             "ug": _json.dumps(regime.get("up_groups") or [])})
+        return {"success": True, "regime": regime, "warning": warning,
+                "n_claims": len(mc)}
+    except Exception as e:
+        logger.error(f"ai-capex-regime recompute failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -68,6 +68,9 @@ for s, r in results.items():
     spot = d.get("spot")
     cls = d.get("classification") or {}
     worst = (d.get("macro_scenarios") or {}).get("_worst") or {}
+    dem = d.get("demand_profile") or {}
+    dur = (dem.get("durability") or {}).get("score")
+    dgate = (dem.get("gate") or {}).get("gate")
     bb = d.get("buy_below")
     gate = ("🟢 below" if spot and bb and spot <= bb else
             "🔴 above" if bb else "—")
@@ -75,6 +78,10 @@ for s, r in results.items():
         "symbol": s,
         "regime": res.get("regime"),
         "archetypes": "+".join(cls.get("all") or []),
+        "demand": dem.get("demand_model"),
+        "dur": dur,
+        "fund": dem.get("capital_funding_risk"),
+        "d-gate": dgate,
         "spot": spot,
         "fv": res.get("fair_value"),
         "expected": res.get("expected_fair_value"),
@@ -156,6 +163,47 @@ for s, r in results.items():
                 st.caption(f"· {v.get('label')}: {v.get('impact',0):+.0%} "
                            f"→ fv ${v.get('stressed_fv')} "
                            f"(vs spot {v.get('stressed_vs_spot',0):+.0%})")
+
+        # demand / capital-cycle layer (shadow — informs, never trades)
+        dem = d.get("demand_profile") or {}
+        if dem:
+            axes = " · ".join(
+                f"{k.split('_')[0]} `{dem[k]}`" for k in
+                ("demand_model", "capex_sensitivity", "demand_durability",
+                 "utilization_health", "capital_funding_risk",
+                 "ai_monetization") if dem.get(k))
+            st.caption(f"**demand** — {axes}")
+            dur = dem.get("durability") or {}
+            gate = dem.get("gate") or {}
+            reg = dem.get("ai_capex_regime") or {}
+            warn = dem.get("ai_cycle_warning") or {}
+            bits = []
+            if dur.get("score") is not None:
+                bits.append(f"durability **{dur['score']}**/100 "
+                            f"({dur.get('confidence')})")
+            if reg.get("regime"):
+                bits.append(f"ai-regime `{reg['regime']}`")
+            if warn.get("score") is not None:
+                bits.append(f"cycle-warn **{warn['score']}**")
+            if gate.get("gate"):
+                lt = "· LT-eligible" if gate.get(
+                    "long_term_eligible") else "· tactical-only"
+                bits.append(f"gate `{gate['gate']}` {lt} *(shadow)*")
+            st.caption(" · ".join(bits))
+            if dem.get("conflicts"):
+                st.warning("⚠ evidence conflicts: " +
+                           ", ".join(f"`{c}`" for c in dem["conflicts"]))
+            sc = dem.get("scenarios") or {}
+            if sc.get("revenue_growth_base") not in (None, "unknown"):
+                st.caption(
+                    f"rev growth — base "
+                    f"{sc['revenue_growth_base']:+.0%} · slowdown "
+                    f"{sc.get('revenue_growth_slowdown'):+.0%} · stress "
+                    f"{sc.get('revenue_growth_stress'):+.0%} · fcf-stress "
+                    f"`{sc.get('fcf_stress_state')}`")
+            if sc.get("thesis_break_conditions"):
+                st.caption("thesis breaks if: " +
+                           " · ".join(sc["thesis_break_conditions"]))
 
         # why — method contributions
         st.caption("**why this number — methods:**")

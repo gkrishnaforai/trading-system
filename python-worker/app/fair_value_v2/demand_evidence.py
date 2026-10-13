@@ -207,6 +207,25 @@ def claims_for(symbol: str, include_drafts: bool = False
         return []
 
 
+def market_claims(limit: int = 2000) -> List[Dict[str, Any]]:
+    """Approved claims across all symbols — the consensus pool for
+    ai_capex_regime / cycle_warning. Rejected excluded; drafts too."""
+    from app.database import db
+    try:
+        return db.execute_query(
+            """
+            SELECT symbol, axis, signal, source, source_date,
+                   confidence, status, value
+            FROM demand_evidence
+            WHERE status = 'approved'
+            ORDER BY source_date DESC NULLS LAST
+            LIMIT :n
+            """, {"n": limit}) or []
+    except Exception as exc:
+        logger.warning("market_claims failed: %s", exc)
+        return []
+
+
 def set_status(claim_id: int, status: str,
                reviewed_by: Optional[str] = None) -> bool:
     if status not in ("approved", "rejected", "stale", "draft"):

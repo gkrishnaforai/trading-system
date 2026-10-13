@@ -1,71 +1,72 @@
 # Demand / Capital-Cycle Layer — Phase 2 Roadmap
 
-Phase 1 (shipped, commit `691ae8b`): canonical demand axes persisted
-per symbol (`company_demand_profile`), deterministic funding-risk
-measurement, demand-model-modulated macro stress, MoS funding adder.
+Phase 1 (`691ae8b`): canonical demand axes persisted
+(`company_demand_profile`), measured funding risk, demand-model-
+modulated macro stress, MoS funding adder.
 
-Phase 1.5 (this commit): evidence feed — `demand_evidence` table,
-validated claims (LLM-extractable, human-approved), evidence-driven
-axis overrides with conflict preservation.
+Phase 1.5 (`7818952`): evidence feed — `demand_evidence` claims
+(draft → human approve → axis upgrade), conflict preservation,
+freshness windows, LLM extraction (drafts only), admin endpoints,
+evidence review Streamlit page.
 
-## Phase 2 — remaining work (do not lose)
+Phase 2 core scorers (this commit): `durability_score` 0-100 with
+renormalized coverage + confidence; `ai_capex_regime` market
+consensus (never one company); `ai_cycle_warning_score` (≥2
+independent down groups to escalate); `demand_gate` SHADOW modifier
++ long-term eligibility split; 3-scenario revenue stress from
+measured forward growth; `market_ai_regime` daily persistence.
 
-### Scoring & regime (blocked on evidence volume)
-- [ ] `demand_durability_score` 0-100 — weighted dims (contract/backlog
-      quality 25, recurring demand 20, essentiality 15, replacement 10,
-      diversification 10, AI monetization 10, funding resilience 10),
-      scored from `demand_evidence`, confidence reported separately
-- [ ] `ai_capex_regime` — accelerating | expanding | growth_moderating
-      | flat | contracting | stress | unknown. Weighted consensus across
-      ≥3 hyperscaler capex guidance points + supplier orders +
-      utilization + monetization + financing. NEVER one company's
-      guidance as the signal
-- [ ] `ai_cycle_warning_score` 0-100 — requires ≥2 independent
-      deteriorating signal groups before escalating
-- [ ] Three-scenario stress with real numbers: `revenue_growth_base /
-      slowdown / stress`, `fcf_stress_state`,
-      `valuation_stress_downside_pct`, `thesis_break_conditions`,
-      `scenario_confidence`. `unknown` when not responsibly estimable
+## Still open — Phase 2 tail
 
-### Evidence ingestion feeds
+### Evidence ingestion feeds (the bottleneck — scorers need data)
 - [ ] Quarterly capex guidance parser (hyperscaler earnings:
-      AMZN/GOOGL/MSFT/META) → `demand_evidence` rows
+      AMZN/GOOGL/MSFT/META) → `demand_evidence` claims
 - [ ] Supplier order/guidance feed (NVDA/AVGO/MRVL/CRDO/ANET/TSM/ASML)
-- [ ] Contract/backlog disclosure extraction (8-K, 10-Q via llm_extract)
+- [ ] Contract/backlog extraction job (8-K / 10-Q → llm_extract)
 - [ ] Utilization/pricing disclosures (neocloud GPU utilization,
-      rental $/hr, lease commencement dates)
+      rental $/hr, lease commencement)
 - [ ] Financing events (prepayments, debt raises, covenants, dilution)
+- [ ] New durability dimensions as feeds land:
+      essentiality/switching + customer_diversification currently
+      excluded from score (renormalized out) until evidence exists
 
-### Decision-engine integration (shadow first)
-- [ ] Modifiers ordered AFTER existing hard gates: data validity →
-      hard risk → thesis break → earnings proximity → tape →
-      valuation → THEN capex regime + durability
-- [ ] Rules: durable+attractive+healthy tape → permit add;
-      high capex sensitivity + moderating regime → higher burden of
-      proof; high funding risk + neg FCF + falling utilization →
-      block adds; moderation + improving recurring → no penalty;
-      unknown/stale → lower confidence
-- [ ] Tactical vs long-term-compounder separation — low durability
-      can qualify tactical, never auto-qualifies compounder
-- [ ] Shadow-mode comparison old vs new engine before enabling
+### Decision-engine integration (shadow → enable)
+- [x] `demand_gate` computed + persisted as shadow field —
+      `gate.gate` ∈ permit_add | higher_burden | watch | block_adds
+      and `gate.long_term_eligible` (durability contracted/recurring
+      + funding ok + no conflicts). NOT applied to actions yet.
+- [ ] Shadow-mode comparison harness: log old vs gated decisions
+      side-by-side for N weeks, review divergences
+- [ ] Enable `higher_burden` → requires stronger valuation/tape;
+      `block_adds` → hard gate on new adds, AFTER existing gates
+      (data validity → hard risk → thesis break → earnings → tape →
+      valuation → demand layer → sizing)
 
-### UI / ops
-- [ ] Stock page + Fair Value Test: demand axes, evidence list,
-      conflicts, scenario stress, durability score
-- [ ] Evidence review queue page (draft → approve/reject)
+### Ops
+- [ ] PIT evaluation harness: replay historical claims, score each
+      warning early/accurate/late/false
 - [ ] Reclassification history + review dates on stale evidence
+- [x] Streamlit: FV Test shows demand axes/score/gate/scenarios;
+      `41_Demand_Evidence` review queue + manual submit + LLM extract
 
-### Regression tests (framework-mandated)
-- [ ] Capex moderates + recurring revenue/utilization rise → no
-      automatic downgrade
-- [ ] Capex grows + utilization falls + orders weaken → warning rises
+### Regression tests — remaining cases need feeds
 - [ ] Big backlog + unsustainable debt/capex → adds blocked
+      (needs backlog evidence volume)
 - [ ] Signed lease, delayed commencement → not counted as current
-      cash flow
-- [ ] Recurring software + AI substitution → durability falls
+      cash flow (needs lease-commencement signal wiring to FV inputs)
 - [ ] Strong demand + extreme valuation + weak tape → no auto-add
-- [ ] Conflicting guidance sources → conflict preserved, confidence
-      lowered (implemented in evidence layer — verify E2E)
-- [ ] Missing utilization → stays `unknown` (implemented)
-- [ ] Low durability → tactical eligible, not compounder
-- [ ] PIT evaluation harness: warnings scored early/accurate/late/false
+      (needs decision-engine integration, shadow first)
+- [ ] PIT replay tests once the harness exists
+
+### Done (tested, 26 cases)
+- [x] Capex moderates + usage/monetization rise → `growth_moderating`,
+      NOT stress
+- [x] ≥2 independent down groups required for warning escalation
+- [x] Conflicting sources → conflict preserved + confidence low
+- [x] Missing utilization/data → stays `unknown`, excluded from score
+- [x] Critical funding → `block_adds`; conflict → not LT-eligible,
+      tactical unaffected
+- [x] Low durability → `watch`/discretionary, never auto-compounder
+- [x] One company's guidance ≠ regime
+- [x] Stale evidence ignored for axes, kept for audit
+- [x] Filing can reclassify demand_model via `evidence_can_set`

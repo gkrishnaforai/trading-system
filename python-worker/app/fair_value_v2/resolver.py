@@ -225,17 +225,33 @@ class FairValueV2Resolver:
                 decide, _scalars_from_methods)
             from app.fair_value_v2.demand import build_profile
             from app.fair_value_v2.demand_evidence import (
-                claims_for, derive_axes)
+                claims_for, derive_axes, market_claims)
+            from app.fair_value_v2.demand_score import (
+                ai_capex_regime, cycle_warning_score, demand_gate,
+                demand_scenarios, durability_score)
             cat = (result.regime or "").split(":")[0] or None
             archs = (result.classification or {}).get("all")
             # demand/funding exposure — separate questions, kept separate:
             # demand axes from priors upgraded by approved evidence,
             # funding risk measured from inputs
             evidence = derive_axes(claims_for(result.symbol))
+            scalars = _scalars_from_methods(result.method_results)
             demand = build_profile(
                 result.symbol, archs or ([cat] if cat else []),
-                _scalars_from_methods(result.method_results),
-                evidence=evidence)
+                scalars, evidence=evidence)
+            # Phase 2 scorers — deterministic over the evidence pool.
+            # Gate + regime are persisted but SHADOW: they inform the
+            # decision payload without changing the action.
+            mc = market_claims()
+            regime = ai_capex_regime(mc)
+            warning = cycle_warning_score(mc)
+            dur = durability_score(demand, evidence)
+            demand["durability"] = dur
+            demand["ai_capex_regime"] = regime
+            demand["ai_cycle_warning"] = warning
+            demand["scenarios"] = demand_scenarios(demand, scalars)
+            demand["gate"] = demand_gate(demand, regime, dur)
+            self._persist_market_regime(regime, warning)
             decision = decide(
                 cat, result.fair_value, result.expected_fair_value,
                 result.scenario_fair_values, quality_flags, spot,
@@ -293,6 +309,34 @@ class FairValueV2Resolver:
             },
         )
 
+    def _persist_market_regime(self, regime: Dict[str, Any],
+                               warning: Dict[str, Any]) -> None:
+        """Daily upsert of the market-level AI-capex regime — shared
+        consensus, written once per day regardless of run volume."""
+        try:
+            db.execute_update(
+                """
+                INSERT INTO market_ai_regime
+                    (as_of_date, regime, warning_score, groups,
+                     down_groups, up_groups, computed_by, updated_at)
+                VALUES (CURRENT_DATE, :r, :w, :g, :dg, :ug,
+                        'fv_engine', now())
+                ON CONFLICT (as_of_date) DO UPDATE SET
+                    regime = EXCLUDED.regime,
+                    warning_score = EXCLUDED.warning_score,
+                    groups = EXCLUDED.groups,
+                    down_groups = EXCLUDED.down_groups,
+                    up_groups = EXCLUDED.up_groups,
+                    updated_at = now()
+                """,
+                {"r": regime.get("regime"),
+                 "w": warning.get("score"),
+                 "g": json.dumps(regime.get("groups") or {}),
+                 "dg": json.dumps(regime.get("down_groups") or []),
+                 "ug": json.dumps(regime.get("up_groups") or [])})
+        except Exception as exc:
+            logger.warning("market regime persist failed: %s", exc)
+
     def _upsert_demand_profile(self, result: FairValueV2Result,
                                demand: Dict[str, Any],
                                archs: Optional[List[str]]) -> None:
@@ -339,6 +383,12 @@ class FairValueV2Resolver:
                      "conflicts": demand.get("conflicts") or [],
                      "confidence": demand.get("evidence_confidence"),
                      "impact_mult": demand.get("impact_mult"),
+                     "durability": demand.get("durability"),
+                     "gate": demand.get("gate"),
+                     "scenarios": demand.get("scenarios"),
+                     "ai_cycle_warning":
+                         (demand.get("ai_cycle_warning") or {})
+                         .get("score"),
                  }),
                  "src": demand.get("source") or "rules",
                  })

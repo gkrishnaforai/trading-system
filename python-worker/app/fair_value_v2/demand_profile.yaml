@@ -145,6 +145,151 @@ signal_map:
     evidence_can_set: true            # a filing can redefine the model
     freshness_days: 9999              # business model rarely flips
 
+# ── Phase 2: scoring & regime ────────────────────────────────────
+# demand_durability_score 0-100 — dimension weights total 100; each
+# dimension maps axis values to a 0-100 dimension score. Dimensions
+# with no evidence are EXCLUDED and the score renormalizes over
+# available weight; coverage is reported as confidence.
+durability_score:
+  dimensions:
+    contract_backlog_quality:
+      weight: 25
+      by_axis: {axis: demand_durability,
+                map: {contracted: 100, recurring: 70, usage_based: 55,
+                      replacement_cycle: 40, discretionary: 20,
+                      speculative: 10}}
+      # evidence shifts the dimension score, never replaces it
+      evidence_axis: demand_durability
+      evidence_shift: 20          # per net pos/neg unit, ±
+    recurring_usage:
+      weight: 20
+      by_axis: {axis: demand_model,
+                map: {recurring_software: 90, maintenance_services: 85,
+                      power_generation: 80, usage_consumption: 70,
+                      capacity_rental: 60, mixed: 50,
+                      replacement_cycle: 45, capex_project: 30,
+                      speculative: 10}}
+    essentiality_switching:
+      weight: 15                  # no feed yet → excluded unless evidence
+      by_axis: {axis: demand_model,
+                map: {maintenance_services: 85, recurring_software: 75,
+                      power_generation: 80, capacity_rental: 65,
+                      usage_consumption: 60, capex_project: 40,
+                      replacement_cycle: 45, mixed: 50, speculative: 10}}
+    replacement_demand:
+      weight: 10
+      by_axis: {axis: demand_durability,
+                map: {replacement_cycle: 85, recurring: 60,
+                      contracted: 55, usage_based: 45,
+                      discretionary: 25, speculative: 10}}
+    ai_monetization:
+      weight: 10
+      by_axis: {axis: ai_monetization,
+                map: {proven: 100, scaling: 75, early: 40,
+                      unproven: 10}}
+    funding_resilience:
+      weight: 10
+      by_axis: {axis: capital_funding_risk,
+                map: {low: 100, moderate: 70, high: 30, critical: 0}}
+    customer_diversification:
+      weight: 10                # no feed yet — always excluded today
+      by_axis: null
+  coverage_thresholds: {high: 0.70, medium: 0.45}
+
+# revenue-growth shock factors per demand model for the 3-scenario
+# stress test — fraction of base growth retained under each scenario.
+# capacity_rental degrades less: workloads migrate to rented compute.
+model_growth_shock:
+  capex_project:       {slowdown: 0.50, stress: 0.15}
+  capacity_rental:     {slowdown: 0.70, stress: 0.40}
+  usage_consumption:   {slowdown: 0.85, stress: 0.60}
+  recurring_software:  {slowdown: 0.90, stress: 0.75}
+  maintenance_services: {slowdown: 0.95, stress: 0.85}
+  power_generation:    {slowdown: 0.95, stress: 0.85}
+  replacement_cycle:   {slowdown: 0.65, stress: 0.35}
+  mixed:               {slowdown: 0.75, stress: 0.50}
+  speculative:         {slowdown: 0.40, stress: 0.10}
+  unknown:             {slowdown: 0.75, stress: 0.50}
+
+# ai_capex_regime — market-level consensus across signal groups.
+# Each group folds approved claims market-wide; a group reads
+# up/down/mixed/unknown. Rules are ordered — first match wins.
+# THE rule: moderating capex + rising usage = normalization, not risk.
+ai_regime:
+  groups:
+    spending:    {positive: [customer_capex_guidance_up],
+                  negative: [customer_capex_guidance_down]}
+    orders:      {positive: [order_growth, design_win],
+                  negative: [order_cancellation, inventory_build]}
+    monetization: {positive: [ai_revenue_disclosed, ai_revenue_growing,
+                             ai_product_launch],
+                  negative: [ai_revenue_absent, ai_pricing_pressure]}
+    utilization: {positive: [utilization_rising, capacity_sold_out,
+                             rental_pricing_up],
+                  negative: [utilization_falling, rental_pricing_down,
+                             capacity_idle]}
+    financing:   {positive: [prepayment_received, debt_repaid,
+                             fcf_positive],
+                  negative: [refinancing_risk, covenant_issue,
+                             credit_downgrade, dilution_announced,
+                             debt_raised]}
+  freshness_days: 200
+  rules:
+    - name: stress
+      when: {down_groups_at_least: 3, must_include: [utilization]}
+    - name: stress
+      when: {down_groups_at_least: 3, must_include: [financing]}
+    - name: contracting
+      when: {down_groups_at_least: 2, must_include: [spending, orders]}
+    - name: growth_moderating
+      when: {down_groups_at_least: 1, must_include: [spending],
+             up_groups_at_least: 1, up_must_include: [utilization]}
+    - name: growth_moderating
+      when: {down_groups_at_least: 1, must_include: [spending],
+             up_groups_at_least: 1, up_must_include: [monetization]}
+    - name: flat
+      when: {down_groups_at_least: 1, must_include: [spending]}
+    - name: accelerating
+      when: {up_groups_at_least: 4}
+    - name: expanding
+      when: {up_groups_at_least: 2, up_must_include: [spending, orders]}
+    - name: expanding
+      when: {up_groups_at_least: 2, up_must_include: [spending]}
+    - name: unknown            # default fallback
+
+# ai_cycle_warning_score 0-100 — deteriorating group weights; requires
+# >= min_groups down before the score can exceed cap_below_min.
+cycle_warning:
+  group_weights: {spending: 25, orders: 20, utilization: 20,
+                  monetization: 15, financing: 20}
+  min_escalation_groups: 2
+  cap_below_min: 30              # one weak group = noise, not warning
+
+# demand_gate — SHADOW modifiers; evaluated after hard gates, never
+# applied to the action until shadow-mode comparison validates them.
+demand_gate:
+  rules:
+    - gate: block_adds
+      when: {funding_in: [critical]}
+    - gate: block_adds
+      when: {funding_in: [high], utilization_in: [falling]}
+    - gate: block_adds
+      when: {funding_in: [high], regime_in: [contracting, stress]}
+    - gate: higher_burden
+      when: {sensitivity_in: [very_high, high],
+             regime_in: [growth_moderating, flat, contracting, stress]}
+    - gate: higher_burden
+      when: {durability_in: [discretionary, speculative],
+             regime_in: [contracting, stress]}
+    - gate: watch
+      when: {durability_in: [speculative]}
+    - gate: permit_add         # default fallback
+  # long-term compounder eligibility — separate from tactical:
+  long_term_requires:
+    durability_in: [contracted, recurring]
+    funding_not_in: [high, critical]
+    no_conflicts: true
+
 durability_by_model:
   capex_project:       discretionary   # order-driven, defers easily
   capacity_rental:     contracted      # workloads rent, not buy
