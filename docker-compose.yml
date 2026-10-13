@@ -43,7 +43,7 @@ services:
       - MIN_POOL_SIZE=${PGBOUNCER_MIN_POOL_SIZE:-0}
       - RESERVE_POOL_SIZE=${PGBOUNCER_RESERVE_POOL_SIZE:-5}
     ports:
-      - "${PGBOUNCER_PORT:-6432}:5432"
+      - "127.0.0.1:${PGBOUNCER_PORT:-6432}:5432"
     depends_on:
       postgres:
         condition: service_healthy
