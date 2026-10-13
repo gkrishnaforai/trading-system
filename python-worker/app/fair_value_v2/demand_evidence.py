@@ -148,8 +148,11 @@ def record_claim(c: Dict[str, Any]) -> Dict[str, Any]:
     if errs:
         return {"ok": False, "errors": errs}
     status = c.get("status") or "draft"
-    if c.get("source") != "manual" and status == "approved":
-        status = "draft"  # non-manual claims always need review
+    # trusted deterministic sources (human manual, provider-measured
+    # actuals) may enter approved; anything interpretive → draft
+    if status == "approved" and c.get("source") not in (
+            "manual", "fmp_cashflow"):
+        status = "draft"
     from app.database import db
     from sqlalchemy import text
     try:

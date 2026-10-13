@@ -18,14 +18,27 @@ measured forward growth; `market_ai_regime` daily persistence.
 
 ## Still open — Phase 2 tail
 
-### Evidence ingestion feeds (the bottleneck — scorers need data)
-- [ ] Quarterly capex guidance parser (hyperscaler earnings:
-      AMZN/GOOGL/MSFT/META) → `demand_evidence` claims
-- [ ] Supplier order/guidance feed (NVDA/AVGO/MRVL/CRDO/ANET/TSM/ASML)
-- [ ] Contract/backlog extraction job (8-K / 10-Q → llm_extract)
-- [ ] Utilization/pricing disclosures (neocloud GPU utilization,
-      rental $/hr, lease commencement)
-- [ ] Financing events (prepayments, debt raises, covenants, dilution)
+### Evidence ingestion feeds
+- [x] On-demand ingest — `POST /admin/demand-evidence/ingest` +
+      "load evidence" control on the Demand Evidence page. Groups:
+      hyperscalers / accelerators / networking / neoclouds / power /
+      semi_equipment / software / watchlist.
+- [x] Capex actuals — deterministic YoY/QoQ trend from FMP
+      cash-flow, auto-approved (`source=fmp_cashflow`), feeds the
+      `spending` group of `ai_capex_regime`
+- [x] News extraction — FMP stock news → LLM → drafts
+- [x] Transcript extraction — latest earnings call (head + Q&A tail)
+      → LLM → drafts (opt-in, slower)
+- [ ] Guidance-specific parsing — transcripts give drafts today; a
+      dedicated capex-guidance extractor could tighten precision
+- [ ] Scheduled ingest job (cron) so evidence refreshes without
+      manual pulls — currently on-demand only
+- [ ] Contract/backlog feed — 8-K/10-Q attachments beyond headlines
+- [ ] Utilization/pricing feed — neocloud disclosures are sparse on
+      FMP; may need a second provider or manual entry
+- [ ] New durability dimensions as feeds land:
+      essentiality/switching + customer_diversification currently
+      excluded from score (renormalized out) until evidence exists
 - [ ] New durability dimensions as feeds land:
       essentiality/switching + customer_diversification currently
       excluded from score (renormalized out) until evidence exists

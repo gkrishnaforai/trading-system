@@ -102,6 +102,12 @@ class DemandExtractRequest(BaseModel):
     source_ref: Optional[str] = None
 
 
+class DemandIngestRequest(BaseModel):
+    group: str = "hyperscalers"
+    include_news: bool = True
+    include_transcripts: bool = False
+
+
 class FairValueOverrideRequest(BaseModel):
     symbol: str
     fair_value: float
@@ -1743,6 +1749,24 @@ async def extract_demand_evidence(req: DemandExtractRequest):
                 "drafts": out, "persisted": False}
     except Exception as e:
         logger.error(f"demand-evidence extract failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/demand-evidence/ingest")
+async def ingest_demand_evidence(req: DemandIngestRequest):
+    """On-demand evidence pull for a group (hyperscalers, neoclouds,
+    suppliers…). Capex actuals are computed deterministically from FMP
+    cash-flow and auto-approved; news/transcript extractions arrive
+    as drafts for human review."""
+    try:
+        from app.fair_value_v2.demand_ingest import (
+            ingest_group, ingest_groups)
+        out = ingest_group(req.group, include_news=req.include_news,
+                           include_transcripts=req.include_transcripts)
+        out["groups"] = sorted(ingest_groups())
+        return {"success": bool(out.get("ok")), **out}
+    except Exception as e:
+        logger.error(f"demand-evidence ingest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

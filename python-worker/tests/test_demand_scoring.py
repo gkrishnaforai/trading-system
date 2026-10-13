@@ -210,3 +210,41 @@ def test_scenarios_unknown_without_estimates():
                           "capital_funding_risk": "low"}, {})
     assert s["revenue_growth_base"] == "unknown"
     assert s["revenue_growth_stress"] == "unknown"
+
+
+# ── ingest: deterministic capex claims ─────────────────────────────
+
+from app.fair_value_v2.demand_ingest import capex_claim  # noqa: E402
+
+
+def _cf(date, capex, period="Q4", fy="2026"):
+    return {"date": date, "capitalExpenditure": -abs(capex),
+            "period": period, "fiscalYear": fy}
+
+
+def test_capex_claim_growth_up():
+    rows = [
+        _cf("2025-03-31", 20e9, "Q4", "2025"),
+        _cf("2025-06-30", 22e9, "Q4", "2025"),
+        _cf("2025-09-30", 24e9, "Q4", "2025"),
+        _cf("2025-12-31", 25e9, "Q4", "2025"),
+        _cf("2026-06-30", 34e9, "Q4", "2026"),
+    ]
+    c = capex_claim("MSFT", rows)
+    assert c and c["signal"] == "capex_actuals_up"
+    assert c["status"] == "approved"       # measured fact, not LLM
+    assert c["confidence"] == "high"
+
+
+def test_capex_claim_decline_and_flat():
+    down = capex_claim("MSFT", [_cf("2025-12-31", 30e9),
+                              _cf("2026-06-30", 20e9)])
+    assert down["signal"] == "capex_actuals_down"
+    flat = capex_claim("MSFT", [_cf("2025-12-31", 30e9),
+                              _cf("2026-06-30", 31e9)])
+    assert flat is None          # ±3% is noise, not a signal
+
+
+def test_capex_claim_insufficient_data():
+    assert capex_claim("X", [_cf("2026-06-30", 1e9)]) is None
+    assert capex_claim("X", []) is None

@@ -133,9 +133,10 @@ signal_map:
     escalate_only: true
     freshness_days: 180
   capex_sensitivity:
-    positive: [customer_capex_guidance_up, order_growth, design_win]
+    positive: [customer_capex_guidance_up, order_growth, design_win,
+               capex_actuals_up]
     negative: [customer_capex_guidance_down, order_cancellation,
-               inventory_build]
+               inventory_build, capex_actuals_down]
     axis_value: {positive: high, negative: medium}
     conflict_value: high              # conflicting order signals → assume worse
     freshness_days: 180
@@ -217,8 +218,10 @@ model_growth_shock:
 # THE rule: moderating capex + rising usage = normalization, not risk.
 ai_regime:
   groups:
-    spending:    {positive: [customer_capex_guidance_up],
-                  negative: [customer_capex_guidance_down]}
+    spending:    {positive: [customer_capex_guidance_up,
+                             capex_actuals_up],
+                  negative: [customer_capex_guidance_down,
+                             capex_actuals_down]}
     orders:      {positive: [order_growth, design_win],
                   negative: [order_cancellation, inventory_build]}
     monetization: {positive: [ai_revenue_disclosed, ai_revenue_growing,
@@ -289,6 +292,20 @@ demand_gate:
     durability_in: [contracted, recurring]
     funding_not_in: [high, critical]
     no_conflicts: true
+
+# on-demand evidence ingestion groups — POST /admin/demand-evidence/
+# ingest pulls capex actuals (deterministic, auto-approved), news
+# drafts and optional transcript drafts for each group.
+ingest_groups:
+  hyperscalers:    [AMZN, GOOGL, MSFT, META]
+  accelerators:    [NVDA, AVGO]
+  networking:      [MRVL, CRDO, ANET, ALAB, LITE, COHR]
+  neoclouds:       [NBIS, CRWV, IREN, APLD]
+  power:           [CEG, VST, ETN, VRT, GEV]
+  semi_equipment:  [TSM, ASML, AMAT]
+  software:        [NOW, PANW, CRWD, RBRK, SNPS, CDNS]
+  watchlist:       [NBIS, CRWV, IREN, APLD, CRDO, ALAB, ANET, MRVL,
+                    NVDA, AVGO, TSM, CEG, VRT]
 
 durability_by_model:
   capex_project:       discretionary   # order-driven, defers easily

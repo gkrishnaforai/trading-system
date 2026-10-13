@@ -31,11 +31,15 @@ SIGNALS = sorted([
     "ai_revenue_disclosed", "ai_revenue_growing", "ai_product_launch",
     "ai_revenue_absent", "ai_pricing_pressure",
     "customer_capex_guidance_up", "customer_capex_guidance_down",
+    "capex_actuals_up", "capex_actuals_down",
     "order_growth", "order_cancellation", "design_win",
     "inventory_build",
     "segment_disclosure", "business_model_shift",
     "revenue_mix_disclosed",
 ])
+
+GROUPS = ["hyperscalers", "accelerators", "networking", "neoclouds",
+          "power", "semi_equipment", "software", "watchlist"]
 
 st.title("🧾 Demand evidence — review queue")
 st.caption("Facts → validated claims → human approval → canonical "
@@ -58,6 +62,39 @@ try:
         st.rerun()
 except Exception as e:
     st.info(f"market regime unavailable: {e}")
+
+# ------------------------------------------------ on-demand ingest
+with st.expander("📥 load evidence — pull capex / news / transcripts"):
+    st.caption("Capex actuals are computed from FMP cash-flow and "
+               "auto-approved; news & transcript extractions arrive "
+               "as drafts for review below.")
+    g1, g2, g3 = st.columns([2, 1, 1])
+    grp = g1.selectbox("group", GROUPS)
+    inc_news = g2.checkbox("news", value=True)
+    inc_tx = g3.checkbox("transcripts", value=False,
+                         help="slower — one LLM call per symbol")
+    if st.button(f"▶ pull {grp}", type="primary"):
+        with st.spinner(f"fetching {grp} evidence…"):
+            try:
+                out = client.post("admin/demand-evidence/ingest",
+                                  json_data={"group": grp,
+                                             "include_news": inc_news,
+                                             "include_transcripts":
+                                                 inc_tx})
+                if out.get("success"):
+                    st.success(
+                        f"{out.get('approved_claims', 0)} approved "
+                        f"(capex actuals) · {out.get('draft_claims', 0)} "
+                        f"drafts queued for review")
+                    per = out.get("per_symbol") or {}
+                    if per:
+                        st.dataframe(
+                            [{"symbol": s, **v} for s, v in per.items()],
+                            use_container_width=True, hide_index=True)
+                else:
+                    st.error(out.get("error") or "ingest failed")
+            except Exception as e:
+                st.error(str(e))
 
 st.divider()
 
