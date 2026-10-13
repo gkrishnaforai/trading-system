@@ -316,6 +316,7 @@ def card(sym: str) -> dict[str, Any]:
             "conviction": conv, "hidden_gem": gem,
             "hedge": hedge, "swing_call": call,
             "fv_upside_pct": fv_up, "fv": fv_detail,
+            "fv_v1": _try_fv_v1(s, spot),
             "lt_power": _try_lt_power(s),
             "growth_quality": gq,
             "readiness": readiness,
@@ -445,6 +446,39 @@ def _try_growth_quality(sym: str) -> dict:
     try:
         from app.signals.growth_quality import card_for
         return card_for(sym) or {}
+    except Exception:
+        return {}
+
+
+def _try_fv_v1(sym: str, spot) -> dict:
+    """Legacy v1 engine number for side-by-side with the v2 ladder —
+    the engine still runs (fundamentals_api blends it) so comparing
+    against the stored v2 run is honest diagnostics, not double
+    counting. {} when data is insufficient."""
+    try:
+        from app.services.fair_value_service import FairValueService
+        res = FairValueService().calculate_fair_value(sym)
+        if not res or not res.fair_value or res.fair_value <= 0:
+            return {}
+        methods = {}
+        for k, v in (res.individual_valuations or {}).items():
+            try:
+                fv = float(v)
+            except Exception:
+                continue
+            if fv > 0:
+                methods[k] = round(fv, 2)
+        regime = str(((res.fundamentals or {})
+                      .get("data_quality") or {}).get("regime") or "")
+        vm = res.valuation_metrics or {}
+        out = {"fv": round(float(res.fair_value), 2),
+               "regime": regime or None,
+               "rating": vm.get("valuation_rating"),
+               "methods": methods}
+        if spot:
+            out["upside_pct"] = round(
+                (float(res.fair_value) / spot - 1) * 100, 1)
+        return out
     except Exception:
         return {}
 

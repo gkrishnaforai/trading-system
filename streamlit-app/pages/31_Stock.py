@@ -348,6 +348,26 @@ if fvd.get("scenarios") and fvd.get("spot"):
                "(bear 25% · base 50% · bull 20% · explosive 5%) — "
                "a probability-weighted value, not just the base case")
 
+    # v1 legacy engine — still computes inside /fair-value; shown here
+    # for comparison. Different math (regime keyword heuristics +
+    # hardcoded blend), so divergence itself is signal.
+    _fv1 = H.get("fv_v1") or {}
+    if _fv1.get("fv"):
+        _b = _vals.get("base") or fvd.get("expected")
+        _l1 = f"🧮 **v1 engine** — fv **${float(_fv1['fv']):.2f}**"
+        if _fv1.get("upside_pct") is not None:
+            _l1 += f" ({_fv1['upside_pct']:+.0f}% vs spot)"
+        if _fv1.get("regime"):
+            _l1 += f" · regime `{_fv1['regime']}`"
+        if _b:
+            _d = float(_fv1["fv"]) / float(_b) - 1
+            _l1 += f" · vs v2 base {_d:+.0%}"
+        st.markdown(_l1)
+        if _fv1.get("methods"):
+            st.caption("v1 methods: " + " · ".join(
+                f"{k.replace('_v2', '')} ${float(v):.0f}"
+                for k, v in _fv1["methods"].items()))
+
     # decision layer — fair value prices worth; buy_below prices safety
     _dec = fvd.get("decision") or {}
     _cls = _dec.get("classification") or {}
