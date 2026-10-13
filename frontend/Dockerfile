@@ -3,12 +3,11 @@ FROM node:18-alpine AS builder
 WORKDIR /app
 
 COPY frontend/package*.json ./
-RUN npm ci
+RUN npm ci --include=dev
 
 COPY frontend/ ./
 RUN mkdir -p public
-ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+RUN NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 npm run build
 
 FROM node:18-alpine AS runner
 
