@@ -20,7 +20,9 @@ logger = get_logger(__name__)
 router = APIRouter(tags=["fundamentals"])
 
 _TRUE_VALUES = {"1", "true", "yes", "y", "on"}
-ENABLE_FAIR_VALUE_V2 = os.getenv("ENABLE_FAIR_VALUE_V2", "false").strip().lower() in _TRUE_VALUES
+# v2 is the production engine (symbol_fair_values view, decision layer);
+# the env var remains only as an explicit kill switch.
+ENABLE_FAIR_VALUE_V2 = os.getenv("ENABLE_FAIR_VALUE_V2", "true").strip().lower() in _TRUE_VALUES
 
 # Request models
 class FairValueRequest(BaseModel):
