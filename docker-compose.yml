@@ -387,6 +387,27 @@ services:
           cpus: '0.5'
           memory: 0.5G
 
+  # MarketPulse — Next.js public site (regime-first morning brief)
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: trading-system-frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      - WORKER_URL=${PYTHON_WORKER_URL:-http://python-worker:8001}
+    depends_on:
+      python-worker:
+        condition: service_started
+    networks:
+      - trading-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 0.5G
+
   # Streamlit Dashboard (Legacy UI)
   streamlit-legacy:
     build:
