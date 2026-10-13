@@ -224,13 +224,18 @@ class FairValueV2Resolver:
             from app.fair_value_v2.decision import (
                 decide, _scalars_from_methods)
             from app.fair_value_v2.demand import build_profile
+            from app.fair_value_v2.demand_evidence import (
+                claims_for, derive_axes)
             cat = (result.regime or "").split(":")[0] or None
             archs = (result.classification or {}).get("all")
             # demand/funding exposure — separate questions, kept separate:
-            # demand axes from priors, funding risk measured from inputs
+            # demand axes from priors upgraded by approved evidence,
+            # funding risk measured from inputs
+            evidence = derive_axes(claims_for(result.symbol))
             demand = build_profile(
                 result.symbol, archs or ([cat] if cat else []),
-                _scalars_from_methods(result.method_results))
+                _scalars_from_methods(result.method_results),
+                evidence=evidence)
             decision = decide(
                 cat, result.fair_value, result.expected_fair_value,
                 result.scenario_fair_values, quality_flags, spot,
@@ -301,9 +306,10 @@ class FairValueV2Resolver:
                     (symbol, demand_model, capex_sensitivity,
                      demand_durability, utilization_health,
                      capital_funding_risk, ai_monetization,
-                     archetypes, source, updated_by, as_of, updated_at)
+                     archetypes, evidence, source,
+                     updated_by, as_of, updated_at)
                 VALUES (:s, :dm, :cs, :dd, :uh, :fr, :am,
-                        :archs, :src, 'fv_engine', now(), now())
+                        :archs, :ev, :src, 'fv_engine', now(), now())
                 ON CONFLICT (symbol) DO UPDATE SET
                     demand_model = EXCLUDED.demand_model,
                     capex_sensitivity = EXCLUDED.capex_sensitivity,
@@ -312,11 +318,13 @@ class FairValueV2Resolver:
                     capital_funding_risk = EXCLUDED.capital_funding_risk,
                     ai_monetization = EXCLUDED.ai_monetization,
                     archetypes = EXCLUDED.archetypes,
+                    evidence = EXCLUDED.evidence,
                     source = EXCLUDED.source,
                     as_of = EXCLUDED.as_of,
                     updated_at = now()
                 WHERE company_demand_profile.source IN
-                    ('rules', 'symbol_seed', 'archetype_prior', 'fv_engine')
+                    ('rules', 'symbol_seed', 'archetype_prior',
+                     'evidence', 'fv_engine')
                 """,
                 {"s": result.symbol,
                  "dm": demand.get("demand_model"),
@@ -326,6 +334,12 @@ class FairValueV2Resolver:
                  "fr": demand.get("capital_funding_risk"),
                  "am": demand.get("ai_monetization"),
                  "archs": json.dumps(archs or []),
+                 "ev": json.dumps({
+                     "evidence_axes": demand.get("evidence_axes") or [],
+                     "conflicts": demand.get("conflicts") or [],
+                     "confidence": demand.get("evidence_confidence"),
+                     "impact_mult": demand.get("impact_mult"),
+                 }),
                  "src": demand.get("source") or "rules",
                  })
         except Exception as exc:

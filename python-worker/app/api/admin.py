@@ -75,6 +75,32 @@ class FairValueV2ClassifySuggestRequest(BaseModel):
     symbol: str
 
 
+class DemandEvidenceClaimRequest(BaseModel):
+    symbol: str
+    axis: str
+    signal: str
+    claim: str
+    value: Optional[dict] = None
+    source: str = "manual"
+    source_ref: Optional[str] = None
+    source_date: Optional[str] = None
+    confidence: str = "medium"
+    reviewed_by: Optional[str] = None
+
+
+class DemandEvidenceStatusRequest(BaseModel):
+    status: str
+    reviewed_by: Optional[str] = None
+
+
+class DemandExtractRequest(BaseModel):
+    symbol: str
+    text: str
+    source: str = "filing"
+    source_date: Optional[str] = None
+    source_ref: Optional[str] = None
+
+
 class FairValueOverrideRequest(BaseModel):
     symbol: str
     fair_value: float
@@ -1608,6 +1634,102 @@ async def suggest_fair_value_v2_classification(req: FairValueV2ClassifySuggestRe
         return {"success": True, "suggestion": out}
     except Exception as e:
         logger.error(f"classify-suggest failed for {req.symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/demand-profile/{symbol}")
+async def get_demand_profile(symbol: str, fresh: bool = False):
+    """Canonical demand/capital-cycle exposure profile for a symbol.
+    fresh=true recomputes live (approved evidence + measured funding
+    risk) instead of returning the last persisted run."""
+    try:
+        sym = symbol.strip().upper()
+        if fresh:
+            from app.fair_value_v2.demand import build_profile
+            from app.fair_value_v2.demand_evidence import (
+                claims_for, derive_axes)
+            rows = db.execute_query(
+                "SELECT decision->'classification' AS cls "
+                "FROM fair_value_v2_runs WHERE symbol = :s "
+                "ORDER BY as_of DESC LIMIT 1", {"s": sym})
+            archs = (((rows or [{}])[0].get("cls") or {}).get("all")
+                     if rows else []) or []
+            profile = build_profile(
+                sym, archs, {}, evidence=derive_axes(claims_for(sym)))
+            return {"success": True, "symbol": sym, "profile": profile,
+                    "persisted": False}
+        rows = db.execute_query(
+            "SELECT * FROM company_demand_profile WHERE symbol = :s",
+            {"s": sym})
+        return {"success": True, "symbol": sym,
+                "profile": (rows or [None])[0]}
+    except Exception as e:
+        logger.error(f"demand-profile failed for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/demand-evidence/{symbol}")
+async def list_demand_evidence(symbol: str, include_drafts: bool = True):
+    """Evidence claims feeding the demand profile — drafts included by
+    default so the review queue is visible."""
+    try:
+        from app.fair_value_v2.demand_evidence import claims_for
+        claims = claims_for(symbol.strip().upper(),
+                            include_drafts=include_drafts)
+        return {"success": True, "symbol": symbol.strip().upper(),
+                "claims": claims}
+    except Exception as e:
+        logger.error(f"demand-evidence list failed for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/demand-evidence")
+async def submit_demand_evidence(req: DemandEvidenceClaimRequest):
+    """Submit one evidence claim. Manual claims may enter approved;
+    any other source is forced to draft pending human review."""
+    try:
+        from app.fair_value_v2.demand_evidence import record_claim
+        res = record_claim(req.model_dump())
+        if not res.get("ok"):
+            return {"success": False, "errors": res.get("errors")}
+        return {"success": True, **res}
+    except Exception as e:
+        logger.error(f"demand-evidence submit failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/demand-evidence/{claim_id}/status")
+async def set_demand_evidence_status(claim_id: int,
+                                     req: DemandEvidenceStatusRequest):
+    """Approve / reject / mark-stale a claim — the only path by which
+    extracted evidence gains power over the canonical profile."""
+    try:
+        from app.fair_value_v2.demand_evidence import set_status
+        if not set_status(claim_id, req.status, req.reviewed_by):
+            return {"success": False,
+                    "error": "invalid status or claim not found"}
+        return {"success": True, "id": claim_id, "status": req.status}
+    except Exception as e:
+        logger.error(f"demand-evidence status failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/demand-evidence/extract")
+async def extract_demand_evidence(req: DemandExtractRequest):
+    """LLM-extract structured claims from a filing / call excerpt.
+    Returns validated DRAFTS only — nothing is persisted; the caller
+    reviews then submits via POST /demand-evidence."""
+    try:
+        from app.fair_value_v2.llm_extract import extract_claims
+        out = extract_claims(req.symbol.strip().upper(), req.text,
+                             req.source, req.source_date, req.source_ref)
+        if out is None:
+            return {"success": False,
+                    "error": "LLM tier unavailable"}
+        return {"success": True, "symbol": req.symbol.strip().upper(),
+                "drafts": out, "persisted": False}
+    except Exception as e:
+        logger.error(f"demand-evidence extract failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

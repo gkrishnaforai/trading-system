@@ -75,14 +75,33 @@ def _funding_risk(cfg: Dict[str, Any], scalars: Dict[str, Any]
     return str((cfg.get("funding_risk") or {}).get("default") or "low")
 
 
+_FUNDING_ORDER = ["low", "moderate", "high", "critical"]
+
+
+def _escalate(level: str, steps: int = 1) -> str:
+    """Move a funding-risk level worse — evidence can escalate a
+    measured level but never downgrade it."""
+    try:
+        i = _FUNDING_ORDER.index(level)
+    except ValueError:
+        i = 0 if level == "unknown" else -1
+    if i < 0:
+        return level
+    return _FUNDING_ORDER[min(i + steps, len(_FUNDING_ORDER) - 1)]
+
+
 def build_profile(symbol: str,
                   archetypes: List[str],
-                  scalars: Dict[str, Any]) -> Dict[str, Any]:
+                  scalars: Dict[str, Any],
+                  evidence: Optional[Dict[str, Any]] = None
+                  ) -> Dict[str, Any]:
     """Deterministic exposure profile.
 
     Axes from evidence-graded priors: a symbol_seed (curated revenue-
     model hypothesis) beats the archetype prior; funding risk is always
-    computed from measured inputs. Axes with no evidence stay
+    computed from measured inputs. Approved evidence (derive_axes
+    verdicts) upgrades axes where the signal map allows; conflicts are
+    preserved, never silently resolved. Missing evidence stays
     'unknown' — never fabricated.
     """
     cfg = _policy()
@@ -101,13 +120,61 @@ def build_profile(symbol: str,
         "capex_sensitivity": _axis("capex_sensitivity"),
         "demand_durability": (cfg.get("durability_by_model") or {})
                              .get(model, "unknown"),
-        # utilization needs contract/telemetry data we don't ingest —
-        # honest unknown until that evidence exists
         "utilization_health": "unknown",
         "capital_funding_risk": _funding_risk(cfg, scalars),
         "ai_monetization": _axis("ai_monetization"),
     }
-    profile["source"] = "symbol_seed" if seed else "archetype_prior"
+
+    # ── evidence overlay ──────────────────────────────────────────
+    # verdicts from demand_evidence.derive_axes: {axis: {value,
+    # confidence, conflict, ...}}. Applied only where the axis has a
+    # mapped axis_value; funding evidence escalates the measured level
+    # (never downgrades); demand_model evidence can carry the new
+    # model in claim value.
+    conflicts: List[str] = []
+    used: List[str] = []
+    sig_map = cfg.get("signal_map") or {}
+    for axis, verdict in (evidence or {}).items():
+        if axis not in _VALID or not isinstance(verdict, dict):
+            continue
+        spec = sig_map.get(axis) or {}
+        if verdict.get("conflict"):
+            conflicts.append(axis)
+        if axis == "capital_funding_risk":
+            # escalate-only: negative funding evidence raises the
+            # measured level one notch (unknown → high, conservative);
+            # positive evidence never lowers it
+            measured = profile[axis]
+            if verdict.get("neg_score", 0) > verdict.get("pos_score", 0):
+                profile[axis] = ("high" if measured == "unknown"
+                                 else _escalate(measured))
+                used.append(axis)
+            continue
+        v = verdict.get("value")
+        if axis == "demand_model":
+            # filing evidence may carry the reclassified model itself
+            v = ((verdict.get("model_value") or v)
+                 if spec.get("evidence_can_set") else None)
+        if not v or v not in _VALID[axis]:
+            continue
+        profile[axis] = v
+        used.append(axis)
+
+    # durability may follow an evidence-redefined demand model
+    if "demand_model" in used and profile["demand_model"] != model:
+        model = profile["demand_model"]
+        if "demand_durability" not in used:
+            profile["demand_durability"] = (
+                cfg.get("durability_by_model") or {}).get(
+                    model, "unknown")
+
+    profile["source"] = ("evidence" if used else
+                         "symbol_seed" if seed else "archetype_prior")
+    profile["evidence_axes"] = used
+    profile["conflicts"] = conflicts
+    profile["evidence_confidence"] = (
+        "low" if conflicts else
+        "high" if used else "unknown")
     profile["impact_mult"] = float(
         (cfg.get("demand_model_impact_mult") or {}).get(model, 1.0))
     return profile

@@ -97,6 +97,54 @@ symbol_priors:
   HOOD: {demand_model: usage_consumption, capex_sensitivity: low,  ai_monetization: early}
   COIN: {demand_model: usage_consumption, capex_sensitivity: low,  ai_monetization: unknown}
 
+# ── evidence feed ────────────────────────────────────────────────
+# controlled signal vocabulary: which signals inform which axis and
+# in which direction. Claims enter demand_evidence as drafts, are
+# validated deterministically, and upgrade axes only when approved
+# and fresh. Opposing signals in the same axis = conflict → axis
+# falls back to prior, confidence drops, conflict preserved.
+signal_map:
+  utilization_health:
+    positive: [utilization_rising, capacity_sold_out, rental_pricing_up]
+    negative: [utilization_falling, rental_pricing_down, capacity_idle]
+    axis_value: {positive: rising, negative: falling}
+    conflict_value: stable            # opposing evidence → stable, not unknown
+    freshness_days: 120               # utilization decays fast
+  demand_durability:
+    positive: [contract_signed, backlog_growth, backlog_conversion,
+               renewal, lease_commenced, prepayment_received]
+    negative: [contract_cancelled, lease_delayed, backlog_declining,
+               churn, delivery_missed]
+    axis_value: {positive: contracted, negative: discretionary}
+    conflict_value: unknown           # genuine contract uncertainty → unknown
+    freshness_days: 270
+  ai_monetization:
+    positive: [ai_revenue_disclosed, ai_revenue_growing, ai_product_launch]
+    negative: [ai_revenue_absent, ai_pricing_pressure]
+    axis_value: {positive: scaling, negative: unproven}
+    conflict_value: early
+    freshness_days: 270
+  capital_funding_risk:
+    positive: [prepayment_received, debt_repaid, fcf_positive]
+    negative: [debt_raised, refinancing_risk, dilution_announced,
+               covenant_issue, credit_downgrade]
+    # funding risk is measured from financials; evidence only escalates
+    # (negative) or confirms — never downgrades a measured level
+    escalate_only: true
+    freshness_days: 180
+  capex_sensitivity:
+    positive: [customer_capex_guidance_up, order_growth, design_win]
+    negative: [customer_capex_guidance_down, order_cancellation,
+               inventory_build]
+    axis_value: {positive: high, negative: medium}
+    conflict_value: high              # conflicting order signals → assume worse
+    freshness_days: 180
+  demand_model:
+    positive: [segment_disclosure, business_model_shift, revenue_mix_disclosed]
+    negative: []
+    evidence_can_set: true            # a filing can redefine the model
+    freshness_days: 9999              # business model rarely flips
+
 durability_by_model:
   capex_project:       discretionary   # order-driven, defers easily
   capacity_rental:     contracted      # workloads rent, not buy
