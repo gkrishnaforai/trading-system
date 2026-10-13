@@ -1771,6 +1771,15 @@ async def incident_resolve(signature: str):
     return {"resolved": n}
 
 
+@router.post("/incidents/{signature}/analyze")
+async def incident_analyze(signature: str):
+    """Research agent — bounded root-cause analysis over the incident's
+    captured log evidence. Rules first, LLM second when a key exists.
+    Output is a diagnosis + fix plan, never an auto-applied change."""
+    from app.support.analyst import analyze
+    return await asyncio.to_thread(analyze, signature)
+
+
 @router.get("/refresh/status")
 async def refresh_status():
     """Last-run state per job — in-memory first, then the durable

@@ -80,8 +80,18 @@ if _esc:
                 f"`{str(i.get('first_seen'))[:16]}` · last "
                 f"`{str(i.get('last_seen'))[:16]}`")
             if _d:
-                _c1.caption("sensor detail:")
-                _c1.json(_d)
+                _tail = (_d.get("log_tail") or []) if isinstance(_d, dict) \
+                    else []
+                if _tail:
+                    _c1.caption("📄 related log lines (worker, "
+                                "most recent last):")
+                    _c1.code("\n".join(_tail[-12:]), language="log")
+                _extra = {k: v for k, v in _d.items()
+                          if k != "log_tail"} if isinstance(_d, dict) \
+                    else {}
+                if _extra:
+                    with _c1.expander("sensor detail"):
+                        st.json(_extra)
             _c2.markdown("**🛠️ Manual intervention:**")
             _c2.markdown(i.get("manual_steps") or
                          "Inspect worker logs, fix root cause, "
@@ -89,6 +99,30 @@ if _esc:
             if i.get("alerted_at"):
                 _c2.caption(f"technical alert raised "
                             f"{str(i['alerted_at'])[:19]} UTC")
+            if _c2.button("🧠 Analyze root cause", key=f"an_{i['signature']}",
+                          help="research agent — pattern-matched triage "
+                               "first, bounded LLM analysis when a key "
+                               "is configured"):
+                with st.spinner("analyzing…"):
+                    try:
+                        _an = client.post(
+                            "api/v1/board/incidents/"
+                            f"{i['signature']}/analyze") or {}
+                        st.session_state[f"an_{i['signature']}"] = _an
+                    except Exception as e:
+                        st.error(f"analyze failed: {e}")
+            _an = st.session_state.get(f"an_{i['signature']}")
+            if _an:
+                _src = _an.get("source")
+                _tag = {"llm": "🧠 LLM research agent",
+                        "rules": "📐 deterministic triage",
+                        "none": "—"}.get(_src, _src)
+                _c2.markdown(
+                    f"**{_tag} · {_an.get('confidence', '?')} conf**")
+                _c2.markdown(f"**Root cause:** {_an.get('root_cause')}")
+                _c2.markdown(f"**Proposed fix:** {_an.get('proposed_fix')}")
+                if _an.get("verify"):
+                    _c2.caption(f"verify: {_an['verify']}")
             if st.button("✅ Mark resolved", key=f"res_{i['signature']}"):
                 try:
                     client.post("api/v1/board/incidents/"

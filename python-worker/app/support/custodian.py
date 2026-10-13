@@ -259,6 +259,13 @@ async def run_pass() -> dict[str, Any]:
     for f in findings:
         sig = f["signature"]
         diag, rem, tier = _diagnose(f)
+        # attach the log evidence — the *why* lives in the lines
+        # leading up to the sensor firing
+        try:
+            from .log_buffer import tail, signature_patterns
+            f["detail"]["log_tail"] = tail(signature_patterns(sig), n=15)
+        except Exception:
+            pass
         existing = db.execute_query(
             "SELECT status, attempts, last_seen FROM"
             " custodian_incidents WHERE signature=:s", {"s": sig})
