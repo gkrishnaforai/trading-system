@@ -1780,6 +1780,46 @@ async def incident_analyze(signature: str):
     return await asyncio.to_thread(analyze, signature)
 
 
+@router.get("/tickets")
+async def custodian_tickets():
+    """Staged tickets — the JIRA-style backlog the analyst proposes.
+    Created only via explicit human action on the Custodian page."""
+    from app.database import db
+    rows = await asyncio.to_thread(
+        db.execute_query,
+        "SELECT * FROM custodian_tickets ORDER BY id DESC LIMIT 50")
+    return {"tickets": rows}
+
+
+@router.post("/tickets")
+async def custodian_ticket_create(body: dict):
+    """File a ticket draft — the human-approve step between 'the agent
+    proposed a fix' and 'it becomes work'. Key minted as CUST-<id>."""
+    import json
+    from app.database import db
+    row = await asyncio.to_thread(
+        db.execute_query,
+        """INSERT INTO custodian_tickets
+               (signature, issue_type, title, description, root_cause,
+                proposed_fix, patch, evidence, source)
+           VALUES (:sig, :it, :t, :d, :rc, :pf, :p,
+                   CAST(:ev AS jsonb), :src)
+           RETURNING id""",
+        {"sig": body.get("signature", ""), "it": body.get("issue_type", "code"),
+         "t": body.get("title", "untitled")[:200],
+         "d": body.get("description"), "rc": body.get("root_cause"),
+         "pf": body.get("proposed_fix"), "p": body.get("patch"),
+         "ev": json.dumps(body.get("evidence") or {}),
+         "src": body.get("source", "manual")})
+    tid = row[0]["id"] if row else None
+    if tid:
+        await asyncio.to_thread(
+            db.execute_update,
+            "UPDATE custodian_tickets SET ticket_key=:k WHERE id=:i",
+            {"k": f"CUST-{tid}", "i": tid})
+    return {"id": tid, "ticket_key": f"CUST-{tid}" if tid else None}
+
+
 @router.get("/refresh/status")
 async def refresh_status():
     """Last-run state per job — in-memory first, then the durable

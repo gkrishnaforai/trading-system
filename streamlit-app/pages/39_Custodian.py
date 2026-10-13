@@ -120,11 +120,43 @@ if _esc:
                 _c2.markdown(
                     f"**{_tag} · {_an.get('confidence', '?')} conf**")
                 _c2.markdown(f"**Root cause:** {_an.get('root_cause')}")
+                _ft = _an.get("fix_type")
+                _ft_lbl = {"infra": "🧰 infra fix — runbook above",
+                           "code": "💻 code fix — needs a ticket",
+                           "enhancement": "✨ enhancement — ticket it"}.get(_ft)
+                if _ft_lbl:
+                    _c2.markdown(f":violet[{_ft_lbl}]")
                 _c2.markdown(f"**Proposed fix:** {_an.get('proposed_fix')}")
                 if _an.get("patch"):
                     _c2.caption("proposed patch — review before "
                                 "applying:")
                     _c2.code(_an["patch"], language="diff")
+                _tk = _an.get("ticket") or {}
+                if _ft in ("code", "enhancement") and _tk:
+                    _cc0 = _an.get("code_context") or {}
+                    with _c2.form(key=f"tk_{i['signature']}"):
+                        _tt = st.text_input("ticket title",
+                                            value=str(_tk.get("title") or "")[:200])
+                        _td = st.text_area("description",
+                                           value=str(_tk.get("description") or ""),
+                                           height=140)
+                        if st.form_submit_button("📋 File ticket"):
+                            try:
+                                client.post("api/v1/board/tickets", json_data={
+                                    "signature": i["signature"],
+                                    "issue_type": _ft,
+                                    "title": _tt, "description": _td,
+                                    "root_cause": _an.get("root_cause"),
+                                    "proposed_fix": _an.get("proposed_fix"),
+                                    "patch": _an.get("patch"),
+                                    "evidence": {
+                                        "log_tail": _an.get("log_tail") or [],
+                                        "handler": _cc0.get("file")},
+                                    "source": _an.get("source")})
+                                _incidents.clear()
+                                st.toast("ticket filed to custodian_tickets")
+                            except Exception as e:
+                                st.error(f"file failed: {e}")
                 _cc = _an.get("code_context") or {}
                 if _cc.get("source"):
                     with _c1.expander(
@@ -164,6 +196,23 @@ if _acts:
                 f"`{str(a.get('created_at'))[:19]}` T{a.get('tier')} "
                 f"`{a['signature']}` → **{a['action']}** — "
                 f"{a.get('result') or '—'}")
+
+# ── ticket backlog — analyst-proposed work, JIRA staging ────────────────
+try:
+    _tks = (client.get("api/v1/board/tickets") or {}).get("tickets") or []
+except Exception:
+    _tks = []
+if _tks:
+    with st.expander(f"📋 Tickets — filed by the analyst "
+                     f"({len(_tks)})", expanded=True):
+        for t in _tks:
+            _it = {"code": "💻", "infra": "🧰",
+                   "enhancement": "✨"}.get(t.get("issue_type"), "📋")
+            st.caption(
+                f"**{t.get('ticket_key') or '—'}** {_it} "
+                f"`{t.get('issue_type')}` [{t.get('status')}] — "
+                f"{t.get('title')} · `{t.get('signature')}` · "
+                f"{str(t.get('created_at'))[:10]}")
 
 # ── recently resolved ────────────────────────────────────────────────────
 if _res:
