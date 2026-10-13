@@ -368,6 +368,17 @@ if fvd.get("scenarios") and fvd.get("spot"):
                 f"{k.replace('_v2', '')} ${float(v):.0f}"
                 for k, v in _fv1["methods"].items()))
 
+    # per-method FVs — each method's independent answer before the blend,
+    # same pattern as the old v1 method table (PEG/PE rows)
+    _mtab = [m for m in (fvd.get("methods") or []) if m.get("fv")]
+    if _mtab:
+        st.caption("methods → " + " · ".join(
+            f"`{m['key']}` **${float(m['fv']):.2f}** "
+            f"({float(m['fv']) / _sp - 1:+.0%})"
+            + (f" w{m['w']:.2f}" if isinstance(m.get("w"), (int, float))
+               else "")
+            for m in _mtab))
+
     # decision layer — fair value prices worth; buy_below prices safety
     _dec = fvd.get("decision") or {}
     _cls = _dec.get("classification") or {}
