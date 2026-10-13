@@ -38,6 +38,8 @@ adders:
   no_scenarios:        0.10   # no method produced a scenario set
   extreme_gap:         0.05   # |fv/spot - 1| > 1.5 — model or data smells
   no_analyst_coverage: 0.05   # analyst_count missing — thin external check
+  capital_funding_risk: 0.08  # funding_risk high/critical — can't fund
+                              # its own growth even if demand holds
 
 cap: 0.60                       # beyond this the name is uninvestable,
                                 # not cheap — the gate flags it instead

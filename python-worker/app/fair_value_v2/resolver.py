@@ -221,13 +221,22 @@ class FairValueV2Resolver:
         # buy_below, not raw upside.
         decision = None
         try:
-            from app.fair_value_v2.decision import decide
+            from app.fair_value_v2.decision import (
+                decide, _scalars_from_methods)
+            from app.fair_value_v2.demand import build_profile
             cat = (result.regime or "").split(":")[0] or None
+            archs = (result.classification or {}).get("all")
+            # demand/funding exposure — separate questions, kept separate:
+            # demand axes from priors, funding risk measured from inputs
+            demand = build_profile(
+                result.symbol, archs or ([cat] if cat else []),
+                _scalars_from_methods(result.method_results))
             decision = decide(
                 cat, result.fair_value, result.expected_fair_value,
                 result.scenario_fair_values, quality_flags, spot,
                 result.method_results,
-                archetypes=(result.classification or {}).get("all"))
+                archetypes=archs, demand=demand)
+            self._upsert_demand_profile(result, demand, archs)
         except Exception as exc:
             logger.warning("fv decision layer failed for %s: %s",
                            result.symbol, exc)
@@ -278,6 +287,50 @@ class FairValueV2Resolver:
                 "fv_upside_pct": (decision or {}).get("fv_upside_pct"),
             },
         )
+
+    def _upsert_demand_profile(self, result: FairValueV2Result,
+                               demand: Dict[str, Any],
+                               archs: Optional[List[str]]) -> None:
+        """Persist the canonical demand profile. Rules-grade writes only
+        replace rules-grade rows — a human/LLM-approved classification
+        is never silently clobbered by a scheduled run."""
+        try:
+            db.execute_update(
+                """
+                INSERT INTO company_demand_profile
+                    (symbol, demand_model, capex_sensitivity,
+                     demand_durability, utilization_health,
+                     capital_funding_risk, ai_monetization,
+                     archetypes, source, updated_by, as_of, updated_at)
+                VALUES (:s, :dm, :cs, :dd, :uh, :fr, :am,
+                        :archs, :src, 'fv_engine', now(), now())
+                ON CONFLICT (symbol) DO UPDATE SET
+                    demand_model = EXCLUDED.demand_model,
+                    capex_sensitivity = EXCLUDED.capex_sensitivity,
+                    demand_durability = EXCLUDED.demand_durability,
+                    utilization_health = EXCLUDED.utilization_health,
+                    capital_funding_risk = EXCLUDED.capital_funding_risk,
+                    ai_monetization = EXCLUDED.ai_monetization,
+                    archetypes = EXCLUDED.archetypes,
+                    source = EXCLUDED.source,
+                    as_of = EXCLUDED.as_of,
+                    updated_at = now()
+                WHERE company_demand_profile.source IN
+                    ('rules', 'symbol_seed', 'archetype_prior', 'fv_engine')
+                """,
+                {"s": result.symbol,
+                 "dm": demand.get("demand_model"),
+                 "cs": demand.get("capex_sensitivity"),
+                 "dd": demand.get("demand_durability"),
+                 "uh": demand.get("utilization_health"),
+                 "fr": demand.get("capital_funding_risk"),
+                 "am": demand.get("ai_monetization"),
+                 "archs": json.dumps(archs or []),
+                 "src": demand.get("source") or "rules",
+                 })
+        except Exception as exc:
+            logger.warning("demand profile upsert failed for %s: %s",
+                           result.symbol, exc)
 
     @staticmethod
     def _to_result(row: Dict[str, Any]) -> FairValueV2Result:

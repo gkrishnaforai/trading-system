@@ -1,0 +1,142 @@
+version: 1
+
+# Business-demand exposure layer — how each company earns its next
+# dollar and what happens to it if AI capex slows. Priors are
+# hypotheses about business economics, not permanent ratings;
+# evidence (contracts, filings, utilization) upgrades them.
+#
+# Separate questions kept separate:
+#   demand risk  — will customers keep buying?
+#   funding risk — can the company profitably deliver?
+
+archetype_priors:
+  ai_infra:
+    demand_model: capex_project
+    capex_sensitivity: high
+    ai_monetization: scaling
+  technology:
+    demand_model: mixed
+    capex_sensitivity: medium
+    ai_monetization: scaling
+  growth:
+    demand_model: recurring_software
+    capex_sensitivity: medium
+    ai_monetization: early
+  fintech:
+    demand_model: usage_consumption
+    capex_sensitivity: low
+    ai_monetization: unknown
+  financials:
+    demand_model: recurring_software
+    capex_sensitivity: low
+    ai_monetization: unknown
+  consumer:
+    demand_model: mixed
+    capex_sensitivity: low
+    ai_monetization: unknown
+  healthcare:
+    demand_model: recurring_software
+    capex_sensitivity: low
+    ai_monetization: unknown
+  cyclical:
+    demand_model: capex_project
+    capex_sensitivity: medium
+    ai_monetization: unknown
+  value:
+    demand_model: replacement_cycle
+    capex_sensitivity: low
+    ai_monetization: unknown
+  pre_earnings:
+    demand_model: speculative
+    capex_sensitivity: high
+    ai_monetization: unproven
+  unknown:
+    demand_model: unknown
+    capex_sensitivity: unknown
+    ai_monetization: unknown
+
+# demand_durability defaults keyed off demand_model — what supports
+# revenue BEYOND new infrastructure builds
+# per-company priors where the archetype can't see the revenue model —
+# seeded hypotheses (source: rules); evidence or a human override wins.
+# NBIS rents compute → capex-slowdown demand holds better than CRDO's
+# hardware orders, but NBIS carries its own funding risk (measured
+# separately by the funding_risk rules, not guessed here).
+symbol_priors:
+  NBIS: {demand_model: capacity_rental, capex_sensitivity: medium, ai_monetization: scaling}
+  CRWV: {demand_model: capacity_rental, capex_sensitivity: medium, ai_monetization: scaling}
+  IREN: {demand_model: capacity_rental, capex_sensitivity: medium, ai_monetization: scaling}
+  APLD: {demand_model: capacity_rental, capex_sensitivity: medium, ai_monetization: early}
+  CEG:  {demand_model: power_generation, capex_sensitivity: low,  ai_monetization: scaling}
+  VST:  {demand_model: power_generation, capex_sensitivity: low,  ai_monetization: scaling}
+  ETN:  {demand_model: capex_project,    capex_sensitivity: high, ai_monetization: scaling}
+  VRT:  {demand_model: capex_project,    capex_sensitivity: high, ai_monetization: scaling}
+  GEV:  {demand_model: capex_project,    capex_sensitivity: high, ai_monetization: scaling}
+  SNPS: {demand_model: recurring_software, capex_sensitivity: medium, ai_monetization: scaling}
+  CDNS: {demand_model: recurring_software, capex_sensitivity: medium, ai_monetization: scaling}
+  NOW:  {demand_model: recurring_software, capex_sensitivity: low,  ai_monetization: scaling}
+  CRM:  {demand_model: recurring_software, capex_sensitivity: low,  ai_monetization: scaling}
+  PANW: {demand_model: recurring_software, capex_sensitivity: low,  ai_monetization: scaling}
+  CRWD: {demand_model: recurring_software, capex_sensitivity: low,  ai_monetization: scaling}
+  RBRK: {demand_model: recurring_software, capex_sensitivity: medium, ai_monetization: early}
+  AMZN: {demand_model: usage_consumption, capex_sensitivity: medium, ai_monetization: proven}
+  GOOGL: {demand_model: usage_consumption, capex_sensitivity: medium, ai_monetization: proven}
+  MSFT: {demand_model: usage_consumption, capex_sensitivity: medium, ai_monetization: proven}
+  META: {demand_model: usage_consumption, capex_sensitivity: medium, ai_monetization: scaling}
+  NVDA: {demand_model: capex_project,     capex_sensitivity: high, ai_monetization: proven}
+  AVGO: {demand_model: capex_project,     capex_sensitivity: high, ai_monetization: scaling}
+  MRVL: {demand_model: capex_project,     capex_sensitivity: high, ai_monetization: scaling}
+  CRDO: {demand_model: capex_project,     capex_sensitivity: high, ai_monetization: scaling}
+  ALAB: {demand_model: capex_project,     capex_sensitivity: high, ai_monetization: scaling}
+  ANET: {demand_model: capex_project,     capex_sensitivity: high, ai_monetization: proven}
+  LITE: {demand_model: capex_project,     capex_sensitivity: high, ai_monetization: early}
+  COHR: {demand_model: capex_project,     capex_sensitivity: high, ai_monetization: early}
+  TSM:  {demand_model: capex_project,     capex_sensitivity: medium, ai_monetization: proven}
+  ASML: {demand_model: capex_project,     capex_sensitivity: medium, ai_monetization: proven}
+  AMAT: {demand_model: capex_project,     capex_sensitivity: medium, ai_monetization: proven}
+  HOOD: {demand_model: usage_consumption, capex_sensitivity: low,  ai_monetization: early}
+  COIN: {demand_model: usage_consumption, capex_sensitivity: low,  ai_monetization: unknown}
+
+durability_by_model:
+  capex_project:       discretionary   # order-driven, defers easily
+  capacity_rental:     contracted      # workloads rent, not buy
+  usage_consumption:   usage_based
+  recurring_software:  recurring
+  maintenance_services: recurring
+  power_generation:    contracted      # operating load persists
+  replacement_cycle:   replacement_cycle
+  mixed:               unknown
+  speculative:         speculative
+  unknown:             unknown
+
+# deterministic funding risk from features the engine already resolves —
+# first match wins. fcf_lte/debt_to_cash_gt are measured, not inferred.
+funding_risk:
+  rules:
+    - when: {fcf_lte: 0, debt_to_cash_gt: 4}
+      level: critical
+    - when: {fcf_lte: 0, debt_to_cash_gt: 2}
+      level: high
+    - when: {fcf_lte: 0}
+      level: moderate
+    - when: {debt_to_cash_gt: 4}
+      level: high
+    - when: {debt_to_cash_gt: 2}
+      level: moderate
+  default: low
+  # when debt/cash/fcf inputs are all missing → 'unknown', not 'low'
+
+# demand_model modulates the macro-scenario impact inside an archetype —
+# CRDO (capex_project) takes a bigger hit than NBIS (capacity_rental)
+# under the same capex slowdown; workloads migrate to rented compute.
+demand_model_impact_mult:
+  capex_project:        1.25
+  capacity_rental:      0.80
+  usage_consumption:    0.70
+  recurring_software:   0.50
+  maintenance_services: 0.55
+  power_generation:     0.60
+  replacement_cycle:    0.90
+  mixed:                1.00
+  speculative:          1.10
+  unknown:              1.00

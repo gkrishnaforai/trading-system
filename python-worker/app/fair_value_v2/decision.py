@@ -65,10 +65,13 @@ def _macro_scenarios(scen_cfg: Dict[str, Any],
                      archetypes: List[str],
                      fv_ref: Optional[float],
                      buy_below: Optional[float],
-                     spot: Optional[float]) -> Dict[str, Any]:
+                     spot: Optional[float],
+                     impact_mult: float = 1.0) -> Dict[str, Any]:
     """Stress overlay: expected FV and buy_below re-priced under each
     AI-capex macro scenario. Primary archetype carries weight
-    1 - secondary_blend; matched secondaries share the rest."""
+    1 - secondary_blend; matched secondaries share the rest.
+    impact_mult modulates by demand model — capacity_rental (NBIS)
+    absorbs a capex slowdown better than capex_project (CRDO)."""
     if not fv_ref or not archetypes:
         return {}
     sens = scen_cfg.get("sensitivities") or {}
@@ -81,8 +84,9 @@ def _macro_scenarios(scen_cfg: Dict[str, Any],
                   (sens.get("unknown") or {}).get(key) or 0)
         secs = [float((sens.get(s) or {}).get(key) or 0)
                 for s in secondaries]
-        impact = ((1 - blend_w) * p +
-                  (blend_w * sum(secs) / len(secs) if secs else 0))
+        impact = (((1 - blend_w) * p +
+                   (blend_w * sum(secs) / len(secs) if secs else 0))
+                  * float(impact_mult or 1.0))
         entry = {"impact": round(impact, 4), "label": spec.get("label")}
         stressed_fv = fv_ref * (1 + impact)
         entry["stressed_fv"] = round(stressed_fv, 2)
@@ -119,7 +123,8 @@ def decide(category: Optional[str],
            quality_flags: List[str],
            spot: Optional[float],
            method_results: list,
-           archetypes: Optional[List[str]] = None) -> Dict[str, Any]:
+           archetypes: Optional[List[str]] = None,
+           demand: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Return the decision payload for one run.
 
     fv_* fields describe worth; buy_below is the gate. risk_flags are
@@ -185,6 +190,12 @@ def decide(category: Optional[str],
     if scalars.get("analyst_count") in (None, 0):
         adders_total += adders.get("no_analyst_coverage", 0)
         applied.append("no_analyst_coverage")
+    # funding risk is a first-class axis — a name can hold demand
+    # through a capex slowdown and still be unable to finance delivery
+    fr = (demand or {}).get("capital_funding_risk")
+    if fr in ("critical", "high"):
+        adders_total += adders.get("capital_funding_risk", 0)
+        applied.append(f"funding_{fr}")
 
     score = min(1.0, adders_total /
                 float(policy.get("range_scale", 0.25) or 0.25))
@@ -225,6 +236,8 @@ def decide(category: Optional[str],
         "risk_flags": risk_flags,
         "fv_reference": "expected" if expected_fv else "base",
         "spot": spot,
+        "demand_profile": demand,
         "macro_scenarios": _macro_scenarios(
-            scen_cfg, archs, fv_ref, buy_below, spot),
+            scen_cfg, archs, fv_ref, buy_below, spot,
+            impact_mult=(demand or {}).get("impact_mult", 1.0)),
     }
