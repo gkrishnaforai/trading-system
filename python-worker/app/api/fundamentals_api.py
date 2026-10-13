@@ -117,6 +117,24 @@ async def get_fair_value_analysis_query(symbol: str, method_key: Optional[str] =
         logger.error(f"Error in fair value analysis for {symbol}: {e}")
         return FairValueResponse(success=False, error=f"Error analyzing fair value: {str(e)}")
 
+@router.post("/fair-value-v2/run")
+async def run_fair_value_v2(request: FairValueRequest):
+    """Full v2 result for the test page — scenarios, per-method 'why',
+    decision layer (buy_below/MoS/confidence/risk flags), classification,
+    and macro-scenario stress. force_refresh recomputes ignoring the
+    stored-run reuse watermark."""
+    if not ENABLE_FAIR_VALUE_V2:
+        raise HTTPException(status_code=400, detail="fair_value_v2 is disabled")
+    try:
+        v2, run_meta = fair_value_v2_resolver.resolve(
+            request.symbol.strip().upper(), force=request.force_refresh)
+        return {"success": True, "run_meta": run_meta,
+                "result": v2.model_dump(mode="json")}
+    except Exception as e:
+        logger.error(f"fair-value-v2 run failed for {request.symbol}: {e}")
+        return {"success": False, "error": str(e)}
+
+
 @router.post("/fair-value", response_model=FairValueResponse)
 async def get_fair_value_analysis(request: FairValueRequest):
     """Get comprehensive fair value analysis for a symbol"""

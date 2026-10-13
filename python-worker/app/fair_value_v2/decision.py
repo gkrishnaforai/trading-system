@@ -198,6 +198,7 @@ def decide(category: Optional[str],
         "valuation_confidence": confidence,
         "risk_flags": risk_flags,
         "fv_reference": "expected" if expected_fv else "base",
+        "spot": spot,
         "macro_scenarios": _macro_scenarios(
             scen_cfg, archs, fv_ref, buy_below, spot),
     }
