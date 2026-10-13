@@ -42,6 +42,10 @@ export type MacroEvent = {
   verified?: boolean
   unconfirmed?: boolean
   days_away?: number
+  actual?: number
+  estimate?: number
+  prev?: number
+  reading?: string
   [k: string]: unknown
 }
 

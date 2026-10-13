@@ -177,7 +177,11 @@ export default async function RegimePage() {
                     k={String(e.title ?? e.name ?? 'event') +
                       (e.unconfirmed ? ' ·?' : '')}
                     v={`${dateStr}${tag ? ` · ${tag}` : ''}` +
-                      (moved ? ` ⟵ was ${e.rescheduled_from}` : '')}
+                      (moved ? ` ⟵ was ${e.rescheduled_from}` : '') +
+                      (e.actual != null
+                        ? ` · printed ${e.actual}${e.estimate != null ? ` vs est ${e.estimate}` : ''}`
+                        : e.estimate != null ? ` · est ${e.estimate}` : '') +
+                      (e.reading ? ` — ${e.reading}` : '')}
                   />
                 )
               })}

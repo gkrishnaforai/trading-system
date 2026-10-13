@@ -114,12 +114,19 @@ def _apply_verified_overrides(evts: list, today: date, days: int) -> list:
     wins and the entry is flagged `rescheduled`/`rescheduled_from`.
     Verified dates with no baseline counterpart are appended outright."""
     try:
-        from .verify import load_overrides
+        from .verify import load_overrides, reading_for
         overrides = load_overrides(days)
     except Exception:
         return evts
     if not overrides:
         return evts
+
+    def _res(row: dict, kind: str) -> dict:
+        return {"actual": row.get("actual"),
+                "estimate": row.get("estimate"),
+                "prev": row.get("prev"),
+                "reading": reading_for(kind, row.get("actual"),
+                                       row.get("estimate"))}
 
     used: set = set()  # (kind, date) pairs already consumed
     out: list = []
@@ -129,7 +136,8 @@ def _apply_verified_overrides(evts: list, today: date, days: int) -> list:
             out.append(e)
             continue
         if e["date"] in ver:
-            e = {**e, "verified": True}
+            row = ver[e["date"]]
+            e = {**e, "verified": True, **_res(row, e["kind"])}
             used.add((e["kind"], e["date"]))
             out.append(e)
             continue
@@ -148,7 +156,7 @@ def _apply_verified_overrides(evts: list, today: date, days: int) -> list:
                         "days_away": max(0, (date.fromisoformat(cand[0])
                                              - today).days),
                         "rescheduled": True, "rescheduled_from": e["date"],
-                        "verified": True})
+                        "verified": True, **_res(row, e["kind"])})
         else:
             out.append({**e, "unconfirmed": True})
     # provider events with no baseline counterpart — new releases
@@ -163,7 +171,8 @@ def _apply_verified_overrides(evts: list, today: date, days: int) -> list:
                                 "time_et": row.get("time_et") or "08:30",
                                 "severity": row.get("severity") or "high",
                                 "days_away": max(0, gap), "est": False,
-                                "verified": True, "source": "finnhub"})
+                                "verified": True, "source": "finnhub",
+                                **_res(row, kind)})
     return out
 
 

@@ -33,6 +33,42 @@ _KIND_RULES = [
 _US_ONLY = {"US", "USA", "United States"}
 
 
+def _num(v) -> Optional[float]:
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def reading_for(kind: str, actual, estimate) -> Optional[str]:
+    """Deterministic read of a print vs consensus — no LLM."""
+    a, e = _num(actual), _num(estimate)
+    if a is None:
+        return None
+    if e is None:
+        return f"printed {a:g}"
+    diff = a - e
+    if kind in ("cpi", "ppi", "pce"):
+        if diff > 0.04:
+            return "hotter than est — hawkish, equity headwind"
+        if diff < -0.04:
+            return "cooler than est — dovish tailwind"
+        return "in line with estimates"
+    if kind == "nfp":
+        if diff > 30:
+            return "strong payrolls — hawkish tilt"
+        if diff < -30:
+            return "soft payrolls — dovish tilt"
+        return "near expectations"
+    if kind == "fomc":
+        if diff > 0:
+            return "hawkish surprise"
+        if diff < 0:
+            return "dovish surprise"
+        return "as expected"
+    return None
+
+
 def _classify(event_name: str, country: str) -> Optional[tuple]:
     if country and country.upper() not in _US_ONLY:
         return None
@@ -68,7 +104,10 @@ def verify_and_store(days: int = 45) -> Dict[str, Any]:
         except ValueError:
             continue
         mapped.append({"kind": kind, "name": name, "date": d,
-                       "severity": sev, "time_et": t})
+                       "severity": sev, "time_et": t,
+                       "actual": r.get("actual"),
+                       "estimate": r.get("estimate"),
+                       "prev": r.get("prev")})
 
     baseline: Dict[str, List[str]] = {}
     for e in upcoming_macro_events(days):
@@ -87,14 +126,23 @@ def verify_and_store(days: int = 45) -> Dict[str, Any]:
                    (kind, name, event_date, original_date, status, source,
                     time_et, severity, verified_at)
                VALUES (:kind, :name, :d, :orig, :status, 'finnhub',
-                       :t, :sev, now())
+                       :t, :sev, :act, :est, :prev, now())
                ON CONFLICT (kind, event_date) DO UPDATE SET
                    name=excluded.name, original_date=excluded.original_date,
                    status=excluded.status, time_et=excluded.time_et,
-                   severity=excluded.severity, verified_at=now()""",
+                   severity=excluded.severity,
+                   actual=COALESCE(excluded.actual,
+                                   macro_event_overrides.actual),
+                   estimate=COALESCE(excluded.estimate,
+                                     macro_event_overrides.estimate),
+                   prev=COALESCE(excluded.prev,
+                                 macro_event_overrides.prev),
+                   verified_at=now()""",
             {"kind": m["kind"], "name": m["name"], "d": m["date"].isoformat(),
              "orig": base if moved else None, "status": status,
-             "t": m["time_et"], "sev": m["severity"]})
+             "t": m["time_et"], "sev": m["severity"],
+             "act": _num(m["actual"]), "est": _num(m["estimate"]),
+             "prev": _num(m["prev"])})
         stored += 1
         rescheduled += int(moved)
     logger.info("macro calendar verified: %d events, %d rescheduled",
@@ -107,7 +155,7 @@ def load_overrides(days: int = 45) -> Dict[str, Dict[str, Any]]:
     try:
         rows = db.execute_query(
             """SELECT kind, name, event_date, original_date, status,
-                      time_et, severity
+                      time_et, severity, actual, estimate, prev
                FROM macro_event_overrides
                WHERE event_date >= CURRENT_DATE - 1
                  AND event_date <= CURRENT_DATE + CAST(:days AS int)

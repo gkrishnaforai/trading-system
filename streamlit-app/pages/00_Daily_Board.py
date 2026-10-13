@@ -394,6 +394,29 @@ if p:
                     f"({_mr.get('score', '—')}/100 · "
                     f"{_mr.get('confidence', '—')} conf)   ·   "
                     f"AI sleeve: `{_mr.get('ai_regime') or '—'}`")
+                # today's catalyst — status banner (pending or printed)
+                for _te in (e for e in _mev if e.get("days_away") == 0):
+                    try:
+                        if _te.get("actual") is not None:
+                            _tmsg = (f"printed {float(_te['actual']):g}"
+                                     + (f" vs est {float(_te['estimate']):g}"
+                                        if _te.get('estimate') is not None
+                                        else "")
+                                     + (f" — {_te['reading']}"
+                                        if _te.get('reading') else ""))
+                        else:
+                            _tmsg = ((f"{_te['time_et']} ET"
+                                      if _te.get("time_et") else "today")
+                                     + (f" · est {float(_te['estimate']):g}"
+                                        if _te.get('estimate') is not None
+                                        else "")
+                                     + (f" · prior {float(_te['prev']):g}"
+                                        if _te.get('prev') is not None
+                                        else "")
+                                     + " — release pending")
+                    except (TypeError, ValueError):
+                        _tmsg = "today — release pending"
+                    st.markdown(f":orange[⚡ **{_te['name']}** — {_tmsg}]")
                 if _conf or _evr:
                     _cf_i = {"high": "🟢", "mixed": "🟡",
                              "low": "🔴"}.get(_conf, "⚪")
