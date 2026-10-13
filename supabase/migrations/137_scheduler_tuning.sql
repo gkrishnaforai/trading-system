@@ -1,5 +1,5 @@
 -- Scheduler tuning — job timing fixes and supervisor enablement.
--- job_definitions crons are UTC; schedules rows carry their own timezone.
+-- job_definitions crons are UTC — schedules rows carry their own timezone.
 
 -- Enable the custodian supervisor: retries silently-failed jobs and
 -- escalates to the board after repeated failures. Without it, a broken
