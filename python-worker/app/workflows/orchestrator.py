@@ -475,9 +475,9 @@ class WorkflowOrchestrator:
         db.execute_update(
             """
             UPDATE workflow_executions
-            SET status = :status,
+            SET status = CAST(:status AS text),
                 current_stage = NULL,
-                completed_at = CASE WHEN :status IN ('completed', 'failed') THEN CURRENT_TIMESTAMP ELSE completed_at END,
+                completed_at = CASE WHEN CAST(:status AS text) IN ('completed', 'failed') THEN CURRENT_TIMESTAMP ELSE completed_at END,
                 metadata_json = :metadata,
                 updated_at = CURRENT_TIMESTAMP
             WHERE workflow_id = :workflow_id
@@ -511,8 +511,8 @@ class WorkflowOrchestrator:
         db.execute_update(
             """
             UPDATE workflow_stage_executions
-            SET status = :status,
-                completed_at = CASE WHEN :status IN ('completed', 'failed') THEN CURRENT_TIMESTAMP ELSE completed_at END,
+            SET status = CAST(:status AS text),
+                completed_at = CASE WHEN CAST(:status AS text) IN ('completed', 'failed') THEN CURRENT_TIMESTAMP ELSE completed_at END,
                 symbols_succeeded = :succeeded,
                 symbols_failed = :failed,
                 updated_at = CURRENT_TIMESTAMP
@@ -548,9 +548,9 @@ class WorkflowOrchestrator:
         db.execute_update(
             """
             UPDATE workflow_symbol_states
-            SET status = :status,
+            SET status = CAST(:status AS text),
                 error_message = :error,
-                completed_at = CASE WHEN :status IN ('completed', 'failed') THEN CURRENT_TIMESTAMP ELSE completed_at END,
+                completed_at = CASE WHEN CAST(:status AS text) IN ('completed', 'failed') THEN CURRENT_TIMESTAMP ELSE completed_at END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE workflow_id = :workflow_id AND symbol = :symbol AND stage = :stage
             """,

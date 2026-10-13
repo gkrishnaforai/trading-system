@@ -98,8 +98,8 @@ def record_exit(trade_id: str, price: float, qty: float,
     status = "closed" if remaining <= 0 else "partial"
     db.execute_update(
         """
-        UPDATE trades SET status = :status, realized_pl = :pl,
-               closed_at = CASE WHEN :status = 'closed' THEN now() ELSE closed_at END
+        UPDATE trades SET status = CAST(:status AS text), realized_pl = :pl,
+               closed_at = CASE WHEN CAST(:status AS text) = 'closed' THEN now() ELSE closed_at END
         WHERE id = :id
         """,
         {"status": status, "pl": realized, "id": trade_id},

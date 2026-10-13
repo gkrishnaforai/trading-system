@@ -3611,8 +3611,8 @@ class DataRefreshManager(BaseService):
             query = """
                 INSERT INTO data_ingestion_state
                 (symbol, dataset, interval, source, cursor_ts, last_attempt_at, last_success_at, status, error_message, retry_count)
-                VALUES (:symbol, :dataset, :interval, :source, :cursor_ts, :last_attempt_at, :last_success_at, :status, :error,
-                        CASE WHEN :status = 'success' THEN 0 ELSE 1 END)
+                VALUES (:symbol, :dataset, :interval, :source, :cursor_ts, :last_attempt_at, :last_success_at, CAST(:status AS text), :error,
+                        CASE WHEN CAST(:status AS text) = 'success' THEN 0 ELSE 1 END)
                 ON CONFLICT (symbol, dataset, interval)
                 DO UPDATE SET
                   source = EXCLUDED.source,

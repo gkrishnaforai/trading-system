@@ -251,8 +251,8 @@ class UniversalEventRepository(BaseService):
         try:
             query = """
                 UPDATE universal_events
-                SET processing_status = :status,
-                    processed_at = CASE WHEN :status = 'completed' THEN NOW() ELSE processed_at END,
+                SET processing_status = CAST(:status AS text),
+                    processed_at = CASE WHEN CAST(:status AS text) = 'completed' THEN NOW() ELSE processed_at END,
                     error_message = :error_message,
                     updated_at = NOW()
                 WHERE event_id = :event_id
