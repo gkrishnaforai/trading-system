@@ -121,6 +121,16 @@ if _esc:
                     f"**{_tag} · {_an.get('confidence', '?')} conf**")
                 _c2.markdown(f"**Root cause:** {_an.get('root_cause')}")
                 _c2.markdown(f"**Proposed fix:** {_an.get('proposed_fix')}")
+                if _an.get("patch"):
+                    _c2.caption("proposed patch — review before "
+                                "applying:")
+                    _c2.code(_an["patch"], language="diff")
+                _cc = _an.get("code_context") or {}
+                if _cc.get("source"):
+                    with _c1.expander(
+                            f"🧩 handler source — {_cc.get('name')} "
+                            f"({os.path.basename(_cc.get('file') or '')})"):
+                        st.code(_cc["source"], language="python")
                 if _an.get("verify"):
                     _c2.caption(f"verify: {_an['verify']}")
             if st.button("✅ Mark resolved", key=f"res_{i['signature']}"):

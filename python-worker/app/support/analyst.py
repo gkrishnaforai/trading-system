@@ -92,7 +92,8 @@ def _rule_analysis(sig: str, lines: List[str]) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _llm_analysis(sig: str, incident: dict, lines: List[str]
+def _llm_analysis(sig: str, incident: dict, lines: List[str],
+                  code: Optional[Dict[str, Any]] = None
                   ) -> Optional[Dict[str, Any]]:
     try:
         from litellm import completion
@@ -114,9 +115,13 @@ Sensor detail: {json.dumps(incident.get('detail') or {})[:1200]}
 Recent related log lines:
 {chr(10).join(lines[:15]) or '(none captured)'}
 
+Handler source ({code['file'] + ' :: ' + code['name'] if code else 'not resolved'}):
+{code['source'][:2400] if code else ''}
+
 Return ONLY compact JSON:
 {{"root_cause": "...", "confidence": "high|medium|low",
   "proposed_fix": "numbered steps",
+  "patch": "unified diff or code snippet if the fix is a code change, else null",
   "verify": "how to confirm the fix worked"}}"""
     try:
         resp = completion(
@@ -136,8 +141,46 @@ Return ONLY compact JSON:
         return None
 
 
+def _code_context(signature: str) -> Optional[Dict[str, Any]]:
+    """Resolve the signature to source — the dev-agent half of the
+    analyst. job:X → the registered handler; stale:X → its refresh
+    job; scan:alerts → the scan entrypoint."""
+    import inspect
+    job_map = {"stale:momentum": "momentum",
+               "stale:fundamental": "fund-flags",
+               "stale:flywheel": "flywheel"}
+    name = None
+    fn = None
+    if signature.startswith("job:"):
+        name = signature.split(":")[1]
+    elif signature in job_map:
+        name = job_map[signature]
+    if name:
+        try:
+            from app.api.board_api import JOBS
+            spec = JOBS.get(name)
+            fn = spec[1] if spec else None
+        except Exception:
+            fn = None
+    elif signature.startswith("scan:"):
+        try:
+            from app.alerts.service import run_scan_job
+            fn = run_scan_job
+        except Exception:
+            fn = None
+    if not fn:
+        return None
+    try:
+        return {"file": inspect.getsourcefile(fn),
+                "name": getattr(fn, "__name__", str(fn)),
+                "source": inspect.getsource(fn)[:3000]}
+    except (TypeError, OSError):
+        return None
+
+
 def analyze(signature: str) -> Dict[str, Any]:
-    """Full analysis: incident row + log tail → rules → LLM fallback."""
+    """Full analysis: incident row + log tail + handler source →
+    rules → LLM fallback."""
     rows = db.execute_query(
         "SELECT * FROM custodian_incidents WHERE signature=:s",
         {"s": signature})
@@ -145,12 +188,14 @@ def analyze(signature: str) -> Dict[str, Any]:
         return {"error": "incident not found", "signature": signature}
     inc = rows[0]
     lines = tail(signature_patterns(signature), n=15)
+    code = _code_context(signature)
     base = {"signature": signature, "log_tail": lines,
             "detail": inc.get("detail"),
             "status": inc.get("status"),
-            "attempts": inc.get("attempts")}
+            "attempts": inc.get("attempts"),
+            "code_context": code}
     out = _rule_analysis(signature, lines) \
-        or _llm_analysis(signature, inc, lines) \
+        or _llm_analysis(signature, inc, lines, code) \
         or {"source": "none",
             "root_cause": "No matching error pattern and LLM analysis "
                           "unavailable (no OPENAI_API_KEY / "
