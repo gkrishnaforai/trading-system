@@ -20,6 +20,18 @@ from utils import render_top_nav, health_col, health_cfg, sym_md
 
 client = APIClient(api_config.python_worker_url, timeout=180)
 
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _cget(path: str, params=None):
+    """Cached board GET — the page makes ~17 calls per rerun and most
+    payloads are job-refreshed snapshots, so 2min staleness is invisible
+    while collapsing refetch on every widget interaction."""
+    try:
+        return client.get(path, params=params) or {}
+    except Exception:
+        return {}
+
+
 st.set_page_config(page_title="Daily Board", page_icon="🎯", layout="wide")
 render_top_nav()
 st.title("🎯 Daily Action Board")
@@ -29,7 +41,7 @@ st.caption("Exits first, then deploys. Momentum flag × fundamentals × "
 
 # --- today's posture — the permission layer for everything below ---
 try:
-    _PO = client.get("api/v1/board/posture") or {}
+    _PO = _cget("api/v1/board/posture") or {}
 except Exception:
     _PO = {}
 if _PO.get("posture"):
@@ -66,8 +78,8 @@ _FUND_RISK = {"low": "", "medium": "risk·med", "high": "risk·HIGH",
 # momentum loads bars+technicals at :30 hourly through the session;
 # alerts and focus-scan ride each refresh 15/20 min later.
 try:
-    _cat = (client.get("api/v1/board/jobs/catalog") or {}).get("jobs") or []
-    _st = (client.get("api/v1/board/refresh/status") or {}).get("jobs") or {}
+    _cat = (_cget("api/v1/board/jobs/catalog") or {}).get("jobs") or []
+    _st = (_cget("api/v1/board/refresh/status") or {}).get("jobs") or {}
 except Exception:
     _cat, _st = [], {}
 
@@ -127,6 +139,7 @@ _REFRESH_GROUPS = [
 def _kick(job: str):
     try:
         r = client.post(f"api/v1/board/refresh/{job}")
+        _cget.clear()
         st.toast(f"{job}: {r.get('status', 'started')}")
     except Exception as e:
         st.error(f"{job} failed to start: {e}")
@@ -136,7 +149,7 @@ with st.expander("⚙️ Data & refresh — every input the board reads",
                  expanded=False):
     # fetch job status up front so each button can show its last run
     try:
-        _jobs = (client.get("api/v1/board/refresh/status") or {}) \
+        _jobs = (_cget("api/v1/board/refresh/status") or {}) \
             .get("jobs") or {}
     except Exception:
         _jobs = {}
@@ -167,7 +180,7 @@ with st.expander("⚙️ Data & refresh — every input the board reads",
 
     # --- ⏰ job registry — AutoSys-style catalog + schedules ------------------
     try:
-        _cat = (client.get("api/v1/board/jobs/catalog") or {}) \
+        _cat = (_cget("api/v1/board/jobs/catalog") or {}) \
             .get("jobs") or []
     except Exception:
         _cat = []
@@ -209,6 +222,7 @@ with st.expander("⚙️ Data & refresh — every input the board reads",
                                 json_data={"cron": _nc,
                                            "enabled": _ne})
                             _saved += 1
+                    _cget.clear()
                     st.toast(f"saved {_saved} schedule change(s)")
                 except Exception as _e:
                     st.error(f"save failed: {_e}")
@@ -228,14 +242,14 @@ with st.expander("⚙️ Data & refresh — every input the board reads",
         if _c1.button("📈 Technicals", key="lk_tech_btn",
                       disabled=not _sym):
             try:
-                st.session_state["lk_tech"] = client.get(
+                st.session_state["lk_tech"] = _cget(
                     f"api/v1/board/symbol/{_sym}/technicals")
             except Exception as _e:
                 st.error(str(_e)[:200])
         if _c2.button("🏛 Fundamentals", key="lk_fund_btn",
                       disabled=not _sym):
             try:
-                st.session_state["lk_fund"] = client.get(
+                st.session_state["lk_fund"] = _cget(
                     f"api/v1/board/symbol/{_sym}/fundamentals")
             except Exception as _e:
                 st.error(str(_e)[:200])
@@ -245,6 +259,7 @@ with st.expander("⚙️ Data & refresh — every input the board reads",
             try:
                 st.session_state["lk_ref"] = client.post(
                     f"api/v1/board/symbol/{_sym}/refresh")
+                _cget.clear()
             except Exception as _e:
                 st.error(str(_e)[:200])
         _t = st.session_state.get("lk_tech")
@@ -285,7 +300,7 @@ with st.expander("⚙️ Data & refresh — every input the board reads",
                        f"({_r.get('bars')} bars, {_r.get('as_of')})")
 
 try:
-    board = client.get("api/v1/board/daily") or {}
+    board = _cget("api/v1/board/daily") or {}
 except Exception as e:
     st.error(f"Board unavailable: {e} — the worker may still be "
              "restarting after a deploy; wait ~60s and hit Refresh.")
@@ -365,7 +380,7 @@ if p:
     # regime details + the scheduled macro dates that can flip it
     _rd = p.get("regime_detail") or {}
     try:
-        _mev = (client.get("api/v1/board/macro-events") or {}) \
+        _mev = (_cget("api/v1/board/macro-events") or {}) \
             .get("events") or []
     except Exception:
         _mev = []
@@ -683,7 +698,7 @@ if p:
                         f"${h['cost']:,.0f}{_vp}")
                 if _gap and st.button("📐 Structure the next tranche",
                                       key="hb_suggest"):
-                    _sg = client.get("api/v1/board/hedge/suggest") or {}
+                    _sg = _cget("api/v1/board/hedge/suggest") or {}
                     st.caption(
                         f"suggested: buy {_sg.get('qty_for_gap')}× "
                         f"{_sg.get('underlier')} "
@@ -846,7 +861,7 @@ if p:
 
 # --- 🎯 today's swing calls — the distilled top-3 with plans ------------------
 try:
-    _cdata = client.get("api/v1/board/calls") or {}
+    _cdata = _cget("api/v1/board/calls") or {}
     _calls = _cdata.get("calls") or []
     _rec = _cdata.get("record") or {}
     _rc = []
@@ -909,7 +924,7 @@ except Exception:
 
 # --- � today's put calls — short-side distilled picks ----------------
 try:
-    _pdata = client.get("api/v1/board/put-calls") or {}
+    _pdata = _cget("api/v1/board/put-calls") or {}
     _pcs = _pdata.get("calls") or []
     _prec = _pdata.get("record") or {}
     _ppo = _pdata.get("posture") or {}
@@ -962,7 +977,7 @@ except Exception:
 
 # --- �🛡️ portfolio defense & recovery — regime-scaled insurance card ---
 try:
-    _def = client.get("api/v1/board/defense") or {}
+    _def = _cget("api/v1/board/defense") or {}
     _ds = _def.get("defensive_state") or "NORMAL"
     _h = _def.get("hedge") or {}
     _rec = _def.get("recovery") or {}
@@ -1027,7 +1042,7 @@ except Exception:
 
 # --- ⚡ HL triggers — higher-low confirmations at the line ----------------------
 try:
-    _hl = client.get("api/v1/board/hl-triggers") or {}
+    _hl = _cget("api/v1/board/hl-triggers") or {}
     _conf = _hl.get("confirmed") or []
     _trg = _hl.get("triggers") or []
     if _conf or _trg:
@@ -1071,7 +1086,7 @@ except Exception:
 
 # --- 🔥 fundamental momentum radar — rapidly improving names ------------------
 try:
-    _fm = (client.get("api/v1/board/fund-momentum") or {}) \
+    _fm = (_cget("api/v1/board/fund-momentum") or {}) \
         .get("items") or []
     if _fm:
         _add = [r for r in _fm if not r["extended"]
@@ -1099,7 +1114,7 @@ except Exception:
 
 # --- 🩺 custodian strip — the support agent's ledger --------------------------
 try:
-    _inc = client.get("api/v1/board/incidents") or {}
+    _inc = _cget("api/v1/board/incidents") or {}
     _open = _inc.get("open") or []
     if _open:
         _esc = [i for i in _open if i.get("status") == "escalated"]
@@ -1137,7 +1152,7 @@ with st.expander("🎯 Focus book — members & scan", expanded=False):
     _fs2.markdown(f":red[⏱ {_last('focus-scan')}]")
 
     try:
-        _fmem = client.get("api/v1/board/focus/members") or []
+        _fmem = _cget("api/v1/board/focus/members") or []
     except Exception:
         _fmem = []
     _pend = st.session_state.get("fx_pending")
@@ -1174,6 +1189,7 @@ with st.expander("🎯 Focus book — members & scan", expanded=False):
             try:
                 client.post(f"api/v1/board/focus/{_new}",
                             params={"thesis": _th} if _th else None)
+                _cget.clear()
                 st.toast(f"{_new} added — run Focus book scan")
                 st.rerun()
             except Exception as e:
@@ -1230,7 +1246,7 @@ if counts.get("peer_drag"):
 
 # --- 📊 action track record — were the suggestions right? ----------------------
 try:
-    _trd = (client.get("api/v1/board/track-record") or {})
+    _trd = (_cget("api/v1/board/track-record") or {})
     _cells = ((_trd.get("instruments") or {}).get("cells")) or []
     _reg = (_trd.get("regime") or {})
     if _cells or (_reg.get("summary") or {}).get("n"):
@@ -1403,7 +1419,7 @@ with st.expander("📈 GARP screen — quality at fair price", expanded=False):
         _kick("fund-flags")
     _gp3.markdown(f":red[⏱ {_last('fund-flags')}]")
     try:
-        _g = client.get("api/v1/board/garp",
+        _g = _cget("api/v1/board/garp",
                         params={"max_pe": _mpe}) or {}
     except Exception:
         _g = {}
@@ -1440,7 +1456,7 @@ with st.expander("📈 GARP screen — quality at fair price", expanded=False):
 # 5/10/20d forward returns (board_outcomes) by the outcomes refresh job.
 # this strip is the answer to "is the board actually right?"
 try:
-    tr = client.get("api/v1/board/track-record") or {}
+    tr = _cget("api/v1/board/track-record") or {}
     cells = tr.get("cells") or []
     if cells:
         import pandas as pd
