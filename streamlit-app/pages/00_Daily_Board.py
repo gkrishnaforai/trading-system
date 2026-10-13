@@ -20,21 +20,64 @@ from utils import render_top_nav, health_col, health_cfg, sym_md
 
 client = APIClient(api_config.python_worker_url, timeout=180)
 
+# static GET paths hit by the page — fetched in one parallel burst up
+# front so sections render top-to-bottom without serial waiting
+_BOARD_PATHS = [
+    "api/v1/board/posture",
+    "api/v1/board/daily",
+    "api/v1/board/macro-events",
+    "api/v1/board/calls",
+    "api/v1/board/put-calls",
+    "api/v1/board/defense",
+    "api/v1/board/hl-triggers",
+    "api/v1/board/fund-momentum",
+    "api/v1/board/incidents",
+    "api/v1/board/focus/members",
+    "api/v1/board/track-record",
+    "api/v1/board/jobs/catalog",
+    "api/v1/board/refresh/status",
+    "api/v1/board/hedge/suggest",
+]
+
+
+def _safe_get(p):
+    try:
+        return p, client.get(p) or {}
+    except Exception:
+        return p, {}
+
 
 @st.cache_data(ttl=120, show_spinner=False)
+def _prefetch_all() -> dict:
+    """One parallel burst for every static payload — total wait is the
+    slowest endpoint, not the sum of 14 serial calls."""
+    import concurrent.futures as cf
+    with cf.ThreadPoolExecutor(max_workers=8) as ex:
+        return dict(ex.map(_safe_get, _BOARD_PATHS))
+
+
 def _cget(path: str, params=None):
-    """Cached board GET — the page makes ~17 calls per rerun and most
-    payloads are job-refreshed snapshots, so 2min staleness is invisible
-    while collapsing refetch on every widget interaction."""
+    """Section read — served from the prefetched dict when static,
+    direct call for parameterized/dynamic paths."""
+    if params is None and path in _PRE:
+        return _PRE[path]
     try:
         return client.get(path, params=params) or {}
     except Exception:
         return {}
 
 
+def _bust():
+    _prefetch_all.clear()
+
+
 st.set_page_config(page_title="Daily Board", page_icon="🎯", layout="wide")
 render_top_nav()
 st.title("🎯 Daily Action Board")
+
+# title paints first, then one parallel burst warms every section
+with st.spinner("Loading board data…"):
+    _PRE = _prefetch_all()
 st.caption("Exits first, then deploys. Momentum flag × fundamentals × "
            "swing readiness × catalysts — market regime sets the posture, "
            "not the picks.")
@@ -139,7 +182,7 @@ _REFRESH_GROUPS = [
 def _kick(job: str):
     try:
         r = client.post(f"api/v1/board/refresh/{job}")
-        _cget.clear()
+        _bust()
         st.toast(f"{job}: {r.get('status', 'started')}")
     except Exception as e:
         st.error(f"{job} failed to start: {e}")
@@ -222,7 +265,7 @@ with st.expander("⚙️ Data & refresh — every input the board reads",
                                 json_data={"cron": _nc,
                                            "enabled": _ne})
                             _saved += 1
-                    _cget.clear()
+                    _bust()
                     st.toast(f"saved {_saved} schedule change(s)")
                 except Exception as _e:
                     st.error(f"save failed: {_e}")
@@ -259,7 +302,7 @@ with st.expander("⚙️ Data & refresh — every input the board reads",
             try:
                 st.session_state["lk_ref"] = client.post(
                     f"api/v1/board/symbol/{_sym}/refresh")
-                _cget.clear()
+                _bust()
             except Exception as _e:
                 st.error(str(_e)[:200])
         _t = st.session_state.get("lk_tech")
@@ -1189,7 +1232,7 @@ with st.expander("🎯 Focus book — members & scan", expanded=False):
             try:
                 client.post(f"api/v1/board/focus/{_new}",
                             params={"thesis": _th} if _th else None)
-                _cget.clear()
+                _bust()
                 st.toast(f"{_new} added — run Focus book scan")
                 st.rerun()
             except Exception as e:
