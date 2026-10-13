@@ -315,6 +315,46 @@ class PostgresPointInTimeFeatureStore:
                 v = None
             return v, ts, ccy
 
+    _FORWARD_ESTIMATE_COLUMNS = {"revenue_estimate", "eps_estimate"}
+
+    def get_forward_estimate(
+        self,
+        symbol: str,
+        as_of_ts: datetime,
+        column: str = "revenue_estimate",
+    ) -> Tuple[Optional[float], Optional[Any], Optional[int]]:
+        """Nearest forward fiscal-year consensus, point-in-time.
+
+        Picks the earliest fiscal_year >= year(as_of) — i.e. the current
+        unreported year — at the latest snapshot on or before as_of. This
+        is the number the street actually prices hypergrowth names on
+        (NBIS: FY26E $3.34B vs $1.36B TTM).
+        """
+        if column not in self._FORWARD_ESTIMATE_COLUMNS:
+            raise ValueError(f"invalid forward estimate column: {column}")
+        sql = f"""
+        SELECT {column}, as_of_date, fiscal_year
+        FROM fundamental_estimate_snapshots
+        WHERE symbol = :symbol
+          AND fiscal_period = 'annual'
+          AND fiscal_year >= EXTRACT(YEAR FROM CAST(:as_of AS date))::int
+          AND as_of_date <= CAST(:as_of AS date)
+          AND {column} IS NOT NULL
+        ORDER BY fiscal_year ASC, as_of_date DESC
+        LIMIT 1
+        """
+        with db.get_session() as session:
+            row = session.execute(
+                text(sql), {"symbol": symbol, "as_of": as_of_ts.date()}
+            ).fetchone()
+            if not row:
+                return None, None, None
+            try:
+                v = float(row[0]) if row[0] is not None else None
+            except Exception:
+                v = None
+            return v, row[1], int(row[2]) if row[2] is not None else None
+
     def get_macro_scalar(
         self,
         as_of_ts: datetime,

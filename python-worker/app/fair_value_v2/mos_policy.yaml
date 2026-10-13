@@ -6,20 +6,29 @@ version: 1
 # Base discounts follow the category's cash-flow predictability; adders
 # price the company-level risks the scenario can't fully capture.
 
-default_base: 0.25
+# Ranges, not points: the uncertainty adders position a name inside
+# its band (score = adders_total / range_scale), and high valuation
+# confidence pulls toward the low end — a clean, well-covered
+# compounder earns the floor; a levered partial-data name pays the top.
+default_low: 0.20
+default_high: 0.35
+range_scale: 0.25                 # adders_total that maps to band top
+high_confidence_dampen: 0.6       # high conf → score *= this
+low_confidence_floor: 0.5         # low conf → score >= this (uncertainty
+                                  # itself is a cost even without adders)
 
 categories:
-  financials:      {base: 0.15}   # regulated, audited book values
-  value:           {base: 0.15}
-  consumer:        {base: 0.20}   # steady demand, brand moats
-  healthcare:      {base: 0.20}   # defensive, but trial/patent risk
-  fintech:         {base: 0.30}   # platform economics, volatile revenue
-  growth:          {base: 0.25}
-  technology:      {base: 0.25}
-  ai_infra:        {base: 0.35}   # capital-intensive, capex-cycle risk
-  cyclical:        {base: 0.30}
-  pre_earnings:    {base: 0.45}   # negative-FCF, dilution-prone
-  unknown:         {base: 0.30}
+  financials:      {low: 0.10, high: 0.20}  # regulated, audited book values
+  value:           {low: 0.10, high: 0.20}
+  consumer:        {low: 0.12, high: 0.25}  # steady demand, brand moats
+  healthcare:      {low: 0.12, high: 0.25}  # defensive, trial/patent risk
+  fintech:         {low: 0.20, high: 0.35}  # platform economics, volatile rev
+  growth:          {low: 0.20, high: 0.30}
+  technology:      {low: 0.20, high: 0.30}
+  ai_infra:        {low: 0.30, high: 0.50}  # capital-intensive, capex-cycle
+  cyclical:        {low: 0.20, high: 0.40}
+  pre_earnings:    {low: 0.35, high: 0.55}  # negative-FCF, dilution-prone
+  unknown:         {low: 0.25, high: 0.40}
 
 # uncertainty adders — stacked on the category base, capped
 adders:

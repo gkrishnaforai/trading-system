@@ -128,6 +128,8 @@ class FeatureResolver:
             v, s, q = self._resolve_table_column(symbol, as_of_ts, d)
         elif t == "macro_column":
             v, s, q = self._resolve_macro_column(as_of_ts, d)
+        elif t == "forward_estimate":
+            v, s, q = self._resolve_forward_estimate(symbol, as_of_ts, d)
         elif t == "derived":
             return self._resolve_derived(symbol, as_of_ts, d)
         elif t == "coalesce":
@@ -369,6 +371,24 @@ class FeatureResolver:
             q["where"] = dict(where)
 
         src = f"{table}.{column}" if v is not None else None
+        return v, src, q
+
+    def _resolve_forward_estimate(self, symbol: str, as_of_ts: datetime, d: Dict[str, Any]) -> Tuple[Any, Optional[str], Dict[str, Any]]:
+        column = str(d.get("column") or "revenue_estimate")
+        try:
+            v, ts, fy = self._store.get_forward_estimate(
+                symbol, as_of_ts, column=column)
+        except ValueError:
+            return None, None, {"rejected": True,
+                                "reason": "column_not_allowed",
+                                "column": column}
+        q: Dict[str, Any] = {
+            "row_found": v is not None,
+            "timestamp": str(ts) if ts is not None else None,
+            "fiscal_year": fy,
+        }
+        src = (f"fundamental_estimate_snapshots.{column}[FY{fy}]"
+               if v is not None else None)
         return v, src, q
 
     def _resolve_coalesce(self, symbol: str, as_of_ts: datetime, d: Dict[str, Any]) -> Tuple[Any, Optional[str], Dict[str, Any]]:

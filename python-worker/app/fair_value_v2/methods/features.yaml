@@ -361,6 +361,16 @@ features:
         order_by: fiscal_date_ending
         where_not_null: true
 
+  # Forward (next unreported FY) consensus revenue — the base the street
+  # actually prices hypergrowth names on. Without it, EV/S on trailing
+  # sales collapses ramping names (NBIS: $1.36B TTM vs $3.34B FY26E).
+  revenue_forward:
+    type: coalesce
+    max_age_days: 200
+    sources:
+      - type: forward_estimate
+        column: revenue_estimate
+
   fcf_ttm:
     type: coalesce
     max_age_days: 400

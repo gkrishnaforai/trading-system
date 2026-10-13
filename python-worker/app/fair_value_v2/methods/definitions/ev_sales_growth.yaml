@@ -12,6 +12,7 @@ requires:
     - net_profit_margin_ttm
     - operating_margin_ttm
     - fcf_ttm
+    - revenue_forward
   series: []
 params:
   # EV/S is anchored through the identity EV/S ≈ implied P/E × net margin:
@@ -38,8 +39,22 @@ params:
   margin_floor: 0.03
   margin_cap: 0.60
   op_margin_haircut: 0.75
+  # contracted-ramp names (neoclouds et al.): when forward consensus
+  # revenue runs well ahead of trailing sales, the sales base is the
+  # forward number and the margin floor rises to a normalized-ramp
+  # level — a negative TTM margin reflects buildout D&A/interest, not
+  # the unit economics the contracted backlog converts at.
+  ramp_ratio: 1.5
+  margin_floor_ramp: 0.10
 formula:
   bindings:
+    # sales base: forward consensus when published (point-in-time,
+    # nearest unreported FY), else trailing. This is what turns
+    # NBIS-class names from 'broken' into 'conservative but sane'.
+    sales_base:
+      coalesce:
+        - {var: revenue_forward}
+        - {var: revenue_ttm}
     g:
       clamp:
         value: {var: revenue_growth_ttm}
@@ -63,13 +78,27 @@ formula:
         - {div: [{var: fcf_ttm}, {var: revenue_ttm}]}
         - {param: margin_default}
     margin_raw: {max: [{var: margin_net}, {var: margin_fcf}]}
+    # ramp-aware floor: nested ifs (and: is eager, div raises on 0) —
+    # only when forward sales exist AND run >= ramp_ratio ahead of TTM
+    # does the negative-margin floor move to the ramp level.
+    margin_floor_eff:
+      if:
+        cond: {gt: [{var: revenue_ttm}, 0]}
+        then:
+          if:
+            cond:
+              gte: [{div: [{var: sales_base}, {var: revenue_ttm}]},
+                    {param: ramp_ratio}]
+            then: {param: margin_floor_ramp}
+            else: {param: margin_floor}
+        else: {param: margin_floor}
     # the floor is a pre-earnings benefit-of-doubt ONLY — a real positive
     # margin, however thin, is kept as-is (flooring a 0.3% distributor to
     # 3% would inflate its revenue-heavy base 10x)
     margin_src:
       if:
         cond: {lt: [{var: margin_raw}, 0]}
-        then: {param: margin_floor}
+        then: {var: margin_floor_eff}
         else: {min: [{var: margin_raw}, {param: margin_cap}]}
     pe_base_scenario:
       clamp:
@@ -108,44 +137,44 @@ formula:
     if:
       cond:
         or:
-          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: sales_base}, 0]
           - lte: [{var: shares_outstanding}, 0]
       then: null
       else:
         div:
-          - sub: [{mul: [{var: revenue_ttm}, {var: evs_base}]}, {var: net_debt}]
+          - sub: [{mul: [{var: sales_base}, {var: evs_base}]}, {var: net_debt}]
           - var: shares_outstanding
   bear_fair_price:
     if:
       cond:
         or:
-          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: sales_base}, 0]
           - lte: [{var: shares_outstanding}, 0]
       then: null
       else:
         div:
-          - sub: [{mul: [{var: revenue_ttm}, {var: evs_bear}]}, {var: net_debt}]
+          - sub: [{mul: [{var: sales_base}, {var: evs_bear}]}, {var: net_debt}]
           - var: shares_outstanding
   bull_fair_price:
     if:
       cond:
         or:
-          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: sales_base}, 0]
           - lte: [{var: shares_outstanding}, 0]
       then: null
       else:
         div:
-          - sub: [{mul: [{var: revenue_ttm}, {var: evs_bull}]}, {var: net_debt}]
+          - sub: [{mul: [{var: sales_base}, {var: evs_bull}]}, {var: net_debt}]
           - var: shares_outstanding
   explosive_fair_price:
     if:
       cond:
         or:
-          - lte: [{var: revenue_ttm}, 0]
+          - lte: [{var: sales_base}, 0]
           - lte: [{var: shares_outstanding}, 0]
       then: null
       else:
         div:
-          - sub: [{mul: [{var: revenue_ttm}, {var: evs_explosive}]}, {var: net_debt}]
+          - sub: [{mul: [{var: sales_base}, {var: evs_explosive}]}, {var: net_debt}]
           - var: shares_outstanding
 validations: []

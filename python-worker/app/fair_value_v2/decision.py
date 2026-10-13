@@ -9,7 +9,7 @@ mos_policy.yaml — no judgment calls in the math.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -34,18 +34,31 @@ def _load_scenarios() -> Dict[str, Any]:
         return {}
 
 
-def _mos_base_for(cats: Dict[str, Any],
-                  archetypes: List[str],
-                  default_base: float) -> float:
-    """Strictest applicable base across the matched archetype set — a
-    name that is partly ai_infra shouldn't earn the cheaper technology
-    discount. Single-archetype names reduce to their category base."""
-    base = default_base
+def _mos_range_for(cats: Dict[str, Any],
+                   archetypes: List[str],
+                   default_low: float,
+                   default_high: float) -> Tuple[float, float]:
+    """Strictest applicable MoS band across the matched archetype set —
+    a name that is partly ai_infra can't hide behind the cheaper
+    technology band. Defaults apply only when no category matched;
+    {base: x} entries treated as a point range."""
+    lo, hi = None, None
     for a in archetypes or []:
         spec = cats.get(a)
-        if spec is not None:
-            base = max(base, float(spec.get("base", default_base)))
-    return base
+        if spec is None:
+            continue
+        if "low" in spec or "high" in spec:
+            l = float(spec.get("low", default_low))
+            h = float(spec.get("high", default_high))
+        elif "base" in spec:
+            l = h = float(spec["base"])
+        else:
+            continue
+        lo = l if lo is None else max(lo, l)
+        hi = h if hi is None else max(hi, h)
+    if lo is None:
+        return default_low, default_high
+    return lo, max(lo, hi)
 
 
 def _macro_scenarios(scen_cfg: Dict[str, Any],
@@ -125,36 +138,62 @@ def decide(category: Optional[str],
     archs = list(archetypes) if archetypes else [cat]
     if cat not in archs:
         archs.insert(0, cat)
-    base = _mos_base_for(cats, archs,
-                         float(policy.get("default_base", 0.25)))
+    low, high = _mos_range_for(
+        cats, archs,
+        float(policy.get("default_low", 0.20)),
+        float(policy.get("default_high", 0.35)))
 
-    # uncertainty adders — each a measurable risk the scenario may miss
+    fv_ref = expected_fv or fair_value
+
+    # confidence roll first — it positions the MoS within the band
+    ok_n = len([m for m in (method_results or [])
+                if getattr(m, "status", None) == "ok"
+                or (isinstance(m, dict) and m.get("status") == "ok")])
+    hi_spec = (policy.get("confidence") or {}).get("high_needs") or {}
+    me_spec = (policy.get("confidence") or {}).get("medium_needs") or {}
+    def _ok_for(spec):
+        return ok_n >= int(spec.get("min_ok_methods", 99)) and not any(
+            f in (quality_flags or []) for f in spec.get("forbid_flags", []))
+    confidence = ("high" if fv_ref and _ok_for(hi_spec)
+                  else "medium" if fv_ref and _ok_for(me_spec)
+                  else "low")
+
+    # uncertainty adders — each a measurable risk the scenario may miss;
+    # their total positions the name inside its category band
     applied: List[str] = []
-    mos = base
+    adders_total = 0.0
     fcf = scalars.get("fcf_ttm")
     try:
         if fcf is not None and float(fcf) <= 0:
-            mos += adders.get("negative_fcf", 0); applied.append("negative_fcf")
+            adders_total += adders.get("negative_fcf", 0)
+            applied.append("negative_fcf")
     except (TypeError, ValueError):
         pass
     try:
         if float(scalars.get("total_debt") or 0) > \
                 2 * float(scalars.get("cash_and_equivalents") or 0) \
                 and float(scalars.get("total_debt") or 0) > 0:
-            mos += adders.get("high_leverage", 0); applied.append("high_leverage")
+            adders_total += adders.get("high_leverage", 0)
+            applied.append("high_leverage")
     except (TypeError, ValueError):
         pass
     for flag, key in (("scenarios_partial", "scenarios_partial"),
                       ("no_scenarios", "no_scenarios"),
                       ("extreme_gap", "extreme_gap")):
         if flag in (quality_flags or []):
-            mos += adders.get(key, 0); applied.append(flag)
+            adders_total += adders.get(key, 0); applied.append(flag)
     if scalars.get("analyst_count") in (None, 0):
-        mos += adders.get("no_analyst_coverage", 0)
+        adders_total += adders.get("no_analyst_coverage", 0)
         applied.append("no_analyst_coverage")
-    mos = round(min(mos, cap), 4)
 
-    fv_ref = expected_fv or fair_value
+    score = min(1.0, adders_total /
+                float(policy.get("range_scale", 0.25) or 0.25))
+    if confidence == "high":
+        score *= float(policy.get("high_confidence_dampen", 0.6))
+    elif confidence == "low":
+        score = max(score, float(policy.get("low_confidence_floor", 0.5)))
+    mos = round(min(low + (high - low) * score, cap), 4)
+
     buy_below = round(fv_ref * (1 - mos), 4) if fv_ref else None
 
     upside = None
@@ -175,22 +214,9 @@ def decide(category: Optional[str],
     if fv_ref is None:
         risk_flags.append("no_fair_value")
 
-    # confidence roll — policy thresholds over flags + method coverage
-    ok_n = len([m for m in (method_results or [])
-                if getattr(m, "status", None) == "ok"
-                or (isinstance(m, dict) and m.get("status") == "ok")])
-    hi = (policy.get("confidence") or {}).get("high_needs") or {}
-    me = (policy.get("confidence") or {}).get("medium_needs") or {}
-    def _ok_for(spec):
-        return ok_n >= int(spec.get("min_ok_methods", 99)) and not any(
-            f in (quality_flags or []) for f in spec.get("forbid_flags", []))
-    confidence = ("high" if fv_ref and _ok_for(hi)
-                  else "medium" if fv_ref and _ok_for(me)
-                  else "low")
-
     return {
         "mos_pct": mos,
-        "mos_base": base,
+        "mos_band": [low, high],
         "mos_adders": applied,
         "buy_below": buy_below,
         "fv_upside_pct": upside,

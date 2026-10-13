@@ -207,8 +207,12 @@ class FairValueV2Resolver:
         except Exception:
             spot = None
         if spot and result.fair_value:
-            gap = abs(float(result.fair_value) / spot - 1.0)
-            if gap > 1.5 and "extreme_gap" not in quality_flags:
+            ratio = float(result.fair_value) / spot
+            # asymmetric-insanity guard: +150% blowout OR a model claiming
+            # the business is worth <35% of price (NBIS-class input
+            # breakage) are equally suspect data, not real signals.
+            if (ratio - 1.0 > 1.5 or ratio < 0.35) \
+                    and "extreme_gap" not in quality_flags:
                 quality_flags.append("extreme_gap")
 
         # decision layer — fair value → buy price. mos_policy.yaml sets
