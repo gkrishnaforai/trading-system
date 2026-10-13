@@ -184,6 +184,36 @@ class FinnhubClient:
             logger.warning(f"Failed to fetch earnings for {symbol} from Finnhub: {e}")
             return []
 
+    def fetch_economic_calendar(self, start: str, end: str) -> List[Dict[str, Any]]:
+        """Macro release calendar — /calendar/economic (free tier).
+
+        Returns [{event, date, time, impact, country, actual, estimate, prev}]
+        so scheduled dates (CPI/PPI/NFP/FOMC/PCE) can be verified against a
+        live source rather than trusting hardcoded tables."""
+        try:
+            data = self._get("/calendar/economic", {"from": start, "to": end})
+            rows = (data or {}).get("economicCalendar") or []
+            out: List[Dict[str, Any]] = []
+            for item in rows:
+                ts = item.get("time") or ""
+                out.append(
+                    {
+                        "event": item.get("event", ""),
+                        "date": (ts or item.get("date") or "")[:10],
+                        "time": ts,
+                        "impact": item.get("impact"),
+                        "country": item.get("country"),
+                        "actual": item.get("actual"),
+                        "estimate": item.get("estimate"),
+                        "prev": item.get("prev"),
+                        "source": "finnhub",
+                    }
+                )
+            return [r for r in out if r["date"]]
+        except Exception as e:
+            logger.warning(f"Failed to fetch economic calendar from Finnhub: {e}")
+            return []
+
     def fetch_fundamentals(self, symbol: str) -> Dict[str, Any]:
         # Finnhub free endpoints are limited; reuse profile2 fields as a fundamentals-like payload.
         return self.fetch_symbol_details(symbol)

@@ -291,6 +291,14 @@ async def _j_fred_macro():
     return await asyncio.to_thread(_run)
 
 
+async def _j_econ_cal_verify():
+    """Macro calendar verification — Finnhub econ calendar reconciled
+    against the hardcoded BLS/Fed dates. Catches reschedules (shutdowns,
+    bureau moves) so boards show the real date, not the stale one."""
+    from app.market_events.verify import verify_and_store
+    return await asyncio.to_thread(verify_and_store)
+
+
 async def _j_etf_flows():
     """Daily AUM snapshot per sector/theme ETF — real fund flows
     accrue as ΔAUM − market-explained drift."""
@@ -545,6 +553,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "event-day":     ("Macro event judge", _j_event_day),
     "morning-regime": ("Morning regime engine", _j_morning_regime),
     "fred-macro":   ("FRED structural layer", _j_fred_macro),
+    "econ-cal-verify": ("Macro calendar verification",
+                        _j_econ_cal_verify),
     "etf-flows":    ("ETF AUM → fund flows", _j_etf_flows),
     "strategy":     ("Portfolio strategy snapshot", _j_strategy),
     "hidden-gems":  ("Hidden gems scanner", _j_hidden_gems),
@@ -571,6 +581,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
 # order matters for 'all': posture first, then signals, then evals
 # (evals already tail-refresh momentum+flywheel — harmless overlap)
 _ALL_ORDER = ["regime", "momentum", "morning-regime", "fred-macro",
+              "econ-cal-verify",
               "etf-flows",
               "strategy", "event-day",
               "flywheel", "fund-flags", "alerts",
@@ -594,7 +605,7 @@ _JOB_TIMEOUT = {
     "daily-puts": 5 * 60, "spec-incubator": 3 * 60,
     "meta": 5 * 60, "event-day": 3 * 60, "morning-regime": 4 * 60,
     "etf-flows": 2 * 60, "strategy": 5 * 60, "hidden-gems": 5 * 60,
-    "fred-macro": 3 * 60,
+    "fred-macro": 3 * 60, "econ-cal-verify": 2 * 60,
     "fund-journal": 60 * 60, "hedge-universe": 15 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,

@@ -37,6 +37,11 @@ export type MacroEvent = {
   when?: string
   date?: string
   importance?: string
+  rescheduled?: boolean
+  rescheduled_from?: string
+  verified?: boolean
+  unconfirmed?: boolean
+  days_away?: number
   [k: string]: unknown
 }
 

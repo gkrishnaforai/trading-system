@@ -101,8 +101,70 @@ def upcoming_macro_events(days: int = 45,
             "08:30", "high", est=True)
         add("PCE inflation", "pce", _last_weekday(mm, 4),
             "08:30", "high", est=True)
+    evts = _apply_verified_overrides(evts, today, days)
     evts.sort(key=lambda e: e["date"])
     return evts
+
+
+def _apply_verified_overrides(evts: list, today: date, days: int) -> list:
+    """Overlay provider-verified dates on the hardcoded baseline.
+
+    When Finnhub's calendar disagrees with the baked-in date for a kind
+    (bureau reschedule, shutdown delay, holiday shift) the verified date
+    wins and the entry is flagged `rescheduled`/`rescheduled_from`.
+    Verified dates with no baseline counterpart are appended outright."""
+    try:
+        from .verify import load_overrides
+        overrides = load_overrides(days)
+    except Exception:
+        return evts
+    if not overrides:
+        return evts
+
+    used: set = set()  # (kind, date) pairs already consumed
+    out: list = []
+    for e in evts:
+        ver = overrides.get(e["kind"])
+        if not ver:
+            out.append(e)
+            continue
+        if e["date"] in ver:
+            e = {**e, "verified": True}
+            used.add((e["kind"], e["date"]))
+            out.append(e)
+            continue
+        # baseline date absent from provider schedule — nearest verified
+        # date within ±20d is a reschedule; anything else is unconfirmed
+        base = date.fromisoformat(e["date"])
+        cand = min(
+            ((d, abs((date.fromisoformat(d) - base).days))
+             for d in ver if (e["kind"], d) not in used),
+            key=lambda p: p[1], default=None)
+        if cand and cand[1] <= 20:
+            row = ver[cand[0]]
+            used.add((e["kind"], cand[0]))
+            out.append({**e, "date": cand[0],
+                        "time_et": row.get("time_et") or e["time_et"],
+                        "days_away": max(0, (date.fromisoformat(cand[0])
+                                             - today).days),
+                        "rescheduled": True, "rescheduled_from": e["date"],
+                        "verified": True})
+        else:
+            out.append({**e, "unconfirmed": True})
+    # provider events with no baseline counterpart — new releases
+    for kind, dates in overrides.items():
+        for d, row in dates.items():
+            if (kind, d) not in used:
+                base = date.fromisoformat(d)
+                gap = (base - today).days
+                if -1 <= gap <= days:
+                    out.append({"name": row["name"], "kind": kind,
+                                "date": d,
+                                "time_et": row.get("time_et") or "08:30",
+                                "severity": row.get("severity") or "high",
+                                "days_away": max(0, gap), "est": False,
+                                "verified": True, "source": "finnhub"})
+    return out
 
 
 def resolve_current_market_event(

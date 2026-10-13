@@ -164,13 +164,23 @@ export default async function RegimePage() {
         {evList.length > 0 && (
           <Section title="On the calendar" subtitle="macro events">
             <div className="divide-y divide-transparent">
-              {evList.slice(0, 8).map((e, i) => (
-                <Kv
-                  key={i}
-                  k={String(e.title ?? e.name ?? 'event')}
-                  v={e.when ?? e.date ?? e.importance ?? ''}
-                />
-              ))}
+              {evList.slice(0, 8).map((e, i) => {
+                const moved = e.rescheduled && e.rescheduled_from
+                const dateStr = e.when ?? e.date ?? e.importance ?? ''
+                const tag =
+                  e.days_away === 0 ? 'today'
+                    : e.days_away === 1 ? 'tomorrow'
+                      : typeof e.days_away === 'number' ? `${e.days_away}d` : ''
+                return (
+                  <Kv
+                    key={i}
+                    k={String(e.title ?? e.name ?? 'event') +
+                      (e.unconfirmed ? ' ·?' : '')}
+                    v={`${dateStr}${tag ? ` · ${tag}` : ''}` +
+                      (moved ? ` ⟵ was ${e.rescheduled_from}` : '')}
+                  />
+                )
+              })}
             </div>
           </Section>
         )}

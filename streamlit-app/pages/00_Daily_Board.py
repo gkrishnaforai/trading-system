@@ -812,10 +812,14 @@ if p:
                     _tag = ("**today**" if e["days_away"] == 0 else
                             "**tomorrow**" if e["days_away"] == 1 else
                             f"in {e['days_away']}d")
+                    _mv = (f" 🔀 moved from `{e['rescheduled_from']}`"
+                           if e.get("rescheduled") else "")
                     st.caption(
                         f"`{e['date']}` {e['name']} {_tag}"
                         + (" ⚠️" if e["severity"] == "extreme" else "")
-                        + (" *(est)*" if e.get("est") else ""))
+                        + (" *(est)*" if e.get("est") else "")
+                        + (" *(unconfirmed)*" if e.get("unconfirmed") else "")
+                        + _mv)
 
 # --- 🎯 today's swing calls — the distilled top-3 with plans ------------------
 try:
