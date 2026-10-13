@@ -15,6 +15,7 @@ import os
 from abc import ABC, abstractmethod
 
 from app.database import db
+from app.config import settings
 from app.observability.logging import get_logger
 from app.observability.metrics import get_metrics
 
@@ -57,31 +58,29 @@ class EarningsCalendarPlugin:
     async def _fetch_fmp_earnings(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Fetch earnings data from FMP API"""
         try:
-            api_key = config.get('fmp_api_key')
+            api_key = config.get('fmp_api_key') or settings.fmp_api_key
             if not api_key:
                 logger.warning("⚠️ No FMP API key provided")
                 return []
-            
-            url = f"https://financialmodelingprep.com/api/v3/earning_calendar"
-            headers = {'apikey': api_key}
-            
+
+            url = f"{settings.fmp_base_url}/earnings-calendar"
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as response:
+                async with session.get(url, params={'apikey': api_key}) as response:
                     if response.status == 200:
                         data = await response.json()
                         return self._transform_earnings_data(data, 'fmp')
                     else:
                         logger.error(f"❌ FMP API error: {response.status}")
                         return []
-                        
+
         except Exception as e:
             logger.error(f"❌ Error fetching FMP earnings: {e}")
             return []
-    
+
     async def _fetch_av_earnings(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Fetch earnings data from Alpha Vantage API"""
         try:
-            api_key = config.get('alpha_vantage_api_key')
+            api_key = config.get('alpha_vantage_api_key') or settings.alphavantage_api_key
             if not api_key:
                 logger.warning("⚠️ No Alpha Vantage API key provided")
                 return []
