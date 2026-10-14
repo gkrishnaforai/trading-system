@@ -114,6 +114,8 @@ class FairValueRunner:
             "revenue_growth_ttm",
             "roic_ttm",
             "sbc_to_revenue_ttm",
+            "eps_ttm",
+            "eps_forward",
         ]
 
     def _required_scalar_issues(

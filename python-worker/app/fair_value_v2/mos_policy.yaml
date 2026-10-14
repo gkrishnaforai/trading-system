@@ -60,6 +60,8 @@ adders:
                                   # expected value biased low, signal noise
   single_method: 0.03             # only one method could price the name —
                                   # no cross-check, dispersion unfireable
+  eps_basis_gap: 0.03             # forward EPS >1.5x trailing — methods
+                                  # straddle two earnings horizons
 
 cap: 0.60                       # beyond this the name is uninvestable,
                                 # not cheap — the gate flags it instead

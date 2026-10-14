@@ -74,13 +74,19 @@ formula:
         - {div: [{var: fcf_ttm}, {var: revenue_ttm}]}
         - {param: margin_default}
     margin_raw: {max: [{var: margin_net}, {var: margin_fcf}]}
+    midcycle_clamped:
+      clamp:
+        value:
+          coalesce: [{var: net_profit_margin_midcycle}, {var: margin_raw}]
+        lo: -3.0
+        hi: 1.0
     margin_norm:
       min:
         - var: margin_raw
         - div:
             - add:
                 - var: margin_raw
-                - coalesce: [{var: net_profit_margin_midcycle}, {var: margin_raw}]
+                - var: midcycle_clamped
             - 2
     margin_src:
       if:

@@ -971,3 +971,68 @@ def test_23_analyst_coverage_survives_negative_eps_series():
         "NVDA", _dt.datetime.now(_dt.timezone.utc), "eps_est_analysts",
         {"type": "eps_estimate_series", "field": "analysts"})
     assert v2 == 30
+
+
+# ---------------- 24. MRVL audit regressions --------------------------
+
+def test_24_pe_technology_dynamic_prices_forward_basis_when_available():
+    # the dynamic multiple embeds growth — it is a forward multiple and
+    # must sit on forward EPS when published, not depressed GAAP trailing
+    s = {"eps_ttm": 3.07, "eps_forward": 6.75, "eps_growth_ttm": -0.29,
+         "revenue_growth_ttm": 0.37, "forward_growth": 0.40,
+         "market_cap": 2.1e11, "operating_margin_ttm": 0.16,
+         "tnx_yield": 4.0}
+    out_fwd = _eval("pe_technology_dynamic", s)
+    s_ttm = dict(s); del s_ttm["eps_forward"]
+    out_ttm = _eval("pe_technology_dynamic", s_ttm)
+    # forward basis lifts the value roughly by the eps ratio
+    assert out_fwd["base"] == pytest.approx(
+        out_ttm["base"] * 6.75 / 3.07, rel=1e-6)
+    # neither EPS basis → clean null, not an exception
+    s_none = dict(s_ttm); del s_none["eps_ttm"]
+    out_none = _eval("pe_technology_dynamic", s_none)
+    assert out_none["base"] is None
+
+
+def test_24_midcycle_garbage_is_clamped_not_propagated():
+    # NBIS's financial_ratios print +5523%/-700% "margins" — the midcycle
+    # average must be clamped before it can lift margin_norm
+    s = dict(BASE, net_profit_margin_midcycle=14.5986)
+    out_bad = _eval("ev_sales_growth", s)
+    s_ok = dict(BASE, net_profit_margin_midcycle=0.18)
+    out_ok = _eval("ev_sales_growth", s_ok)
+    # clamped to 1.0 → avg of (raw, min(raw,1)) — bounded difference,
+    # not a 70x margin-driven blowup
+    assert out_bad["base"] <= out_ok["base"] * 3.0
+    # deep negative garbage likewise bounded
+    s_neg = dict(BASE, net_profit_margin_midcycle=-7.0)
+    out_neg = _eval("ev_sales_growth", s_neg)
+    assert out_neg["base"] is not None and out_neg["base"] > 0
+
+
+def test_24_eps_basis_gap_adder_fires_on_horizon_mix():
+    s = dict(OK_IN); s.update({"eps_forward": 6.75, "eps_ttm": 3.07})
+    d = decide("technology", 190.0, 185.0,
+               {"bear": 130.0, "base": 190.0, "bull": 230.0,
+                "explosive": 260.0},
+               [], 245.0, [_mr(190.0, inputs=s), _mr(200.0, inputs=s)],
+               scalars=s)
+    assert "eps_basis_gap" in (d.get("mos_adders") or [])
+    assert "eps_basis_gap" in d["business_uncertainty"]["drivers"]
+    # no gap → no flag
+    s2 = dict(OK_IN); s2.update({"eps_forward": 3.2, "eps_ttm": 3.07})
+    d2 = decide("technology", 190.0, 185.0,
+                {"bear": 130.0, "base": 190.0, "bull": 230.0,
+                 "explosive": 260.0},
+                [], 245.0, [_mr(190.0, inputs=s2), _mr(200.0, inputs=s2)],
+                scalars=s2)
+    assert "eps_basis_gap" not in (d2.get("mos_adders") or [])
+
+
+def test_24_risk_flags_carry_axis_labels():
+    d = decide("technology", 100.0, 95.0,
+               {"bear": 50.0, "base": 100.0, "bull": 130.0,
+                "explosive": 150.0},
+               [], 200.0, [_mr(100.0), _mr(105.0)], scalars=dict(OK_IN))
+    axes = d.get("risk_flag_axes") or {}
+    assert axes.get("bear_loss_severe") == "valuation"

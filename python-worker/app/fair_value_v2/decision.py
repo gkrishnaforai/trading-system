@@ -213,6 +213,17 @@ def decide(category: Optional[str],
             applied.append("high_leverage")
     except (TypeError, ValueError):
         pass
+    # EPS horizon gap — methods split between trailing and forward bases;
+    # when forward runs >1.5x trailing the mix is mid-recovery and the
+    # blend quietly straddles two different earnings definitions
+    try:
+        _ef = scalars.get("eps_forward"); _et = scalars.get("eps_ttm")
+        if (_ef is not None and _et is not None
+                and float(_et) > 0 and float(_ef) > 1.5 * float(_et)):
+            adders_total += adders.get("eps_basis_gap", 0)
+            applied.append("eps_basis_gap")
+    except (TypeError, ValueError):
+        pass
     for flag, key in (("scenarios_partial", "scenarios_partial"),
                       ("forward_revenue_inflated", "forward_revenue_inflated"),
                       ("scenario_degenerate", "scenario_degenerate"),
@@ -380,6 +391,8 @@ def decide(category: Optional[str],
                "forward_revenue_inflated"):
         if _f in (quality_flags or []):
             bu_drivers.append(_f)
+    if "eps_basis_gap" in applied:
+        bu_drivers.append("eps_basis_gap")
     business_uncertainty = {
         "score": ("high" if len(bu_drivers) >= 3 or fr == "critical"
                   else "moderate" if bu_drivers else "low"),
@@ -416,6 +429,12 @@ def decide(category: Optional[str],
         risk_flags.append("uninvestable_mos")
     if fv_ref is None:
         risk_flags.append("no_fair_value")
+    # axis labels — bear_loss_severe/uninvestable_mos are price-vs-worth
+    # conditions (valuation risk), no_fair_value is an input problem.
+    # Business risk lives in business_uncertainty/mos_adders, not here.
+    _axis = {"bear_loss_severe": "valuation",
+             "uninvestable_mos": "valuation",
+             "no_fair_value": "data"}
 
     return {
         "mos_pct": mos,
@@ -431,6 +450,7 @@ def decide(category: Optional[str],
         "valuation_uncertainty": valuation_uncertainty,
         "business_uncertainty": business_uncertainty,
         "risk_flags": risk_flags,
+        "risk_flag_axes": {f: _axis.get(f, "business") for f in risk_flags},
         "fv_reference": "expected" if expected_fv else "base",
         "spot": spot,
         "demand_profile": demand,

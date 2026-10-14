@@ -3,7 +3,6 @@ version: 2
 category: technology
 requires:
   scalars:
-    - eps_ttm
     - eps_growth_ttm
     - revenue_growth_ttm
     - market_cap
@@ -11,6 +10,8 @@ requires:
     - tnx_yield
   optional_scalars:
     - forward_growth
+    - eps_forward
+    - eps_ttm
   series: []
 params:
   pe_floor: 10.0
@@ -46,14 +47,22 @@ params:
   bull_eps_shock: 1.06      # earnings miss/beat AND a repriced multiple
   explosive_eps_shock: 1.15
 formula:
+  bindings:
+    # the dynamic multiple embeds growth — it is a forward multiple and
+    # belongs on forward earnings when published; trailing is the
+    # conservative fallback, not the priced basis
+    eps_eff:
+      coalesce:
+        - {var: eps_forward}
+        - {var: eps_ttm}
   fair_price:
     if:
       cond:
-        lte: [{var: eps_ttm}, 0]
+        lte: [{coalesce: [{var: eps_eff}, -1]}, 0]
       then: null
       else:
         mul:
-          - var: eps_ttm
+          - var: eps_eff
           - clamp:
               value:
                 add:
@@ -106,11 +115,11 @@ formula:
   bear_fair_price:
     if:
       cond:
-        lte: [{var: eps_ttm}, 0]
+        lte: [{coalesce: [{var: eps_eff}, -1]}, 0]
       then: null
       else:
         mul:
-          - var: eps_ttm
+          - var: eps_eff
           - {param: bear_eps_shock}
           - clamp:
               value:
@@ -166,11 +175,11 @@ formula:
   bull_fair_price:
     if:
       cond:
-        lte: [{var: eps_ttm}, 0]
+        lte: [{coalesce: [{var: eps_eff}, -1]}, 0]
       then: null
       else:
         mul:
-          - var: eps_ttm
+          - var: eps_eff
           - {param: bull_eps_shock}
           - clamp:
               value:
@@ -226,11 +235,11 @@ formula:
   explosive_fair_price:
     if:
       cond:
-        lte: [{var: eps_ttm}, 0]
+        lte: [{coalesce: [{var: eps_eff}, -1]}, 0]
       then: null
       else:
         mul:
-          - var: eps_ttm
+          - var: eps_eff
           - {param: explosive_eps_shock}
           - clamp:
               value:

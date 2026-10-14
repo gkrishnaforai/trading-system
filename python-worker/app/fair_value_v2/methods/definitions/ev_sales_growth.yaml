@@ -114,13 +114,22 @@ formula:
         - {div: [{var: fcf_ttm}, {var: revenue_ttm}]}
         - {param: margin_default}
     margin_raw: {max: [{var: margin_net}, {var: margin_fcf}]}
+    # midcycle comes off financial_ratios which carries corrupt rows for
+    # some names (NBIS: +5523%/-700% printed) — clamp to a sane band
+    # before it can lift or sink the normalised margin
+    midcycle_clamped:
+      clamp:
+        value:
+          coalesce: [{var: net_profit_margin_midcycle}, {var: margin_raw}]
+        lo: -3.0
+        hi: 1.0
     margin_norm:
       min:
         - var: margin_raw
         - div:
             - add:
                 - var: margin_raw
-                - coalesce: [{var: net_profit_margin_midcycle}, {var: margin_raw}]
+                - var: midcycle_clamped
             - 2
     # ramp-aware floor: nested ifs (and: is eager, div raises on 0) —
     # only when forward sales exist AND run >= ramp_ratio ahead of TTM
