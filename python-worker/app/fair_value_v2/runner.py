@@ -496,10 +496,13 @@ class FairValueRunner:
                 shares_diluted=rs.get("shares_diluted"),
                 realized_growth=rs.get("revenue_growth_ttm"),
                 consensus_growth_pct_1y=rs.get("forward_growth_pct_1y"))
-            if reverse.get("flag"):
+            _rflag = reverse.get("flag") or (
+                reverse.get("reason")
+                if reverse.get("status") != "ok" else None)
+            if _rflag:
                 warnings.append({
                     "level": "info", "scope": "reverse_dcf",
-                    "reason": reverse["flag"],
+                    "reason": _rflag,
                     "details": {"implied_fcf_growth":
                                 reverse.get("implied_fcf_growth")}})
         except Exception as exc:

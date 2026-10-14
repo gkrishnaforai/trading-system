@@ -455,11 +455,18 @@ class FeatureResolver:
                                 "field": field}
         s = self._store.get_eps_estimate_series(symbol, as_of_ts)
         v = (s or {}).get(field)
+        cov = None
+        if field == "analysts" and v is None:
+            # coverage does not require a positive-EPS window — a
+            # loss-maker can still be widely covered
+            cov = self._store.get_estimate_coverage(symbol, as_of_ts)
+            v = (cov or {}).get("analysts")
         window = (f"FY{s['start_fy']}-FY{s['end_fy']}"
-                  if s else None)
+                  if s else
+                  (f"FY{cov['fiscal_year']}" if cov else None))
         q: Dict[str, Any] = {
-            "row_found": s is not None,
-            "timestamp": str(s["as_of"]) if s and s.get("as_of") else None,
+            "row_found": s is not None or cov is not None,
+            "timestamp": str((s or cov or {}).get("as_of") or "") or None,
             "window": window,
         }
         src = (f"fundamental_estimate_snapshots.eps_estimate[{window}]"

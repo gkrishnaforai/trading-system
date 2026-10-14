@@ -476,6 +476,39 @@ class PostgresPointInTimeFeatureStore:
             "as_of": start[3] or end[3],
         }
 
+    def get_estimate_coverage(
+        self,
+        symbol: str,
+        as_of_ts: datetime,
+    ) -> Optional[Dict[str, Any]]:
+        """Analyst coverage count — nearest forward annual fiscal year,
+        point-in-time. Independent of EPS sign: analysts covering a
+        loss-maker still count as coverage (the eps series gates on
+        positive estimates because it feeds PEG math; coverage does
+        not have that constraint)."""
+        sql = """
+        SELECT DISTINCT ON (fiscal_year)
+            fiscal_year, analyst_count, as_of_date
+        FROM fundamental_estimate_snapshots
+        WHERE symbol = :symbol
+          AND fiscal_period = 'annual'
+          AND fiscal_year >= EXTRACT(YEAR FROM CAST(:as_of AS date))::int
+          AND as_of_date <= CAST(:as_of AS date)
+          AND analyst_count IS NOT NULL
+        ORDER BY fiscal_year, as_of_date DESC
+        """
+        with db.get_session() as session:
+            row = session.execute(
+                text(sql), {"symbol": symbol, "as_of": as_of_ts.date()}
+            ).fetchone()
+        if not row or row[1] is None:
+            return None
+        return {
+            "analysts": int(row[1]),
+            "fiscal_year": int(row[0]),
+            "as_of": row[2],
+        }
+
     def get_macro_scalar(
         self,
         as_of_ts: datetime,

@@ -931,3 +931,43 @@ def test_23_new_flags_charge_mos_and_uncertainty():
     assert "scenario_degenerate" in d["valuation_uncertainty"]["drivers"]
     assert "single_method" in d["valuation_uncertainty"]["drivers"]
     assert "forward_revenue_inflated" in d["business_uncertainty"]["drivers"]
+
+
+def test_23_analyst_coverage_survives_negative_eps_series():
+    # NBIS regression: analysts forecasting losses still count as
+    # coverage — the eps-series positivity gate must not swallow the
+    # analysts field (it exists for PEG math, not coverage)
+    import datetime as _dt
+
+    class _Store:
+        def get_eps_estimate_series(self, symbol, as_of):
+            return None  # negative start_eps → series rejected
+        def get_estimate_coverage(self, symbol, as_of):
+            return {"analysts": 7, "fiscal_year": 2026,
+                    "as_of": as_of.date()}
+
+    fr = FeatureResolver(
+        feature_store=_Store(),
+        features_yaml_path="app/fair_value_v2/methods/features.yaml")
+    v, src, q = fr._resolve_one(
+        "NBIS", _dt.datetime.now(_dt.timezone.utc), "eps_est_analysts",
+        {"type": "eps_estimate_series", "field": "analysts"})
+    assert v == 7
+    assert "FY2026" in (src or "")
+
+    class _StorePos:
+        def get_eps_estimate_series(self, symbol, as_of):
+            return {"start_eps": 5.0, "end_eps": 9.0, "years": 3,
+                    "analysts": 30, "start_fy": 2026, "end_fy": 2029,
+                    "as_of": as_of.date()}
+        def get_estimate_coverage(self, symbol, as_of):
+            raise AssertionError("coverage fallback must not run when "
+                                 "the series already supplies analysts")
+
+    fr2 = FeatureResolver(
+        feature_store=_StorePos(),
+        features_yaml_path="app/fair_value_v2/methods/features.yaml")
+    v2, src2, _ = fr2._resolve_one(
+        "NVDA", _dt.datetime.now(_dt.timezone.utc), "eps_est_analysts",
+        {"type": "eps_estimate_series", "field": "analysts"})
+    assert v2 == 30
