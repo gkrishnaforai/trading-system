@@ -51,13 +51,15 @@ def build_market_regime_graph(
     model: str = "gpt-4o-mini",
     use_llm: bool = True,
     include_breadth: bool = True,
+    force_refresh: bool = False,
 ):
     """Compile the market-regime graph bound to a data service."""
     svc = service or MarketDataService()
 
     async def fetch_market_state(state: RegimeGraphState) -> dict:
         try:
-            cached = MarketContextStore().latest(date.today(), "swing")
+            cached = (None if force_refresh else
+                      MarketContextStore().latest(date.today(), "swing"))
             if cached:
                 return {
                     "snapshot": cached["snapshot"],
@@ -192,7 +194,12 @@ def build_market_regime_graph(
             event_payload = event.model_dump(mode="json") if event else None
             reaction_payload = reaction.model_dump(mode="json") if reaction else None
             MarketContextStore().save(
-                session_date=snap.as_of.date() if snap.as_of else date.today(),
+                # run date — one row per calendar day so same-day reruns
+                # hit the fetch cache instead of overwriting the prior
+                # session's row. as_of keeps the data-vintage timestamp
+                # (e.g. a 4 AM pre-market run is keyed to today but
+                # describes data through yesterday's close).
+                session_date=date.today(),
                 as_of=snap.as_of,
                 horizon="swing",
                 snapshot=snap.model_dump(mode="json"),

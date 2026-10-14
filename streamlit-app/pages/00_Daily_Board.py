@@ -429,12 +429,19 @@ if p:
         _mev = []
     if _rd or _mev:
         try:
-            _rd_d = date.fromisoformat(str(p.get("as_of"))[:10])
+            _rd_d = date.fromisoformat(
+                str(p.get("regime_session_date") or p.get("as_of"))[:10])
         except Exception:
             _rd_d = date.today()
+        try:
+            _data_d = date.fromisoformat(str(p.get("as_of"))[:10])
+        except Exception:
+            _data_d = _rd_d
+        _vintage = (f" · data thru {_data_d:%b} {_data_d.day}"
+                    if _data_d != _rd_d else "")
         with st.expander(f"🌐 Market regime — {_rd_d:%B} {_rd_d.day}, "
-                         f"{_rd_d:%Y} — what the posture sees, and the "
-                         f"dates that can flip it",
+                         f"{_rd_d:%Y}{_vintage} — what the posture sees, "
+                         f"and the dates that can flip it",
                          expanded=False):
             # --- morning regime: the daily engine's dashboard -------
             _mr = p.get("morning") or {}

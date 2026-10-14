@@ -263,10 +263,15 @@ async def _j_fund_flags():
 
 
 async def _j_regime():
-    """Market regime card — deterministic snapshot (no LLM)."""
+    """Market regime card — deterministic snapshot (no LLM). Honors
+    force_refresh to bypass the same-day context cache (event days)."""
     from app.market_regime import build_market_regime_graph
-    r = await build_market_regime_graph(use_llm=False).ainvoke({})
-    return {"regime": (r or {}).get("regime")}
+    import os
+    force = os.getenv("REGIME_FORCE_REFRESH", "0").strip().lower() in {
+        "1", "true", "yes", "y", "on"}
+    r = await build_market_regime_graph(
+        use_llm=False, force_refresh=force).ainvoke({})
+    return {"regime": (r or {}).get("regime"), "forced": force}
 
 
 async def _j_morning_regime():

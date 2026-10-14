@@ -196,6 +196,9 @@ def _posture(tape: dict, regime: Optional[dict]) -> dict[str, Any]:
             "regime": (regime or {}).get("regime"),
             "regime_detail": {k: v for k, v in rd.items()
                               if v is not None},
+            # session_date = run date (when the card was computed);
+            # as_of = data vintage (session the snapshot describes)
+            "regime_session_date": (regime or {}).get("session_date"),
             "as_of": (regime or {}).get("as_of")}
 
 
