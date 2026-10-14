@@ -62,7 +62,6 @@ def _eval_dcf_mega_cap_price(node: Any, ctx: EvalContext, path: str) -> float:
 
     fcf_ttm = _to_float(ctx.scalars.get("fcf_ttm"), path=f"{path}.fcf_ttm")
     shares_outstanding = _to_float(ctx.scalars.get("shares_outstanding"), path=f"{path}.shares_outstanding")
-    total_debt = _to_float(ctx.scalars.get("total_debt"), path=f"{path}.total_debt")
     cash_and_equivalents = _to_float(ctx.scalars.get("cash_and_equivalents"), path=f"{path}.cash_and_equivalents")
 
     if fcf_ttm <= 0 or shares_outstanding <= 0:
@@ -147,8 +146,9 @@ def _eval_dcf_mega_cap_price(node: Any, ctx: EvalContext, path: str) -> float:
             },
         )
 
-    net_debt = total_debt - cash_and_equivalents
-    equity_value = ev - net_debt
+    # levered FCF (OCF−capex) already nets debt service — adding cash
+    # keeps the owned-asset credit; subtracting debt would double-count
+    equity_value = ev + cash_and_equivalents
     fair_price = equity_value / shares_outstanding
 
     _trace(

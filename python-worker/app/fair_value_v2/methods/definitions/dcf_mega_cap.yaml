@@ -5,7 +5,6 @@ requires:
   scalars:
     - fcf_ttm
     - shares_outstanding
-    - total_debt
     - cash_and_equivalents
   optional_scalars:
     - market_cap

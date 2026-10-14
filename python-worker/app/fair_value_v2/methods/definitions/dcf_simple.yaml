@@ -5,7 +5,6 @@ requires:
   scalars:
     - fcf_ttm
     - shares_outstanding
-    - total_debt
     - cash_and_equivalents
   optional_scalars:
     - market_cap
@@ -79,10 +78,8 @@ formula:
               add: [{var: pv_fcf_1_5}, {var: pv_terminal}]
             terminal_share_of_ev:
               div: [{var: pv_terminal}, {var: ev}]
-            net_debt:
-              sub: [{var: total_debt}, {var: cash_and_equivalents}]
             equity_value:
-              sub: [{var: ev}, {var: net_debt}]
+              add: [{var: ev}, {var: cash_and_equivalents}]
             fair_price_raw:
               div: [{var: equity_value}, {var: shares_outstanding}]
           in:

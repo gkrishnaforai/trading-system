@@ -10,7 +10,6 @@ requires:
   scalars:
     - fcf_ttm
     - shares_outstanding
-    - total_debt
     - cash_and_equivalents
     - revenue_growth_ttm        # growth proxy for the multiple (fcf_growth is lumpier)
   series: []
@@ -72,7 +71,6 @@ formula:
             - mul: [{param: growth_weight}, {var: g_explosive}]
         lo: 0
         hi: {param: multiple_cap_explosive}
-    net_debt: {sub: [{var: total_debt}, {var: cash_and_equivalents}]}
   fair_price:
     if:
       cond:
@@ -82,7 +80,7 @@ formula:
       then: null
       else:
         div:
-          - sub: [{mul: [{var: fcf_ttm}, {var: mult_base}]}, {var: net_debt}]
+          - add: [{mul: [{var: fcf_ttm}, {var: mult_base}]}, {var: cash_and_equivalents}]
           - var: shares_outstanding
   bear_fair_price:
     if:
@@ -93,7 +91,7 @@ formula:
       then: null
       else:
         div:
-          - sub: [{mul: [{var: fcf_bear}, {var: mult_bear}]}, {var: net_debt}]
+          - add: [{mul: [{var: fcf_bear}, {var: mult_bear}]}, {var: cash_and_equivalents}]
           - var: shares_outstanding
   bull_fair_price:
     if:
@@ -104,7 +102,7 @@ formula:
       then: null
       else:
         div:
-          - sub: [{mul: [{var: fcf_bull}, {var: mult_bull}]}, {var: net_debt}]
+          - add: [{mul: [{var: fcf_bull}, {var: mult_bull}]}, {var: cash_and_equivalents}]
           - var: shares_outstanding
   explosive_fair_price:
     if:
@@ -115,6 +113,6 @@ formula:
       then: null
       else:
         div:
-          - sub: [{mul: [{var: fcf_explosive}, {var: mult_explosive}]}, {var: net_debt}]
+          - add: [{mul: [{var: fcf_explosive}, {var: mult_explosive}]}, {var: cash_and_equivalents}]
           - var: shares_outstanding
 validations: []

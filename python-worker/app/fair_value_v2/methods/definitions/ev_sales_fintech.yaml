@@ -5,7 +5,6 @@ requires:
   scalars:
     - revenue_ttm
     - shares_outstanding
-    - total_debt
     - cash_and_equivalents
     - revenue_growth_ttm
   optional_scalars:
@@ -91,7 +90,6 @@ formula:
     evs_bear: {mul: [{var: pe_bear_scenario}, {var: margin_src}]}
     evs_bull: {mul: [{var: pe_bull_scenario}, {var: margin_src}]}
     evs_explosive: {mul: [{var: pe_explosive_scenario}, {var: margin_src}]}
-    net_debt: {sub: [{var: total_debt}, {var: cash_and_equivalents}]}
   fair_price:
     if:
       cond:
@@ -101,7 +99,7 @@ formula:
       then: null
       else:
         div:
-          - sub: [{mul: [{var: revenue_ttm}, {var: evs_base}]}, {var: net_debt}]
+          - add: [{mul: [{var: revenue_ttm}, {var: evs_base}]}, {var: cash_and_equivalents}]
           - var: shares_outstanding
   bear_fair_price:
     if:
@@ -112,7 +110,7 @@ formula:
       then: null
       else:
         div:
-          - sub: [{mul: [{var: revenue_ttm}, {var: evs_bear}]}, {var: net_debt}]
+          - add: [{mul: [{var: revenue_ttm}, {var: evs_bear}]}, {var: cash_and_equivalents}]
           - var: shares_outstanding
   bull_fair_price:
     if:
@@ -123,7 +121,7 @@ formula:
       then: null
       else:
         div:
-          - sub: [{mul: [{var: revenue_ttm}, {var: evs_bull}]}, {var: net_debt}]
+          - add: [{mul: [{var: revenue_ttm}, {var: evs_bull}]}, {var: cash_and_equivalents}]
           - var: shares_outstanding
   explosive_fair_price:
     if:
@@ -134,6 +132,6 @@ formula:
       then: null
       else:
         div:
-          - sub: [{mul: [{var: revenue_ttm}, {var: evs_explosive}]}, {var: net_debt}]
+          - add: [{mul: [{var: revenue_ttm}, {var: evs_explosive}]}, {var: cash_and_equivalents}]
           - var: shares_outstanding
 validations: []
