@@ -9,8 +9,13 @@ requires:
     - revenue_growth_ttm
   optional_scalars:
     - net_profit_margin_ttm
+    - net_profit_margin_midcycle
     - operating_margin_ttm
     - fcf_ttm
+    - total_debt
+    - dilution_overhang
+    - cash_conversion
+    - net_income_ttm
   series: []
 params:
   # same EV/S ≈ implied P/E × net margin identity as ev_sales_growth,
@@ -53,11 +58,19 @@ formula:
         - {div: [{var: fcf_ttm}, {var: revenue_ttm}]}
         - {param: margin_default}
     margin_raw: {max: [{var: margin_net}, {var: margin_fcf}]}
+    margin_norm:
+      min:
+        - var: margin_raw
+        - div:
+            - add:
+                - var: margin_raw
+                - coalesce: [{var: net_profit_margin_midcycle}, {var: margin_raw}]
+            - 2
     margin_src:
       if:
-        cond: {lt: [{var: margin_raw}, 0]}
+        cond: {lt: [{var: margin_norm}, 0]}
         then: {param: margin_floor}
-        else: {min: [{var: margin_raw}, {param: margin_cap}]}
+        else: {min: [{var: margin_norm}, {param: margin_cap}]}
     pe_base_scenario:
       clamp:
         value:

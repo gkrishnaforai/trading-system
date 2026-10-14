@@ -8,6 +8,10 @@ requires:
     - cash_and_equivalents
   optional_scalars:
     - market_cap
+    - total_debt
+    - dilution_overhang
+    - cash_conversion
+    - net_income_ttm
   series: []
 params:
   wacc: 0.10

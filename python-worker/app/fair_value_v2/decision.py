@@ -150,6 +150,29 @@ def decide(category: Optional[str],
 
     fv_ref = expected_fv or fair_value
 
+    # ensemble dispersion — when ok methods disagree on the base FV by a
+    # wide share of spot, the blend is pretending precision it lacks;
+    # cap confidence and price the disagreement as uncertainty
+    disp_cfg = policy.get("dispersion") or {}
+    _bases: List[float] = []
+    for mr in method_results or []:
+        _ok = getattr(mr, "status", None) == "ok" or \
+            (isinstance(mr, dict) and mr.get("status") == "ok")
+        if not _ok:
+            continue
+        _fp = getattr(mr, "fair_price", None)
+        if _fp is None and isinstance(mr, dict):
+            _fp = mr.get("fair_price")
+        try:
+            if _fp is not None and float(_fp) > 0:
+                _bases.append(float(_fp))
+        except (TypeError, ValueError):
+            pass
+    method_dispersion = None
+    if len(_bases) >= 2 and spot and float(spot) > 0:
+        method_dispersion = round(
+            (max(_bases) - min(_bases)) / float(spot), 4)
+
     # confidence roll first — it positions the MoS within the band
     ok_n = len([m for m in (method_results or [])
                 if getattr(m, "status", None) == "ok"
@@ -162,6 +185,12 @@ def decide(category: Optional[str],
     confidence = ("high" if fv_ref and _ok_for(hi_spec)
                   else "medium" if fv_ref and _ok_for(me_spec)
                   else "low")
+    if method_dispersion is not None:
+        if method_dispersion > float(disp_cfg.get("medium_conf_max", 0.70)):
+            confidence = "low"
+        elif method_dispersion > float(disp_cfg.get("high_conf_max", 0.35)) \
+                and confidence == "high":
+            confidence = "medium"
 
     # uncertainty adders — each a measurable risk the scenario may miss;
     # their total positions the name inside its category band
@@ -196,6 +225,25 @@ def decide(category: Optional[str],
     if fr in ("critical", "high"):
         adders_total += adders.get("capital_funding_risk", 0)
         applied.append(f"funding_{fr}")
+    if method_dispersion is not None and method_dispersion > \
+            float(disp_cfg.get("adder_trigger", 0.50)):
+        adders_total += adders.get("method_dispersion", 0)
+        applied.append("method_dispersion")
+    try:
+        _do = scalars.get("dilution_overhang")
+        if _do is not None and float(_do) - 1 > 0.05:
+            adders_total += adders.get("share_dilution", 0)
+            applied.append("share_dilution")
+    except (TypeError, ValueError):
+        pass
+    try:
+        _cc = scalars.get("cash_conversion")
+        if _cc is not None and float(scalars.get("net_income_ttm") or 0) > 0 \
+                and float(_cc) < 0.6:
+            adders_total += adders.get("weak_cash_conversion", 0)
+            applied.append("weak_cash_conversion")
+    except (TypeError, ValueError):
+        pass
 
     score = min(1.0, adders_total /
                 float(policy.get("range_scale", 0.25) or 0.25))
@@ -233,6 +281,7 @@ def decide(category: Optional[str],
         "fv_upside_pct": upside,
         "expected_return_2y": er2y,
         "valuation_confidence": confidence,
+        "method_dispersion": method_dispersion,
         "risk_flags": risk_flags,
         "fv_reference": "expected" if expected_fv else "base",
         "spot": spot,

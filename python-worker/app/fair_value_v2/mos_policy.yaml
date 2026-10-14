@@ -40,9 +40,21 @@ adders:
   no_analyst_coverage: 0.05   # analyst_count missing — thin external check
   capital_funding_risk: 0.08  # funding_risk high/critical — can't fund
                               # its own growth even if demand holds
+  method_dispersion: 0.06     # ok methods' base-FV spread > 50% of spot —
+                              # the blend is more certain than its inputs
+  share_dilution: 0.04        # diluted/basic share overhang > 5%
+  weak_cash_conversion: 0.06  # ocf/net_income < 0.6 — earnings aren't
+                              # turning into cash (accrual quality)
 
 cap: 0.60                       # beyond this the name is uninvestable,
                                 # not cheap — the gate flags it instead
+
+# ensemble dispersion — disagreement between ok methods measured as
+# (max−min base FV) / spot
+dispersion:
+  high_conf_max: 0.35           # spread >35% of spot → cap confidence at medium
+  medium_conf_max: 0.70         # spread >70% of spot → low
+  adder_trigger: 0.50           # spread >50% of spot → method_dispersion adder
 
 # confidence roll — how much trust the fv itself deserves
 confidence:

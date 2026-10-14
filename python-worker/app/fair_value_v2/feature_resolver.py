@@ -126,6 +126,8 @@ class FeatureResolver:
             v, s, q = self._resolve_snapshot_json_path(symbol, as_of_ts, d)
         elif t == "table_column":
             v, s, q = self._resolve_table_column(symbol, as_of_ts, d)
+        elif t == "table_column_avg":
+            v, s, q = self._resolve_table_column_avg(symbol, as_of_ts, d)
         elif t == "macro_column":
             v, s, q = self._resolve_macro_column(as_of_ts, d)
         elif t == "forward_estimate":
@@ -373,6 +375,43 @@ class FeatureResolver:
             q["where"] = dict(where)
 
         src = f"{table}.{column}" if v is not None else None
+        return v, src, q
+
+    def _resolve_table_column_avg(self, symbol: str, as_of_ts: datetime, d: Dict[str, Any]) -> Tuple[Any, Optional[str], Dict[str, Any]]:
+        table = str(d.get("table") or "")
+        column = str(d.get("column") or "")
+        as_of = str(d.get("as_of") or "")
+        order_by = str(d.get("order_by") or as_of)
+        rows = int(d.get("rows") or 8)
+
+        allow = self._allow_table_columns.get(table) or {}
+        allow_cols = set(allow.get("columns") or [])
+        allow_asof = set(allow.get("as_of_columns") or [])
+        if table not in self._allow_table_columns:
+            return None, None, {"rejected": True, "reason": "table_not_allowed", "table": table}
+        if column not in allow_cols:
+            return None, None, {"rejected": True, "reason": "column_not_allowed", "table": table, "column": column}
+        if as_of not in allow_asof:
+            return None, None, {"rejected": True, "reason": "as_of_not_allowed", "table": table, "as_of": as_of}
+        if order_by != as_of:
+            return None, None, {"rejected": True, "reason": "order_by_must_equal_as_of", "order_by": order_by, "as_of": as_of}
+
+        v, ts, row_ccy = self._store.get_table_column_avg(
+            symbol=symbol, as_of_ts=as_of_ts, table=table, column=column,
+            as_of_column=as_of, order_by_column=order_by, limit=rows)
+        q: Dict[str, Any] = {
+            "row_found": v is not None,
+            "as_of_column": as_of,
+            "rows": rows,
+            "timestamp": str(ts) if ts is not None else None,
+        }
+        if row_ccy:
+            q["row_currency"] = row_ccy
+        if v is not None:
+            v, fx_note = fv_ccy.scale(column, v, row_ccy, as_of=as_of_ts)
+            if fx_note:
+                q["fx"] = fx_note
+        src = f"{table}.{column}~avg{rows}" if v is not None else None
         return v, src, q
 
     def _resolve_forward_estimate(self, symbol: str, as_of_ts: datetime, d: Dict[str, Any]) -> Tuple[Any, Optional[str], Dict[str, Any]]:

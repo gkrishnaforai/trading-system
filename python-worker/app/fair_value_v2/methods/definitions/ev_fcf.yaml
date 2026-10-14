@@ -12,6 +12,11 @@ requires:
     - shares_outstanding
     - cash_and_equivalents
     - revenue_growth_ttm        # growth proxy for the multiple (fcf_growth is lumpier)
+  optional_scalars:
+    - total_debt
+    - dilution_overhang
+    - cash_conversion
+    - net_income_ttm
   series: []
 params:
   base_multiple: 14.0           # mature, low-growth EV/FCF anchor

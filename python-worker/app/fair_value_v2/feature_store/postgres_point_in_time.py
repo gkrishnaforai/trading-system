@@ -315,6 +315,70 @@ class PostgresPointInTimeFeatureStore:
                 v = None
             return v, ts, ccy
 
+    def get_table_column_avg(
+        self,
+        symbol: str,
+        as_of_ts: datetime,
+        table: str,
+        column: str,
+        as_of_column: str,
+        order_by_column: str,
+        limit: int,
+    ) -> Tuple[Optional[float], Optional[Any], Optional[str]]:
+        """Mean of the `limit` most recent non-null values — the
+        mid-cycle base for normalizing metrics that peak at cycle tops
+        (margins, growth). Timestamp/currency of the newest row."""
+        ident_re = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+        for ident_name, ident in (
+            ("table", table),
+            ("column", column),
+            ("as_of_column", as_of_column),
+            ("order_by_column", order_by_column),
+        ):
+            if not ident_re.match(str(ident or "")):
+                raise ValueError(f"invalid identifier for {ident_name}: {ident}")
+        if order_by_column != as_of_column:
+            raise ValueError("order_by_column must equal as_of_column")
+        limit = max(1, min(int(limit), 40))
+
+        if table == "financial_ratios" or as_of_column in {"fiscal_date_ending", "consensus_date", "target_date", "rating_date"}:
+            as_of_value: Any = as_of_ts.date()
+        else:
+            as_of_value = as_of_ts
+
+        with db.get_session() as session:
+            symbol_column = self._get_symbol_column(session, table)
+            if not ident_re.match(str(symbol_column or "")):
+                raise ValueError(f"invalid identifier for symbol column: {symbol_column}")
+            has_ccy = self._has_currency_column(session, table)
+            cur_sel = ", currency" if has_ccy else ""
+            sql = f"""
+            SELECT {column}, {as_of_column}{cur_sel}
+            FROM {table}
+            WHERE {symbol_column} = :symbol
+              AND {as_of_column} <= :as_of
+              AND {column} IS NOT NULL
+            ORDER BY {order_by_column} DESC
+            LIMIT :lim
+            """
+            rows = session.execute(
+                text(sql), {"symbol": symbol, "as_of": as_of_value,
+                            "lim": limit}).fetchall()
+            if not rows:
+                return None, None, None
+            vals = []
+            for r in rows:
+                try:
+                    vals.append(float(r[0]))
+                except Exception:
+                    pass
+            if not vals:
+                return None, None, None
+            ts = rows[0][1]
+            ccy = (str(rows[0][2]).upper()
+                   if has_ccy and rows[0][2] else None)
+            return sum(vals) / len(vals), ts, ccy
+
     _FORWARD_ESTIMATE_COLUMNS = {"revenue_estimate", "eps_estimate"}
 
     def get_forward_estimate(

@@ -10,6 +10,10 @@ requires:
     - market_cap
     - revenue_growth_ttm
     - forward_growth_pct_1y
+    - total_debt
+    - dilution_overhang
+    - cash_conversion
+    - net_income_ttm
   series: []
 params:
   wacc: 0.10
