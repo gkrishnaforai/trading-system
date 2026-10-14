@@ -371,6 +371,14 @@ class FairValueRunner:
                     }
                 )
 
+        # family cap applies to the recorded weight too — the breakdown
+        # shows the effective share, not just the configured one
+        self.blender.cap_family_weights(blend_inputs)
+        for mr, w in blend_inputs:
+            try:
+                (mr.metrics or {}).update({"blend_weight": w})
+            except Exception:
+                pass
         blend = self.blender.blend(blend_inputs)
         combined_hash = hashlib.sha256("|".join(sorted(set(features_hashes))).encode("utf-8")).hexdigest() if features_hashes else None
 
