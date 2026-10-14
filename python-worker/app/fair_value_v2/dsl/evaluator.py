@@ -487,7 +487,8 @@ def evaluate_fair_price(formula: Dict[str, Any], *, scalars: Dict[str, Any], par
 
 
 def evaluate_scenarios(
-    formula: Dict[str, Any], *, scalars: Dict[str, Any], params: Dict[str, Any], debug: bool = False
+    formula: Dict[str, Any], *, scalars: Dict[str, Any], params: Dict[str, Any],
+    validations: Optional[List[Dict[str, Any]]] = None, debug: bool = False,
 ) -> Tuple[Dict[str, Optional[float]], Dict[str, Any]]:
     """Evaluate base + optional scenario fair prices.
 
@@ -495,11 +496,30 @@ def evaluate_scenarios(
     - bear_fair_price
     - bull_fair_price
     - explosive_fair_price
-    """
+
+    `validations` is the method's input contract — each rule
+    `{name, when, reason}` rejects the run with invalid_input when its
+    `when` expression is truthy over the resolved scalars/params. A method
+    must never emit a plausible-looking number from economically invalid
+    inputs."""
 
     ctx = EvalContext(scalars=scalars or {}, params=params or {}, locals={}, debug=debug, trace=[] if debug else None)
     ctx = _apply_formula_bindings(formula or {}, ctx, path="$")
     metrics: Dict[str, Any] = {}
+
+    # input contract — evaluated before any formula output; a triggered
+    # rule is an explicit rejection, never a silent null
+    for rule in (validations or []):
+        cond = (rule or {}).get("when")
+        if cond is None:
+            continue
+        violated = eval_expr(cond, ctx, path=f"$.validations.{(rule or {}).get('name', '?')}")
+        if violated:
+            raise DslError(
+                "invalid_input",
+                (rule or {}).get("reason") or (rule or {}).get("name") or "validation_failed",
+                {"validation": (rule or {}).get("name"), "path": "$.validations"},
+            )
 
     out: Dict[str, Optional[float]] = {}
 
@@ -509,6 +529,12 @@ def evaluate_scenarios(
         raise DslError("invalid_definition", "formula.fair_price is required")
 
     base_v = eval_expr(base_expr, ctx, path="$.fair_price")
+    if base_v is not None and not math.isfinite(float(base_v)):
+        raise DslError("invalid_assumption", "non_finite_fair_value",
+                       {"path": "$.fair_price"})
+    if base_v is not None and float(base_v) > 1e6:
+        raise DslError("invalid_assumption", "fair_price_absurd",
+                       {"path": "$.fair_price", "value": float(base_v)})
     out["base"] = None if base_v is None else _to_float(base_v, path="$.fair_price")
 
     for key, out_key in (
@@ -521,6 +547,9 @@ def evaluate_scenarios(
             out[out_key] = None
             continue
         v = eval_expr(expr, ctx, path=f"$.{key}")
+        if v is not None and not math.isfinite(float(v)):
+            raise DslError("invalid_assumption", "non_finite_fair_value",
+                           {"path": f"$.{key}"})
         out[out_key] = None if v is None else _to_float(v, path=f"$.{key}")
 
     if debug:

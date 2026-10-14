@@ -97,4 +97,7 @@ formula:
               value: {mul: [{param: peg_target}, {var: g_explosive}]}
               lo: {param: pe_floor}
               hi: {param: pe_cap_explosive}
-validations: []
+validations:
+  - name: growth_pct_not_decimal
+    when: {gt: [{var: forward_growth_pct_1y}, 300]}
+    reason: forward_growth_pct_1y looks like a decimal (>300) or analyst garbage — reject rather than price it

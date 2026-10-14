@@ -224,6 +224,7 @@ class FairValueRunner:
                 definition.formula,
                 scalars=features.scalars,
                 params=params,
+                validations=getattr(definition, "validations", None),
                 debug=debug,
             )
             base_fair_price = scenarios.get("base")

@@ -188,4 +188,7 @@ formula:
         div:
           - add: [{mul: [{var: sales_base}, {var: evs_explosive}]}, {var: cash_and_equivalents}]
           - var: shares_outstanding
-validations: []
+validations:
+  - name: margin_impossible
+    when: {or: [{gt: [{var: net_profit_margin_ttm}, 1.0]}, {gt: [{var: operating_margin_ttm}, 1.0]}]}
+    reason: a margin above 100% of revenue is a data error, not a business

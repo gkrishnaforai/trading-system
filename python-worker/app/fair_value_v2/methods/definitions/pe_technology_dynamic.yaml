@@ -282,3 +282,10 @@ formula:
                     gt: [{var: market_cap}, {param: mega_cap_threshold}]
                   then: {param: pe_cap_mega}
                   else: {param: pe_cap_normal}
+validations:
+  - name: margin_impossible
+    when: {gt: [{var: operating_margin_ttm}, 1.0]}
+    reason: operating margin above 100% of revenue is a data error
+  - name: growth_units_suspicious
+    when: {gt: [{var: forward_growth}, 10]}
+    reason: forward_growth above 10x is a unit mistake or analyst garbage — decimals only

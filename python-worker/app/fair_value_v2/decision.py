@@ -245,8 +245,11 @@ def decide(category: Optional[str],
     except (TypeError, ValueError):
         pass
 
-    score = min(1.0, adders_total /
-                float(policy.get("range_scale", 0.25) or 0.25))
+    # score can overshoot 1.0 — stacked uncertainty pushes past the
+    # category band toward the cap, which is what makes
+    # uninvestable_mos reachable (otherwise no category high ≥ cap
+    # means the flag could never fire)
+    score = adders_total / float(policy.get("range_scale", 0.25) or 0.25)
     if confidence == "high":
         score *= float(policy.get("high_confidence_dampen", 0.6))
     elif confidence == "low":

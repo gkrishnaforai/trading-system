@@ -40,6 +40,51 @@ allow_macro_columns:
 #
 # Fixing feature issues should be possible by editing this YAML (keys, fallbacks, derivations).
 
+# Unit contract — every scalar feature is one of:
+#   usd_per_share  dollars per share (eps, targets, bvps)
+#   usd            absolute dollars (revenue, fcf, cash, market_cap)
+#   decimal        fraction (0.15 = 15%)
+#   percent        percentage points (15 = 15%) — name MUST end _pct*
+#   count          shares / analysts / years
+# The convention is load-bearing: `pe_per_g` params price percent points;
+# `growth_weight`/`growth_cap` params price decimals. A unit mismatch is a
+# silent 100x error — tests/test_fv_units.py enforces this manifest.
+units:
+  book_value_per_share: usd_per_share
+  roe: decimal
+  eps_ttm: usd_per_share
+  eps_ttm_implied: usd_per_share
+  eps_forward: usd_per_share
+  eps_growth_ttm: decimal
+  operating_margin_ttm: decimal
+  net_profit_margin_ttm: decimal
+  net_profit_margin_midcycle: decimal
+  revenue_growth_ttm: decimal
+  consensus_price_target: usd_per_share
+  price_target_high: usd_per_share
+  price_target_low: usd_per_share
+  analyst_count: count
+  market_cap: usd
+  shares_outstanding: count
+  shares_diluted: count
+  shares_basic: count
+  dilution_overhang: decimal
+  revenue_ttm: usd
+  revenue_forward: usd
+  eps_est_start: usd_per_share
+  eps_est_end: usd_per_share
+  eps_est_years: count
+  eps_est_analysts: count
+  ocf_ttm: usd
+  net_income_ttm: usd
+  cash_conversion: decimal
+  fcf_ttm: usd
+  cash_and_equivalents: usd
+  total_debt: usd
+  forward_growth: decimal
+  forward_growth_pct_1y: percent
+  tnx_yield: percent
+
 features:
   book_value_per_share:
     type: coalesce
