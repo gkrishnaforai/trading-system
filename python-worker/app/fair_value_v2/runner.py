@@ -15,6 +15,7 @@ from app.fair_value_v2.blender import (
     expected_fair_value,
 )
 from app.fair_value_v2.dsl.evaluator import DslError, evaluate_scenarios
+from app.fair_value_v2.dsl.render import render_scenarios
 from app.fair_value_v2.feature_resolver import FeatureResolver
 from app.fair_value_v2.feature_store.postgres_point_in_time import PostgresPointInTimeFeatureStore
 from app.fair_value_v2.methods.registry import MethodRegistry
@@ -199,6 +200,12 @@ class FairValueRunner:
             )
             base_fair_price = scenarios.get("base")
             status = "ok" if base_fair_price and base_fair_price > 0 else "missing_data"
+            try:
+                formula_repr = render_scenarios(
+                    definition.formula, scalars=features.scalars,
+                    params=params)
+            except Exception:
+                formula_repr = None
             mr = MethodResult(
                 method_key=definition.method_key,
                 version=definition.version,
@@ -206,7 +213,9 @@ class FairValueRunner:
                 status=status,
                 fair_price=base_fair_price if status == "ok" else None,
                 inputs_used={**inputs_used, **{f"param.{k}": v for k, v in params.items()}},
-                metrics={**(metrics or {}), "scenario_fair_values": scenarios},
+                metrics={**(metrics or {}), "scenario_fair_values": scenarios,
+                         **({"formula_repr": formula_repr}
+                            if formula_repr else {})},
                 # distinguish "computed and the equity value is ≤0" (e.g. EV/S
                 # implied EV < net debt — levered stub) from missing inputs
                 reason_code=(
@@ -223,6 +232,12 @@ class FairValueRunner:
         except DslError as e:
             missing_codes = {"missing_data", "missing", "invalid_number", "invalid_ast"}
             status = "missing_data" if e.code in missing_codes else "invalid_assumption"
+            try:
+                formula_repr = render_scenarios(
+                    definition.formula, scalars=features.scalars,
+                    params=params)
+            except Exception:
+                formula_repr = None
             mr = MethodResult(
                 method_key=definition.method_key,
                 version=definition.version,
@@ -230,7 +245,8 @@ class FairValueRunner:
                 status=status,
                 fair_price=None,
                 inputs_used={**inputs_used, **{f"param.{k}": v for k, v in params.items()}},
-                metrics={},
+                metrics=({"formula_repr": formula_repr}
+                         if formula_repr else {}),
                 reason_code=e.code,
                 reason_details={
                     **(e.details or {}),

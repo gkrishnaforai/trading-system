@@ -171,17 +171,20 @@ for s, r in results.items():
                        (cls.get("all") or [])) +
                        (f"  (override)" if cls.get("source") == "override"
                         else ""))
-        # ladder
-        if scen and spot:
-            bits = [f"price **${float(spot):.2f}**"]
+        # ladder — shown even without spot (vs-spot % only when priced)
+        if scen:
+            bits = ([f"price **${float(spot):.2f}**"]
+                    if spot else [])
             for k, lbl in [("bear", "bear"), ("base", "base"),
                            ("expected", "exp"), ("bull", "bull"),
                            ("explosive", "expl")]:
                 v = res.get("expected_fair_value") if k == "expected" \
                     else scen.get(k)
                 if v is not None:
-                    bits.append(f"{lbl} **${float(v):.2f}** "
-                                f"({float(v)/float(spot)-1:+.0%})")
+                    seg = f"{lbl} **${float(v):.2f}**"
+                    if spot:
+                        seg += f" ({float(v)/float(spot)-1:+.0%})"
+                    bits.append(seg)
             st.markdown(" · ".join(bits))
         elif res.get("fair_value"):
             st.markdown(f"fv **${float(res['fair_value']):.2f}**")
@@ -262,6 +265,11 @@ for s, r in results.items():
                            f"{m.get('status')}"
                            + (f" ({m.get('reason_code')})"
                               if m.get("reason_code") else ""))
+                _fr = (m.get("metrics") or {}).get("formula_repr") or {}
+                if _fr.get("base"):
+                    with st.expander(f"formula — {m.get('method_key')}",
+                                     expanded=False):
+                        st.code(_fr["base"], language=None)
                 continue
             iu = m.get("inputs_used") or {}
             drivers = []
@@ -273,12 +281,30 @@ for s, r in results.items():
                     v = iu[k]
                     drivers.append(f"{k}={v:.3g}" if isinstance(
                         v, (int, float)) else f"{k}={v}")
-            w = (m.get("metrics") or {}).get("blend_weight")
+            met = m.get("metrics") or {}
+            w = met.get("blend_weight")
             st.caption(f"· `{m.get('method_key')}` "
                        f"{f'w={w} ' if w else ''}→ "
                        f"**${float(m.get('fair_price') or 0):.2f}**"
                        + (f"  ({', '.join(drivers[:6])})"
                           if drivers else ""))
+            # per-leg formulas — rendered from the deployed DSL with
+            # this run's resolved values substituted inline
+            frepr = met.get("formula_repr") or {}
+            scenv = met.get("scenario_fair_values") or {}
+            if frepr:
+                with st.expander(f"formulas — {m.get('method_key')}",
+                                 expanded=False):
+                    for leg in ("bear", "base", "bull", "explosive"):
+                        expr = frepr.get(leg)
+                        if expr is None:
+                            continue
+                        fv = scenv.get(leg)
+                        st.code(
+                            f"{leg:>9} = {expr}\n"
+                            f"{leg:>9} → "
+                            f"{'$' + format(float(fv), '.2f') if fv is not None else 'null'}",
+                            language=None)
 
         if flags:
             st.caption("⚠️ quality flags: " + ", ".join(flags))
