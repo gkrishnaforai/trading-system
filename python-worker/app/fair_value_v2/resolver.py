@@ -268,6 +268,8 @@ class FairValueV2Resolver:
             decision["classification"] = result.classification
         if decision is not None and result.reverse_dcf:
             decision["reverse_dcf"] = result.reverse_dcf
+        if decision is not None and result.relative_valuation:
+            decision["relative_valuation"] = result.relative_valuation
         try:
             result.decision = decision
         except Exception:

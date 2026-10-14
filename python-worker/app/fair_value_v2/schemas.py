@@ -61,4 +61,7 @@ class FairValueV2Result(BaseModel):
     # quality gates read these instead of relying on routed methods
     # to have declared them
     decision_scalars: Dict[str, Any] = Field(default_factory=dict)
+    # industry-relative reference leg — peer-median multiples vs the
+    # subject's implied multiple; contradiction detector, never blended
+    relative_valuation: Optional[Dict[str, Any]] = None
     model_version: str = "fair_value_v2.1"

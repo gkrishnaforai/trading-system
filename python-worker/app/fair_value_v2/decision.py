@@ -271,11 +271,13 @@ def decide(category: Optional[str],
                             "negative with leverage — growth financed "
                             "by debt, not operations")
                 elif (scalars.get("dilution_overhang") is not None
-                      and float(scalars["dilution_overhang"]) - 1 > 0.05):
+                      and float(scalars["dilution_overhang"]) - 1 > 0.05) or \
+                     (scalars.get("sbc_to_revenue_ttm") is not None
+                      and float(scalars["sbc_to_revenue_ttm"]) > 0.05):
                     cls = "divergence_dilution"
                     note = ("revenue grows while EPS lags and the "
-                            "share count expands — SBC/hiring is "
-                            "consuming the growth")
+                            "share count/SBC expands — comp and "
+                            "hiring are consuming the growth")
                 elif (scalars.get("cash_conversion") is not None
                       and float(scalars.get("net_income_ttm") or 0) > 0
                       and float(scalars["cash_conversion"]) < 0.6):
@@ -326,6 +328,57 @@ def decide(category: Optional[str],
     except (TypeError, ValueError):
         capital_quality = None
 
+    # two-axis uncertainty — reporting only, weights unchanged:
+    #   valuation_uncertainty = how sensitive the fv itself is
+    #     (method disagreement, scenario width, terminal reliance)
+    #   business_uncertainty = how trustworthy the operating inputs
+    #     are (earnings divergence, coverage, funding, fcf reality)
+    vu_drivers: List[str] = []
+    if method_dispersion is not None and \
+            method_dispersion > float(disp_cfg.get("high_conf_max", 0.35)):
+        vu_drivers.append("method_dispersion")
+    scen_spread = None
+    _b = (scenarios or {}).get("bear"); _u = (scenarios or {}).get("bull")
+    if _b and _u and fv_ref:
+        scen_spread = round((_u - _b) / fv_ref, 4)
+        if scen_spread > 0.6:
+            vu_drivers.append("wide_scenario_band")
+    if "tv_dominant" in (quality_flags or []):
+        vu_drivers.append("tv_dominant")
+    valuation_uncertainty = {
+        "score": ("high" if len(vu_drivers) >= 2 or
+                  (method_dispersion or 0) >
+                  float(disp_cfg.get("medium_conf_max", 0.70))
+                  else "moderate" if vu_drivers else "low"),
+        "drivers": vu_drivers,
+        "method_dispersion": method_dispersion,
+        "scenario_spread": scen_spread,
+    }
+
+    bu_drivers: List[str] = []
+    if earnings_quality and \
+            earnings_quality.get("classification") != "divergence_favorable":
+        bu_drivers.append(earnings_quality["classification"])
+    if capital_quality and capital_quality.get("flag") == "growth_below_wacc":
+        bu_drivers.append("growth_below_wacc")
+    if scalars.get("analyst_count") in (None, 0):
+        bu_drivers.append("no_analyst_coverage")
+    try:
+        if fcf is not None and float(fcf) <= 0:
+            bu_drivers.append("negative_fcf")
+    except (TypeError, ValueError):
+        pass
+    if fr in ("critical", "high"):
+        bu_drivers.append(f"funding_{fr}")
+    for _f in ("no_scenarios", "scenarios_partial"):
+        if _f in (quality_flags or []):
+            bu_drivers.append(_f)
+    business_uncertainty = {
+        "score": ("high" if len(bu_drivers) >= 3 or fr == "critical"
+                  else "moderate" if bu_drivers else "low"),
+        "drivers": bu_drivers,
+    }
+
     # score can overshoot 1.0 — stacked uncertainty pushes past the
     # category band toward the cap, which is what makes
     # uninvestable_mos reachable (otherwise no category high ≥ cap
@@ -368,6 +421,8 @@ def decide(category: Optional[str],
         "method_dispersion": method_dispersion,
         "earnings_quality": earnings_quality,
         "capital_quality": capital_quality,
+        "valuation_uncertainty": valuation_uncertainty,
+        "business_uncertainty": business_uncertainty,
         "risk_flags": risk_flags,
         "fv_reference": "expected" if expected_fv else "base",
         "spot": spot,

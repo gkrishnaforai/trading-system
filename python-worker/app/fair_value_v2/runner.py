@@ -86,6 +86,7 @@ class FairValueRunner:
             "eps_growth_ttm",
             "revenue_growth_ttm",
             "roic_ttm",
+            "sbc_to_revenue_ttm",
         ]
 
     def _required_scalar_issues(
@@ -438,12 +439,14 @@ class FairValueRunner:
         # against the dcf_mega_cap spec. Reference metric; never blends
         # and never blocks a run.
         reverse = None
+        rs: Dict[str, Any] = {}
         try:
             rfeatures = self._get_features_for_requires(
                 symbol, ts, ["spot_price", "fcf_ttm", "shares_outstanding",
                              "shares_diluted", "total_debt",
                              "cash_and_equivalents", "revenue_growth_ttm",
-                             "forward_growth_pct_1y"])
+                             "forward_growth_pct_1y",
+                             "eps_ttm", "revenue_ttm"])
             rs = rfeatures.scalars or {}
             dcf_params = dict(self.registry.get("dcf_mega_cap").params or {})
             reverse = implied_growth(
@@ -467,6 +470,28 @@ class FairValueRunner:
         except Exception as exc:
             warnings.append({"level": "warning", "scope": "reverse_dcf",
                              "reason": "reverse_dcf_failed",
+                             "details": {"error": str(exc)}})
+
+        # Industry-relative leg — peer-median multiples vs the subject's
+        # implied multiple at spot and at fair value. Reference only:
+        # a disagreement flag, never a blended vote.
+        relative = None
+        try:
+            from app.fair_value_v2.relative import compute_relative
+            relative = compute_relative(
+                symbol, industry, rs,
+                spot=rs.get("spot_price"),
+                fair_value=(blend.fair_value if any(
+                    mr.status == "ok" and mr.fair_price
+                    for mr in method_results) else None))
+            if relative.get("flag"):
+                warnings.append({
+                    "level": "info", "scope": "relative_valuation",
+                    "reason": relative["flag"],
+                    "details": {"note": relative.get("note")}})
+        except Exception as exc:
+            warnings.append({"level": "warning", "scope": "relative_valuation",
+                             "reason": "relative_valuation_failed",
                              "details": {"error": str(exc)}})
 
         # Strict-only policy: if nothing succeeded, do not emit a fair value.
@@ -511,5 +536,6 @@ class FairValueRunner:
             features_hash=combined_hash,
             warnings=warnings,
             reverse_dcf=reverse,
+            relative_valuation=relative,
             decision_scalars=decision_scalars,
         )

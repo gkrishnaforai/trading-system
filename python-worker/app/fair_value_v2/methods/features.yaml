@@ -83,6 +83,7 @@ units:
   ocf_ttm: usd
   net_income_ttm: usd
   cash_conversion: decimal
+  sbc_to_revenue_ttm: decimal
   fcf_ttm: usd
   cash_and_equivalents: usd
   total_debt: usd
@@ -577,6 +578,19 @@ features:
     params:
       numerator: {type: feature_ref, name: ocf_ttm}
       denominator: {type: feature_ref, name: net_income_ttm}
+
+  # stock comp as a share of revenue — the comp cost EPS growth can
+  # hide; feeds the earnings-divergence dilution classification
+  sbc_to_revenue_ttm:
+    type: coalesce
+    max_age_days: 400
+    sources:
+      - type: snapshot_json
+        source: fmp_key_metrics_ttm
+        json_root: key_metrics_ttm
+        keys:
+          - stockBasedCompensationToRevenueTTM
+          - stockBasedCompensationToRevenue
 
   fcf_ttm:
     type: coalesce

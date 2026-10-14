@@ -801,3 +801,66 @@ def test_21_tv_dominant_charges_uncertainty_and_caps_confidence():
     assert "tv_dominant" in d["mos_adders"]
     # forbidden flag → can never be 'high'
     assert d["valuation_confidence"] != "high"
+
+
+# ---------------- 22. industry-relative leg & uncertainty split -----------
+
+def test_22_peer_medians_from_key_metrics():
+    from app.fair_value_v2.relative import peer_medians
+    rows = [{"symbol": f"P{p}", "key_metrics": {
+                "earningsYieldTTM": 1.0 / p,
+                "evToSalesTTM": p / 10.0}}
+            for p in (20, 30, 40)]
+    med = peer_medians(rows)
+    assert med["pe"] == pytest.approx(30.0, rel=1e-6)
+    assert med["ev_sales"] == pytest.approx(3.0, rel=1e-6)
+    # outlier (pe=1000) exceeds the sanity bound — excluded, not averaged
+    rows2 = rows + [{"symbol": "PX", "key_metrics": {
+        "earningsYieldTTM": 0.001, "evToSalesTTM": 3.0}}]
+    assert peer_medians(rows2)["pe"] == pytest.approx(30.0, rel=1e-6)
+
+
+def test_22_relative_flag_is_growth_normalized():
+    from app.fair_value_v2.relative import flag_relative
+    med = {"pe": 20.0, "revenue_growth": 0.10}
+    # fv implies 40x vs 20x peers but subject grows 30% vs peers' 10%
+    # → the premium is growth-supported, not flagged
+    r = flag_relative(med, {"pe": 45.0}, {"pe": 40.0}, 0.30)
+    assert r.get("flag") is None
+    assert r["growth_edge"]["subject"] == pytest.approx(0.30)
+    # same 40x premium without the growth edge → flagged unsupported
+    r2 = flag_relative(med, {"pe": 45.0}, {"pe": 40.0}, 0.10)
+    assert r2["flag"] == "fv_premium_unsupported"
+    # fv far below peers → pessimism flagged
+    r3 = flag_relative(med, {"pe": 10.0}, {"pe": 10.0}, 0.10)
+    assert r3["flag"] == "fv_discount_vs_peers"
+
+
+def test_22_uncertainty_split_two_axes():
+    # business risk high (divergence + no coverage + negative fcf)
+    # while methods agree tightly → valuation uncertainty stays low
+    risky = {"fcf_ttm": -1e9, "analyst_count": 0, "net_income_ttm": -2e9,
+             "cash_and_equivalents": 3e9, "total_debt": 15e9,
+             "revenue_growth_ttm": 0.30, "eps_growth_ttm": -0.10,
+             "dilution_overhang": 1.0}
+    tight = {"bear": 110.0, "base": 120.0, "bull": 130.0,
+             "explosive": 135.0}
+    d = decide("technology", 120.0, 122.0, tight, [], 100.0,
+               [_mr(120.0, inputs=risky), _mr(122.0, inputs=risky)])
+    assert d["business_uncertainty"]["score"] == "high"
+    assert d["valuation_uncertainty"]["score"] == "low"
+    # flip: clean inputs but methods disagree 3x → valuation axis fires
+    far = _mr(60.0, inputs=OK_IN)
+    d2 = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
+                [_mr(120.0, inputs=OK_IN), far, _mr(180.0, inputs=OK_IN)])
+    assert d2["valuation_uncertainty"]["score"] in ("moderate", "high")
+    assert "method_dispersion" in d2["valuation_uncertainty"]["drivers"]
+
+
+def test_22_sbc_drives_dilution_classification():
+    base = dict(OK_IN)
+    base.update({"revenue_growth_ttm": 0.30, "eps_growth_ttm": 0.05,
+                 "dilution_overhang": 1.0, "sbc_to_revenue_ttm": 0.08})
+    d = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
+               [_mr(120.0, inputs=base), _mr(122.0, inputs=base)])
+    assert d["earnings_quality"]["classification"] == "divergence_dilution"

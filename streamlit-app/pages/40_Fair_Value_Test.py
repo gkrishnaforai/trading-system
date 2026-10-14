@@ -237,6 +237,39 @@ for s, r in results.items():
             st.caption(f"🏗 capital — `{cq['flag']}` "
                        f"(roic {cq.get('roic_ttm',0):.0%})"
                        + (f" — {cq['note']}" if cq.get("note") else ""))
+        # two-axis uncertainty + industry-relative read
+        _vu = d.get("valuation_uncertainty") or {}
+        _bu = d.get("business_uncertainty") or {}
+        if _vu.get("score") or _bu.get("score"):
+            st.caption(
+                "⚖ uncertainty — valuation "
+                f"`{_vu.get('score')}`"
+                + (f" ({', '.join(_vu['drivers'])})"
+                   if _vu.get("drivers") else "")
+                + f" · business `{_bu.get('score')}`"
+                + (f" ({', '.join(_bu['drivers'])})"
+                   if _bu.get("drivers") else ""))
+        _rv = d.get("relative_valuation") or {}
+        if _rv.get("status") == "ok":
+            _pm = _rv.get("peer_medians") or {}
+            _af = _rv.get("at_fair_value") or {}
+            _bits = []
+            if _pm.get("pe") and _af.get("pe"):
+                _bits.append(f"fv-PE {_af['pe']:.0f}x vs peers "
+                             f"{_pm['pe']:.0f}x")
+            if _pm.get("ev_sales") and _af.get("ev_sales"):
+                _bits.append(f"EV/S {_af['ev_sales']:.1f} vs "
+                             f"{_pm['ev_sales']:.1f}")
+            if _pm.get("revenue_growth") is not None:
+                _bits.append(f"peer g {_pm['revenue_growth']:+.0%}")
+            st.caption(
+                f"🏘 peers n={_rv.get('peers_n')} "
+                f"{_rv.get('industry')} — " + " · ".join(_bits)
+                + (f" — `{_rv['flag']}` {rv_note}"
+                   if (_rv.get("flag") and
+                       (rv_note := _rv.get("note"))) else ""))
+        elif _rv.get("status") == "insufficient_peers":
+            st.caption(f"🏘 peers n/a — {_rv.get('reason')}")
         if d.get("risk_flags"):
             st.warning("⛔ " + " · ".join(f"`{f}`" for f in d["risk_flags"]))
 
