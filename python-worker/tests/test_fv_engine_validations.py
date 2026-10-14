@@ -1036,3 +1036,55 @@ def test_24_risk_flags_carry_axis_labels():
                [], 200.0, [_mr(100.0), _mr(105.0)], scalars=dict(OK_IN))
     axes = d.get("risk_flag_axes") or {}
     assert axes.get("bear_loss_severe") == "valuation"
+
+
+# ---------------- 25. COIN audit regressions --------------------------
+
+def test_25_extreme_favorable_divergence_is_earnings_instability():
+    # COIN: eps_growth 2912% vs revenue 514% — directionally "favorable"
+    # but a 24-point divergence is cyclical-base earnings, not durable
+    # margin expansion; it must surface as business uncertainty
+    s = dict(OK_IN)
+    s.update({"eps_growth_ttm": 29.12, "revenue_growth_ttm": 5.14})
+    d = decide("fintech", 44.0, 43.0,
+               {"bear": 27.0, "base": 44.0, "bull": 55.0,
+                "explosive": 73.0},
+               [], 172.0, [_mr(39.0, inputs=s), _mr(54.0, inputs=s)],
+               scalars=s)
+    assert d["earnings_quality"]["classification"] == "divergence_favorable"
+    assert "earnings_instability" in d["business_uncertainty"]["drivers"]
+    # modest favorable gap → no instability driver
+    s2 = dict(OK_IN)
+    s2.update({"eps_growth_ttm": 0.45, "revenue_growth_ttm": 0.10})
+    d2 = decide("fintech", 44.0, 43.0,
+                {"bear": 27.0, "base": 44.0, "bull": 55.0,
+                 "explosive": 73.0},
+                [], 172.0, [_mr(39.0, inputs=s2), _mr(54.0, inputs=s2)],
+                scalars=s2)
+    assert "earnings_instability" not in \
+        d2["business_uncertainty"]["drivers"]
+
+
+def test_25_stale_intraday_source_falls_through_to_daily_close():
+    # a >2d intraday tick must not shadow today's daily_bars close —
+    # COIN had a 2-day-old tick at $177.73 outranking the $172.89 close
+    import datetime as _dt2
+    now = _dt2.datetime.now(_dt2.timezone.utc)
+
+    class _StaleTick:
+        def get_table_scalar(self, symbol, as_of_ts, table, column,
+                             as_of_column=None, order_by_column=None,
+                             where_not_null=False, where=None):
+            if table == "raw_market_data_intraday":
+                # 3-day-old tick — fresh enough for 21d, stale under 2d
+                return 177.73, now - _dt2.timedelta(days=3, hours=3), None
+            if table == "daily_bars":
+                return 172.89, now.date(), None
+            return None, None, None
+
+    fr = FeatureResolver(
+        feature_store=_StaleTick(),
+        features_yaml_path="app/fair_value_v2/methods/features.yaml")
+    vals, srcs, _q = fr.resolve_scalars("COIN", now, ["spot_price"])
+    assert vals["spot_price"] == pytest.approx(172.89)
+    assert srcs["spot_price"] == "daily_bars.close"

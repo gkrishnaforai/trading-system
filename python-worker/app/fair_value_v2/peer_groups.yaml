@@ -26,3 +26,14 @@ groups:
     - WULF
     - GLXY
     - VRT
+
+  # Retail-facing crypto / trading / consumer-credit platforms: all
+  # priced off engagement + take-rate + credit cycles rather than the
+  # generic "Financial Data & Stock Exchanges" industry FMP assigns.
+  fintech:
+    - COIN
+    - HOOD
+    - GLXY
+    - SOFI
+    - UPST
+    - PYPL

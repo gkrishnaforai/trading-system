@@ -376,6 +376,13 @@ def decide(category: Optional[str],
     if earnings_quality and \
             earnings_quality.get("classification") != "divergence_favorable":
         bu_drivers.append(earnings_quality["classification"])
+    elif earnings_quality and \
+            earnings_quality.get("classification") == "divergence_favorable" and \
+            abs(float(earnings_quality.get("divergence") or 0)) > 1.0:
+        # extreme favorable divergence (>100pts) is not benign — it
+        # means earnings are swinging orders of magnitude off revenue,
+        # i.e. cyclical/base-effect earnings, not durable margins
+        bu_drivers.append("earnings_instability")
     if capital_quality and capital_quality.get("flag") == "growth_below_wacc":
         bu_drivers.append("growth_below_wacc")
     if scalars.get("analyst_count") in (None, 0):
