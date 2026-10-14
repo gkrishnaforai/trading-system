@@ -52,6 +52,15 @@ def enforce_scenario_order(
             out[k] = float(out[prev_k])
             v = out[k]
         prev_k = k
+    # degenerate blend: upside legs collapsed onto base while downside
+    # still differentiates — the probability-weighted expected value is
+    # then biased low with no warning. Surface it explicitly.
+    base_v, bull_v = out.get("base"), out.get("bull")
+    if (base_v is not None and bull_v is not None
+            and float(bull_v) <= float(base_v)
+            and out.get("bear") is not None
+            and float(out["bear"]) < float(base_v)):
+        flags.append("scenario_degenerate")
     return out, flags
 
 

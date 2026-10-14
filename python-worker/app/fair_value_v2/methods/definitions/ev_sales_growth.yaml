@@ -48,6 +48,16 @@ params:
   # the unit economics the contracted backlog converts at.
   ramp_ratio: 1.5
   margin_floor_ramp: 0.10
+  # scenario differentiation on the revenue axis: once g saturates g_cap
+  # the multiple legs collapse to identical values — bull/explosive for a
+  # ramping name means faster capacity conversion, i.e. more recognized
+  # revenue, not just a higher multiple on the same sales base.
+  sales_bear_mult: 0.85
+  sales_bull_mult: 1.10
+  sales_explosive_mult: 1.25
+  # forward revenue running >3x trailing is ARR-flavoured extrapolation,
+  # not next-FY recognized revenue — flag it rather than silently trust it
+  forward_rev_max_ratio: 3.0
 formula:
   bindings:
     # EV->equity bridge: the multiple produces enterprise value, so
@@ -66,6 +76,21 @@ formula:
       coalesce:
         - {var: revenue_forward}
         - {var: revenue_ttm}
+    # ARR-vs-recognized check: flag_* bindings land in metrics.flags and
+    # are promoted to run quality_flags by the runner
+    flag_forward_revenue_inflated:
+      if:
+        cond: {gt: [{coalesce: [{var: revenue_ttm}, 0]}, 0]}
+        then:
+          gte:
+            - div: [{var: sales_base}, {var: revenue_ttm}]
+            - param: forward_rev_max_ratio
+        else: {const: false}
+    # per-scenario revenue: downside = slower conversion, upside = faster
+    # ramp. Keeps bear < base < bull < explosive when g saturates g_cap.
+    sales_bear: {mul: [{var: sales_base}, {param: sales_bear_mult}]}
+    sales_bull: {mul: [{var: sales_base}, {param: sales_bull_mult}]}
+    sales_explosive: {mul: [{var: sales_base}, {param: sales_explosive_mult}]}
     g:
       clamp:
         value: {var: revenue_growth_ttm}
@@ -174,7 +199,7 @@ formula:
       else:
         div:
           - sub:
-              - add: [{mul: [{var: sales_base}, {var: evs_bear}]}, {var: cash_and_equivalents}]
+              - add: [{mul: [{var: sales_bear}, {var: evs_bear}]}, {var: cash_and_equivalents}]
               - var: debt_eff
           - var: shares_eff
   bull_fair_price:
@@ -187,7 +212,7 @@ formula:
       else:
         div:
           - sub:
-              - add: [{mul: [{var: sales_base}, {var: evs_bull}]}, {var: cash_and_equivalents}]
+              - add: [{mul: [{var: sales_bull}, {var: evs_bull}]}, {var: cash_and_equivalents}]
               - var: debt_eff
           - var: shares_eff
   explosive_fair_price:
@@ -200,7 +225,7 @@ formula:
       else:
         div:
           - sub:
-              - add: [{mul: [{var: sales_base}, {var: evs_explosive}]}, {var: cash_and_equivalents}]
+              - add: [{mul: [{var: sales_explosive}, {var: evs_explosive}]}, {var: cash_and_equivalents}]
               - var: debt_eff
           - var: shares_eff
 validations:

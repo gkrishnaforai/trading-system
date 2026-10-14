@@ -176,8 +176,9 @@ class FairValueV2Resolver:
                     """
                     SELECT run_id, symbol, as_of, inputs_watermark, features_hash,
                            fair_value, scenario_fair_values, expected_fair_value,
-                           quality_flags, regime,
-                           method_results, warnings, model_version, decision
+                           spot_at_run, quality_flags, regime,
+                           method_results, warnings, model_version, decision,
+                           reverse_dcf, relative_valuation, decision_scalars
                     FROM fair_value_v2_runs
                     WHERE symbol = :symbol
                     ORDER BY as_of DESC
@@ -206,6 +207,10 @@ class FairValueV2Resolver:
                 spot = float(row[0]["close"])
         except Exception:
             spot = None
+        try:
+            result.spot_at_run = spot
+        except Exception:
+            pass
         if spot and result.fair_value:
             ratio = float(result.fair_value) / spot
             # asymmetric-insanity guard: +150% blowout OR a model claiming
@@ -282,13 +287,14 @@ class FairValueV2Resolver:
              scenario_fair_values, expected_fair_value, spot_at_run,
              quality_flags, regime, method_results, warnings, model_version,
              decision, buy_below, valuation_confidence, expected_return_2y,
-             fv_upside_pct)
+             fv_upside_pct, reverse_dcf, relative_valuation, decision_scalars)
             VALUES
             (:run_id, :symbol, :as_of, :inputs_watermark, :features_hash, :fair_value,
              :scenario_fair_values, :expected_fair_value, :spot_at_run,
              :quality_flags, :regime, :method_results, :warnings, :model_version,
              :decision, :buy_below, :valuation_confidence, :expected_return_2y,
-             :fv_upside_pct)
+             :fv_upside_pct, :reverse_dcf, :relative_valuation,
+             :decision_scalars)
             """,
             {
                 "run_id": result.run_id,
@@ -304,7 +310,7 @@ class FairValueV2Resolver:
                 "regime": result.regime,
                 "method_results": json.dumps(method_results, default=str),
                 "warnings": json.dumps(warnings, default=str),
-                "model_version": "fair_value_v2.1",
+                "model_version": result.model_version,
                 "decision": json.dumps(decision, default=str)
                             if decision else None,
                 "buy_below": (decision or {}).get("buy_below"),
@@ -313,6 +319,14 @@ class FairValueV2Resolver:
                 "expected_return_2y": (decision or {}).get(
                     "expected_return_2y"),
                 "fv_upside_pct": (decision or {}).get("fv_upside_pct"),
+                "reverse_dcf": json.dumps(result.reverse_dcf, default=str)
+                               if result.reverse_dcf else None,
+                "relative_valuation": json.dumps(
+                    result.relative_valuation, default=str)
+                    if result.relative_valuation else None,
+                "decision_scalars": json.dumps(
+                    result.decision_scalars, default=str)
+                    if result.decision_scalars else None,
             },
         )
 
@@ -421,7 +435,11 @@ class FairValueV2Resolver:
             features_hash=row.get("features_hash"),
             warnings=row.get("warnings") or [],
             decision=row.get("decision"),
+            spot_at_run=row.get("spot_at_run"),
             model_version=row.get("model_version") or "fair_value_v2",
+            reverse_dcf=row.get("reverse_dcf"),
+            relative_valuation=row.get("relative_valuation"),
+            decision_scalars=row.get("decision_scalars") or {},
         )
 
     # -- resolve --------------------------------------------------------------
@@ -465,7 +483,14 @@ class FairValueV2Resolver:
                 watermark is None
                 or (stored_wm is not None and stored_wm >= watermark)
             )
-            if age_ok and inputs_fresh:
+            # model version is a content hash of the YAML method/policy
+            # surface — a formula edit must recompute even when inputs
+            # are unchanged, else cached runs keep stale valuations
+            model_ok = (
+                latest.get("model_version") ==
+                getattr(self._service.runner, "model_version", None)
+            )
+            if age_ok and inputs_fresh and model_ok:
                 return self._to_result(latest), {
                     "reused": True,
                     "run_id": latest["run_id"],
@@ -481,7 +506,9 @@ class FairValueV2Resolver:
             "run_as_of": result.as_of_ts.isoformat(),
             "inputs_watermark": watermark.isoformat() if watermark else None,
             "reason": "forced" if force else (
-                "inputs_changed" if latest else "no_prior_run"
+                ("model_changed" if latest.get("model_version") !=
+                 getattr(self._service.runner, "model_version", None)
+                 else "inputs_changed") if latest else "no_prior_run"
             ),
         }
         if result.fair_value and float(result.fair_value) > 0:

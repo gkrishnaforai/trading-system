@@ -34,6 +34,12 @@ params:
   margin_floor: 0.03
   margin_cap: 0.60
   op_margin_haircut: 0.75
+  # revenue-axis scenario differentiation: once g saturates g_cap the
+  # multiple legs are identical — upside cases need more revenue, not
+  # just a higher multiple on the same base
+  rev_bear_mult: 0.85
+  rev_bull_mult: 1.10
+  rev_explosive_mult: 1.25
 formula:
   bindings:
     # EV->equity bridge: the multiple produces enterprise value, so
@@ -55,6 +61,9 @@ formula:
       min: [{mul: [{var: g}, {param: bull_g_mult}]}, {param: g_cap}]
     g_explosive:
       min: [{mul: [{var: g}, {param: explosive_g_mult}]}, {param: g_cap}]
+    rev_bear: {mul: [{var: revenue_ttm}, {param: rev_bear_mult}]}
+    rev_bull: {mul: [{var: revenue_ttm}, {param: rev_bull_mult}]}
+    rev_explosive: {mul: [{var: revenue_ttm}, {param: rev_explosive_mult}]}
     margin_net:
       coalesce:
         - {var: net_profit_margin_ttm}
@@ -133,7 +142,7 @@ formula:
       else:
         div:
           - sub:
-              - add: [{mul: [{var: revenue_ttm}, {var: evs_bear}]}, {var: cash_and_equivalents}]
+              - add: [{mul: [{var: rev_bear}, {var: evs_bear}]}, {var: cash_and_equivalents}]
               - var: debt_eff
           - var: shares_eff
   bull_fair_price:
@@ -146,7 +155,7 @@ formula:
       else:
         div:
           - sub:
-              - add: [{mul: [{var: revenue_ttm}, {var: evs_bull}]}, {var: cash_and_equivalents}]
+              - add: [{mul: [{var: rev_bull}, {var: evs_bull}]}, {var: cash_and_equivalents}]
               - var: debt_eff
           - var: shares_eff
   explosive_fair_price:
@@ -159,7 +168,7 @@ formula:
       else:
         div:
           - sub:
-              - add: [{mul: [{var: revenue_ttm}, {var: evs_explosive}]}, {var: cash_and_equivalents}]
+              - add: [{mul: [{var: rev_explosive}, {var: evs_explosive}]}, {var: cash_and_equivalents}]
               - var: debt_eff
           - var: shares_eff
 validations: []

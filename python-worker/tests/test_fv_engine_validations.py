@@ -864,3 +864,70 @@ def test_22_sbc_drives_dilution_classification():
     d = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
                [_mr(120.0, inputs=base), _mr(122.0, inputs=base)])
     assert d["earnings_quality"]["classification"] == "divergence_dilution"
+
+
+# ---------------- 23. scenario degeneracy + NBIS audit regressions ----
+
+def test_23_scenario_degenerate_flagged_when_upside_collapses():
+    # bear < base == bull — the NBIS signature: expected value biased low
+    scen, flags = enforce_scenario_order(
+        {"bear": 40.0, "base": 70.0, "bull": 70.0, "explosive": 75.0})
+    assert "scenario_degenerate" in flags
+    # distinct upside → no flag
+    scen, flags = enforce_scenario_order(
+        {"bear": 40.0, "base": 70.0, "bull": 90.0, "explosive": 110.0})
+    assert "scenario_degenerate" not in flags
+    # flat everywhere incl. bear is a different pathology — not this flag
+    scen, flags = enforce_scenario_order(
+        {"bear": 70.0, "base": 70.0, "bull": 70.0, "explosive": 75.0})
+    assert "scenario_degenerate" not in flags
+
+
+def test_23_ev_sales_growth_differentiates_at_g_saturation():
+    # revenue growth far above g_cap used to give base == bull (NBIS).
+    # Revenue-axis shocks must keep bear < base < bull < explosive.
+    s = dict(BASE, revenue_growth_ttm=6.0, revenue_forward=3.3e9,
+             revenue_ttm=5.3e8, net_profit_margin_ttm=-0.5,
+             net_profit_margin_midcycle=0.10, operating_margin_ttm=-0.4,
+             fcf_ttm=-1.0e9)
+    out = _eval("ev_sales_growth", s)
+    assert out["bear"] < out["base"] < out["bull"] < out["explosive"]
+
+
+def test_23_ev_sales_fintech_differentiates_at_g_saturation():
+    s = dict(BASE, revenue_growth_ttm=4.0)
+    out = _eval("ev_sales_fintech", s)
+    assert out["bear"] < out["base"] < out["bull"] < out["explosive"]
+
+
+def test_23_forward_revenue_inflation_flagged_not_silent():
+    # forward sales base running >3x trailing is ARR-flavoured
+    # extrapolation — a flag_* binding that must surface in metrics
+    s = dict(BASE, revenue_forward=4.0e10, revenue_ttm=1.0e10)
+    scen, metrics = evaluate_scenarios(
+        REG.get("ev_sales_growth").formula, scalars=s,
+        params=dict(REG.get("ev_sales_growth").params or {}),
+        validations=list(REG.get("ev_sales_growth").validations or []))
+    assert "forward_revenue_inflated" in (metrics.get("flags") or [])
+    # 2.5x forward — under the bound, no flag
+    s2 = dict(BASE, revenue_forward=2.5e10, revenue_ttm=1.0e10)
+    _, metrics2 = evaluate_scenarios(
+        REG.get("ev_sales_growth").formula, scalars=s2,
+        params=dict(REG.get("ev_sales_growth").params or {}),
+        validations=list(REG.get("ev_sales_growth").validations or []))
+    assert "forward_revenue_inflated" not in (metrics2.get("flags") or [])
+
+
+def test_23_new_flags_charge_mos_and_uncertainty():
+    s = dict(OK_IN)
+    d = decide("ai_infra", 70.0, 61.0, {"bear": 40.0, "base": 70.0,
+                                      "bull": 70.0, "explosive": 75.0},
+               ["scenario_degenerate", "forward_revenue_inflated",
+                "single_method"], 100.0, [_mr(70.0, inputs=s)],
+               scalars=s)
+    applied = set(d.get("mos_adders") or [])
+    assert {"scenario_degenerate", "forward_revenue_inflated",
+            "single_method"} <= applied
+    assert "scenario_degenerate" in d["valuation_uncertainty"]["drivers"]
+    assert "single_method" in d["valuation_uncertainty"]["drivers"]
+    assert "forward_revenue_inflated" in d["business_uncertainty"]["drivers"]

@@ -214,6 +214,9 @@ def decide(category: Optional[str],
     except (TypeError, ValueError):
         pass
     for flag, key in (("scenarios_partial", "scenarios_partial"),
+                      ("forward_revenue_inflated", "forward_revenue_inflated"),
+                      ("scenario_degenerate", "scenario_degenerate"),
+                      ("single_method", "single_method"),
                       ("no_scenarios", "no_scenarios"),
                       ("extreme_gap", "extreme_gap"),
                       ("tv_dominant", "tv_dominant")):
@@ -345,6 +348,9 @@ def decide(category: Optional[str],
             vu_drivers.append("wide_scenario_band")
     if "tv_dominant" in (quality_flags or []):
         vu_drivers.append("tv_dominant")
+    for _f in ("scenario_degenerate", "single_method"):
+        if _f in (quality_flags or []):
+            vu_drivers.append(_f)
     valuation_uncertainty = {
         "score": ("high" if len(vu_drivers) >= 2 or
                   (method_dispersion or 0) >
@@ -370,7 +376,8 @@ def decide(category: Optional[str],
         pass
     if fr in ("critical", "high"):
         bu_drivers.append(f"funding_{fr}")
-    for _f in ("no_scenarios", "scenarios_partial"):
+    for _f in ("no_scenarios", "scenarios_partial",
+               "forward_revenue_inflated"):
         if _f in (quality_flags or []):
             bu_drivers.append(_f)
     business_uncertainty = {

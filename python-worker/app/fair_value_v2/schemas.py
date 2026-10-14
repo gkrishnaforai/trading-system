@@ -54,6 +54,9 @@ class FairValueV2Result(BaseModel):
     warnings: List[Dict[str, Any]] = Field(default_factory=list)
     decision: Optional[Dict[str, Any]] = None
     classification: Optional[Dict[str, Any]] = None
+    # provenance: the price this run was valued against — populated on
+    # persist, read back on reuse so a stored run still shows its spot
+    spot_at_run: Optional[float] = None
     # reference metric, never blended: the FCF growth rate today's spot
     # price already assumes under the dcf_mega_cap spec
     reverse_dcf: Optional[Dict[str, Any]] = None

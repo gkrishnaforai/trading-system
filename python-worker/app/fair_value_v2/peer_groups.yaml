@@ -1,0 +1,28 @@
+version: 1
+
+# Category-driven peer groups for the relative-valuation leg.
+#
+# FMP's industry taxonomy is too coarse for archetypes that cut across
+# sectors — NBIS lands in "Internet Content & Information", neoclouds
+# scatter across "Capital Markets"/"Software". When a symbol's primary
+# category matches a key below, the explicit symbol list replaces the
+# same-industry query as the peer set (industry is still reported for
+# provenance). Membership is reviewed against snapshot coverage —
+# names without key_metrics data simply don't contribute multiples.
+
+groups:
+  # AI compute / neocloud / GPU-datacenter operators: capital-intensive
+  # buildout economics, contract-driven revenue ramp — NOT internet
+  # content, NOT generic software. Equipment suppliers (VRT) included
+  # because the market prices them off the same capex cycle.
+  ai_infra:
+    - NBIS
+    - CRWV
+    - IREN
+    - APLD
+    - CORZ
+    - CIFR
+    - CLSK
+    - WULF
+    - GLXY
+    - VRT

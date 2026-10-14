@@ -268,7 +268,7 @@ class PostgresPointInTimeFeatureStore:
 
         # DATE as-of columns should compare against a date.
         as_of_value: Any
-        if table == "financial_ratios" or as_of_column in {"fiscal_date_ending", "consensus_date", "target_date", "rating_date"}:
+        if table == "financial_ratios" or as_of_column in {"fiscal_date_ending", "consensus_date", "target_date", "rating_date", "date", "float_date"}:
             as_of_value = as_of_ts.date()
         else:
             as_of_value = as_of_ts
@@ -341,7 +341,7 @@ class PostgresPointInTimeFeatureStore:
             raise ValueError("order_by_column must equal as_of_column")
         limit = max(1, min(int(limit), 40))
 
-        if table == "financial_ratios" or as_of_column in {"fiscal_date_ending", "consensus_date", "target_date", "rating_date"}:
+        if table == "financial_ratios" or as_of_column in {"fiscal_date_ending", "consensus_date", "target_date", "rating_date", "date", "float_date"}:
             as_of_value: Any = as_of_ts.date()
         else:
             as_of_value = as_of_ts

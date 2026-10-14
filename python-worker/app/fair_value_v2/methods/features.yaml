@@ -30,6 +30,9 @@ allow_table_columns:
   fmp_real_time_prices:
     as_of_columns: [price_timestamp, created_at, updated_at]
     columns: [price]
+  daily_bars:
+    as_of_columns: [date]
+    columns: [close]
 
 allow_macro_columns:
   as_of_columns: [data_date]
@@ -304,6 +307,12 @@ features:
         source: fmp_quote
         json_root: quote
         keys: [price]
+      - type: table_column
+        table: daily_bars
+        column: close
+        as_of: date
+        order_by: date
+        where_not_null: true
 
   eps_forward:
     type: coalesce
@@ -409,13 +418,21 @@ features:
     where_not_null: true
 
   analyst_count:
-    type: table_column
+    # coverage is the count of analysts contributing to the estimate,
+    # not just the consensus_data table — that table only covers a
+    # handful of symbols while fundamental_estimate_snapshots (the
+    # eps_est_* chain) tracks ~170 names
+    type: coalesce
     max_age_days: 240
-    table: consensus_data
-    column: analyst_count
-    as_of: consensus_date
-    order_by: consensus_date
-    where_not_null: false
+    sources:
+      - type: table_column
+        table: consensus_data
+        column: analyst_count
+        as_of: consensus_date
+        order_by: consensus_date
+        where_not_null: false
+      - type: feature_ref
+        name: eps_est_analysts
 
   market_cap:
     type: snapshot_json

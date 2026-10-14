@@ -59,6 +59,33 @@ class FairValueRunner:
         )
         self.blender = WeightedBlender()
 
+        # Category peer-group overrides for the relative leg — explicit
+        # symbol sets for archetypes the FMP taxonomy mislabels
+        try:
+            import yaml
+            with open(os.path.join(base_dir, "peer_groups.yaml")) as fh:
+                self._peer_groups = (
+                    yaml.safe_load(fh) or {}).get("groups") or {}
+        except Exception:
+            self._peer_groups = {}
+
+        # Content-hash the YAML method/policy surface into the model
+        # version — a formula or policy change must invalidate stored
+        # runs even when the input watermark is unchanged (the reuse
+        # check compares model_version; a static string made formula
+        # edits invisible to already-run symbols)
+        try:
+            h = hashlib.sha256()
+            for root, _dirs, files in sorted(os.walk(base_dir)):
+                for fn in sorted(files):
+                    if fn.endswith(".yaml"):
+                        fp = os.path.join(root, fn)
+                        h.update(os.path.relpath(fp, base_dir).encode())
+                        h.update(open(fp, "rb").read())
+            self.model_version = f"fair_value_v2.{h.hexdigest()[:8]}"
+        except Exception:
+            self.model_version = "fair_value_v2.1"
+
         # Scalars used only for regime selection. Keep this list small and stable.
         self._regime_selection_scalars = [
             "eps_ttm",
@@ -405,20 +432,28 @@ class FairValueRunner:
             quality_flags.append("no_scenarios")
         elif scen_methods and len(scen_methods) < len(ok_methods):
             quality_flags.append("scenarios_partial")
+        # single-method runs are legitimate (pre-earnings names have no
+        # earnings-based candidates) but dispersion and cross-method
+        # contradiction checks are structurally impossible — say so
+        if len(ok_methods) == 1:
+            quality_flags.append("single_method")
         for f in quality_flags:
             warnings.append({"level": "warning", "scope": "scenarios",
                              "reason": f})
 
-        # tv_dominant — an ok method whose value rests mostly on the
-        # terminal is a legitimate long-duration estimate, not a
-        # rejection; surface it as a quality flag so the decision layer
-        # can charge uncertainty and cap confidence
-        tv_hit = any("tv_dominant" in ((mr.metrics or {}).get("flags") or [])
-                     for mr in ok_methods)
-        if tv_hit:
-            quality_flags.append("tv_dominant")
+        # method-level flags promoted to run quality_flags —
+        # tv_dominant: the value rests mostly on the terminal (legitimate
+        #   long-duration estimate, but charge uncertainty + cap confidence)
+        # forward_revenue_inflated: forward/ARR-flavoured revenue runs far
+        #   ahead of trailing — extrapolation risk, not recognized revenue
+        promoted = {"tv_dominant", "forward_revenue_inflated"}
+        hits = sorted({f for mr in ok_methods
+                       for f in ((mr.metrics or {}).get("flags") or [])
+                       if f in promoted} - set(quality_flags))
+        for f in hits:
+            quality_flags.append(f)
             warnings.append({"level": "info", "scope": "scenarios",
-                             "reason": "tv_dominant"})
+                             "reason": f})
 
         # FX provenance: which statement-currency fields were converted
         # (or refused) during this run — e.g. {'TWD@0.0314': [fcf_ttm…]}.
@@ -446,7 +481,7 @@ class FairValueRunner:
                              "shares_diluted", "total_debt",
                              "cash_and_equivalents", "revenue_growth_ttm",
                              "forward_growth_pct_1y",
-                             "eps_ttm", "revenue_ttm"])
+                             "eps_ttm", "revenue_ttm", "revenue_forward"])
             rs = rfeatures.scalars or {}
             dcf_params = dict(self.registry.get("dcf_mega_cap").params or {})
             reverse = implied_growth(
@@ -483,7 +518,8 @@ class FairValueRunner:
                 spot=rs.get("spot_price"),
                 fair_value=(blend.fair_value if any(
                     mr.status == "ok" and mr.fair_price
-                    for mr in method_results) else None))
+                    for mr in method_results) else None),
+                peer_symbols=self._peer_groups.get(category))
             if relative.get("flag"):
                 warnings.append({
                     "level": "info", "scope": "relative_valuation",
@@ -538,4 +574,5 @@ class FairValueRunner:
             reverse_dcf=reverse,
             relative_valuation=relative,
             decision_scalars=decision_scalars,
+            model_version=self.model_version,
         )
