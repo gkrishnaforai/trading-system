@@ -480,6 +480,72 @@ def test_17_dispersion_boundaries():
 
 # ---------------- 18. data freshness & integrity --------------------------
 
+# ---------------- reverse DCF — market-implied expectations -------------
+
+_DCF_KW = dict(wacc=0.10, terminal_growth=0.03, growth_cap=0.20,
+               fade_years=5, explicit_years=10)
+_DCF_PRICE_KW = {k: v for k, v in _DCF_KW.items() if k != "growth_cap"}
+
+
+def test_reverse_dcf_recovers_known_growth():
+    from app.fair_value_v2.reverse_dcf import dcf_price, implied_growth
+    for g_true in (-0.10, 0.0, 0.05, 0.12, 0.19):
+        price = dcf_price(1e9, 1e8, 5e9, growth=g_true,
+                          **_DCF_PRICE_KW)["price"]
+        out = implied_growth(1e9, 1e8, 5e9, price, **_DCF_KW)
+        assert out["boundary"] is None
+        assert abs(out["implied_fcf_growth"] - g_true) < 1e-4, \
+            f"g_true={g_true} → {out['implied_fcf_growth']}"
+
+
+def test_reverse_dcf_boundary_flags():
+    from app.fair_value_v2.reverse_dcf import dcf_price, implied_growth
+    # price far above what the cap-growth DCF can produce → at_cap
+    p_high = 5 * dcf_price(1e9, 1e8, 5e9, growth=0.20,
+                           **_DCF_PRICE_KW)["price"]
+    out = implied_growth(1e9, 1e8, 5e9, p_high, **_DCF_KW)
+    assert out["boundary"] == "at_cap" and out["flag"] == "implied_above_cap"
+    # price below the -60%/yr floor → below_floor
+    p_low = 0.5 * dcf_price(1e9, 1e8, 5e9, growth=-0.60,
+                            **_DCF_PRICE_KW)["price"]
+    out = implied_growth(1e9, 1e8, 5e9, p_low, **_DCF_KW)
+    assert out["boundary"] == "below_floor" \
+        and out["flag"] == "implied_below_floor"
+
+
+def test_reverse_dcf_not_applicable_cases():
+    from app.fair_value_v2.reverse_dcf import implied_growth
+    for kwargs, reason in (
+            ({}, "no_spot_price"),
+            ({"fcf_ttm": -1e9, "spot": 100.0}, "fcf_ttm_not_positive"),
+            ({"shares_outstanding": 0, "spot": 100.0},
+             "shares_not_positive")):
+        base = dict(fcf_ttm=1e9, shares_outstanding=1e8,
+                    cash_and_equivalents=5e9, spot=None)
+        base.update(kwargs)
+        fcf = base.pop("fcf_ttm"); sh = base.pop("shares_outstanding")
+        cash = base.pop("cash_and_equivalents"); spot = base.pop("spot")
+        out = implied_growth(fcf, sh, cash, spot, **_DCF_KW)
+        assert out["status"] == "not_applicable" \
+            and out["reason"] == reason
+
+
+def test_reverse_dcf_spec_matches_deployed_dcf():
+    # the inversion must price IDENTICALLY to the deployed
+    # dcf_mega_cap at the same growth input (modulo the g>=0 clamp)
+    from app.fair_value_v2.reverse_dcf import dcf_price
+    d = _defn("dcf_mega_cap")
+    scalars = {"fcf_ttm": 1.5e9, "shares_outstanding": 1e8,
+               "cash_and_equivalents": 5e9, "revenue_growth_ttm": 0.12}
+    out = _eval("dcf_mega_cap", scalars)
+    p = dict(d.params or {})
+    ref = dcf_price(1.5e9, 1e8, 5e9, wacc=p["wacc"],
+                    terminal_growth=p["terminal_growth"], growth=0.12,
+                    fade_years=p["fade_years"],
+                    explicit_years=p["explicit_years"])["price"]
+    assert abs(ref - out["base"]) < 0.01 * out["base"]
+
+
 def test_18_missing_required_scalar_rejects_not_zeros():
     with pytest.raises(DslError) as e:
         _eval("pe_basic", {"eps_ttm": None})

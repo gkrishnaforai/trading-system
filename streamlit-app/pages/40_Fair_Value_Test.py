@@ -189,6 +189,27 @@ for s, r in results.items():
         elif res.get("fair_value"):
             st.markdown(f"fv **${float(res['fair_value']):.2f}**")
 
+        # reverse DCF — the growth today's price already assumes
+        _rdcf = res.get("reverse_dcf") or {}
+        if _rdcf.get("status") == "ok":
+            _ig = _rdcf.get("implied_fcf_growth")
+            _bits = [f"market prices **{_ig:+.1%}/yr** FCF growth"]
+            if _rdcf.get("realized_growth") is not None:
+                _bits.append(f"realized "
+                             f"{_rdcf['realized_growth']:+.1%}")
+            if _rdcf.get("consensus_growth_1y") is not None:
+                _bits.append(f"cons-1y "
+                             f"{_rdcf['consensus_growth_1y']:+.1%}")
+            if _rdcf.get("tv_share_at_implied") is not None:
+                _bits.append(f"TV {_rdcf['tv_share_at_implied']:.0%} EV")
+            if _rdcf.get("boundary"):
+                _bits.append(f"`{_rdcf['boundary']}`")
+            st.caption("🧮 reverse-DCF — " + " · ".join(_bits))
+            if _rdcf.get("note"):
+                st.caption(f"↳ {_rdcf['note']}")
+        elif _rdcf.get("status") == "not_applicable":
+            st.caption(f"🧮 reverse-DCF n/a — {_rdcf.get('reason')}")
+
         # decision line
         if d.get("buy_below") and spot:
             bb = float(d["buy_below"])

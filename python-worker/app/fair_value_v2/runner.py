@@ -16,6 +16,7 @@ from app.fair_value_v2.blender import (
 )
 from app.fair_value_v2.dsl.evaluator import DslError, evaluate_scenarios
 from app.fair_value_v2.dsl.render import render_scenarios
+from app.fair_value_v2.reverse_dcf import implied_growth
 from app.fair_value_v2.feature_resolver import FeatureResolver
 from app.fair_value_v2.feature_store.postgres_point_in_time import PostgresPointInTimeFeatureStore
 from app.fair_value_v2.methods.registry import MethodRegistry
@@ -403,6 +404,38 @@ class FairValueRunner:
                 }
             )
 
+        # Reverse DCF — the growth today's spot already assumes, solved
+        # against the dcf_mega_cap spec. Reference metric; never blends
+        # and never blocks a run.
+        reverse = None
+        try:
+            rfeatures = self._get_features_for_requires(
+                symbol, ts, ["spot_price", "fcf_ttm", "shares_outstanding",
+                             "cash_and_equivalents", "revenue_growth_ttm",
+                             "forward_growth_pct_1y"])
+            rs = rfeatures.scalars or {}
+            dcf_params = dict(self.registry.get("dcf_mega_cap").params or {})
+            reverse = implied_growth(
+                rs.get("fcf_ttm"), rs.get("shares_outstanding"),
+                rs.get("cash_and_equivalents"), rs.get("spot_price"),
+                wacc=float(dcf_params.get("wacc", 0.10)),
+                terminal_growth=float(dcf_params.get("terminal_growth", 0.03)),
+                growth_cap=float(dcf_params.get("growth_cap", 0.20)),
+                fade_years=float(dcf_params.get("fade_years", 5)),
+                explicit_years=int(dcf_params.get("explicit_years", 10)),
+                realized_growth=rs.get("revenue_growth_ttm"),
+                consensus_growth_pct_1y=rs.get("forward_growth_pct_1y"))
+            if reverse.get("flag"):
+                warnings.append({
+                    "level": "info", "scope": "reverse_dcf",
+                    "reason": reverse["flag"],
+                    "details": {"implied_fcf_growth":
+                                reverse.get("implied_fcf_growth")}})
+        except Exception as exc:
+            warnings.append({"level": "warning", "scope": "reverse_dcf",
+                             "reason": "reverse_dcf_failed",
+                             "details": {"error": str(exc)}})
+
         # Strict-only policy: if nothing succeeded, do not emit a fair value.
         any_ok = any((mr.status == "ok" and mr.fair_price is not None) for mr in method_results)
         if not any_ok:
@@ -432,4 +465,5 @@ class FairValueRunner:
             method_results=method_results,
             features_hash=combined_hash,
             warnings=warnings,
+            reverse_dcf=reverse,
         )

@@ -87,6 +87,7 @@ units:
   total_debt: usd
   forward_growth: decimal
   forward_growth_pct_1y: percent
+  spot_price: usd_per_share
   tnx_yield: percent
 
 features:
@@ -278,6 +279,29 @@ features:
                 source: fmp_key_metrics_ttm
                 json_root: key_metrics_ttm
                 keys: [earningsYieldTTM]
+
+  spot_price:
+    type: coalesce
+    max_age_days: 21
+    sources:
+      - type: table_column
+        table: raw_market_data_intraday
+        column: close
+        as_of: ts
+        order_by: ts
+        where_not_null: true
+        where:
+          interval: last
+      - type: table_column
+        table: fmp_real_time_prices
+        column: price
+        as_of: created_at
+        order_by: created_at
+        where_not_null: true
+      - type: snapshot_json
+        source: fmp_quote
+        json_root: quote
+        keys: [price]
 
   eps_forward:
     type: coalesce
