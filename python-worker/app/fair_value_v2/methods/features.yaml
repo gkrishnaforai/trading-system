@@ -11,9 +11,13 @@ allow_table_columns:
     columns: [consensus_price_target, price_target_high, price_target_low, analyst_count]
   income_statements:
     as_of_columns: [fiscal_date_ending]
-    columns: [total_revenue, net_income, net_profit_margin,
-              weighted_average_shares_outstanding_basic,
-              weighted_average_shares_outstanding_diluted]
+    columns: [total_revenue, net_income, net_profit_margin]
+  fundamental_quarterly:
+    as_of_columns: [filing_date, period_end]
+    columns: [shares_diluted]
+  share_float:
+    as_of_columns: [report_date]
+    columns: [shares_outstanding]
   balance_sheets:
     as_of_columns: [fiscal_date_ending]
     columns: [cash_and_cash_equivalents, long_term_debt, total_stockholders_equity]
@@ -467,10 +471,10 @@ features:
     max_age_days: 200
     sources:
       - type: table_column
-        table: income_statements
-        column: weighted_average_shares_outstanding_diluted
-        as_of: fiscal_date_ending
-        order_by: fiscal_date_ending
+        table: fundamental_quarterly
+        column: shares_diluted
+        as_of: filing_date
+        order_by: filing_date
         where_not_null: true
       - type: snapshot_json_path
         source: fmp_fundamentals
@@ -481,10 +485,10 @@ features:
     max_age_days: 200
     sources:
       - type: table_column
-        table: income_statements
-        column: weighted_average_shares_outstanding_basic
-        as_of: fiscal_date_ending
-        order_by: fiscal_date_ending
+        table: share_float
+        column: shares_outstanding
+        as_of: report_date
+        order_by: report_date
         where_not_null: true
       - type: snapshot_json_path
         source: fmp_fundamentals
