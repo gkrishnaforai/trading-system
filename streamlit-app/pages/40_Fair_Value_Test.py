@@ -53,6 +53,55 @@ if st.button("▶ calculate", type="primary", use_container_width=True):
     prog.empty()
     st.session_state["fv_test"] = results
 
+# ------------------------------------------------ engine backtest
+# Replays every stored fv run against realized prices — fv bias/MAE,
+# bear-breach calibration, buy_below gate reach, and forward returns
+# inside vs outside the gate. Read-only, safe to run any time.
+with st.expander("📐 engine backtest — did stored FVs & gates predict?",
+                 expanded=False):
+    bc1, bc2, bc3 = st.columns([2, 1, 1])
+    with bc1:
+        _bt_sym = st.text_input("symbol (blank = all runs)",
+                                key="bt_sym").strip().upper() or None
+    with bc2:
+        _bt_hz = st.text_input("horizons (days)", "90,180,365",
+                               key="bt_hz")
+    with bc3:
+        st.write("")
+        _go = st.button("▶ run backtest", key="bt_go")
+    if _go:
+        try:
+            _r = client.get("admin/fair-value-v2/backtest", params={
+                "symbol": _bt_sym or "", "horizons": _bt_hz})
+            st.session_state["fv_bt"] = _r
+        except Exception as e:
+            st.session_state["fv_bt"] = {"success": False, "error": str(e)}
+    _bt = st.session_state.get("fv_bt") or {}
+    if _bt.get("success") and (_bt.get("result") or {}).get("horizons"):
+        st.caption(f"{_bt['result']['total_runs']} stored runs evaluated")
+        import pandas as _pd
+        _f = lambda x: f"{x:+.1%}" if x is not None else "—"
+        _g = lambda x: f"{x:.0%}" if x is not None else "—"
+        _rows = [{
+            "horizon": f"{h['days']}d", "n": h["n"],
+            "fv_bias": _f(h["fv_bias"]), "fv_mae": _f(h["fv_mae"]),
+            "bear breach (target ~25%)": _g(h["bear_breach"]),
+            "gate reached": _g(h["gate_reach"]),
+            f"ret if ≤buy_below (n={h['n_inside']})":
+                _f(h["ret_inside_gate"]),
+            f"ret if >buy_below (n={h['n_outside']})":
+                _f(h["ret_outside_gate"]),
+        } for h in _bt["result"]["horizons"]]
+        st.dataframe(_pd.DataFrame(_rows), hide_index=True,
+                     use_container_width=True)
+        st.caption("fv_bias<0 → realized price UNDER fair value "
+                   "(engine overshot) · bear breach ~25% = calibrated · "
+                   "ret≤bb > ret>bb → the gate separates good entries")
+    elif _bt and not _bt.get("success"):
+        st.error(_bt.get("error") or "backtest failed")
+    elif _bt.get("success"):
+        st.caption("no evaluable runs — horizons longer than run age")
+
 results = st.session_state.get("fv_test") or {}
 if not results:
     st.stop()

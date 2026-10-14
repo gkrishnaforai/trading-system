@@ -1,103 +1,100 @@
-"""Point-in-time fair-value backtest.
+"""FV v2 backtest — do stored fair values and buy_below gates predict?
 
-Runs the engine as_of a past date — the feature store only sees data
-that existed then — and compares the scenario ladder against the
-realized close. This is what the versioned run journal is for: every
-row becomes a labeled training example (inputs → scenarios → realized
-forward return) once enough history accumulates.
+Read-only over fair_value_v2_runs × daily_bars. For each horizon:
+
+  fv_bias      median signed error of base FV vs realized end price
+  fv_mae       median |error|
+  bear_breach  share of runs whose min(path) <= bear FV (~25% target)
+  gate_reach   share of runs where min(path) <= buy_below
+  ret_in/out   median forward return for runs that were already inside
+               the buy_below gate at run time vs outside it
+
+Pure computation + SQL — imported by the admin endpoint and the CLI
+script so both report identical numbers.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+import json
+import statistics
+from typing import Any, Dict, List, Optional
 
 from app.database import db
 
 
-def run_backtest(days_back: int = 90, limit: int = 80) -> Dict[str, Any]:
-    from app.fair_value_v2.service import FairValueV2Service
-    svc = FairValueV2Service()
-    as_of = datetime.now(timezone.utc) - timedelta(days=days_back)
+def _median(xs: List[Optional[float]]) -> Optional[float]:
+    xs = sorted(x for x in xs if x is not None)
+    return statistics.median(xs) if xs else None
 
-    symbols = [r["stock_symbol"] for r in db.execute_query(
-        "SELECT DISTINCT stock_symbol FROM stock_insights_snapshots"
-        " WHERE source='fmp_fundamentals' ORDER BY stock_symbol")]
-    realized = {r["symbol"]: float(r["close"]) for r in db.execute_query(
-        "SELECT DISTINCT ON (symbol) symbol, close FROM daily_bars"
-        " ORDER BY symbol, date DESC")}
-    px_then = {}
-    for r in db.execute_query(
-            "SELECT DISTINCT ON (symbol) symbol, close FROM daily_bars"
-            " WHERE date <= :d ORDER BY symbol, date DESC",
-            {"d": as_of.date()}):
-        px_then[r["symbol"]] = float(r["close"])
 
-    rows: List[Dict[str, Any]] = []
-    for sym in symbols[:limit]:
-        if sym not in realized or sym not in px_then:
-            continue
-        try:
-            res = svc.calculate(sym, as_of_ts=as_of)
-        except Exception as exc:
-            rows.append({"symbol": sym, "error": str(exc)[:80]})
-            continue
-        if not res.fair_value:
-            rows.append({"symbol": sym, "status": "no_fv"})
-            continue
-        sc = res.scenario_fair_values or {}
-        p0, p1 = px_then[sym], realized[sym]
-        ret = p1 / p0 - 1
-        rows.append({
-            "symbol": sym,
-            "regime": res.regime,
-            "px_then": round(p0, 2), "px_now": round(p1, 2),
-            "ret_pct": round(ret * 100, 1),
-            "fv_base": round(res.fair_value, 2),
-            "fv_expected": (round(res.expected_fair_value, 2)
-                            if res.expected_fair_value else None),
-            "bear": round(sc["bear"], 2) if sc.get("bear") else None,
-            "bull": round(sc["bull"], 2) if sc.get("bull") else None,
-            "gap_pct": round((res.fair_value / p0 - 1) * 100, 1),
-            "realized_vs_base": round((p1 / res.fair_value - 1) * 100, 1),
-            "within_band": (sc.get("bear") is not None
-                            and sc.get("bull") is not None
-                            and sc["bear"] <= p1 <= sc["bull"]),
-            "flags": res.quality_flags,
+def _runs(symbol: Optional[str]):
+    q = ("SELECT symbol, as_of::date AS as_of, fair_value,"
+         " expected_fair_value, spot_at_run, scenario_fair_values,"
+         " decision"
+         " FROM fair_value_v2_runs"
+         " WHERE fair_value IS NOT NULL AND spot_at_run > 0")
+    params: Dict[str, Any] = {}
+    if symbol:
+        q += " AND symbol = :s"
+        params["s"] = symbol.upper()
+    q += " ORDER BY as_of"
+    return db.execute_query(q, params)
+
+
+def _forward(symbol: str, as_of, days: int) -> Dict[str, Any]:
+    rows = db.execute_query(
+        "SELECT min(close) AS lo,"
+        "  (SELECT close FROM daily_bars WHERE symbol=:s"
+        "   AND date > :d ORDER BY date ASC"
+        "   LIMIT 1 OFFSET :off) AS end_px"
+        " FROM daily_bars WHERE symbol=:s"
+        "  AND date > :d AND date <= :d + :days",
+        {"s": symbol, "d": as_of, "days": days,
+         "off": max(0, int(days * 5 / 7) - 1)})
+    return rows[0] if rows else {}
+
+
+def run_backtest(symbol: Optional[str] = None,
+                 horizons: Optional[List[int]] = None) -> Dict[str, Any]:
+    horizons = horizons or [90, 180, 365]
+    runs = _runs(symbol)
+    out: Dict[str, Any] = {"symbol": symbol, "horizons": [],
+                           "total_runs": len(runs)}
+    for h in horizons:
+        biases, maes, bear_hits, gate_hits = [], [], 0, 0
+        ret_in, ret_out = [], []
+        n_eval = 0
+        for r in runs:
+            spot = float(r["spot_at_run"])
+            fv = float(r["fair_value"])
+            scen = r.get("scenario_fair_values") or {}
+            if isinstance(scen, str):
+                scen = json.loads(scen)
+            dec = r.get("decision") or {}
+            if isinstance(dec, str):
+                dec = json.loads(dec)
+            bb = dec.get("buy_below")
+            bear = scen.get("bear")
+            fwd = _forward(r["symbol"], r["as_of"], h)
+            if not fwd or fwd.get("end_px") is None:
+                continue
+            end_px = float(fwd["end_px"])
+            lo = float(fwd["lo"]) if fwd.get("lo") is not None else None
+            n_eval += 1
+            err = end_px / fv - 1
+            biases.append(err)
+            maes.append(abs(err))
+            if bear and lo is not None and lo <= float(bear):
+                bear_hits += 1
+            if bb and lo is not None and lo <= float(bb):
+                gate_hits += 1
+            ret = end_px / spot - 1
+            (ret_in if (bb and spot <= float(bb)) else ret_out).append(ret)
+        out["horizons"].append({
+            "days": h, "n": n_eval,
+            "fv_bias": _median(biases), "fv_mae": _median(maes),
+            "bear_breach": (bear_hits / n_eval) if n_eval else None,
+            "gate_reach": (gate_hits / n_eval) if n_eval else None,
+            "ret_inside_gate": _median(ret_in), "n_inside": len(ret_in),
+            "ret_outside_gate": _median(ret_out), "n_outside": len(ret_out),
         })
-
-    ok = [r for r in rows if r.get("fv_base")]
-    banded = [r for r in ok if r.get("within_band") is not None]
-    in_band = sum(1 for r in banded if r["within_band"])
-    cheap = [r for r in ok if (r["gap_pct"] or 0) > 15]
-    cheap_won = sum(1 for r in cheap if (r["ret_pct"] or 0) > 0)
-    rich = [r for r in ok if (r["gap_pct"] or 0) < -25]
-    rich_fell = sum(1 for r in rich if (r["ret_pct"] or 0) < 0)
-    errs = [abs(r["realized_vs_base"]) for r in ok]
-
-    return {
-        "as_of": as_of.date().isoformat(),
-        "horizon_days": days_back,
-        "n_symbols": len(ok),
-        "no_fv": [r["symbol"] for r in rows if r.get("status") == "no_fv"],
-        "coverage_pct": (round(100 * in_band / len(banded), 1)
-                         if banded else None),
-        "median_abs_err_pct": (round(sorted(errs)[len(errs) // 2], 1)
-                               if errs else None),
-        "cheap_hit_rate": (f"{cheap_won}/{len(cheap)}" if cheap else None),
-        "rich_avoid_rate": (f"{rich_fell}/{len(rich)}" if rich else None),
-        "rows": sorted(ok, key=lambda r: -(r["gap_pct"] or 0)),
-    }
-
-
-if __name__ == "__main__":
-    import json
-    import sys
-    d = int(sys.argv[1]) if len(sys.argv) > 1 else 90
-    out = run_backtest(d)
-    print(json.dumps({k: v for k, v in out.items() if k != "rows"},
-                     indent=2, default=str))
-    for r in out["rows"]:
-        print(f"  {r['symbol']:>6} ret={r['ret_pct']:>+7.1f}%  "
-              f"gap={r['gap_pct']:>+7.1f}%  base={r['fv_base']:>8} "
-              f"bear={r['bear']} bull={r['bull']} "
-              f"in_band={r['within_band']} {r.get('flags')}")
+    return out

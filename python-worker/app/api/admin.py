@@ -1831,6 +1831,22 @@ async def recompute_ai_capex_regime():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/fair-value-v2/backtest")
+async def fair_value_v2_backtest(symbol: Optional[str] = None,
+                                 horizons: str = "90,180,365"):
+    """Replay stored fv runs against realized daily_bars — fv bias/MAE,
+    bear-breach rate, buy_below gate reach, and forward returns split by
+    whether spot was inside the gate. Read-only."""
+    try:
+        from app.fair_value_v2.backtest import run_backtest
+        hs = [int(x) for x in str(horizons).split(",") if x.strip()]
+        return {"success": True,
+                "result": run_backtest(symbol, hs or None)}
+    except Exception as e:
+        logger.error(f"fair-value-v2 backtest failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/fair-value-v2/category-overrides")
 async def upsert_fair_value_v2_category_override(req: FairValueV2CategoryOverrideRequest):
     """Upsert a Fair Value V2 category override."""
