@@ -186,14 +186,34 @@ def test_5_dcf_simple_default_params_emit():
     assert out["base"] is not None
 
 
-def test_5_excessive_terminal_share_rejected():
-    # terminal_growth 5% vs wacc 10% → TV ~80%+ of EV → explicit rejection
-    with pytest.raises(DslError) as e:
-        _eval("dcf_simple", {"fcf_ttm": 1e9, "shares_outstanding": 1e8,
-                             "cash_and_equivalents": 1e9},
-              {"terminal_growth": 0.05})
-    assert e.value.code == "invalid_assumption"
-    assert e.value.details.get("terminal_share_of_ev", 0) > 0
+def test_5_excessive_terminal_share_flagged_not_rejected():
+    # terminal_growth 5% vs wacc 10% → TV ~80%+ of EV — legitimate for
+    # long-duration names: emit the value, flag the dependence so the
+    # decision layer charges uncertainty instead of losing the answer
+    d = _defn("dcf_simple")
+    scen, metrics = evaluate_scenarios(
+        d.formula,
+        scalars={"fcf_ttm": 1e9, "shares_outstanding": 1e8,
+                 "cash_and_equivalents": 1e9},
+        params={**(d.params or {}), "terminal_growth": 0.05},
+        validations=list(d.validations or []),
+    )
+    assert scen["base"] is not None
+    assert "tv_dominant" in (metrics.get("flags") or [])
+
+
+def test_5_terminal_share_within_cap_not_flagged():
+    # a normal stable name must NOT carry the flag
+    d = _defn("dcf_simple")
+    scen, metrics = evaluate_scenarios(
+        d.formula,
+        scalars={"fcf_ttm": 1e9, "shares_outstanding": 1e8,
+                 "cash_and_equivalents": 1e9},
+        params=dict(d.params or {}),
+        validations=list(d.validations or []),
+    )
+    assert scen["base"] is not None
+    assert "tv_dominant" not in (metrics.get("flags") or [])
 
 
 # ---------------- 6. horizon & convergence ------------------------------
@@ -244,8 +264,8 @@ def test_8_margin_capped_at_60pct():
                                     "net_profit_margin_midcycle": 0.85,
                                     "fcf_ttm": 9e9})
     # margin min((.9+.85)/2, .9)=.875 → src min(.875,.6)=.6; pe 18 →
-    # evs 10.8 → 1e10*10.8=1.08e11 + 5e9 → 1130
-    assert out["base"] == pytest.approx(1130.0, rel=2e-3)
+    # evs 10.8 → 1e10*10.8=1.08e11 + 5e9 cash − 3e9 debt → 1100
+    assert out["base"] == pytest.approx(1100.0, rel=2e-3)
 
 
 # ---------------- 9. cash-flow reconciliation ----------------------------
@@ -307,14 +327,31 @@ def test_11_dilution_overhang_priced_in_decision():
     ("dcf_simple", {"fcf_ttm": 1.5e9}),
     ("dcf_mega_cap", {"fcf_ttm": 1.5e9, "revenue_growth_ttm": 0.10}),
 ])
-def test_12_debt_level_does_not_change_fair_value(method, extra):
-    # levered convention: debt service is inside the flow — adding
-    # total_debt as an optional input must NOT alter the fair value.
+def test_12_debt_subtracted_in_equity_bridge(method, extra):
+    # equity = EV + cash − debt: +5e9 debt at 1e8 shares must lower
+    # the fair price by exactly $50 — levered names are not free
     base = {"shares_outstanding": 1e8, "cash_and_equivalents": 5e9,
             **extra}
     a = _eval(method, base)["base"]
-    b = _eval(method, {**base, "total_debt": 5e10})["base"]
-    assert a == pytest.approx(b, rel=1e-12)
+    b = _eval(method, {**base, "total_debt": 5e9})["base"]
+    assert a is not None and b is not None
+    assert a - b == pytest.approx(50.0, rel=1e-9)
+
+
+def test_12_missing_debt_resolves_as_zero():
+    # absent debt data means no subtraction, not a rejection
+    out = _eval("ev_fcf", {"fcf_ttm": 1.5e9, "revenue_growth_ttm": 0.15,
+                           "shares_outstanding": 1e8,
+                           "cash_and_equivalents": 5e9})["base"]
+    assert out == pytest.approx(395.0, rel=1e-6)
+
+
+def test_12_diluted_shares_priced_when_present():
+    scalars = {"fcf_ttm": 1.5e9, "revenue_growth_ttm": 0.15,
+               "shares_outstanding": 1e8, "cash_and_equivalents": 5e9}
+    basic = _eval("ev_fcf", scalars)["base"]
+    diluted = _eval("ev_fcf", {**scalars, "shares_diluted": 1.1e8})["base"]
+    assert diluted == pytest.approx(basic / 1.1, rel=1e-6)
 
 
 def test_12_cash_credited_exactly_once():
@@ -703,3 +740,64 @@ def test_20_confidence_reflects_evidence_not_optimism():
     d2 = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
                 [_mr(119.0, inputs=OK_IN), _mr(121.0, inputs=OK_IN)])
     assert d2["valuation_confidence"] == "high"
+
+
+# ---------------- 21. earnings-quality & capital signals -------------------
+
+def test_21_earnings_divergence_classified_by_cause():
+    base = dict(OK_IN)
+    base.update({"revenue_growth_ttm": 0.30, "eps_growth_ttm": 0.25})
+    # aligned growth → no signal
+    d = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
+               [_mr(120.0, inputs=base), _mr(122.0, inputs=base)])
+    assert d["earnings_quality"] is None
+    # adverse + dilution overhang → divergence_dilution
+    dil = {**base, "eps_growth_ttm": 0.05, "dilution_overhang": 1.10}
+    d2 = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
+                [_mr(120.0, inputs=dil), _mr(122.0, inputs=dil)])
+    assert d2["earnings_quality"]["classification"] == "divergence_dilution"
+    assert "divergence_dilution" in d2["mos_adders"]
+    # funding risk wins over dilution when fcf<0 and levered
+    fund = {**base, "eps_growth_ttm": -0.10, "fcf_ttm": -1e9,
+            "total_debt": 15e9, "cash_and_equivalents": 3e9,
+            "dilution_overhang": 1.10}
+    d3 = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
+                [_mr(120.0, inputs=fund), _mr(122.0, inputs=fund)])
+    assert d3["earnings_quality"]["classification"] == "divergence_funding_risk"
+    # clean balance sheet → investment phase: smaller watch adder
+    inv = {**base, "eps_growth_ttm": 0.05, "dilution_overhang": 1.0}
+    d4 = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
+                [_mr(120.0, inputs=inv), _mr(122.0, inputs=inv)])
+    assert d4["earnings_quality"]["classification"] == "divergence_investment_phase"
+    assert "divergence_investment_phase" in d4["mos_adders"]
+    # eps outpacing revenue → favorable: recorded, never penalized
+    fav = {**base, "eps_growth_ttm": 0.50}
+    d5 = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
+                [_mr(120.0, inputs=fav), _mr(122.0, inputs=fav)])
+    assert d5["earnings_quality"]["classification"] == "divergence_favorable"
+    assert "divergence_favorable" not in d5["mos_adders"]
+
+
+def test_21_roic_gate_flags_value_destroying_growth():
+    low_roic = {**OK_IN, "roic_ttm": 0.06, "revenue_growth_ttm": 0.30}
+    d = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
+               [_mr(120.0, inputs=low_roic), _mr(122.0, inputs=low_roic)])
+    assert "reinvestment_below_wacc" in d["mos_adders"]
+    assert d["capital_quality"]["flag"] == "growth_below_wacc"
+    hi = {**OK_IN, "roic_ttm": 0.22, "revenue_growth_ttm": 0.30}
+    d2 = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
+                [_mr(120.0, inputs=hi), _mr(122.0, inputs=hi)])
+    assert "reinvestment_below_wacc" not in d2["mos_adders"]
+    assert d2["capital_quality"]["flag"] == "capital_efficient"
+    # no roic data → clean no-op
+    d3 = decide("technology", 120.0, 122.0, SCEN, [], 100.0,
+                [_mr(120.0, inputs=OK_IN), _mr(121.0, inputs=OK_IN)])
+    assert d3["capital_quality"] is None
+
+
+def test_21_tv_dominant_charges_uncertainty_and_caps_confidence():
+    d = decide("technology", 120.0, 122.0, SCEN, ["tv_dominant"], 100.0,
+               [_mr(119.0, inputs=OK_IN), _mr(121.0, inputs=OK_IN)])
+    assert "tv_dominant" in d["mos_adders"]
+    # forbidden flag → can never be 'high'
+    assert d["valuation_confidence"] != "high"

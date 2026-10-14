@@ -224,6 +224,19 @@ for s, r in results.items():
             st.caption(gate +
                        (f"  ·  adders: {', '.join(d['mos_adders'])}"
                         if d.get("mos_adders") else ""))
+        # earnings-quality + capital-consistency signals
+        eq = d.get("earnings_quality") or {}
+        if eq.get("classification"):
+            _cls = eq["classification"].replace("divergence_", "")
+            _sgn = "+" if eq.get("divergence", 0) > 0 else ""
+            st.caption(f"📊 earnings-quality — `{_cls}` "
+                       f"(eps/rev gap {_sgn}{eq.get('divergence',0):.0%})"
+                       + (f" — {eq['note']}" if eq.get("note") else ""))
+        cq = d.get("capital_quality") or {}
+        if cq.get("flag"):
+            st.caption(f"🏗 capital — `{cq['flag']}` "
+                       f"(roic {cq.get('roic_ttm',0):.0%})"
+                       + (f" — {cq['note']}" if cq.get("note") else ""))
         if d.get("risk_flags"):
             st.warning("⛔ " + " · ".join(f"`{f}`" for f in d["risk_flags"]))
 

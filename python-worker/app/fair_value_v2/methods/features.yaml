@@ -5,7 +5,7 @@ version: 1
 allow_table_columns:
   financial_ratios:
     as_of_columns: [fiscal_date_ending]
-    columns: [roe, operating_margin, net_profit_margin]
+    columns: [roe, operating_margin, net_profit_margin, roic, return_on_capital]
   consensus_data:
     as_of_columns: [consensus_date]
     columns: [consensus_price_target, price_target_high, price_target_low, analyst_count]
@@ -61,6 +61,7 @@ units:
   eps_forward: usd_per_share
   eps_growth_ttm: decimal
   operating_margin_ttm: decimal
+  roic_ttm: decimal
   net_profit_margin_ttm: decimal
   net_profit_margin_midcycle: decimal
   revenue_growth_ttm: decimal
@@ -338,6 +339,26 @@ features:
     column: operating_margin
     as_of: fiscal_date_ending
     order_by: fiscal_date_ending
+
+  # return on invested capital — the reinvestment-quality gate input.
+  # growth only creates value when incremental ROIC clears the discount
+  # rate; the decision layer flags growth priced above what roic earns
+  roic_ttm:
+    type: coalesce
+    max_age_days: 400
+    sources:
+      - type: table_column
+        table: financial_ratios
+        column: roic
+        as_of: fiscal_date_ending
+        order_by: fiscal_date_ending
+        where_not_null: true
+      - type: table_column
+        table: financial_ratios
+        column: return_on_capital
+        as_of: fiscal_date_ending
+        order_by: fiscal_date_ending
+        where_not_null: true
     where_not_null: true
 
   net_profit_margin_ttm:

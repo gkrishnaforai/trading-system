@@ -124,7 +124,8 @@ def decide(category: Optional[str],
            spot: Optional[float],
            method_results: list,
            archetypes: Optional[List[str]] = None,
-           demand: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+           demand: Optional[Dict[str, Any]] = None,
+           scalars: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Return the decision payload for one run.
 
     fv_* fields describe worth; buy_below is the gate. risk_flags are
@@ -138,7 +139,8 @@ def decide(category: Optional[str],
     cap = float(policy.get("cap", 0.60))
     gates = policy.get("gates") or {}
 
-    scalars = _scalars_from_methods(method_results)
+    if scalars is None:
+        scalars = _scalars_from_methods(method_results)
     cat = (category or "unknown").split(":")[0] or "unknown"
     archs = list(archetypes) if archetypes else [cat]
     if cat not in archs:
@@ -213,7 +215,8 @@ def decide(category: Optional[str],
         pass
     for flag, key in (("scenarios_partial", "scenarios_partial"),
                       ("no_scenarios", "no_scenarios"),
-                      ("extreme_gap", "extreme_gap")):
+                      ("extreme_gap", "extreme_gap"),
+                      ("tv_dominant", "tv_dominant")):
         if flag in (quality_flags or []):
             adders_total += adders.get(key, 0); applied.append(flag)
     if scalars.get("analyst_count") in (None, 0):
@@ -244,6 +247,84 @@ def decide(category: Optional[str],
             applied.append("weak_cash_conversion")
     except (TypeError, ValueError):
         pass
+
+    # earnings-quality divergence — revenue growth and EPS growth
+    # decoupling is a signal, not an automatic haircut: classify the
+    # likely cause first, then charge the adverse classes. A temporary
+    # investment phase raises uncertainty only.
+    earnings_quality: Optional[Dict[str, Any]] = None
+    try:
+        rg = scalars.get("revenue_growth_ttm")
+        eg = scalars.get("eps_growth_ttm")
+        if rg is not None and eg is not None:
+            div = float(eg) - float(rg)
+            if abs(div) >= 0.15:
+                if div > 0:
+                    cls = "divergence_favorable"
+                    note = ("EPS growth outpaces revenue — margin "
+                            "expansion or buybacks; verify durability")
+                elif fcf is not None and float(fcf) <= 0 and \
+                        float(scalars.get("total_debt") or 0) > \
+                        2 * float(scalars.get("cash_and_equivalents") or 0):
+                    cls = "divergence_funding_risk"
+                    note = ("revenue grows while EPS lags and FCF is "
+                            "negative with leverage — growth financed "
+                            "by debt, not operations")
+                elif (scalars.get("dilution_overhang") is not None
+                      and float(scalars["dilution_overhang"]) - 1 > 0.05):
+                    cls = "divergence_dilution"
+                    note = ("revenue grows while EPS lags and the "
+                            "share count expands — SBC/hiring is "
+                            "consuming the growth")
+                elif (scalars.get("cash_conversion") is not None
+                      and float(scalars.get("net_income_ttm") or 0) > 0
+                      and float(scalars["cash_conversion"]) < 0.6):
+                    cls = "divergence_accrual"
+                    note = ("revenue grows while EPS lags and earnings "
+                            "aren't converting to cash — accrual quality")
+                else:
+                    cls = "divergence_investment_phase"
+                    note = ("revenue grows while EPS lags — likely "
+                            "investment ahead of monetization; "
+                            "uncertainty up, growth intact")
+                earnings_quality = {
+                    "divergence": round(div, 4),
+                    "direction": ("eps_above_revenue" if div > 0
+                                  else "eps_below_revenue"),
+                    "classification": cls,
+                    "note": note,
+                }
+                akey = ("earnings_divergence"
+                        if cls != "divergence_investment_phase"
+                        else "earnings_divergence_watch")
+                if cls != "divergence_favorable":
+                    adders_total += adders.get(akey, 0)
+                    applied.append(cls)
+    except (TypeError, ValueError):
+        earnings_quality = None
+
+    # reinvestment consistency — growth priced at a premium only
+    # creates value when incremental returns clear the discount rate;
+    # high growth + roic below wacc destroys value despite headline FV
+    capital_quality: Optional[Dict[str, Any]] = None
+    try:
+        roic = scalars.get("roic_ttm")
+        rg = scalars.get("revenue_growth_ttm")
+        if roic is not None:
+            roic = float(roic)
+            capital_quality = {"roic_ttm": round(roic, 4)}
+            if rg is not None and float(rg) > 0.15 and roic < 0.10:
+                adders_total += adders.get("reinvestment_below_wacc", 0)
+                applied.append("reinvestment_below_wacc")
+                capital_quality["flag"] = "growth_below_wacc"
+                capital_quality["note"] = (
+                    f"growth {float(rg):.0%} priced but roic "
+                    f"{roic:.1%} < 10% discount rate — incremental "
+                    "growth may be destroying value")
+            elif roic >= 0.15:
+                capital_quality["flag"] = "capital_efficient"
+    except (TypeError, ValueError):
+        capital_quality = None
 
     # score can overshoot 1.0 — stacked uncertainty pushes past the
     # category band toward the cap, which is what makes
@@ -285,6 +366,8 @@ def decide(category: Optional[str],
         "expected_return_2y": er2y,
         "valuation_confidence": confidence,
         "method_dispersion": method_dispersion,
+        "earnings_quality": earnings_quality,
+        "capital_quality": capital_quality,
         "risk_flags": risk_flags,
         "fv_reference": "expected" if expected_fv else "base",
         "spot": spot,

@@ -14,9 +14,7 @@ requires:
     - revenue_growth_ttm        # growth proxy for the multiple (fcf_growth is lumpier)
   optional_scalars:
     - total_debt
-    - dilution_overhang
-    - cash_conversion
-    - net_income_ttm
+    - shares_diluted
   series: []
 params:
   base_multiple: 14.0           # mature, low-growth EV/FCF anchor
@@ -45,6 +43,16 @@ formula:
       min: [{mul: [{var: g}, {param: bull_g_mult}]}, {param: g_cap}]
     g_explosive:
       min: [{mul: [{var: g}, {param: explosive_g_mult}]}, {param: g_cap}]
+    # EV→equity bridge: FCF×multiple produces an enterprise value, so
+    # equity = EV + cash − debt. Levered FCF nets interest, never the
+    # principal — not subtracting debt overvalues levered names.
+    # Dilution-aware: price on diluted shares when the data exists.
+    debt_eff: {max: [{coalesce: [{var: total_debt}, 0]}, 0]}
+    shares_eff:
+      if:
+        cond: {gt: [{coalesce: [{var: shares_diluted}, 0]}, 0]}
+        then: {var: shares_diluted}
+        else: {var: shares_outstanding}
     fcf_bear: {mul: [{var: fcf_ttm}, {param: fcf_bear_mult}]}
     fcf_bull: {mul: [{var: fcf_ttm}, {param: fcf_bull_mult}]}
     fcf_explosive: {mul: [{var: fcf_ttm}, {param: fcf_explosive_mult}]}
@@ -85,8 +93,10 @@ formula:
       then: null
       else:
         div:
-          - add: [{mul: [{var: fcf_ttm}, {var: mult_base}]}, {var: cash_and_equivalents}]
-          - var: shares_outstanding
+          - sub:
+              - add: [{mul: [{var: fcf_ttm}, {var: mult_base}]}, {var: cash_and_equivalents}]
+              - var: debt_eff
+          - var: shares_eff
   bear_fair_price:
     if:
       cond:
@@ -96,8 +106,10 @@ formula:
       then: null
       else:
         div:
-          - add: [{mul: [{var: fcf_bear}, {var: mult_bear}]}, {var: cash_and_equivalents}]
-          - var: shares_outstanding
+          - sub:
+              - add: [{mul: [{var: fcf_bear}, {var: mult_bear}]}, {var: cash_and_equivalents}]
+              - var: debt_eff
+          - var: shares_eff
   bull_fair_price:
     if:
       cond:
@@ -107,8 +119,10 @@ formula:
       then: null
       else:
         div:
-          - add: [{mul: [{var: fcf_bull}, {var: mult_bull}]}, {var: cash_and_equivalents}]
-          - var: shares_outstanding
+          - sub:
+              - add: [{mul: [{var: fcf_bull}, {var: mult_bull}]}, {var: cash_and_equivalents}]
+              - var: debt_eff
+          - var: shares_eff
   explosive_fair_price:
     if:
       cond:
@@ -118,6 +132,8 @@ formula:
       then: null
       else:
         div:
-          - add: [{mul: [{var: fcf_explosive}, {var: mult_explosive}]}, {var: cash_and_equivalents}]
-          - var: shares_outstanding
+          - sub:
+              - add: [{mul: [{var: fcf_explosive}, {var: mult_explosive}]}, {var: cash_and_equivalents}]
+              - var: debt_eff
+          - var: shares_eff
 validations: []

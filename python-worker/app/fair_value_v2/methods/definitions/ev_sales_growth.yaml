@@ -14,9 +14,7 @@ requires:
     - fcf_ttm
     - revenue_forward
     - total_debt
-    - dilution_overhang
-    - cash_conversion
-    - net_income_ttm
+    - shares_diluted
   series: []
 params:
   # EV/S is anchored through the identity EV/S ≈ implied P/E × net margin:
@@ -52,6 +50,15 @@ params:
   margin_floor_ramp: 0.10
 formula:
   bindings:
+    # EV->equity bridge: the multiple produces enterprise value, so
+    # equity = EV + cash - debt (levered FCF nets interest, never
+    # principal). Price on diluted shares when the data exists.
+    debt_eff: {max: [{coalesce: [{var: total_debt}, 0]}, 0]}
+    shares_eff:
+      if:
+        cond: {gt: [{coalesce: [{var: shares_diluted}, 0]}, 0]}
+        then: {var: shares_diluted}
+        else: {var: shares_outstanding}
     # sales base: forward consensus when published (point-in-time,
     # nearest unreported FY), else trailing. This is what turns
     # NBIS-class names from 'broken' into 'conservative but sane'.
@@ -153,8 +160,10 @@ formula:
       then: null
       else:
         div:
-          - add: [{mul: [{var: sales_base}, {var: evs_base}]}, {var: cash_and_equivalents}]
-          - var: shares_outstanding
+          - sub:
+              - add: [{mul: [{var: sales_base}, {var: evs_base}]}, {var: cash_and_equivalents}]
+              - var: debt_eff
+          - var: shares_eff
   bear_fair_price:
     if:
       cond:
@@ -164,8 +173,10 @@ formula:
       then: null
       else:
         div:
-          - add: [{mul: [{var: sales_base}, {var: evs_bear}]}, {var: cash_and_equivalents}]
-          - var: shares_outstanding
+          - sub:
+              - add: [{mul: [{var: sales_base}, {var: evs_bear}]}, {var: cash_and_equivalents}]
+              - var: debt_eff
+          - var: shares_eff
   bull_fair_price:
     if:
       cond:
@@ -175,8 +186,10 @@ formula:
       then: null
       else:
         div:
-          - add: [{mul: [{var: sales_base}, {var: evs_bull}]}, {var: cash_and_equivalents}]
-          - var: shares_outstanding
+          - sub:
+              - add: [{mul: [{var: sales_base}, {var: evs_bull}]}, {var: cash_and_equivalents}]
+              - var: debt_eff
+          - var: shares_eff
   explosive_fair_price:
     if:
       cond:
@@ -186,8 +199,10 @@ formula:
       then: null
       else:
         div:
-          - add: [{mul: [{var: sales_base}, {var: evs_explosive}]}, {var: cash_and_equivalents}]
-          - var: shares_outstanding
+          - sub:
+              - add: [{mul: [{var: sales_base}, {var: evs_explosive}]}, {var: cash_and_equivalents}]
+              - var: debt_eff
+          - var: shares_eff
 validations:
   # optional inputs coalesce to a non-triggering value — a missing
   # optional must not crash the contract check

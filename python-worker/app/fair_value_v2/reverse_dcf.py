@@ -27,11 +27,14 @@ _BISECT_ITERS = 60
 def dcf_price(fcf_ttm: float, shares_outstanding: float,
               cash_and_equivalents: float, *, wacc: float,
               terminal_growth: float, growth: float, fade_years: float,
-              explicit_years: int = 10) -> Dict[str, float]:
+              explicit_years: int = 10,
+              total_debt: float = 0.0,
+              shares_diluted: Optional[float] = None) -> Dict[str, float]:
     """Same math as dsl.evaluator._eval_dcf_mega_cap_price — linear
-    growth fade years 6-10, Gordon terminal, cash-credited equity
-    bridge — minus the g0 clamp and the terminal-share rejection (both
-    are forward-discipline; inversion wants the raw answer plus the
+    growth fade years 6-10, Gordon terminal, EV->equity bridge
+    (+ cash − debt), diluted-share denominator when available — minus
+    the g0 clamp and the terminal-share rejection (both are
+    forward-discipline; inversion wants the raw answer plus the
     diagnostics)."""
     one_plus_wacc = 1.0 + wacc
     fade_den = max(1.0, float(fade_years))
@@ -50,8 +53,11 @@ def dcf_price(fcf_ttm: float, shares_outstanding: float,
     terminal_value = (fcf * (1.0 + terminal_growth)) / (wacc - terminal_growth)
     pv_terminal = terminal_value / math.pow(one_plus_wacc, explicit_years)
     ev = pv_explicit + pv_terminal
-    equity_value = ev + cash_and_equivalents
-    price = equity_value / shares_outstanding
+    shares_eff = (float(shares_diluted)
+                  if shares_diluted is not None and float(shares_diluted) > 0
+                  else shares_outstanding)
+    equity_value = ev + cash_and_equivalents - max(0.0, float(total_debt or 0.0))
+    price = equity_value / shares_eff
     return {
         "price": price,
         "ev": ev,
@@ -63,6 +69,8 @@ def implied_growth(fcf_ttm: Optional[float], shares_outstanding: Optional[float]
                    cash_and_equivalents: Optional[float], spot: Optional[float],
                    *, wacc: float, terminal_growth: float, growth_cap: float,
                    fade_years: float, explicit_years: int = 10,
+                   total_debt: Optional[float] = None,
+                   shares_diluted: Optional[float] = None,
                    realized_growth: Optional[float] = None,
                    consensus_growth_pct_1y: Optional[float] = None) -> Dict[str, Any]:
     """Bisection-solve g such that dcf_price(g) = spot. f(g) is strictly
@@ -89,12 +97,15 @@ def implied_growth(fcf_ttm: Optional[float], shares_outstanding: Optional[float]
         return {**base, "status": "not_applicable",
                 "reason": "wacc_lte_terminal_growth"}
     cash = float(cash_and_equivalents or 0.0)
+    debt = float(total_debt or 0.0)
 
     def price_at(g: float) -> float:
         return dcf_price(fcf_ttm, shares_outstanding, cash, wacc=wacc,
                          terminal_growth=terminal_growth, growth=g,
                          fade_years=fade_years,
-                         explicit_years=explicit_years)["price"]
+                         explicit_years=explicit_years,
+                         total_debt=debt,
+                         shares_diluted=shares_diluted)["price"]
 
     p_lo, p_hi = price_at(_IMPLIED_LO), price_at(growth_cap)
     base["spot"] = spot
@@ -122,7 +133,9 @@ def implied_growth(fcf_ttm: Optional[float], shares_outstanding: Optional[float]
         dcf_price(fcf_ttm, shares_outstanding, cash, wacc=wacc,
                   terminal_growth=terminal_growth, growth=implied,
                   fade_years=fade_years,
-                  explicit_years=explicit_years)["terminal_share_of_ev"], 4)
+                  explicit_years=explicit_years,
+                  total_debt=debt,
+                  shares_diluted=shares_diluted)["terminal_share_of_ev"], 4)
 
     if realized_growth is not None:
         base["realized_growth"] = round(float(realized_growth), 4)

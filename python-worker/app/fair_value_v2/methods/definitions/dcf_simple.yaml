@@ -9,9 +9,7 @@ requires:
   optional_scalars:
     - market_cap
     - total_debt
-    - dilution_overhang
-    - cash_conversion
-    - net_income_ttm
+    - shares_diluted
   series: []
 params:
   wacc: 0.10
@@ -82,23 +80,32 @@ formula:
               add: [{var: pv_fcf_1_5}, {var: pv_terminal}]
             terminal_share_of_ev:
               div: [{var: pv_terminal}, {var: ev}]
+            # EV->equity bridge: + cash - debt (levered FCF nets
+            # interest, never principal). Diluted shares when available.
+            debt_eff: {max: [{coalesce: [{var: total_debt}, 0]}, 0]}
+            shares_eff:
+              if:
+                cond: {gt: [{coalesce: [{var: shares_diluted}, 0]}, 0]}
+                then: {var: shares_diluted}
+                else: {var: shares_outstanding}
             equity_value:
-              add: [{var: ev}, {var: cash_and_equivalents}]
+              sub:
+                - add: [{var: ev}, {var: cash_and_equivalents}]
+                - var: debt_eff
             fair_price_raw:
-              div: [{var: equity_value}, {var: shares_outstanding}]
+              div: [{var: equity_value}, {var: shares_eff}]
+            # long-duration businesses legitimately carry most value in
+            # the terminal — flag it for the decision layer instead of
+            # refusing to answer (flag_* bindings surface in metrics)
+            flag_tv_dominant:
+              gt: [{var: terminal_share_of_ev}, {param: terminal_value_cap_share_of_ev}]
           in:
             if:
               cond:
                 or:
                   - lte: [{var: ev}, 0]
-                  - gt: [{var: terminal_share_of_ev}, {param: terminal_value_cap_share_of_ev}]
-              then:
-                error:
-                  code: invalid_assumption
-                  message: terminal_value_dominates
-                  details:
-                    terminal_share_of_ev: {var: terminal_share_of_ev}
-                    terminal_value_cap_share_of_ev: {param: terminal_value_cap_share_of_ev}
+                  - lte: [{var: shares_eff}, 0]
+              then: null
               else: {var: fair_price_raw}
   bear_fair_price: null
   bull_fair_price: null

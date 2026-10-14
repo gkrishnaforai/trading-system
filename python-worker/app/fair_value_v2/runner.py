@@ -69,6 +69,25 @@ class FairValueRunner:
             "operating_margin_ttm",
         ]
 
+        # Decision-layer inputs — resolved once per run regardless of
+        # what the routed methods declare, so MoS adders and quality
+        # gates never silently lose their inputs when routing changes.
+        self._decision_scalars = [
+            "fcf_ttm",
+            "total_debt",
+            "cash_and_equivalents",
+            "net_income_ttm",
+            "ocf_ttm",
+            "cash_conversion",
+            "dilution_overhang",
+            "shares_diluted",
+            "shares_outstanding",
+            "analyst_count",
+            "eps_growth_ttm",
+            "revenue_growth_ttm",
+            "roic_ttm",
+        ]
+
     def _required_scalar_issues(
         self,
         required_scalars: List[str],
@@ -389,6 +408,17 @@ class FairValueRunner:
             warnings.append({"level": "warning", "scope": "scenarios",
                              "reason": f})
 
+        # tv_dominant — an ok method whose value rests mostly on the
+        # terminal is a legitimate long-duration estimate, not a
+        # rejection; surface it as a quality flag so the decision layer
+        # can charge uncertainty and cap confidence
+        tv_hit = any("tv_dominant" in ((mr.metrics or {}).get("flags") or [])
+                     for mr in ok_methods)
+        if tv_hit:
+            quality_flags.append("tv_dominant")
+            warnings.append({"level": "info", "scope": "scenarios",
+                             "reason": "tv_dominant"})
+
         # FX provenance: which statement-currency fields were converted
         # (or refused) during this run — e.g. {'TWD@0.0314': [fcf_ttm…]}.
         if self._fx_notes:
@@ -411,6 +441,7 @@ class FairValueRunner:
         try:
             rfeatures = self._get_features_for_requires(
                 symbol, ts, ["spot_price", "fcf_ttm", "shares_outstanding",
+                             "shares_diluted", "total_debt",
                              "cash_and_equivalents", "revenue_growth_ttm",
                              "forward_growth_pct_1y"])
             rs = rfeatures.scalars or {}
@@ -423,6 +454,8 @@ class FairValueRunner:
                 growth_cap=float(dcf_params.get("growth_cap", 0.20)),
                 fade_years=float(dcf_params.get("fade_years", 5)),
                 explicit_years=int(dcf_params.get("explicit_years", 10)),
+                total_debt=rs.get("total_debt"),
+                shares_diluted=rs.get("shares_diluted"),
                 realized_growth=rs.get("revenue_growth_ttm"),
                 consensus_growth_pct_1y=rs.get("forward_growth_pct_1y"))
             if reverse.get("flag"):
@@ -452,6 +485,18 @@ class FairValueRunner:
                 }
             )
 
+        # Decision-layer features — resolved once so every MoS adder and
+        # quality gate sees its inputs no matter which methods ran
+        decision_scalars: Dict[str, Any] = {}
+        try:
+            dfeatures = self._get_features_for_requires(
+                symbol, ts, self._decision_scalars)
+            decision_scalars = {
+                k: v for k, v in (dfeatures.scalars or {}).items()
+                if v is not None}
+        except Exception:
+            decision_scalars = {}
+
         return FairValueV2Result(
             run_id=run_id,
             symbol=symbol,
@@ -466,4 +511,5 @@ class FairValueRunner:
             features_hash=combined_hash,
             warnings=warnings,
             reverse_dcf=reverse,
+            decision_scalars=decision_scalars,
         )

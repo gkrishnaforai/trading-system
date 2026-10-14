@@ -24,6 +24,11 @@ class EvalContext:
     locals: Dict[str, Any] = field(default_factory=dict)
     debug: bool = False
     trace: Optional[List[Dict[str, Any]]] = None
+    # always-on quality channel — a `flag_*` binding (or builtin) that
+    # evaluates True lands here and surfaces in metrics["flags"]
+    # regardless of debug mode, so the decision layer can see
+    # condition-signals like tv_dominant in production runs
+    flags: List[str] = field(default_factory=list)
 
 
 def _trace(ctx: EvalContext, record: Dict[str, Any]) -> None:
@@ -135,21 +140,23 @@ def _eval_dcf_mega_cap_price(node: Any, ctx: EvalContext, path: str) -> float:
         raise DslError("invalid_assumption", "ev must be > 0", {"path": path, "ev": ev})
 
     terminal_share_of_ev = pv_terminal / ev
-    if terminal_share_of_ev > terminal_value_cap_share_of_ev:
-        raise DslError(
-            "invalid_assumption",
-            "terminal_value_dominates",
-            {
-                "path": path,
-                "terminal_share_of_ev": terminal_share_of_ev,
-                "terminal_value_cap_share_of_ev": terminal_value_cap_share_of_ev,
-            },
-        )
+    tv_dominant = terminal_share_of_ev > terminal_value_cap_share_of_ev
+    if tv_dominant:
+        ctx.flags.append("tv_dominant")
 
-    # levered FCF (OCF−capex) already nets debt service — adding cash
-    # keeps the owned-asset credit; subtracting debt would double-count
-    equity_value = ev + cash_and_equivalents
-    fair_price = equity_value / shares_outstanding
+    # EV->equity bridge: + cash - debt. Levered FCF nets interest but
+    # never principal, so debt must come out of equity value. Price on
+    # diluted shares when the data exists.
+    total_debt = _to_float(ctx.scalars.get("total_debt") or 0.0, path=f"{path}.total_debt")
+    debt_eff = max(0.0, float(total_debt))
+    shares_diluted = ctx.scalars.get("shares_diluted")
+    try:
+        shares_eff = float(shares_diluted) if shares_diluted is not None and float(shares_diluted) > 0 else shares_outstanding
+    except (TypeError, ValueError):
+        shares_eff = shares_outstanding
+
+    equity_value = ev + cash_and_equivalents - debt_eff
+    fair_price = equity_value / shares_eff
 
     _trace(
         ctx,
@@ -163,6 +170,10 @@ def _eval_dcf_mega_cap_price(node: Any, ctx: EvalContext, path: str) -> float:
             "fade_years": fade_years,
             "explicit_years": explicit_years,
             "terminal_share_of_ev": terminal_share_of_ev,
+            "tv_dominant": tv_dominant,
+            "terminal_value_cap_share_of_ev": terminal_value_cap_share_of_ev,
+            "total_debt": debt_eff,
+            "shares_used": shares_eff,
             "out": fair_price,
         },
     )
@@ -255,6 +266,7 @@ def eval_expr(expr: Any, ctx: EvalContext, path: str = "$") -> Any:
             locals=scope,
             debug=ctx.debug,
             trace=ctx.trace,
+            flags=ctx.flags,
         )
 
         if not isinstance(bindings, dict):
@@ -263,6 +275,8 @@ def eval_expr(expr: Any, ctx: EvalContext, path: str = "$") -> Any:
         for k, v_expr in bindings.items():
             val = eval_expr(v_expr, scoped_ctx, path=f"{path}.let.bindings.{k}")
             scope[str(k)] = val
+            if str(k).startswith("flag_") and val is True:
+                ctx.flags.append(str(k)[5:])
             _trace(ctx, {"path": path, "op": "let.bind", "key": str(k), "value": val})
 
         out = eval_expr(in_expr, scoped_ctx, path=f"{path}.let.in")
@@ -442,11 +456,14 @@ def _apply_formula_bindings(formula: Dict[str, Any], ctx: EvalContext, *, path: 
         locals=scope,
         debug=ctx.debug,
         trace=ctx.trace,
+        flags=ctx.flags,
     )
 
     for k, v_expr in bindings.items():
         val = eval_expr(v_expr, scoped_ctx, path=f"{path}.bindings.{k}")
         scope[str(k)] = val
+        if str(k).startswith("flag_") and val is True:
+            ctx.flags.append(str(k)[5:])
         _trace(ctx, {"path": path, "op": "formula.bind", "key": str(k), "value": val})
 
     return scoped_ctx
@@ -464,6 +481,8 @@ def evaluate_formula(formula: Dict[str, Any], scalars: Dict[str, Any], params: D
 
     if debug:
         metrics["trace"] = ctx.trace
+    if ctx.flags:
+        metrics["flags"] = sorted(set(ctx.flags))
 
     return out, metrics
 
@@ -483,6 +502,8 @@ def evaluate_fair_price(formula: Dict[str, Any], *, scalars: Dict[str, Any], par
     fair_price = _to_float(v, path="$.fair_price")
     if debug:
         metrics["trace"] = ctx.trace
+    if ctx.flags:
+        metrics["flags"] = sorted(set(ctx.flags))
     return fair_price, metrics
 
 
@@ -554,5 +575,7 @@ def evaluate_scenarios(
 
     if debug:
         metrics["trace"] = ctx.trace
+    if ctx.flags:
+        metrics["flags"] = sorted(set(ctx.flags))
 
     return out, metrics

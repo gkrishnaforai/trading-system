@@ -57,4 +57,8 @@ class FairValueV2Result(BaseModel):
     # reference metric, never blended: the FCF growth rate today's spot
     # price already assumes under the dcf_mega_cap spec
     reverse_dcf: Optional[Dict[str, Any]] = None
+    # decision-layer inputs resolved once per run — MoS adders and
+    # quality gates read these instead of relying on routed methods
+    # to have declared them
+    decision_scalars: Dict[str, Any] = Field(default_factory=dict)
     model_version: str = "fair_value_v2.1"

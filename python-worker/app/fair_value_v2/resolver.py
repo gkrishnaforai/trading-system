@@ -235,7 +235,10 @@ class FairValueV2Resolver:
             # demand axes from priors upgraded by approved evidence,
             # funding risk measured from inputs
             evidence = derive_axes(claims_for(result.symbol))
-            scalars = _scalars_from_methods(result.method_results)
+            # decision inputs come from the run-level resolution first
+            # (always present), with method-observed values merged over
+            scalars = dict(result.decision_scalars or {})
+            scalars.update(_scalars_from_methods(result.method_results))
             demand = build_profile(
                 result.symbol, archs or ([cat] if cat else []),
                 scalars, evidence=evidence)
@@ -256,7 +259,7 @@ class FairValueV2Resolver:
                 cat, result.fair_value, result.expected_fair_value,
                 result.scenario_fair_values, quality_flags, spot,
                 result.method_results,
-                archetypes=archs, demand=demand)
+                archetypes=archs, demand=demand, scalars=scalars)
             self._upsert_demand_profile(result, demand, archs)
         except Exception as exc:
             logger.warning("fv decision layer failed for %s: %s",

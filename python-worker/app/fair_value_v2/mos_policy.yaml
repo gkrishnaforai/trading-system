@@ -45,6 +45,15 @@ adders:
   share_dilution: 0.04        # diluted/basic share overhang > 5%
   weak_cash_conversion: 0.06  # ocf/net_income < 0.6 — earnings aren't
                               # turning into cash (accrual quality)
+  tv_dominant: 0.04           # an ok method rests mostly on its
+                              # terminal value — legitimate for
+                              # long-duration names, but unverifiable
+  earnings_divergence: 0.04   # adverse EPS/revenue decoupling ≥15pts —
+                              # funding, dilution, or accrual-driven
+  earnings_divergence_watch: 0.02  # investment-phase divergence —
+                                   # raise uncertainty, don't penalize
+  reinvestment_below_wacc: 0.05  # roic < wacc while growth runs >15% —
+                               # growth may be destroying value
 
 cap: 0.60                       # beyond this the name is uninvestable,
                                 # not cheap — the gate flags it instead
@@ -58,7 +67,7 @@ dispersion:
 
 # confidence roll — how much trust the fv itself deserves
 confidence:
-  high_needs:   {min_ok_methods: 2, forbid_flags: [no_scenarios, extreme_gap]}
+  high_needs:   {min_ok_methods: 2, forbid_flags: [no_scenarios, extreme_gap, tv_dominant]}
   medium_needs: {min_ok_methods: 1, forbid_flags: [no_scenarios]}
 
 # decision gates on top of buy_below

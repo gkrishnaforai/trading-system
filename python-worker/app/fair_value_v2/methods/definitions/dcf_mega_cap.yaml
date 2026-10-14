@@ -11,9 +11,7 @@ requires:
     - revenue_growth_ttm
     - forward_growth_pct_1y
     - total_debt
-    - dilution_overhang
-    - cash_conversion
-    - net_income_ttm
+    - shares_diluted
   series: []
 params:
   wacc: 0.10
