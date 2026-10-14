@@ -295,10 +295,11 @@ features:
         as_of: ts
         order_by: ts
         where_not_null: true
-        # a multi-day-old intraday tick must not shadow today's daily
-        # close — tighten this source's freshness below the feature-level
-        # 21d so stale ticks fall through to fresher bars
-        max_age_days: 2
+        # a stale intraday tick must not shadow today's daily close —
+        # .days truncates, so bound 1 accepts same-day/next-day ticks
+        # but rejects anything ≥2 days old (COIN: a 2d3h tick at
+        # $177.73 shadowed the $172.89 close)
+        max_age_days: 1
         where:
           interval: last
       - type: table_column
