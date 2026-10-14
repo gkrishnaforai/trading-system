@@ -8,7 +8,12 @@ import os
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.fair_value_v2.blender import WeightedBlender
+from app.fair_value_v2.blender import (
+    SCENARIO_ORDER,
+    WeightedBlender,
+    enforce_scenario_order,
+    expected_fair_value,
+)
 from app.fair_value_v2.dsl.evaluator import DslError, evaluate_scenarios
 from app.fair_value_v2.feature_resolver import FeatureResolver
 from app.fair_value_v2.feature_store.postgres_point_in_time import PostgresPointInTimeFeatureStore
@@ -25,45 +30,10 @@ class RunContext:
     category: Optional[str]
 
 
-# Scenario probability weights — the headline `expected_fair_value` is
-# the probability-weighted blend, not just the base case (Damodar-style
-# scenario EV). Weights are deliberately static per run; calibration
-# against realized returns can adjust them later via env override.
-_SCENARIO_PROBS: Dict[str, float] = json.loads(
-    os.getenv("FV_SCENARIO_PROBS",
-              '{"bear": 0.25, "base": 0.50, "bull": 0.20, "explosive": 0.05}'))
-_SCENARIO_ORDER = ("bear", "base", "bull", "explosive")
-
-
-def expected_fair_value(scen: Dict[str, Any]) -> Optional[float]:
-    """Σ p·FV over the scenarios that resolved — weights renormalize."""
-    num = den = 0.0
-    for k, p in _SCENARIO_PROBS.items():
-        v = scen.get(k)
-        if v is None:
-            continue
-        num += p * float(v)
-        den += p
-    return num / den if den else None
-
-
-def enforce_scenario_order(
-        scen: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
-    """bear ≤ base ≤ bull ≤ explosive — clamp violations and flag them.
-    The per-method unclamped values stay in method_results for audit."""
-    out = dict(scen or {})
-    flags: List[str] = []
-    prev_k = None
-    for k in _SCENARIO_ORDER:
-        v = out.get(k)
-        if v is None:
-            continue
-        if prev_k is not None and float(v) < float(out[prev_k]):
-            flags.append(f"ordering_violation:{k}<{prev_k}")
-            out[k] = float(out[prev_k])
-            v = out[k]
-        prev_k = k
-    return out, flags
+# Scenario math (probability weights, expected FV, ordering) lives in
+# blender.py — it has no DB imports, so tests and tools can use it
+# without a database connection.
+_SCENARIO_ORDER = SCENARIO_ORDER
 
 
 class FairValueRunner:

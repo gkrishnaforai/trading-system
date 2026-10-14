@@ -19,11 +19,14 @@ formula:
       then: null
       else: {var: consensus_price_target}
   bear_fair_price:
+    # low target is optional — coalesce so an absent target falls
+    # through to the band case instead of erroring the whole method
     if:
       cond:
         and:
-          - gt: [{var: price_target_low}, 0]
-          - lte: [{var: price_target_low}, {var: consensus_price_target}]
+          - gt: [{coalesce: [{var: price_target_low}, 0]}, 0]
+          - lte: [{coalesce: [{var: price_target_low}, 0]},
+                  {var: consensus_price_target}]
       then: {var: price_target_low}
       else:
         if:
@@ -38,8 +41,9 @@ formula:
     if:
       cond:
         and:
-          - gt: [{var: price_target_high}, 0]
-          - gte: [{var: price_target_high}, {var: consensus_price_target}]
+          - gt: [{coalesce: [{var: price_target_high}, 0]}, 0]
+          - gte: [{coalesce: [{var: price_target_high}, 0]},
+                  {var: consensus_price_target}]
       then: {var: price_target_high}
       else:
         if:

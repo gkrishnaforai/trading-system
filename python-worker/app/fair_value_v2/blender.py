@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.fair_value_v2.schemas import MethodResult
 
@@ -10,6 +12,47 @@ from app.fair_value_v2.schemas import MethodResult
 class BlendResult:
     fair_value: Optional[float]
     scenario_fair_values: Dict[str, Optional[float]]
+
+
+# Scenario probability weights — the headline `expected_fair_value` is
+# the probability-weighted blend, not just the base case (Damodar-style
+# scenario EV). Weights are deliberately static per run; calibration
+# against realized returns can adjust them later via env override.
+SCENARIO_PROBS: Dict[str, float] = json.loads(
+    os.getenv("FV_SCENARIO_PROBS",
+              '{"bear": 0.25, "base": 0.50, "bull": 0.20, "explosive": 0.05}'))
+SCENARIO_ORDER = ("bear", "base", "bull", "explosive")
+
+
+def expected_fair_value(scen: Dict[str, Any]) -> Optional[float]:
+    """Σ p·FV over the scenarios that resolved — weights renormalize."""
+    num = den = 0.0
+    for k, p in SCENARIO_PROBS.items():
+        v = scen.get(k)
+        if v is None:
+            continue
+        num += p * float(v)
+        den += p
+    return num / den if den else None
+
+
+def enforce_scenario_order(
+        scen: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    """bear ≤ base ≤ bull ≤ explosive — clamp violations and flag them.
+    The per-method unclamped values stay in method_results for audit."""
+    out = dict(scen or {})
+    flags: List[str] = []
+    prev_k = None
+    for k in SCENARIO_ORDER:
+        v = out.get(k)
+        if v is None:
+            continue
+        if prev_k is not None and float(v) < float(out[prev_k]):
+            flags.append(f"ordering_violation:{k}<{prev_k}")
+            out[k] = float(out[prev_k])
+            v = out[k]
+        prev_k = k
+    return out, flags
 
 
 class WeightedBlender:

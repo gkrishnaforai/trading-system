@@ -189,6 +189,8 @@ formula:
           - add: [{mul: [{var: sales_base}, {var: evs_explosive}]}, {var: cash_and_equivalents}]
           - var: shares_outstanding
 validations:
+  # optional inputs coalesce to a non-triggering value — a missing
+  # optional must not crash the contract check
   - name: margin_impossible
-    when: {or: [{gt: [{var: net_profit_margin_ttm}, 1.0]}, {gt: [{var: operating_margin_ttm}, 1.0]}]}
+    when: {or: [{gt: [{coalesce: [{var: net_profit_margin_ttm}, 0]}, 1.0]}, {gt: [{coalesce: [{var: operating_margin_ttm}, 0]}, 1.0]}]}
     reason: a margin above 100% of revenue is a data error, not a business

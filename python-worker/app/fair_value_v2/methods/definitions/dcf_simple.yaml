@@ -18,7 +18,7 @@ params:
   terminal_growth: 0.03
   growth: 0.08
   growth_cap: 0.20
-  terminal_value_cap_share_of_ev: 0.70
+  terminal_value_cap_share_of_ev: 0.80
 formula:
   fair_price:
     if:

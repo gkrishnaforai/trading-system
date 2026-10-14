@@ -99,8 +99,11 @@ formula:
             else: {var: eps_est_start}
       in:
         if:
-          cond: {lte: [{var: g}, 0]}
-          then: null            # non-positive forward CAGR → no value
+          cond:
+            or:
+              - lte: [{var: g}, 0]
+              - lte: [{var: eps_base}, 0]
+          then: null            # non-positive forward CAGR or EPS → no value
           else: {mul: [{var: eps_base}, {var: pe}]}
   bear_fair_price:
     let:
@@ -171,7 +174,10 @@ formula:
             else: {var: eps_est_start}
       in:
         if:
-          cond: {lte: [{var: g}, 0]}
+          cond:
+            or:
+              - lte: [{var: g}, 0]
+              - lte: [{var: eps_base}, 0]
           then: null
           else: {mul: [{var: eps_base}, {var: pe}]}
   bull_fair_price:
@@ -240,7 +246,10 @@ formula:
             else: {var: eps_est_start}
       in:
         if:
-          cond: {lte: [{var: g}, 0]}
+          cond:
+            or:
+              - lte: [{var: g}, 0]
+              - lte: [{var: eps_base}, 0]
           then: null
           else: {mul: [{var: eps_base}, {var: pe}]}
   explosive_fair_price:
@@ -309,7 +318,10 @@ formula:
             else: {var: eps_est_start}
       in:
         if:
-          cond: {lte: [{var: g}, 0]}
+          cond:
+            or:
+              - lte: [{var: g}, 0]
+              - lte: [{var: eps_base}, 0]
           then: null
           else: {mul: [{var: eps_base}, {var: pe}]}
 validations: []
