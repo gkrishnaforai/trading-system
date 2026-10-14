@@ -80,9 +80,11 @@ def upcoming_macro_events(days: int = 45,
         gap = (d - today).days
         if gap < -1 or gap > days:
             return
+        # days_away stays signed — a -1 (yesterday) release must not
+        # render as "today" and read as "postponed"
         evts.append({"name": name, "kind": kind, "date": str(d),
                      "time_et": time_et, "severity": severity,
-                     "days_away": max(0, gap), "est": est})
+                     "days_away": gap, "est": est})
 
     for d, (name, kind, sev) in _OTHER_DATES.items():
         add(name, kind, d, "all-day", sev)
@@ -153,8 +155,8 @@ def _apply_verified_overrides(evts: list, today: date, days: int) -> list:
             used.add((e["kind"], cand[0]))
             out.append({**e, "date": cand[0],
                         "time_et": row.get("time_et") or e["time_et"],
-                        "days_away": max(0, (date.fromisoformat(cand[0])
-                                             - today).days),
+                        "days_away": (date.fromisoformat(cand[0])
+                                      - today).days,
                         "rescheduled": True, "rescheduled_from": e["date"],
                         "verified": True, **_res(row, e["kind"])})
         else:

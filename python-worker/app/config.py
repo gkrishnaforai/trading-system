@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     enable_live_updates: bool = False
     periodic_update_interval_minutes: int = 15  # How often to check for periodic updates
 
+    # Finnhub API — economic calendar verification (macro_event_overrides)
+    finnhub_api_key: Optional[str] = None
+
     # Financial Modeling Prep (FMP) API
     fmp_api_key: str = Field(default="", description="Financial Modeling Prep API key")
     fmp_enabled: bool = Field(default=False, description="Enable FMP data provider")

@@ -170,7 +170,8 @@ export default async function RegimePage() {
                 const tag =
                   e.days_away === 0 ? 'today'
                     : e.days_away === 1 ? 'tomorrow'
-                      : typeof e.days_away === 'number' ? `${e.days_away}d` : ''
+                      : e.days_away === -1 ? 'yesterday'
+                        : typeof e.days_away === 'number' ? `${e.days_away}d` : ''
                 return (
                   <Kv
                     key={i}

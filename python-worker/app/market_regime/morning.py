@@ -201,7 +201,9 @@ def _event_risk(events: list[dict]) -> str:
     worst = max(
         (sev.get(e.get("severity", "low"), 1) +
          (0 if e["days_away"] == 0 else (0 if e["days_away"] > 1 else -0.5))
-         for e in events), default=0)
+         for e in events
+         if e.get("days_away", 99) >= 0),   # already-released prints
+        default=0)                          # aren't upcoming risk
     return ("extreme" if worst >= 4 else "high" if worst >= 3 else
             "medium" if worst >= 2 else "low")
 
