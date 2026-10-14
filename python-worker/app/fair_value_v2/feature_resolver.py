@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,8 @@ import yaml
 
 from app.fair_value_v2 import currency as fv_ccy
 from app.fair_value_v2.feature_store.postgres_point_in_time import PostgresPointInTimeFeatureStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -117,29 +120,41 @@ class FeatureResolver:
         return False
 
     def _resolve_one(self, symbol: str, as_of_ts: datetime, name: str, d: Dict[str, Any]) -> Tuple[Any, Optional[str], Dict[str, Any]]:
-        t = (d or {}).get("type")
-        if t == "feature_ref":
-            return self._resolve_feature_ref(symbol, as_of_ts, d)
-        if t == "snapshot_json":
-            v, s, q = self._resolve_snapshot_json(symbol, as_of_ts, d)
-        elif t == "snapshot_json_path":
-            v, s, q = self._resolve_snapshot_json_path(symbol, as_of_ts, d)
-        elif t == "table_column":
-            v, s, q = self._resolve_table_column(symbol, as_of_ts, d)
-        elif t == "table_column_avg":
-            v, s, q = self._resolve_table_column_avg(symbol, as_of_ts, d)
-        elif t == "macro_column":
-            v, s, q = self._resolve_macro_column(as_of_ts, d)
-        elif t == "forward_estimate":
-            v, s, q = self._resolve_forward_estimate(symbol, as_of_ts, d)
-        elif t == "eps_estimate_series":
-            v, s, q = self._resolve_eps_series(symbol, as_of_ts, d)
-        elif t == "derived":
-            return self._resolve_derived(symbol, as_of_ts, d)
-        elif t == "coalesce":
-            return self._resolve_coalesce(symbol, as_of_ts, d)
-        else:
-            return None, None, {"unsupported_type": t}
+        # A store/source failure (schema drift, missing column, dead
+        # connection) degrades to an unavailable source with explicit
+        # quality metadata — coalesce falls through to the next source
+        # instead of aborting the whole run.
+        try:
+            t = (d or {}).get("type")
+            if t == "feature_ref":
+                return self._resolve_feature_ref(symbol, as_of_ts, d)
+            if t == "snapshot_json":
+                v, s, q = self._resolve_snapshot_json(symbol, as_of_ts, d)
+            elif t == "snapshot_json_path":
+                v, s, q = self._resolve_snapshot_json_path(symbol, as_of_ts, d)
+            elif t == "table_column":
+                v, s, q = self._resolve_table_column(symbol, as_of_ts, d)
+            elif t == "table_column_avg":
+                v, s, q = self._resolve_table_column_avg(symbol, as_of_ts, d)
+            elif t == "macro_column":
+                v, s, q = self._resolve_macro_column(as_of_ts, d)
+            elif t == "forward_estimate":
+                v, s, q = self._resolve_forward_estimate(symbol, as_of_ts, d)
+            elif t == "eps_estimate_series":
+                v, s, q = self._resolve_eps_series(symbol, as_of_ts, d)
+            elif t == "derived":
+                return self._resolve_derived(symbol, as_of_ts, d)
+            elif t == "coalesce":
+                return self._resolve_coalesce(symbol, as_of_ts, d)
+            else:
+                return None, None, {"unsupported_type": t}
+        except Exception as e:
+            logger.warning("fv2 source error [%s] %s: %s", name, type(e).__name__, e)
+            return None, None, {
+                "source_error": True,
+                "error_class": type(e).__name__,
+                "error_detail": str(e)[:300],
+            }
 
         if v is not None and self._stale(d, q, as_of_ts):
             return None, None, q

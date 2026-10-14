@@ -35,6 +35,7 @@ from app.fair_value_v2.blender import (  # noqa: E402
 )
 from app.fair_value_v2.decision import decide  # noqa: E402
 from app.fair_value_v2.dsl.evaluator import DslError, evaluate_scenarios  # noqa: E402
+from app.fair_value_v2.feature_resolver import FeatureResolver  # noqa: E402
 from app.fair_value_v2.methods.registry import MethodRegistry  # noqa: E402
 
 _DEFS = os.path.join(os.path.dirname(__file__), "..", "app",
@@ -501,6 +502,53 @@ def test_18_no_method_invents_growth_from_absent_inputs():
             continue
         assert all(v is None for v in out.values()), \
             f"{key} emitted {out} from empty inputs"
+
+
+def test_18_source_db_error_degrades_to_missing_then_fallback(tmp_path):
+    # A source-level DB failure (schema drift: renamed/dropped column
+    # or table) must NOT abort the run — the source resolves to
+    # unavailable with explicit metadata and coalesce falls through.
+    feats = tmp_path / "features.yaml"
+    feats.write_text(yaml.safe_dump({
+        "allow_table_columns": {
+            "ghost_table": {"as_of_columns": ["d"], "columns": ["c"]},
+        },
+        "features": {
+            "with_fallback": {
+                "type": "coalesce",
+                "sources": [
+                    {"type": "table_column", "table": "ghost_table",
+                     "column": "c", "as_of": "d", "order_by": "d",
+                     "where_not_null": True},
+                    {"type": "snapshot_json_path", "source": "snap",
+                     "path": ["x"]},
+                ],
+            },
+            "no_fallback": {
+                "type": "table_column", "table": "ghost_table",
+                "column": "c", "as_of": "d", "order_by": "d",
+            },
+        },
+    }))
+
+    class BoomStore:
+        def get_table_scalar(self, **kw):
+            raise RuntimeError('column "c" does not exist')
+
+        def get_snapshot_payload(self, symbol, as_of_ts, source=None):
+            return {"x": 42.0}, as_of_ts
+
+    import datetime as _dt
+    r = FeatureResolver(BoomStore(), str(feats))
+    scalars, sources, quality = r.resolve_scalars(
+        "MCD", _dt.datetime(2026, 10, 14, tzinfo=_dt.timezone.utc),
+        ["with_fallback", "no_fallback"])
+
+    assert scalars["with_fallback"] == 42.0            # fell through
+    assert scalars["no_fallback"] is None              # no fabricated 0
+    assert quality["with_fallback.part_0.source_error"] is True
+    assert quality["no_fallback.source_error"] is True
+    assert quality["with_fallback.selected"] == 1
 
 
 # ---------------- 19. extreme values & boundaries -------------------------
