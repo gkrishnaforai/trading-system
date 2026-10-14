@@ -150,6 +150,81 @@ def verify_and_store(days: int = 45) -> Dict[str, Any]:
     return {"stored": stored, "rescheduled": rescheduled}
 
 
+def pending_due(now: Optional[datetime] = None,
+                lookback_days: int = 5) -> List[Dict[str, Any]]:
+    """Scheduled prints that are due or past but still missing their
+    actual — baseline dates AND provider-rescheduled dates both count.
+    This is the poller's trigger: any pending item means the release
+    either hasn't printed yet or our provider hasn't reported it."""
+    from .calendar import (_CPI_DATES, _PPI_DATES, _FOMC_DECISION_DATES,
+                           _nth_weekday, _last_weekday, _ET)
+
+    today = (now or datetime.now(timezone.utc)).astimezone(_ET).date()
+    lo = today - timedelta(days=lookback_days)
+
+    dues: List[tuple] = ([("cpi", d) for d in _CPI_DATES] +
+                         [("ppi", d) for d in _PPI_DATES] +
+                         [("fomc", d) for d in _FOMC_DECISION_DATES])
+    # rule-derived dates (NFP first Friday, PCE last Friday) for the
+    # lookback window — check last and current month
+    for off in (-1, 0):
+        m0 = today.month + off - 1
+        mm = date(today.year + m0 // 12, m0 % 12 + 1, 1)
+        dues.append(("nfp", _nth_weekday(mm, 4, 1)))
+        dues.append(("pce", _last_weekday(mm, 4)))
+    dues = [(k, d) for k, d in dues if lo <= d <= today]
+    if not dues:
+        return []
+
+    try:
+        rows = db.execute_query(
+            """SELECT kind, event_date, original_date, actual
+               FROM macro_event_overrides
+               WHERE (event_date >= :lo AND event_date <= :hi)
+                  OR (original_date >= :lo AND original_date <= :hi)""",
+            {"lo": lo.isoformat(), "hi": today.isoformat()})
+    except Exception:
+        # table missing/unreadable — everything due is pending
+        rows = []
+
+    covered: set = set()
+    pending: List[Dict[str, Any]] = []
+    for r in rows:
+        d_ev = str(r["event_date"])[:10]
+        d_or = (str(r["original_date"])[:10]
+                if r["original_date"] else None)
+        if r["actual"] is not None:
+            covered.add((r["kind"], d_ev))
+            if d_or:
+                covered.add((r["kind"], d_or))
+        else:
+            if date.fromisoformat(d_ev) <= today:
+                pending.append({"kind": r["kind"], "date": d_ev,
+                                "via": "override_no_actual"})
+            if d_or:
+                # the move itself resolves the baseline entry — its
+                # pending state lives on the provider date instead
+                covered.add((r["kind"], d_or))
+    for k, d in dues:
+        if (k, d.isoformat()) not in covered:
+            pending.append({"kind": k, "date": d.isoformat(),
+                            "via": "baseline_no_actual"})
+    return pending
+
+
+def poll_due(days: int = 45) -> Dict[str, Any]:
+    """Hourly guard — re-verify only while a due print is still
+    missing its actual. No pending items → no provider call."""
+    pending = pending_due()
+    if not pending:
+        return {"skipped": "no_due_items", "stored": 0}
+    out = verify_and_store(days)
+    if "skipped" not in out:
+        out["pending_before"] = pending
+        out["pending_after"] = pending_due()
+    return out
+
+
 def load_overrides(days: int = 45) -> Dict[str, Dict[str, Any]]:
     """kind → {event_date: row} for recently-verified provider dates."""
     try:

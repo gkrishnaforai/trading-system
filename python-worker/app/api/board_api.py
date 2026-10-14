@@ -304,6 +304,14 @@ async def _j_econ_cal_verify():
     return await asyncio.to_thread(verify_and_store)
 
 
+async def _j_econ_cal_poll():
+    """Hourly watch on due macro prints — re-queries Finnhub only
+    while a scheduled event is past its date but still missing its
+    actual (release lagged, bureau rescheduled, provider slow)."""
+    from app.market_events.verify import poll_due
+    return await asyncio.to_thread(poll_due)
+
+
 async def _j_etf_flows():
     """Daily AUM snapshot per sector/theme ETF — real fund flows
     accrue as ΔAUM − market-explained drift."""
@@ -560,6 +568,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "fred-macro":   ("FRED structural layer", _j_fred_macro),
     "econ-cal-verify": ("Macro calendar verification",
                         _j_econ_cal_verify),
+    "econ-cal-poll":  ("Due-print watcher (hourly)",
+                       _j_econ_cal_poll),
     "etf-flows":    ("ETF AUM → fund flows", _j_etf_flows),
     "strategy":     ("Portfolio strategy snapshot", _j_strategy),
     "hidden-gems":  ("Hidden gems scanner", _j_hidden_gems),
@@ -611,6 +621,7 @@ _JOB_TIMEOUT = {
     "meta": 5 * 60, "event-day": 3 * 60, "morning-regime": 4 * 60,
     "etf-flows": 2 * 60, "strategy": 5 * 60, "hidden-gems": 5 * 60,
     "fred-macro": 3 * 60, "econ-cal-verify": 2 * 60,
+    "econ-cal-poll": 2 * 60,
     "fund-journal": 60 * 60, "hedge-universe": 15 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
