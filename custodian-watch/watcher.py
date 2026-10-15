@@ -55,12 +55,22 @@ WATCH_PORT = int(os.getenv("WATCH_PORT") or os.getenv("PORT") or "8100")
 WATCH_TOKEN = os.getenv("WATCH_TOKEN", "")   # Bearer token for the API
 
 _STARTED = time.time()
-_LAST_PASS: dict[str, Any] = {"at": None, "findings": 0, "error": None}
+_LAST_PASS: dict[str, Any] = {"at": None, "findings": 0, "error": None,
+                              "docker_ok": None, "watched": None}
 
 # restart-count growth per poll that counts as a crash loop
 RESTART_LOOP_DELTA = 2
 
 _MANUAL_STEPS = [
+    ("watch:docker-socket",
+     "The watcher cannot read /var/run/docker.sock — it is blind. "
+     "Check the socket mount on the custodian-watch container and that "
+     "the host allows it (some platforms strip sock mounts)."),
+    ("stack:no-watched",
+     "No compose-managed containers exist outside the watcher — either "
+     "the app's deploy was rolled back/removed (check Coolify deploy "
+     "logs) or WATCH_PROJECT is filtering them out. docker ps -a on "
+     "the host shows which."),
     ("container:",
      "1. Coolify/Docker logs for the named container — the log tail is "
      "attached.  2. 'Failed to apply migration' → fix the migration SQL "
@@ -214,12 +224,29 @@ def _sense(own_project: str) -> list[dict[str, Any]]:
     findings = []
     try:
         containers = _list_containers()
+        _LAST_PASS["docker_ok"] = True
     except Exception as exc:
+        # a blind watcher reporting 'all clear' is worse than no watcher
+        _LAST_PASS["docker_ok"] = False
         logger.warning("docker socket unreachable: %s", exc)
-        return findings
+        return [{"signature": "watch:docker-socket-unreachable",
+                 "source": "watch", "severity": "high",
+                 "detail": {"error": str(exc)[:300],
+                            "diagnosis": "watcher cannot read the docker "
+                            "socket — it sees nothing"}}]
+
+    watched = _watched(containers, own_project)
+    _LAST_PASS["watched"] = len(watched)
+    if not watched:
+        findings.append({
+            "signature": "stack:no-watched-containers",
+            "source": "watch", "severity": "medium",
+            "detail": {"diagnosis": "no compose-managed containers "
+                       "outside the watcher — the app is absent "
+                       "(deploy rolled back/removed) or filtered out"}})
 
     conn = _db()
-    for c in _watched(containers, own_project):
+    for c in watched:
         name = (c.get("Names") or ["?"])[0].lstrip("/")
         try:
             ins = _inspect(c["Id"])
