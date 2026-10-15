@@ -897,17 +897,58 @@ if p:
             if _mev:
                 st.markdown("**📅 Macro calendar**")
                 for e in _mev[:8]:
-                    _tag = ("**today**" if e["days_away"] == 0 else
-                            "**tomorrow**" if e["days_away"] == 1 else
-                            f"in {e['days_away']}d")
+                    _da = e.get("days_away")
+                    _tag = ("**today**" if _da == 0 else
+                            "**tomorrow**" if _da == 1 else
+                            "**yesterday**" if _da == -1 else
+                            (f"{-_da}d ago" if isinstance(_da, int)
+                             and _da < 0 else f"in {_da}d"))
                     _mv = (f" 🔀 moved from `{e['rescheduled_from']}`"
                            if e.get("rescheduled") else "")
+                    _prt = ""
+                    try:
+                        if e.get("actual") is not None:
+                            _prt = (f" — printed "
+                                    f"**{float(e['actual']):g}**"
+                                    + (f" vs est {float(e['estimate']):g}"
+                                       if e.get('estimate') is not None
+                                       else "")
+                                    + (f" (prior {float(e['prev']):g})"
+                                       if e.get('prev') is not None
+                                       else ""))
+                        elif e.get("estimate") is not None:
+                            _prt = f" — est {float(e['estimate']):g}"
+                    except (TypeError, ValueError):
+                        _prt = ""
                     st.caption(
                         f"`{e['date']}` {e['name']} {_tag}"
                         + (" ⚠️" if e["severity"] == "extreme" else "")
                         + (" *(est)*" if e.get("est") else "")
                         + (" *(unconfirmed)*" if e.get("unconfirmed") else "")
-                        + _mv)
+                        + _mv + _prt
+                        + (f" — {e['reading']}" if e.get('reading') else ""))
+                    # why it matters + the official release page
+                    _sub = []
+                    if e.get("impact"):
+                        _sub.append(str(e["impact"]))
+                    _jg = e.get("judge") or {}
+                    if _jg.get("verdict"):
+                        _sub.append(
+                            f"judge **{str(_jg['verdict']).upper()}**"
+                            + (f" ({_jg['confidence']}%)"
+                               if _jg.get("confidence") is not None else "")
+                            + (f" · SPY "
+                               f"{float(_jg['spy_ret']) * 100:+.2f}%"
+                               if _jg.get("spy_ret") is not None else "")
+                            + (f" — {_jg['thesis']}"
+                               if _jg.get("thesis") else ""))
+                    _tail = (" · " + " · ".join(_sub)) if _sub else ""
+                    if _tail or e.get("source_url"):
+                        st.caption(
+                            "   ↳" + _tail
+                            + (f" — 📄 [official release ↗]"
+                               f"({e['source_url']})"
+                               if e.get("source_url") else ""))
 
 # --- 🎯 today's swing calls — the distilled top-3 with plans ------------------
 try:
