@@ -450,55 +450,10 @@ services:
           cpus: '0.5'
           memory: 0.5G
 
-  # External supervisor — watches container health from OUTSIDE the
-  # app it guards. Own sqlite volume so it keeps working while postgres
-  # is down; alerts go out over SMTP directly. Deliberately no
-  # depends_on and no app network requirement: it must be up during
-  # deploys, watching the crash-loops that take everything else down.
-  custodian-watch:
-    build:
-      context: .
-      dockerfile: custodian-watch/Dockerfile
-    container_name: trading-system-custodian-watch
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@pgbouncer:5432/${POSTGRES_DB:-trading_system}?sslmode=disable}
-      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USER=${SMTP_USER:-}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
-      - ALERT_EMAIL=${ALERT_EMAIL:-}
-      - HEALTHCHECKS_URL=${HEALTHCHECKS_URL:-}
-      - WATCH_POLL_SECONDS=${WATCH_POLL_SECONDS:-60}
-      - WATCH_PORT=8100
-      - WATCH_TOKEN=${WATCH_TOKEN:-}
-    ports:
-      - "${WATCH_HOST_PORT:-8100}:8100" # status API — Bearer WATCH_TOKEN
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - custodian_data:/data
-    networks:
-      - trading-network
-    restart: unless-stopped
-    healthcheck:
-      test: [ "CMD-SHELL", "find /data/heartbeat -mmin -3 | grep -q . || exit 1" ]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.1'
-          memory: 128M
-
 volumes:
   postgres_data:
     driver: local
   redis_data:
-    driver: local
-  custodian_data:
     driver: local
 
 networks:

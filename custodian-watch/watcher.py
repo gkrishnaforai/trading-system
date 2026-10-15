@@ -120,13 +120,30 @@ def _logs(cid: str, tail: int = 60) -> str:
 
 
 def _project_name() -> str:
-    """This container's own compose project — filter siblings by it."""
+    """This container's own compose project — watched = everything ELSE
+    with a compose project label (the watcher is a separate deploy unit
+    by design; it must survive the app deploys it monitors)."""
     try:
         me = _inspect(socket.gethostname())
         return (me.get("Config", {}).get("Labels", {})
                 .get("com.docker.compose.project", ""))
     except Exception:
         return ""
+
+
+def _watched(containers: list[dict], own_project: str) -> list[dict]:
+    """Containers the watcher supervises: any compose-managed container
+    not in the watcher's own project. WATCH_PROJECT narrows to one."""
+    want = os.getenv("WATCH_PROJECT", "")
+    out = []
+    for c in containers:
+        proj = (c.get("Labels") or {}).get("com.docker.compose.project", "")
+        if not proj or proj == own_project:
+            continue                    # helpers + self
+        if want and proj != want:
+            continue
+        out.append(c)
+    return out
 
 
 # ── sqlite state ───────────────────────────────────────────────────────
@@ -191,7 +208,7 @@ def _classify(tail: str, ins: dict) -> tuple[str, str]:
     return ("container unhealthy/exited — see attached log tail", "high")
 
 
-def _sense(project: str) -> list[dict[str, Any]]:
+def _sense(own_project: str) -> list[dict[str, Any]]:
     findings = []
     try:
         containers = _list_containers()
@@ -200,10 +217,7 @@ def _sense(project: str) -> list[dict[str, Any]]:
         return findings
 
     conn = _db()
-    for c in containers:
-        labels = c.get("Labels") or {}
-        if project and labels.get("com.docker.compose.project") != project:
-            continue
+    for c in _watched(containers, own_project):
         name = (c.get("Names") or ["?"])[0].lstrip("/")
         try:
             ins = _inspect(c["Id"])
@@ -454,12 +468,20 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/incidents":
                 self._send(200, json.dumps(_incidents_json()))
             elif path == "/containers":
-                project = _project_name()
-                out = [{"name": (c.get("Names") or ["?"])[0].lstrip("/"),
-                        "status": c.get("State"), "health": c.get("Status")}
-                       for c in _list_containers()
-                       if not project or (c.get("Labels") or {}).get(
-                           "com.docker.compose.project") == project]
+                out = []
+                for c in _watched(_list_containers(), _project_name()):
+                    try:
+                        ins = _inspect(c["Id"])
+                        st = ins.get("State", {})
+                        out.append({
+                            "name": (c.get("Names") or ["?"])[0].lstrip("/"),
+                            "status": st.get("Status"),
+                            "health": (st.get("Health") or {}).get(
+                                "Status") or "none",
+                            "restarts": st.get("RestartCount", 0),
+                            "exit_code": st.get("ExitCode")})
+                    except Exception:
+                        pass
                 self._send(200, json.dumps({"containers": out}))
             elif path == "/":
                 self._send(200, _incidents_html(), "text/html")
