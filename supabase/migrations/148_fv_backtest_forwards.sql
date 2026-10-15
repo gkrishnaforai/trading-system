@@ -16,3 +16,11 @@ CREATE TABLE IF NOT EXISTS fv_backtest_forwards (
 
 CREATE INDEX IF NOT EXISTS idx_fv_backtest_forwards_symbol
   ON fv_backtest_forwards (symbol, as_of);
+
+-- nightly refresh at 01:30 UTC (after evening bars land)
+insert into job_definitions (name, label, purpose, kind, cron, enabled, depends_on, priority)
+values ('fv-backtest', 'FV backtest forward-price refresh',
+        'Materialize forward closes for every stored FV run into fv_backtest_forwards in one windowed pass over daily_bars',
+        'job', '30 1 * * *', true, null, 30)
+on conflict (name) do update set cron=excluded.cron, purpose=excluded.purpose,
+       priority=excluded.priority;

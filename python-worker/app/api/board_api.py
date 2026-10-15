@@ -529,6 +529,15 @@ async def _j_mover_quality():
             "outcomes": outc}
 
 
+async def _j_fv_backtest() -> dict:
+    """Refresh fv_backtest_forwards — one windowed pass over
+    daily_bars materializing forward closes for every stored FV
+    run, so the backtest page reads a small table instead of an
+    N+1 query per run/horizon."""
+    from app.fair_value_v2.backtest import refresh_forwards
+    return await asyncio.to_thread(refresh_forwards)
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -591,6 +600,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
                       _j_mover_quality),
     "posture-eval": ("Posture eval + outcome grading",
                      _j_posture_eval),
+    "fv-backtest":  ("FV backtest forward-price refresh",
+                     _j_fv_backtest),
 }
 
 # order matters for 'all': posture first, then signals, then evals
@@ -621,7 +632,7 @@ _JOB_TIMEOUT = {
     "meta": 5 * 60, "event-day": 3 * 60, "morning-regime": 4 * 60,
     "etf-flows": 2 * 60, "strategy": 5 * 60, "hidden-gems": 5 * 60,
     "fred-macro": 3 * 60, "econ-cal-verify": 2 * 60,
-    "econ-cal-poll": 2 * 60,
+    "econ-cal-poll": 2 * 60, "fv-backtest": 20 * 60,
     "fund-journal": 60 * 60, "hedge-universe": 15 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
