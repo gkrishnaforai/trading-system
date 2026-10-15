@@ -46,6 +46,15 @@ export type MacroEvent = {
   estimate?: number
   prev?: number
   reading?: string
+  impact?: string
+  source_url?: string
+  judge?: {
+    verdict?: string
+    confidence?: number
+    thesis?: string
+    spy_ret?: number
+    correct?: boolean
+  }
   [k: string]: unknown
 }
 

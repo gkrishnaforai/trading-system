@@ -39,6 +39,56 @@ _PPI_DATES = {
     date(2026, 10, 14), date(2026, 11, 12), date(2026, 12, 11),
 }
 
+# canonical official release pages — the "analysis" link on the board
+_SOURCE_URL = {
+    "cpi": "https://www.bls.gov/news.release/cpi.nr0.htm",
+    "ppi": "https://www.bls.gov/news.release/ppi.nr0.htm",
+    "nfp": "https://www.bls.gov/news.release/empsit.nr0.htm",
+    "pce": "https://www.bea.gov/data/income-saving/personal-income",
+    "fomc": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+}
+
+
+def _impact_for(kind: str, actual, estimate, prev) -> str:
+    """How the print transmits to the tape — deterministic wording,
+    no LLM. Direction comes from actual vs estimate; the mechanism is
+    what a hot/cool surprise does to rates, USD and factor leadership."""
+    def _n(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+    a, e, p = _n(actual), _n(estimate), _n(prev)
+    mech = {
+        "cpi": ("inflation print → reprices the Fed path; hot = yields "
+                "and USD up, growth/long-duration equities down; cool = "
+                "cuts back on the table, rate-sensitives breathe"),
+        "ppi": ("pipeline inflation → feeds next month's CPI view; hot "
+                "= margin pressure + hawkish tilt, cool = input-cost "
+                "relief"),
+        "nfp": ("labor demand → wage pressure → Fed reaction function; "
+                "strong = hawkish, weak = dovish but watch for growth "
+                "scare"),
+        "pce": ("the Fed's preferred gauge; hot = restrictive-for-"
+                "longer repricing, cool = easing path re-opens"),
+        "fomc": ("policy rate + dots/statement tone; hawkish = yields "
+                 "up, duration down; dovish = risk relief rally"),
+    }.get(kind, "scheduled macro release")
+    if a is None:
+        return mech
+    bits = []
+    if e is not None:
+        d = a - e
+        bits.append(("beat estimates (hawkish)" if d > 0.04 else
+                     "missed estimates (dovish)" if d < -0.04 else
+                     "in line with estimates"))
+    if p is not None:
+        d = a - p
+        bits.append(("accelerating vs prior" if d > 0.02 else
+                     "decelerating vs prior" if d < -0.02 else
+                     "flat vs prior"))
+    return mech + " — this print " + " and ".join(bits) if bits else mech
+
 
 def _nth_weekday(d: date, weekday: int, n: int) -> date:
     """nth `weekday` (0=Mon) of d's month — e.g. first Friday for NFP."""
@@ -78,13 +128,16 @@ def upcoming_macro_events(days: int = 45,
     def add(name: str, kind: str, d: date, time_et: str,
             severity: str, est: bool = False):
         gap = (d - today).days
-        if gap < -1 or gap > days:
+        # keep a released print visible for 3 days — a just-delivered
+        # CPI is still what the market is digesting
+        if gap < -3 or gap > days:
             return
         # days_away stays signed — a -1 (yesterday) release must not
         # render as "today" and read as "postponed"
         evts.append({"name": name, "kind": kind, "date": str(d),
                      "time_et": time_et, "severity": severity,
-                     "days_away": gap, "est": est})
+                     "days_away": gap, "est": est,
+                     "source_url": _SOURCE_URL.get(kind)})
 
     for d, (name, kind, sev) in _OTHER_DATES.items():
         add(name, kind, d, "all-day", sev)
@@ -105,7 +158,51 @@ def upcoming_macro_events(days: int = 45,
             "08:30", "high", est=True)
     evts = _apply_verified_overrides(evts, today, days)
     evts.sort(key=lambda e: e["date"])
+    _attach_judgments(evts)
+    for e in evts:
+        # baseline entries that never got verified still carry an
+        # impact read — estimates/actuals just aren't known
+        e.setdefault("impact", _impact_for(e["kind"], e.get("actual"),
+                                           e.get("estimate"),
+                                           e.get("prev")))
     return evts
+
+
+def _attach_judgments(evts: list) -> None:
+    """Link released events to the journaled event-day judge call —
+    verdict + thesis is the 'how it hit the tape' analysis."""
+    from app.database import db
+    wanted = {(e["kind"], e["date"]) for e in evts
+              if e.get("days_away", 99) <= 0}
+    if not wanted:
+        return
+    kinds = [k for k, _ in wanted]
+    dates = sorted(d for _, d in wanted)
+    try:
+        rows = db.execute_query(
+            """SELECT as_of, event_kind, verdict, confidence, thesis,
+                      probs, print_data, spy_ret_1d, correct, debrief
+               FROM event_day_calls
+               WHERE event_kind = ANY(%s)
+                 AND as_of >= %s AND as_of <= %s
+               ORDER BY as_of DESC""",
+            (list(set(kinds)), dates[0], dates[-1]))
+    except Exception:
+        return
+    by_key = {}
+    for r in rows or []:
+        by_key.setdefault((r["event_kind"], str(r["as_of"])[:10]), r)
+    for e in evts:
+        r = by_key.get((e["kind"], e["date"]))
+        if not r:
+            continue
+        e["judge"] = {"verdict": r.get("verdict"),
+                      "confidence": r.get("confidence"),
+                      "thesis": r.get("thesis"),
+                      "probs": r.get("probs"),
+                      "spy_ret": r.get("spy_ret_1d"),
+                      "correct": r.get("correct"),
+                      "debrief": r.get("debrief")}
 
 
 def _apply_verified_overrides(evts: list, today: date, days: int) -> list:
@@ -128,7 +225,10 @@ def _apply_verified_overrides(evts: list, today: date, days: int) -> list:
                 "estimate": row.get("estimate"),
                 "prev": row.get("prev"),
                 "reading": reading_for(kind, row.get("actual"),
-                                       row.get("estimate"))}
+                                       row.get("estimate")),
+                "impact": _impact_for(kind, row.get("actual"),
+                                      row.get("estimate"),
+                                      row.get("prev"))}
 
     used: set = set()  # (kind, date) pairs already consumed
     out: list = []
@@ -167,13 +267,15 @@ def _apply_verified_overrides(evts: list, today: date, days: int) -> list:
             if (kind, d) not in used:
                 base = date.fromisoformat(d)
                 gap = (base - today).days
-                if -1 <= gap <= days:
+                if -3 <= gap <= days:
                     out.append({"name": row["name"], "kind": kind,
                                 "date": d,
                                 "time_et": row.get("time_et") or "08:30",
                                 "severity": row.get("severity") or "high",
-                                "days_away": max(0, gap), "est": False,
-                                "verified": True, "source": "finnhub",
+                                "days_away": gap, "est": False,
+                                "verified": True,
+                                "source": row.get("source"),
+                                "source_url": _SOURCE_URL.get(kind),
                                 **_res(row, kind)})
     return out
 

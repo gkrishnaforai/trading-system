@@ -79,19 +79,56 @@ def _classify(event_name: str, country: str) -> Optional[tuple]:
     return None
 
 
+def _provider_rows(today: date, days: int) -> Optional[List[Dict[str, Any]]]:
+    """Economic-calendar rows, normalized to the Finnhub shape
+    ({event, date, country, actual, estimate, prev}). Finnhub first;
+    FMP's economic calendar is the fallback so verification still runs
+    when only the FMP key is provisioned."""
+    from app.config import settings
+
+    if getattr(settings, "finnhub_api_key", None):
+        from app.providers.finnhub.client import FinnhubClient
+        client = FinnhubClient.from_settings()
+        return client.fetch_economic_calendar(
+            today.isoformat(),
+            (today + timedelta(days=days)).isoformat())
+
+    if not getattr(settings, "fmp_api_key", None):
+        return None
+    try:
+        import requests
+        r = requests.get(
+            f"{settings.fmp_base_url}/economic-calendar",
+            params={"from": today.isoformat(),
+                    "to": (today + timedelta(days=days)).isoformat(),
+                    "apikey": settings.fmp_api_key},
+            timeout=20)
+        items = r.json()
+        if not isinstance(items, list):
+            return []
+        return [{"event": e.get("event") or "",
+                 "date": str(e.get("date") or "")[:10],
+                 "country": e.get("country") or "",
+                 "actual": e.get("actual"),
+                 "estimate": e.get("estimate"),
+                 "prev": e.get("previous"),
+                 "source": "fmp"}
+                for e in items if str(e.get("date") or "")[:10]]
+    except Exception as e:
+        logger.warning("FMP economic calendar failed: %s", e)
+        return []
+
+
 def verify_and_store(days: int = 45) -> Dict[str, Any]:
     """Fetch provider calendar, reconcile vs baseline, persist overrides."""
-    from app.config import settings
-    from app.providers.finnhub.client import FinnhubClient
     from .calendar import upcoming_macro_events
 
-    if not getattr(settings, "finnhub_api_key", None):
-        return {"skipped": "no FINNHUB_API_KEY", "stored": 0}
-
     today = datetime.now(timezone.utc).date()
-    client = FinnhubClient.from_settings()
-    provider_rows = client.fetch_economic_calendar(
-        today.isoformat(), (today + timedelta(days=days)).isoformat())
+    provider_rows = _provider_rows(today, days)
+    if provider_rows is None:
+        return {"skipped": "no econ-calendar provider key "
+                           "(FINNHUB_API_KEY or FMP_API_KEY)",
+                "stored": 0}
 
     mapped: List[Dict[str, Any]] = []
     for r in provider_rows:
@@ -125,7 +162,7 @@ def verify_and_store(days: int = 45) -> Dict[str, Any]:
             """INSERT INTO macro_event_overrides
                    (kind, name, event_date, original_date, status, source,
                     time_et, severity, verified_at)
-               VALUES (:kind, :name, :d, :orig, :status, 'finnhub',
+               VALUES (:kind, :name, :d, :orig, :status, :src,
                        :t, :sev, :act, :est, :prev, now())
                ON CONFLICT (kind, event_date) DO UPDATE SET
                    name=excluded.name, original_date=excluded.original_date,
@@ -140,6 +177,7 @@ def verify_and_store(days: int = 45) -> Dict[str, Any]:
                    verified_at=now()""",
             {"kind": m["kind"], "name": m["name"], "d": m["date"].isoformat(),
              "orig": base if moved else None, "status": status,
+             "src": m.get("source") or "finnhub",
              "t": m["time_et"], "sev": m["severity"],
              "act": _num(m["actual"]), "est": _num(m["estimate"]),
              "prev": _num(m["prev"])})
@@ -230,9 +268,9 @@ def load_overrides(days: int = 45) -> Dict[str, Dict[str, Any]]:
     try:
         rows = db.execute_query(
             """SELECT kind, name, event_date, original_date, status,
-                      time_et, severity, actual, estimate, prev
+                      time_et, severity, actual, estimate, prev, source
                FROM macro_event_overrides
-               WHERE event_date >= CURRENT_DATE - 1
+               WHERE event_date >= CURRENT_DATE - 3
                  AND event_date <= CURRENT_DATE + CAST(:days AS int)
                  AND verified_at >= now() - interval '36 hours'""")
     except Exception as e:

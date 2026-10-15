@@ -171,19 +171,52 @@ export default async function RegimePage() {
                   e.days_away === 0 ? 'today'
                     : e.days_away === 1 ? 'tomorrow'
                       : e.days_away === -1 ? 'yesterday'
-                        : typeof e.days_away === 'number' ? `${e.days_away}d` : ''
+                        : typeof e.days_away === 'number'
+                          ? e.days_away < 0
+                            ? `${-e.days_away}d ago`
+                            : `${e.days_away}d`
+                          : ''
+                const judge = e.judge
                 return (
-                  <Kv
-                    key={i}
-                    k={String(e.title ?? e.name ?? 'event') +
-                      (e.unconfirmed ? ' ·?' : '')}
-                    v={`${dateStr}${tag ? ` · ${tag}` : ''}` +
-                      (moved ? ` ⟵ was ${e.rescheduled_from}` : '') +
-                      (e.actual != null
-                        ? ` · printed ${e.actual}${e.estimate != null ? ` vs est ${e.estimate}` : ''}`
-                        : e.estimate != null ? ` · est ${e.estimate}` : '') +
-                      (e.reading ? ` — ${e.reading}` : '')}
-                  />
+                  <div key={i}>
+                    <Kv
+                      k={String(e.title ?? e.name ?? 'event') +
+                        (e.unconfirmed ? ' ·?' : '')}
+                      v={`${dateStr}${tag ? ` · ${tag}` : ''}` +
+                        (moved ? ` ⟵ was ${e.rescheduled_from}` : '') +
+                        (e.actual != null
+                          ? ` · printed ${e.actual}${e.estimate != null ? ` vs est ${e.estimate}` : ''}`
+                          : e.estimate != null ? ` · est ${e.estimate}` : '') +
+                        (e.reading ? ` — ${e.reading}` : '')}
+                    />
+                    {(e.impact || e.source_url || judge?.verdict) && (
+                      <div className="pb-2 pl-3 text-xs text-muted space-y-0.5">
+                        {e.impact && <div>{e.impact}</div>}
+                        {judge?.verdict && (
+                          <div>
+                            judge: {String(judge.verdict).toUpperCase()}
+                            {judge.confidence != null &&
+                              ` (${judge.confidence}%)`}
+                            {judge.spy_ret != null &&
+                              ` · SPY ${(Number(judge.spy_ret) * 100).toFixed(2)}%`}
+                            {judge.thesis && ` — ${judge.thesis}`}
+                          </div>
+                        )}
+                        {e.source_url && (
+                          <div>
+                            <a
+                              className="underline underline-offset-2 text-faint hover:text-ink"
+                              href={String(e.source_url)}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              official release ↗
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )
               })}
             </div>
