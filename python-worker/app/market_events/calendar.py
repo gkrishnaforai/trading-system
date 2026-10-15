@@ -224,6 +224,8 @@ def _apply_verified_overrides(evts: list, today: date, days: int) -> list:
         return {"actual": row.get("actual"),
                 "estimate": row.get("estimate"),
                 "prev": row.get("prev"),
+                "source": row.get("source"),
+                "status": row.get("status"),
                 "reading": reading_for(kind, row.get("actual"),
                                        row.get("estimate")),
                 "impact": _impact_for(kind, row.get("actual"),
