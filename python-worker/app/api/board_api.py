@@ -728,6 +728,10 @@ async def recompute_sheet(fresh_minutes: int = 60):
             "awaited_inflight": sorted(inflight)}
 
 
+_DAILY_CACHE: dict = {}
+_DAILY_TTL_S = 90
+
+
 @router.get("/daily")
 async def daily_board(max_items: int = 10):
     """Top actions for today — exits first, then deploys.
@@ -737,9 +741,21 @@ async def daily_board(max_items: int = 10):
     RB/5x membership, flywheel gap score, swing-screen readiness,
     open-trade monitor flags, and the LEAPS book's exit alerts.
     Advisory only — nothing executes.
+
+    90s TTL: the board reads stored flags (hourly jobs) plus one
+    yfinance tape pull — a short cache makes page reloads and the
+    regime page's second call instant without changing advice.
     """
+    import time
     from app.signals import daily_board
-    return await daily_board.build_board(max_items=max_items)
+    key = max_items
+    ent = _DAILY_CACHE.get(key)
+    now = time.time()
+    if ent and now - ent[0] < _DAILY_TTL_S:
+        return ent[1]
+    res = await daily_board.build_board(max_items=max_items)
+    _DAILY_CACHE[key] = (now, res)
+    return res
 
 
 @router.get("/strategy")
