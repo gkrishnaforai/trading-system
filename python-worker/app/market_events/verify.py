@@ -320,7 +320,8 @@ def load_overrides(days: int = 45) -> Dict[str, Dict[str, Any]]:
                FROM macro_event_overrides
                WHERE event_date >= CURRENT_DATE - 3
                  AND event_date <= CURRENT_DATE + CAST(:days AS int)
-                 AND verified_at >= now() - interval '36 hours'""")
+                 AND verified_at >= now() - interval '36 hours'""",
+            {"days": days})
     except Exception as e:
         logger.warning(f"macro overrides unavailable: {e}")
         return {}
