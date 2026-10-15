@@ -29,6 +29,7 @@ import http.client
 import json
 import logging
 import os
+import re
 import smtplib
 import socket
 import sqlite3
@@ -458,7 +459,7 @@ def _row_html(r, cols):
     return f"<tr>{cells}</tr>"
 
 
-def _incidents_html() -> str:
+def _incidents_html(token: str = "") -> str:
     d = _incidents_json()
     def tbl(rows, cols):
         head = "".join(f"<th>{c}" for c in cols)
@@ -470,11 +471,16 @@ def _incidents_html() -> str:
         r["log"] = (det.get("log_tail") or det.get("error")
                     or json.dumps(det)[:400]) if isinstance(det, dict) \
             else str(det)[:400]
+        m = re.match(r"^container:([^:]+):", r.get("signature") or "")
+        r["live"] = (f'<a href="/logs/{m.group(1)}?tail=200'
+                     + (f"&token={token}" if token else "")
+                     + '">live&nbsp;tail</a>') if m else ""
     return _PAGE.format(
         uptime=d["uptime_s"], last=d["last_pass"]["at"],
         nfind=d["last_pass"]["findings"], proj=os.uname().nodename,
         open_t=tbl(d["open"], ["signature", "severity", "diagnosis",
-                              "log", "manual_steps", "last_seen"]),
+                              "log", "live", "manual_steps",
+                              "last_seen"]),
         res_t=tbl(d["resolved"], ["signature", "severity", "occurrences",
                                   "resolved_at"]),
         act_t=tbl(d["actions"], ["created_at", "signature", "action",
@@ -530,8 +536,37 @@ class _Handler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                 self._send(200, json.dumps({"containers": out}))
+            elif path.startswith("/logs/"):
+                # /logs/<name-substring>?tail=N — live log pull for any
+                # watched container; substring match since names carry
+                # deploy timestamps (go-api-<project>-<ts>)
+                m = re.match(r"^/logs/([a-zA-Z0-9_.-]+)$", path)
+                frag = m.group(1) if m else ""
+                tail = 200
+                qs = self.path.split("?", 1)
+                if len(qs) == 2:
+                    try:
+                        tail = min(500, int(qs[1].split("tail=")[-1]
+                                            .split("&")[0]))
+                    except ValueError:
+                        pass
+                hit = next(
+                    (c for c in _watched(_list_containers(),
+                                         _project_name())
+                     if frag and frag in
+                     (c.get("Names") or [""])[0].lstrip("/")), None)
+                if not hit:
+                    self._send(404, json.dumps(
+                        {"error": f"no watched container matching "
+                                  f"'{frag}'"}))
+                else:
+                    body = _logs(hit["Id"], tail=tail)
+                    self._send(200, body, "text/plain; charset=utf-8")
             elif path == "/":
-                self._send(200, _incidents_html(), "text/html")
+                from urllib.parse import parse_qs, urlparse
+                tok = parse_qs(urlparse(self.path).query).get(
+                    "token", [""])[0]
+                self._send(200, _incidents_html(tok), "text/html")
             else:
                 self._send(404, json.dumps({"error": "not found"}))
         except Exception as exc:
