@@ -451,7 +451,10 @@ def snapshot() -> Optional[dict[str, Any]]:
     ev = todays_event()
     if not ev:
         return None
-    today = date.today()
+    # stamp by the event's ET date — date.today() is server-local and
+    # drifts a day ahead of ET after 20:00, orphaning the call from
+    # the event it judged (calendar attaches by (kind, event_date))
+    today = date.fromisoformat(ev["date"])
     prior = db.execute_query(
         "SELECT id FROM event_day_calls WHERE as_of = %s "
         "AND event_kind = %s", (today, ev["kind"]))
