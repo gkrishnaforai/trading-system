@@ -1,0 +1,503 @@
+method_key: ev_sales_survival
+version: 1
+category: growth
+# Hypergrowth / pre-earnings survival tree.
+#
+# A negative-FCF grower is not a lower multiple of the same company — it
+# is a probability-weighted claim on two different futures:
+#
+#   fair_price = p_survival × PV(survival equity under dynamic dilution)
+#              + p_failure  × distressed value
+#
+# The survival leg keeps the EV/S ≈ implied-PE × margin machinery but
+# (a) consumes cash against the burn before crediting it to equity,
+# (b) prices the equity raise needed to fund the burn at a stress-issue
+#     discount, plus SBC share drift — a dynamic share count, and
+# (c) discounts the horizon back at a funding-risk tiered rate
+#     (10–18% — the probability leg carries default risk, the rate
+#     carries path risk; a flat 25% would double-count).
+# The failure leg is liquidation-adjacent: net cash recovery plus an
+# option value on the revenue stream (0.1 × trailing sales), never a
+# mere multiple haircut.
+requires:
+  scalars:
+    - revenue_ttm
+    - shares_outstanding
+    - cash_and_equivalents
+    - revenue_growth_ttm
+    - fcf_ttm
+    - market_cap
+    - total_debt
+  optional_scalars:
+    - net_profit_margin_ttm
+    - net_profit_margin_midcycle
+    - operating_margin_ttm
+    - revenue_forward
+    - shares_diluted
+    - sbc_to_revenue_ttm
+    - sales_to_capital
+  series: []
+params:
+  # --- survival probability tiers (cash runway vs annual burn)
+  runway_cap: 10.0              # self-funding == 10y runway equivalent
+  runway_safe: 4.0
+  runway_ok: 2.5
+  runway_tight: 1.5
+  runway_critical: 1.0
+  leverage_stress_mult: 2.0     # debt > 2×cash = financing risk
+  p_safe: 0.90
+  p_ok: 0.75
+  p_tight: 0.55
+  p_low: 0.35
+  p_critical: 0.15
+  p_floor: 0.08                 # <1y runway AND levered → near-distress
+  p_min: 0.02
+  p_max: 0.99
+  # scenario shifts on survival odds
+  p_bear_shift: -0.15
+  p_bull_shift: 0.05
+  p_explosive_shift: 0.10
+  # --- dynamic dilution path
+  funding_horizon_yrs: 3.0      # years of burn needing external cover
+  issue_price_factor: 0.70      # stress raises price ~30% below mark
+  sbc_rate_default: 0.04        # annual share dilution when unmeasured
+  sbc_rate_cap: 0.15
+  dilution_heavy_thresh: 1.30
+  # --- funding-risk tiered discount on the survival horizon
+  wacc_low: 0.10
+  wacc_mid: 0.13
+  wacc_high: 0.16
+  wacc_critical: 0.18
+  # --- distressed leg
+  distressed_sales_mult: 0.10   # option value of the revenue stream
+  distressed_years: 1.5         # failure resolves before the growth
+                                # horizon — discounted at wacc_eff too
+  # --- EV/S machinery (same identity as ev_sales_growth)
+  pe_base: 12.0
+  pe_g_weight: 40.0
+  pe_floor: 8.0
+  pe_cap: 45.0
+  pe_cap_bear: 30.0
+  pe_cap_bull: 50.0
+  pe_cap_explosive: 55.0
+  g_cap: 0.50
+  bear_g_mult: 0.5
+  bull_g_mult: 1.15
+  explosive_g_mult: 1.3
+  margin_default: 0.10
+  margin_floor: 0.03
+  margin_cap: 0.60
+  op_margin_haircut: 0.75
+  ramp_ratio: 1.5
+  margin_floor_ramp: 0.10
+  sales_bear_mult: 0.85
+  sales_bull_mult: 1.10
+  sales_explosive_mult: 1.25
+  forward_rev_max_ratio: 3.0
+  # --- reinvestment binding (P2): growth is not free — Δrevenue must be
+  # financed at sales-to-capital dollars of reinvestment per $1 of new
+  # revenue. Realized scap when measurable, industry constant else.
+  industry_scap: 2.0            # default; category override injected by runner
+  debt_headroom_pct: 0.10       # plausible new-debt capacity = 10% of mcap
+formula:
+  bindings:
+    debt_eff: {max: [{coalesce: [{var: total_debt}, 0]}, 0]}
+    shares_eff:
+      if:
+        cond: {gt: [{coalesce: [{var: shares_diluted}, 0]}, 0]}
+        then: {var: shares_diluted}
+        else: {var: shares_outstanding}
+    sales_base:
+      coalesce:
+        - {var: revenue_forward}
+        - {var: revenue_ttm}
+    flag_forward_revenue_inflated:
+      if:
+        cond: {gt: [{coalesce: [{var: revenue_ttm}, 0]}, 0]}
+        then:
+          gte:
+            - div: [{var: sales_base}, {var: revenue_ttm}]
+            - param: forward_rev_max_ratio
+        else: {const: false}
+    # --- burn, runway, leverage stress -------------------------------
+    burn: {max: [{mul: [{var: fcf_ttm}, -1]}, 0]}
+    # div-by-zero guard via nested if — and:/or: are eager
+    runway_yrs:
+      if:
+        cond: {gt: [{var: burn}, 0]}
+        then:
+          min:
+            - div: [{var: cash_and_equivalents}, {var: burn}]
+            - param: runway_cap
+        else: {param: runway_cap}
+    leverage_stress:
+      gt:
+        - var: debt_eff
+        - mul: [{param: leverage_stress_mult}, {var: cash_and_equivalents}]
+    # --- survival probability -----------------------------------------
+    p_survival:
+      if:
+        cond:
+          and:
+            - var: leverage_stress
+            - lt: [{var: runway_yrs}, {param: runway_critical}]
+        then: {param: p_floor}
+        else:
+          if:
+            cond: {gte: [{var: runway_yrs}, {param: runway_safe}]}
+            then: {param: p_safe}
+            else:
+              if:
+                cond: {gte: [{var: runway_yrs}, {param: runway_ok}]}
+                then: {param: p_ok}
+                else:
+                  if:
+                    cond: {gte: [{var: runway_yrs}, {param: runway_tight}]}
+                    then: {param: p_tight}
+                    else:
+                      if:
+                        cond: {gte: [{var: runway_yrs}, {param: runway_critical}]}
+                        then: {param: p_low}
+                        else: {param: p_critical}
+    p_bear:
+      clamp:
+        value: {add: [{var: p_survival}, {param: p_bear_shift}]}
+        lo: {param: p_min}
+        hi: {param: p_max}
+    p_bull:
+      clamp:
+        value: {add: [{var: p_survival}, {param: p_bull_shift}]}
+        lo: {param: p_min}
+        hi: {param: p_max}
+    p_explosive:
+      clamp:
+        value: {add: [{var: p_survival}, {param: p_explosive_shift}]}
+        lo: {param: p_min}
+        hi: {param: p_max}
+    # --- dynamic dilution ----------------------------------------------
+    # cash is consumed by the burn before it can be credited to equity;
+    # the uncovered remainder is raised at a stress-issue discount.
+    cash_surviving:
+      max:
+        - sub:
+            - var: cash_and_equivalents
+            - mul: [{var: burn}, {param: funding_horizon_yrs}]
+        - 0
+    funding_gap:
+      max:
+        - sub:
+            - mul: [{var: burn}, {param: funding_horizon_yrs}]
+            - var: cash_and_equivalents
+        - 0
+    raise_dilution:
+      if:
+        cond: {gt: [{var: market_cap}, 0]}
+        then:
+          div:
+            - var: funding_gap
+            - mul: [{var: market_cap}, {param: issue_price_factor}]
+        else: {const: 0}
+    sbc_rate:
+      clamp:
+        value:
+          coalesce:
+            - div:
+                - mul:
+                    - var: sbc_to_revenue_ttm
+                    - var: revenue_ttm
+                - var: market_cap
+            - param: sbc_rate_default
+        lo: 0
+        hi: {param: sbc_rate_cap}
+    dilution_mult:
+      add:
+        - 1
+        - var: raise_dilution
+        - mul: [{var: sbc_rate}, {param: funding_horizon_yrs}]
+    flag_dilution_heavy:
+      gt: [{var: dilution_mult}, {param: dilution_heavy_thresh}]
+    # --- growth ↔ reinvestment binding (P2) -----------------------------
+    scap_eff:
+      coalesce:
+        - {var: sales_to_capital}
+        - {param: industry_scap}
+    g_growth:
+      clamp:
+        value: {var: revenue_growth_ttm}
+        lo: 0
+        hi: {param: g_cap}
+    rev_horizon:
+      mul:
+        - var: sales_base
+        - pow:
+            - add: [1, {var: g_growth}]
+            - param: funding_horizon_yrs
+    reinvest_need:
+      div:
+        - sub: [{var: rev_horizon}, {var: sales_base}]
+        - var: scap_eff
+    funding_capacity:
+      add:
+        - add:
+            - var: cash_and_equivalents
+            - mul:
+                - max: [{var: fcf_ttm}, 0]
+                - param: funding_horizon_yrs
+        - mul: [{var: market_cap}, {param: debt_headroom_pct}]
+    flag_growth_unfunded:
+      gt: [{var: reinvest_need}, {var: funding_capacity}]
+    # --- funding-risk tiered discount -----------------------------------
+    wacc_eff:
+      if:
+        cond: {gte: [{var: runway_yrs}, {param: runway_safe}]}
+        then: {param: wacc_low}
+        else:
+          if:
+            cond: {gte: [{var: runway_yrs}, {param: runway_ok}]}
+            then: {param: wacc_mid}
+            else:
+              if:
+                cond: {gte: [{var: runway_yrs}, {param: runway_critical}]}
+                then: {param: wacc_high}
+                else: {param: wacc_critical}
+    disc_factor:
+      div:
+        - 1
+        - pow:
+            - add: [1, {var: wacc_eff}]
+            - param: funding_horizon_yrs
+    # --- EV/S machinery --------------------------------------------------
+    sales_bear: {mul: [{var: sales_base}, {param: sales_bear_mult}]}
+    sales_bull: {mul: [{var: sales_base}, {param: sales_bull_mult}]}
+    sales_explosive: {mul: [{var: sales_base}, {param: sales_explosive_mult}]}
+    g_bear: {mul: [{var: g_growth}, {param: bear_g_mult}]}
+    g_bull:
+      min: [{mul: [{var: g_growth}, {param: bull_g_mult}]}, {param: g_cap}]
+    g_explosive:
+      min: [{mul: [{var: g_growth}, {param: explosive_g_mult}]}, {param: g_cap}]
+    margin_net:
+      coalesce:
+        - {var: net_profit_margin_ttm}
+        - {mul: [{var: operating_margin_ttm}, {param: op_margin_haircut}]}
+        - {param: margin_default}
+    margin_fcf:
+      coalesce:
+        - {div: [{var: fcf_ttm}, {var: revenue_ttm}]}
+        - {param: margin_default}
+    margin_raw: {max: [{var: margin_net}, {var: margin_fcf}]}
+    midcycle_clamped:
+      clamp:
+        value:
+          coalesce: [{var: net_profit_margin_midcycle}, {var: margin_raw}]
+        lo: -3.0
+        hi: 1.0
+    margin_norm:
+      min:
+        - var: margin_raw
+        - div:
+            - add:
+                - var: margin_raw
+                - var: midcycle_clamped
+            - 2
+    margin_floor_eff:
+      if:
+        cond: {gt: [{var: revenue_ttm}, 0]}
+        then:
+          if:
+            cond:
+              gte: [{div: [{var: sales_base}, {var: revenue_ttm}]},
+                    {param: ramp_ratio}]
+            then: {param: margin_floor_ramp}
+            else: {param: margin_floor}
+        else: {param: margin_floor}
+    margin_src:
+      if:
+        cond: {lt: [{var: margin_norm}, 0]}
+        then: {var: margin_floor_eff}
+        else: {min: [{var: margin_norm}, {param: margin_cap}]}
+    pe_base_scenario:
+      clamp:
+        value:
+          add: [{param: pe_base}, {mul: [{param: pe_g_weight}, {var: g_growth}]}]
+        lo: {param: pe_floor}
+        hi: {param: pe_cap}
+    pe_bear_scenario:
+      clamp:
+        value:
+          add:
+            - mul: [{param: pe_base}, 0.7]
+            - mul: [{param: pe_g_weight}, {var: g_bear}]
+        lo: {param: pe_floor}
+        hi: {param: pe_cap_bear}
+    pe_bull_scenario:
+      clamp:
+        value:
+          add: [{param: pe_base}, {mul: [{param: pe_g_weight}, {var: g_bull}]}]
+        lo: {param: pe_floor}
+        hi: {param: pe_cap_bull}
+    pe_explosive_scenario:
+      clamp:
+        value:
+          add:
+            - mul: [{param: pe_base}, 1.2]
+            - mul: [{param: pe_g_weight}, {var: g_explosive}]
+        lo: {param: pe_floor}
+        hi: {param: pe_cap_explosive}
+    evs_base: {mul: [{var: pe_base_scenario}, {var: margin_src}]}
+    evs_bear: {mul: [{var: pe_bear_scenario}, {var: margin_src}]}
+    evs_bull: {mul: [{var: pe_bull_scenario}, {var: margin_src}]}
+    evs_explosive: {mul: [{var: pe_explosive_scenario}, {var: margin_src}]}
+    # --- survival leg: EV + surviving cash − debt, discounted for the
+    # horizon, divided by the diluted share count the raise implies
+    # equity floor — a levered stub prices at zero, not negative; the
+    # failure leg carries the distressed recovery separately
+    surv_equity_base:
+      max:
+        - sub:
+            - add:
+                - mul: [{var: sales_base}, {var: evs_base}]
+                - var: cash_surviving
+            - var: debt_eff
+        - 0
+    surv_equity_bear:
+      max:
+        - sub:
+            - add:
+                - mul: [{var: sales_bear}, {var: evs_bear}]
+                - var: cash_surviving
+            - var: debt_eff
+        - 0
+    surv_equity_bull:
+      max:
+        - sub:
+            - add:
+                - mul: [{var: sales_bull}, {var: evs_bull}]
+                - var: cash_surviving
+            - var: debt_eff
+        - 0
+    surv_equity_explosive:
+      max:
+        - sub:
+            - add:
+                - mul: [{var: sales_explosive}, {var: evs_explosive}]
+                - var: cash_surviving
+            - var: debt_eff
+        - 0
+    surv_ps_base:
+      div:
+        - mul: [{var: surv_equity_base}, {var: disc_factor}]
+        - mul: [{var: shares_eff}, {var: dilution_mult}]
+    surv_ps_bear:
+      div:
+        - mul: [{var: surv_equity_bear}, {var: disc_factor}]
+        - mul: [{var: shares_eff}, {var: dilution_mult}]
+    surv_ps_bull:
+      div:
+        - mul: [{var: surv_equity_bull}, {var: disc_factor}]
+        - mul: [{var: shares_eff}, {var: dilution_mult}]
+    surv_ps_explosive:
+      div:
+        - mul: [{var: surv_equity_explosive}, {var: disc_factor}]
+        - mul: [{var: shares_eff}, {var: dilution_mult}]
+    # --- failure leg: distressed value — net cash recovery + an option
+    # on the revenue stream, never just a compressed multiple. Discounted
+    # at the same funding-risk rate over a shorter resolution horizon —
+    # a default arrives sooner, not "today".
+    distressed_ps:
+      div:
+        - add:
+            - mul: [{param: distressed_sales_mult}, {var: revenue_ttm}]
+            - max:
+                - sub: [{var: cash_and_equivalents}, {var: debt_eff}]
+                - 0
+        - mul:
+            - var: shares_eff
+            - pow:
+                - add: [1, {var: wacc_eff}]
+                - param: distressed_years
+    flag_survival_at_risk:
+      lt: [{var: p_survival}, {param: p_tight}]
+    # liquidation > going-concern PV — the name is worth more dead;
+    # honest signal, surfaced rather than silently blended
+    flag_distressed_floor_binds:
+      gt: [{var: distressed_ps}, {var: surv_ps_base}]
+  fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: sales_base}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        add:
+          - mul: [{var: p_survival}, {var: surv_ps_base}]
+          - mul:
+              - sub: [1, {var: p_survival}]
+              - var: distressed_ps
+  bear_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: sales_base}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        add:
+          - mul: [{var: p_bear}, {var: surv_ps_bear}]
+          - mul:
+              - sub: [1, {var: p_bear}]
+              - var: distressed_ps
+  bull_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: sales_base}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        add:
+          - mul: [{var: p_bull}, {var: surv_ps_bull}]
+          - mul:
+              - sub: [1, {var: p_bull}]
+              - var: distressed_ps
+  explosive_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: sales_base}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        add:
+          - mul: [{var: p_explosive}, {var: surv_ps_explosive}]
+          - mul:
+              - sub: [1, {var: p_explosive}]
+              - var: distressed_ps
+  # deterministic internals — p_survival, runway, dilution path and the
+  # failure-leg value are part of the auditable output, not hidden math
+  report:
+    p_survival: {var: p_survival}
+    p_bear: {var: p_bear}
+    cash_runway_yrs: {var: runway_yrs}
+    burn_annual: {var: burn}
+    funding_gap: {var: funding_gap}
+    raise_dilution: {var: raise_dilution}
+    sbc_dilution_rate: {var: sbc_rate}
+    dilution_mult: {var: dilution_mult}
+    wacc_eff: {var: wacc_eff}
+    scap_eff: {var: scap_eff}
+    reinvest_need: {var: reinvest_need}
+    funding_capacity: {var: funding_capacity}
+    distressed_per_share: {var: distressed_ps}
+    survival_per_share: {var: surv_ps_base}
+    distressed_floor_binds: {var: flag_distressed_floor_binds}
+validations:
+  - name: margin_impossible
+    when: {or: [{gt: [{coalesce: [{var: net_profit_margin_ttm}, 0]}, 1.0]}, {gt: [{coalesce: [{var: operating_margin_ttm}, 0]}, 1.0]}]}
+    reason: a margin above 100% of revenue is a data error, not a business
+  - name: survival_value_inverted
+    when:
+      and:
+        - gt: [{coalesce: [{var: revenue_ttm}, 0]}, 0]
+        - lt: [{var: p_survival}, 0]
+    reason: survival probability below zero is a model bug, not a signal

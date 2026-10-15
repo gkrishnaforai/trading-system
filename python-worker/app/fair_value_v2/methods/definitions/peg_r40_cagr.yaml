@@ -15,7 +15,6 @@ requires:
     - net_profit_margin_ttm
   optional_scalars:
     - eps_forward
-    - eps_est_analysts
   series: []
 params:
   cagr_cap: 0.30            # v1: cap growth at 30% — no hyperbole

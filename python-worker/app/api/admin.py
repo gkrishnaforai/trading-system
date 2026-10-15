@@ -1833,15 +1833,21 @@ async def recompute_ai_capex_regime():
 
 @router.get("/fair-value-v2/backtest")
 async def fair_value_v2_backtest(symbol: Optional[str] = None,
-                                 horizons: str = "90,180,365"):
+                                 horizons: str = "90,180,365",
+                                 refresh: bool = True,
+                                 per_symbol: bool = False):
     """Replay stored fv runs against realized daily_bars — fv bias/MAE,
     bear-breach rate, buy_below gate reach, and forward returns split by
-    whether spot was inside the gate. Read-only."""
+    whether spot was inside the gate. Forward outcomes are materialized
+    in fv_backtest_forwards (refresh=True upserts fresh rows in one
+    windowed pass before scoring)."""
     try:
         from app.fair_value_v2.backtest import run_backtest
         hs = [int(x) for x in str(horizons).split(",") if x.strip()]
         return {"success": True,
-                "result": run_backtest(symbol, hs or None)}
+                "result": run_backtest(symbol, hs or None,
+                                       refresh=refresh,
+                                       per_symbol=per_symbol)}
     except Exception as e:
         logger.error(f"fair-value-v2 backtest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

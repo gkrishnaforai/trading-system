@@ -6,8 +6,6 @@ requires:
     - eps_forward
     - forward_growth_pct_1y
     - operating_margin_ttm
-  optional_scalars:
-    - eps_ttm
   series: []
 params:
   peg_40_target: 1.1

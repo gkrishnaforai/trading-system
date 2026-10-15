@@ -161,3 +161,147 @@ def implied_growth(fcf_ttm: Optional[float], shares_outstanding: Optional[float]
     else:
         base["flag"] = None
     return base
+
+
+# ---------------------------------------------------------------------
+# negative-FCF path — implied normalized margin + implied inflection year
+#
+# When trailing FCF is negative there is no cash stream to invert for a
+# growth rate. What the market is actually pricing is a *margin and a
+# timeline*: the normalized margin the business reaches once the ramp
+# completes, and the year the burn stops. Both are solvable.
+# ---------------------------------------------------------------------
+
+def _margin_path_price(revenue_ttm: float, growth: float, m_start: float,
+                       m_target: float, ramp_years: int, horizon: int,
+                       wacc: float, terminal_growth: float,
+                       cash: float, debt: float, shares: float,
+                       inflection_year: Optional[int] = None) -> float:
+    """PV per share of a margin-ramp revenue path. Margin holds at
+    m_start until `inflection_year` (default: ramp starts now), then
+    linearly approaches m_target over `ramp_years`, held to horizon,
+    Gordon terminal on year-horizon FCF. FCF_t = rev_t × margin_t."""
+    one_plus_wacc = 1.0 + wacc
+    rev = revenue_ttm
+    fcf_end = None
+    pv = 0.0
+    ramp_den = max(1, ramp_years)
+    inflect = 0 if inflection_year is None else inflection_year
+    for t in range(1, horizon + 1):
+        rev = rev * (1.0 + growth)
+        k = t - inflect
+        if k <= 0:
+            m_t = m_start
+        else:
+            frac = min(1.0, k / ramp_den)
+            m_t = m_start + (m_target - m_start) * frac
+        fcf_end = rev * m_t
+        pv += fcf_end / math.pow(one_plus_wacc, t)
+    tv = (fcf_end * (1.0 + terminal_growth)) / (wacc - terminal_growth)
+    pv += tv / math.pow(one_plus_wacc, horizon)
+    equity = pv + cash - max(0.0, debt)
+    return equity / shares if shares > 0 else float("nan")
+
+
+def implied_margin_path(revenue_ttm: Optional[float],
+                        growth_1y: Optional[float],
+                        operating_margin: Optional[float],
+                        shares_outstanding: Optional[float],
+                        cash_and_equivalents: Optional[float],
+                        spot: Optional[float], *,
+                        wacc: float, terminal_growth: float,
+                        ramp_years: int = 5, horizon: int = 10,
+                        total_debt: Optional[float] = None,
+                        shares_diluted: Optional[float] = None,
+                        margin_ceiling: Optional[float] = None,
+                        ) -> Dict[str, Any]:
+    """For pre-profit names: solve the terminal FCF margin M* that makes
+    the discounted margin-ramp equal today's price, then the implied
+    inflection year holding M* at the industry ceiling.
+
+    flag=implied_margin_speculative when M* exceeds the category
+    ceiling — the market is pricing a margin the industry has never
+    structurally carried."""
+    base: Dict[str, Any] = {
+        "status": "ok",
+        "spec": {"wacc": wacc, "terminal_growth": terminal_growth,
+                 "ramp_years": ramp_years, "horizon": horizon},
+    }
+    if not spot or spot <= 0:
+        return {**base, "status": "not_applicable", "reason": "no_spot_price"}
+    if not revenue_ttm or revenue_ttm <= 0:
+        return {**base, "status": "not_applicable",
+                "reason": "revenue_not_positive"}
+    if not shares_outstanding or shares_outstanding <= 0:
+        return {**base, "status": "not_applicable",
+                "reason": "shares_not_positive"}
+    if wacc - terminal_growth <= 0:
+        return {**base, "status": "not_applicable",
+                "reason": "wacc_lte_terminal_growth"}
+
+    shares_eff = (float(shares_diluted)
+                  if shares_diluted is not None and float(shares_diluted) > 0
+                  else float(shares_outstanding))
+    cash = float(cash_and_equivalents or 0.0)
+    debt = float(total_debt or 0.0)
+    g = max(-0.20, min(0.60, float(growth_1y))) if growth_1y is not None else 0.10
+    m_start = float(operating_margin) if operating_margin is not None else -0.10
+    m_start = max(-0.80, min(m_start, 0.60))
+    ceiling = float(margin_ceiling) if margin_ceiling is not None else 0.30
+
+    def price_at_margin(m: float) -> float:
+        return _margin_path_price(revenue_ttm, g, m_start, m, ramp_years,
+                                  horizon, wacc, terminal_growth,
+                                  cash, debt, shares_eff)
+
+    m_lo, m_hi = -0.20, 1.0
+    p_lo, p_hi = price_at_margin(m_lo), price_at_margin(m_hi)
+    base.update({"spot": spot, "revenue_ttm": round(revenue_ttm, 0),
+                 "growth_used": round(g, 4), "m_start": round(m_start, 4),
+                 "margin_ceiling": round(ceiling, 4),
+                 "price_at_floor": round(p_lo, 4),
+                 "price_at_cap": round(p_hi, 4)})
+
+    implied_m = boundary = None
+    if spot <= p_lo:
+        implied_m, boundary = m_lo, "below_floor"
+    elif spot >= p_hi:
+        implied_m, boundary = m_hi, "at_cap"
+    else:
+        lo, hi = m_lo, m_hi
+        for _ in range(_BISECT_ITERS):
+            mid = (lo + hi) / 2.0
+            if price_at_margin(mid) < spot:
+                lo = mid
+            else:
+                hi = mid
+        implied_m = (lo + hi) / 2.0
+    base["implied_normalized_margin"] = round(implied_m, 4)
+    base["boundary"] = boundary
+
+    # implied inflection year — with the terminal margin pinned at the
+    # industry ceiling, the latest year the burn can stop while still
+    # supporting the price. Scan is monotone decreasing in Y.
+    inflect = None
+    for y in range(0, horizon):
+        py = _margin_path_price(revenue_ttm, g, m_start, ceiling,
+                                ramp_years, horizon, wacc, terminal_growth,
+                                cash, debt, shares_eff, inflection_year=y)
+        if py >= spot:
+            inflect = y
+        else:
+            break
+    base["implied_inflection_year"] = inflect
+
+    if implied_m > ceiling:
+        base["flag"] = "implied_margin_speculative"
+        base["note"] = (f"spot ${spot:.2f} implies a normalized FCF "
+                        f"margin of {implied_m:.0%} — above the "
+                        f"{ceiling:.0%} ceiling this archetype carries")
+    elif implied_m > ceiling * 0.85:
+        base["flag"] = "implied_margin_stretched"
+        base["note"] = (f"spot implies {implied_m:.0%} normalized margin "
+                        f"vs {ceiling:.0%} ceiling — little room for error")
+    else:
+        base["flag"] = None
+    return base

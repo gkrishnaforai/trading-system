@@ -230,6 +230,11 @@ def decide(category: Optional[str],
                       ("single_method", "single_method"),
                       ("no_scenarios", "no_scenarios"),
                       ("extreme_gap", "extreme_gap"),
+                      ("survival_at_risk", "survival_at_risk"),
+                      ("growth_unfunded", "growth_unfunded"),
+                      ("dilution_heavy", "dilution_heavy"),
+                      ("distressed_floor_binds", "distressed_floor_binds"),
+                      ("short_fade", "short_fade"),
                       ("tv_dominant", "tv_dominant")):
         if flag in (quality_flags or []):
             adders_total += adders.get(key, 0); applied.append(flag)

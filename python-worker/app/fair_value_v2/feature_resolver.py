@@ -653,4 +653,52 @@ class FeatureResolver:
             src = f"derived: {num_src} / {den_src}" if num_src and den_src else "derived: ratio"
             return v, src, q
 
+        if name == "sales_to_capital":
+            rev_def = (params or {}).get("revenue") or {}
+            g_def = (params or {}).get("growth") or {}
+            ri_def = (params or {}).get("reinvestment") or {}
+
+            rev, rev_src, rev_q = self._resolve_one(symbol, as_of_ts, "derived.revenue", rev_def)
+            g, g_src, g_q = self._resolve_one(symbol, as_of_ts, "derived.growth", g_def)
+            ri, ri_src, ri_q = self._resolve_one(symbol, as_of_ts, "derived.reinvestment", ri_def)
+
+            q: Dict[str, Any] = {
+                "derived": name, "revenue": rev, "growth": g,
+                "reinvestment": ri,
+            }
+            for k, v in (rev_q or {}).items():
+                q[f"revenue.{k}"] = v
+            for k, v in (g_q or {}).items():
+                q[f"growth.{k}"] = v
+            for k, v in (ri_q or {}).items():
+                q[f"reinvestment.{k}"] = v
+
+            if rev is None or g is None or ri is None:
+                return None, None, q
+            try:
+                g_f, rev_f, ri_f = float(g), float(rev), float(ri)
+                if rev_f <= 0 or g_f <= -1:
+                    q["invalid_inputs"] = True
+                    return None, None, q
+                # realized Δrevenue from the YoY growth base
+                delta_rev = rev_f * g_f / (1.0 + g_f)
+                reinvest = abs(ri_f)
+                if delta_rev <= 0 or reinvest <= 0:
+                    q["no_measurable_reinvestment"] = True
+                    return None, None, q
+                scap = delta_rev / reinvest
+                # sane band — a tiny capex base or a one-off print must
+                # not produce a 40:1 turnover fantasy
+                if not (0.1 <= scap <= 20.0):
+                    q["out_of_band"] = round(scap, 4)
+                    return None, None, q
+            except Exception:
+                q["derive_error"] = True
+                return None, None, q
+
+            src = (f"derived: Δrev/{ri_src}" if ri_src
+                   else "derived: sales_to_capital")
+            q["delta_revenue"] = round(delta_rev, 2)
+            return scap, src, q
+
         return None, None, {"unsupported_derived": name}

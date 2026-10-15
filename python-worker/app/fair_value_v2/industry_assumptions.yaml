@@ -1,0 +1,28 @@
+version: 1
+
+# Per-category industry constants — injected into method params as
+# `industry_scap` and `industry_margin_ceiling` by the runner.
+#
+# sales_to_capital: $ of new revenue per $1 of reinvestment — the
+# reinvestment-binding constant. Capital-heavy growers (datacenters)
+# need more investment per revenue dollar than software.
+#
+# margin_ceiling: the highest *normalized* operating margin the market
+# can plausibly price for this archetype — reverse-DCF implied margins
+# above this flag speculative.
+defaults:
+  sales_to_capital: 2.0
+  margin_ceiling: 0.25
+
+categories:
+  technology:    {sales_to_capital: 2.5, margin_ceiling: 0.35}
+  ai_infra:      {sales_to_capital: 1.5, margin_ceiling: 0.30}
+  growth:        {sales_to_capital: 2.0, margin_ceiling: 0.30}
+  fintech:       {sales_to_capital: 2.5, margin_ceiling: 0.30}
+  financials:    {sales_to_capital: 1.0, margin_ceiling: 0.35}
+  consumer:      {sales_to_capital: 3.0, margin_ceiling: 0.15}
+  healthcare:    {sales_to_capital: 1.5, margin_ceiling: 0.30}
+  cyclical:      {sales_to_capital: 1.5, margin_ceiling: 0.15}
+  value:         {sales_to_capital: 2.0, margin_ceiling: 0.20}
+  pre_earnings:  {sales_to_capital: 2.0, margin_ceiling: 0.30}
+  unknown:       {sales_to_capital: 2.0, margin_ceiling: 0.25}

@@ -26,7 +26,8 @@ def test_percent_features_carry_pct_marker():
     for name, unit in UNITS.items():
         if unit == "percent":
             assert "_pct" in name or name in {
-                "tnx_yield", "irx_yield", "yield_curve_spread"}, (
+                "tnx_yield", "irx_yield", "yield_curve_spread",
+                "vix_close"}, (
                 f"{name} is percent-scaled but has no _pct marker — "
                 "a decimal consumer will read it 100x too large")
         if "_pct" in name:

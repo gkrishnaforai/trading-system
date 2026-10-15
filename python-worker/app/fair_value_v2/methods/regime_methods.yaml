@@ -49,8 +49,10 @@ selections:
     pre_earnings:
       combine: weighted_average
       methods:
+        - method_key: ev_sales_survival
+          weight: 0.7
         - method_key: ev_sales_growth
-          weight: 1.0
+          weight: 0.3
 
     mega_cap:
       combine: weighted_average
@@ -68,8 +70,10 @@ selections:
         - method_key: peg_corrected
           weight: 0.15
         - method_key: pe_technology_dynamic
-          weight: 0.45
+          weight: 0.30
         - method_key: ev_fcf
+          weight: 0.15
+        - method_key: dcf_quality_fade
           weight: 0.15
 
   fintech:
@@ -91,8 +95,10 @@ selections:
     pre_earnings:
       combine: weighted_average
       methods:
+        - method_key: ev_sales_survival
+          weight: 0.7
         - method_key: ev_sales_fintech
-          weight: 1.0
+          weight: 0.3
 
   technology:
     standard:
@@ -122,8 +128,10 @@ selections:
     pre_earnings:
       combine: weighted_average
       methods:
+        - method_key: ev_sales_survival
+          weight: 0.7
         - method_key: ev_sales_growth
-          weight: 1.0
+          weight: 0.3
 
     mega_cap:
       combine: weighted_average
@@ -141,8 +149,10 @@ selections:
         - method_key: peg_corrected
           weight: 0.15
         - method_key: pe_technology_dynamic
-          weight: 0.45
+          weight: 0.30
         - method_key: ev_fcf
+          weight: 0.15
+        - method_key: dcf_quality_fade
           weight: 0.15
 
   value:
@@ -165,8 +175,10 @@ selections:
     pre_earnings:
       combine: weighted_average
       methods:
+        - method_key: ev_sales_survival
+          weight: 0.7
         - method_key: ev_sales_growth
-          weight: 1.0
+          weight: 0.3
 
   general:
     standard:
@@ -188,8 +200,10 @@ selections:
     pre_earnings:
       combine: weighted_average
       methods:
+        - method_key: ev_sales_survival
+          weight: 0.7
         - method_key: ev_sales_growth
-          weight: 1.0
+          weight: 0.3
 
   growth:
     standard:
@@ -227,8 +241,10 @@ selections:
     pre_earnings:
       combine: weighted_average
       methods:
+        - method_key: ev_sales_survival
+          weight: 0.7
         - method_key: ev_sales_growth
-          weight: 1.0
+          weight: 0.3
 
     high_growth:
       combine: weighted_average
@@ -238,8 +254,10 @@ selections:
         - method_key: peg
           weight: 0.25
         - method_key: pe_growth
-          weight: 0.3
+          weight: 0.2
         - method_key: ev_fcf
+          weight: 0.15
+        - method_key: dcf_quality_fade
           weight: 0.15
 
   # cyclicals are ALWAYS valued on normalized EPS — peak TTM earnings
@@ -270,5 +288,7 @@ selections:
     pre_earnings:
       combine: weighted_average
       methods:
+        - method_key: ev_sales_survival
+          weight: 0.7
         - method_key: ev_sales_growth
-          weight: 1.0
+          weight: 0.3

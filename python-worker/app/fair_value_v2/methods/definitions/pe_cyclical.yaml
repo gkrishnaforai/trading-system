@@ -6,7 +6,6 @@ requires:
     - eps_ttm
   optional_scalars:
     - eps_forward
-    - forward_growth_pct_1y
   series: []
 params:
   pe_mid: 11.0              # mid-cycle multiple — a cyclical earns

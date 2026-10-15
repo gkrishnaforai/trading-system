@@ -62,6 +62,16 @@ adders:
                                   # no cross-check, dispersion unfireable
   eps_basis_gap: 0.03             # forward EPS >1.5x trailing — methods
                                   # straddle two earnings horizons
+  survival_at_risk: 0.06          # p_survival below the tight tier —
+                                  # failure leg is carrying real weight
+  growth_unfunded: 0.05           # implied reinvestment to fund priced
+                                  # growth exceeds cash+fcf+debt headroom
+  dilution_heavy: 0.04            # dynamic share path dilutes >30% over
+                                  # the funding horizon
+  distressed_floor_binds: 0.04    # liquidation value exceeds the
+                                  # discounted going-concern leg
+  short_fade: 0.02                # low GQ compressed the DCF advantage
+                                  # period — quality gate, not penalty
 
 cap: 0.60                       # beyond this the name is uninvestable,
                                 # not cheap — the gate flags it instead

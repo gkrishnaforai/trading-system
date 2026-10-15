@@ -23,11 +23,66 @@ SCENARIO_PROBS: Dict[str, float] = json.loads(
               '{"bear": 0.25, "base": 0.50, "bull": 0.20, "explosive": 0.05}'))
 SCENARIO_ORDER = ("bear", "base", "bull", "explosive")
 
+# floors so a tilt can never zero out a leg entirely
+_PROB_FLOOR = 0.02
 
-def expected_fair_value(scen: Dict[str, Any]) -> Optional[float]:
-    """Σ p·FV over the scenarios that resolved — weights renormalize."""
+
+def tilted_scenario_probs(vix: Optional[float] = None,
+                          regime: Optional[str] = None,
+                          quality_flags: Optional[List[str]] = None
+                          ) -> Dict[str, float]:
+    """Regime-conditional scenario weights — the static 25/50/20/5 prior
+    tilts fatter-tailed under stress:
+
+      vix ≥ 30                  → bear +0.10, explosive +0.03
+      vix ≥ 24                  → bear +0.05, explosive +0.015
+      pre_earnings / cyclical   → bear +0.05, explosive +0.02
+      extreme_gap / no_scenarios→ bear +0.05
+      tv_dominant / fwd_rev_infl→ bear +0.025
+
+    Base absorbs the shifts, legs floor at 2%, weights renormalize."""
+    probs = dict(SCENARIO_PROBS)
+    bear_add = tail_add = 0.0
+    try:
+        v = float(vix) if vix is not None else None
+    except (TypeError, ValueError):
+        v = None
+    if v is not None:
+        if v >= 30:
+            bear_add += 0.10
+            tail_add += 0.03
+        elif v >= 24:
+            bear_add += 0.05
+            tail_add += 0.015
+    reg = (regime or "")
+    if "pre_earnings" in reg or "cyclical" in reg:
+        bear_add += 0.05
+        tail_add += 0.02
+    flags = set(quality_flags or [])
+    if flags & {"extreme_gap", "no_scenarios"}:
+        bear_add += 0.05
+    if flags & {"tv_dominant", "forward_revenue_inflated"}:
+        bear_add += 0.025
+
+    if bear_add or tail_add:
+        probs["bear"] = probs.get("bear", 0.0) + bear_add
+        probs["explosive"] = probs.get("explosive", 0.0) + tail_add
+        probs["base"] = max(_PROB_FLOOR,
+                            probs.get("base", 0.0) - bear_add - tail_add)
+
+    for k in SCENARIO_ORDER:
+        probs[k] = max(_PROB_FLOOR, float(probs.get(k) or 0.0))
+    total = sum(probs[k] for k in SCENARIO_ORDER)
+    return {k: round(probs[k] / total, 4) for k in SCENARIO_ORDER}
+
+
+def expected_fair_value(scen: Dict[str, Any],
+                        probs: Optional[Dict[str, float]] = None
+                        ) -> Optional[float]:
+    """Σ p·FV over the scenarios that resolved — weights renormalize.
+    `probs` overrides the static prior (regime-conditional tilt)."""
     num = den = 0.0
-    for k, p in SCENARIO_PROBS.items():
+    for k, p in (probs or SCENARIO_PROBS).items():
         v = scen.get(k)
         if v is None:
             continue

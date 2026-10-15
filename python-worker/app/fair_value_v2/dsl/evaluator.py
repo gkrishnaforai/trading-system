@@ -180,6 +180,114 @@ def _eval_dcf_mega_cap_price(node: Any, ctx: EvalContext, path: str) -> float:
     return fair_price
 
 
+def _eval_dcf_fade_price(node: Any, ctx: EvalContext, path: str) -> float:
+    """Generalized growth-fade DCF — explicit `flat_years` at g0, a
+    linear fade to terminal growth over `fade_years`, terminal growth
+    held until `horizon_years`, Gordon TV at the horizon. Subsumes the
+    mega_cap spec (flat 5 + fade 5 + horizon 10) and lets quality
+    scores scale the competitive-advantage period instead of a hard
+    market-cap cliff."""
+    if not isinstance(node, dict):
+        raise DslError("invalid_ast", "dcf_fade_price node must be a dict", {"path": path})
+
+    fcf_ttm = _to_float(ctx.scalars.get("fcf_ttm"), path=f"{path}.fcf_ttm")
+    shares_outstanding = _to_float(ctx.scalars.get("shares_outstanding"), path=f"{path}.shares_outstanding")
+    cash_and_equivalents = _to_float(ctx.scalars.get("cash_and_equivalents"), path=f"{path}.cash_and_equivalents")
+
+    if fcf_ttm <= 0 or shares_outstanding <= 0:
+        raise DslError("missing_data", "invalid inputs", {"path": path, "fcf_ttm": fcf_ttm, "shares_outstanding": shares_outstanding})
+
+    wacc = _to_float(eval_expr(node.get("wacc"), ctx, path=f"{path}.wacc"), path=f"{path}.wacc")
+    terminal_growth = _to_float(
+        eval_expr(node.get("terminal_growth"), ctx, path=f"{path}.terminal_growth"), path=f"{path}.terminal_growth"
+    )
+    growth = _to_float(eval_expr(node.get("growth"), ctx, path=f"{path}.growth"), path=f"{path}.growth")
+    growth_cap = _to_float(eval_expr(node.get("growth_cap"), ctx, path=f"{path}.growth_cap"), path=f"{path}.growth_cap")
+    fade_years = _to_float(eval_expr(node.get("fade_years"), ctx, path=f"{path}.fade_years"), path=f"{path}.fade_years")
+    flat_years = _to_float(eval_expr(node.get("flat_years"), ctx, path=f"{path}.flat_years"), path=f"{path}.flat_years")
+    horizon_years = _to_float(eval_expr(node.get("horizon_years"), ctx, path=f"{path}.horizon_years"), path=f"{path}.horizon_years")
+    terminal_value_cap_share_of_ev = _to_float(
+        eval_expr(node.get("terminal_value_cap_share_of_ev"), ctx, path=f"{path}.terminal_value_cap_share_of_ev"),
+        path=f"{path}.terminal_value_cap_share_of_ev",
+    )
+
+    if horizon_years <= 0 or flat_years < 0 or fade_years < 0:
+        raise DslError(
+            "invalid_assumption", "horizon/flat/fade years invalid",
+            {"path": path, "flat_years": flat_years, "fade_years": fade_years, "horizon_years": horizon_years})
+    if flat_years + fade_years > horizon_years:
+        raise DslError(
+            "invalid_assumption", "flat_years + fade_years must be <= horizon_years",
+            {"path": path, "flat_years": flat_years, "fade_years": fade_years, "horizon_years": horizon_years})
+    if wacc - terminal_growth <= 0:
+        raise DslError(
+            "invalid_assumption",
+            "wacc must be > terminal_growth",
+            {"path": path, "wacc": wacc, "terminal_growth": terminal_growth},
+        )
+
+    g0 = max(0.0, min(growth_cap, growth))
+    one_plus_wacc = 1.0 + wacc
+    fade_den = max(1.0, float(fade_years))
+    horizon = int(horizon_years)
+
+    fcf = fcf_ttm
+    pv_explicit = 0.0
+    for t in range(1, horizon + 1):
+        if t <= flat_years:
+            g_t = g0
+        elif t <= flat_years + fade_years:
+            g_t = g0 - (g0 - terminal_growth) * (t - flat_years) / fade_den
+        else:
+            g_t = terminal_growth
+        fcf = fcf * (1.0 + g_t)
+        pv_explicit += fcf / math.pow(one_plus_wacc, t)
+
+    terminal_value = (fcf * (1.0 + terminal_growth)) / (wacc - terminal_growth)
+    pv_terminal = terminal_value / math.pow(one_plus_wacc, horizon)
+    ev = pv_explicit + pv_terminal
+
+    if ev <= 0:
+        raise DslError("invalid_assumption", "ev must be > 0", {"path": path, "ev": ev})
+
+    terminal_share_of_ev = pv_terminal / ev
+    tv_dominant = terminal_share_of_ev > terminal_value_cap_share_of_ev
+    if tv_dominant:
+        ctx.flags.append("tv_dominant")
+
+    total_debt = _to_float(ctx.scalars.get("total_debt") or 0.0, path=f"{path}.total_debt")
+    debt_eff = max(0.0, float(total_debt))
+    shares_diluted = ctx.scalars.get("shares_diluted")
+    try:
+        shares_eff = float(shares_diluted) if shares_diluted is not None and float(shares_diluted) > 0 else shares_outstanding
+    except (TypeError, ValueError):
+        shares_eff = shares_outstanding
+
+    equity_value = ev + cash_and_equivalents - debt_eff
+    fair_price = equity_value / shares_eff
+
+    _trace(
+        ctx,
+        {
+            "path": path,
+            "op": "dcf_fade_price",
+            "wacc": wacc,
+            "terminal_growth": terminal_growth,
+            "growth": growth,
+            "growth_cap": growth_cap,
+            "flat_years": flat_years,
+            "fade_years": fade_years,
+            "horizon_years": horizon_years,
+            "terminal_share_of_ev": terminal_share_of_ev,
+            "tv_dominant": tv_dominant,
+            "total_debt": debt_eff,
+            "shares_used": shares_eff,
+            "out": fair_price,
+        },
+    )
+    return fair_price
+
+
 def eval_expr(expr: Any, ctx: EvalContext, path: str = "$") -> Any:
     if expr is None:
         return None
@@ -231,6 +339,9 @@ def eval_expr(expr: Any, ctx: EvalContext, path: str = "$") -> Any:
 
     if "dcf_mega_cap_price" in expr:
         return _eval_dcf_mega_cap_price(expr["dcf_mega_cap_price"], ctx, path=f"{path}.dcf_mega_cap_price")
+
+    if "dcf_fade_price" in expr:
+        return _eval_dcf_fade_price(expr["dcf_fade_price"], ctx, path=f"{path}.dcf_fade_price")
 
     if "error" in expr:
         payload = expr["error"]
@@ -572,6 +683,23 @@ def evaluate_scenarios(
             raise DslError("invalid_assumption", "non_finite_fair_value",
                            {"path": f"$.{key}"})
         out[out_key] = None if v is None else _to_float(v, path=f"$.{key}")
+
+    # `report` — named internals the method wants visible on the run
+    # (p_survival, cash runway, dilution path, implied margins). Each
+    # expression evaluates over the same binding scope; failures become
+    # null entries rather than aborting the run.
+    report_exprs = formula.get("report")
+    if isinstance(report_exprs, dict) and report_exprs:
+        report: Dict[str, Any] = {}
+        for rk, rexpr in report_exprs.items():
+            try:
+                rv = eval_expr(rexpr, ctx, path=f"$.report.{rk}")
+                if isinstance(rv, (int, float)) and not isinstance(rv, bool):
+                    rv = round(float(rv), 6) if math.isfinite(float(rv)) else None
+                report[str(rk)] = rv
+            except DslError:
+                report[str(rk)] = None
+        metrics["report"] = report
 
     if debug:
         metrics["trace"] = ctx.trace

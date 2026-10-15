@@ -271,6 +271,8 @@ class FairValueV2Resolver:
                            result.symbol, exc)
         if decision is not None and result.classification:
             decision["classification"] = result.classification
+        if decision is not None and result.scenario_probs:
+            decision["scenario_probs"] = result.scenario_probs
         if decision is not None and result.reverse_dcf:
             decision["reverse_dcf"] = result.reverse_dcf
         if decision is not None and result.relative_valuation:

@@ -5,8 +5,6 @@ requires:
   scalars:
     - eps_forward
     - forward_growth_pct_1y
-  optional_scalars:
-    - eps_ttm
   series: []
 params:
   peg_target: 0.9

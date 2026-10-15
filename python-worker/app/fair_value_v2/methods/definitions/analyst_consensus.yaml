@@ -7,7 +7,6 @@ requires:
   optional_scalars:
     - price_target_high
     - price_target_low
-    - analyst_count
   series: []
 params:
   default_band_pct: 0.12

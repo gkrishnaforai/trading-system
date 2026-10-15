@@ -7,7 +7,6 @@ requires:
     - shares_outstanding
     - cash_and_equivalents
   optional_scalars:
-    - market_cap
     - total_debt
     - shares_diluted
   series: []

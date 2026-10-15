@@ -10,13 +10,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.fair_value_v2.blender import (
     SCENARIO_ORDER,
+    SCENARIO_PROBS,
     WeightedBlender,
     enforce_scenario_order,
     expected_fair_value,
+    tilted_scenario_probs,
 )
 from app.fair_value_v2.dsl.evaluator import DslError, evaluate_scenarios
 from app.fair_value_v2.dsl.render import render_scenarios
-from app.fair_value_v2.reverse_dcf import implied_growth
+from app.fair_value_v2.reverse_dcf import implied_growth, implied_margin_path
 from app.fair_value_v2.feature_resolver import FeatureResolver
 from app.fair_value_v2.feature_store.postgres_point_in_time import PostgresPointInTimeFeatureStore
 from app.fair_value_v2.methods.registry import MethodRegistry
@@ -68,6 +70,21 @@ class FairValueRunner:
                     yaml.safe_load(fh) or {}).get("groups") or {}
         except Exception:
             self._peer_groups = {}
+
+        # Per-category industry constants (sales-to-capital, margin
+        # ceilings) — injected into method params as industry_* so a
+        # single method definition prices each archetype on its own
+        # capital intensity
+        try:
+            import yaml as _yaml
+            with open(os.path.join(base_dir, "industry_assumptions.yaml")) as fh:
+                _ia = _yaml.safe_load(fh) or {}
+            self._industry = {
+                "defaults": _ia.get("defaults") or {},
+                "categories": _ia.get("categories") or {},
+            }
+        except Exception:
+            self._industry = {"defaults": {}, "categories": {}}
 
         # Content-hash the YAML method/policy surface into the model
         # version — a formula or policy change must invalidate stored
@@ -194,7 +211,20 @@ class FairValueRunner:
             quality=quality,
         )
 
-    def _run_method(self, method_key: str, symbol: str, as_of_ts: datetime) -> Tuple[MethodResult, str]:
+    def _industry_params(self, category: Optional[str]) -> Dict[str, Any]:
+        """Category constants overlaid onto method params — a method
+        referencing `{param: industry_scap}` sees the archetype's
+        sales-to-capital, not a global constant."""
+        cat = (category or "").split(":")[0] or "unknown"
+        spec = dict(self._industry.get("defaults") or {})
+        spec.update((self._industry.get("categories") or {}).get(cat) or {})
+        return {
+            "industry_scap": spec.get("sales_to_capital"),
+            "industry_margin_ceiling": spec.get("margin_ceiling"),
+        }
+
+    def _run_method(self, method_key: str, symbol: str, as_of_ts: datetime,
+                    extra_params: Optional[Dict[str, Any]] = None) -> Tuple[MethodResult, str]:
         definition = self.registry.get(method_key)
         required_scalars = (definition.requires or {}).get("scalars") or []
         optional_scalars = (definition.requires or {}).get("optional_scalars") or []
@@ -210,6 +240,13 @@ class FairValueRunner:
         for k in optional_scalars:
             inputs_used[f"optional.{k}"] = features.scalars.get(k)
         params = dict(definition.params or {})
+        # industry_* constants overlay the method defaults — the YAML
+        # param stays the fallback when the category has no entry
+        for k, v in (extra_params or {}).items():
+            if v is not None:
+                params[k] = v
+        for k in (extra_params or {}):
+            inputs_used[f"param.{k}"] = params.get(k)
 
         strict = os.getenv("FAIR_VALUE_V2_STRICT", "0").strip().lower() in {"1", "true", "yes", "y", "on"}
         missing, non_canonical = self._required_scalar_issues(required_scalars=list(required_scalars), features=features)
@@ -382,12 +419,14 @@ class FairValueRunner:
 
         # Use regime-selected methods when present; otherwise, keep category methods.
         selected_method_weights = regime_method_weights or method_weights
+        industry_params = self._industry_params(category)
 
         method_results: List[MethodResult] = []
         blend_inputs: List[Tuple[MethodResult, float]] = []
         features_hashes: List[str] = []
         for mw in selected_method_weights:
-            mr, fh = self._run_method(mw.method_key, symbol, ts)
+            mr, fh = self._run_method(mw.method_key, symbol, ts,
+                                      extra_params=industry_params)
             try:
                 (mr.metrics or {}).update({"blend_weight": mw.weight})
             except Exception:
@@ -422,7 +461,6 @@ class FairValueRunner:
         # Scenario post-processing: enforce monotone ordering and compute
         # the probability-weighted expected value.
         scen, order_flags = enforce_scenario_order(blend.scenario_fair_values)
-        expected = expected_fair_value(scen)
         quality_flags = list(order_flags)
         ok_methods = [mr for mr in method_results
                       if mr.status == "ok" and mr.fair_price]
@@ -443,12 +481,38 @@ class FairValueRunner:
             warnings.append({"level": "warning", "scope": "scenarios",
                              "reason": f})
 
+        # regime-conditional scenario probabilities — static 25/50/20/5
+        # tilts fatter-tailed under stress (vix, regime class, run
+        # quality flags). Deterministic; persisted in warnings for audit.
+        scen_probs: Dict[str, float] = dict(SCENARIO_PROBS)
+        try:
+            vix_features = self._get_features_for_requires(
+                symbol, ts, ["vix_close"])
+            vix = (vix_features.scalars or {}).get("vix_close")
+            tilt_regime = f"{category}:{regime}"
+            scen_probs = tilted_scenario_probs(
+                vix=vix, regime=tilt_regime, quality_flags=quality_flags)
+            if scen_probs != dict(SCENARIO_PROBS):
+                warnings.append({
+                    "level": "info", "scope": "scenarios",
+                    "reason": "scenario_probs_tilted",
+                    "details": {"probs": scen_probs, "vix": vix,
+                                "regime": tilt_regime}})
+        except Exception:
+            pass
+        expected = expected_fair_value(scen, probs=scen_probs)
+
         # method-level flags promoted to run quality_flags —
         # tv_dominant: the value rests mostly on the terminal (legitimate
         #   long-duration estimate, but charge uncertainty + cap confidence)
         # forward_revenue_inflated: forward/ARR-flavoured revenue runs far
         #   ahead of trailing — extrapolation risk, not recognized revenue
-        promoted = {"tv_dominant", "forward_revenue_inflated"}
+        # survival_at_risk / distressed_floor_binds / dilution_heavy /
+        #   growth_unfunded: the survival-tree failure mechanics bind
+        # short_fade: low-GQ compressed competitive-advantage period
+        promoted = {"tv_dominant", "forward_revenue_inflated",
+                    "survival_at_risk", "distressed_floor_binds",
+                    "dilution_heavy", "growth_unfunded", "short_fade"}
         hits = sorted({f for mr in ok_methods
                        for f in ((mr.metrics or {}).get("flags") or [])
                        if f in promoted} - set(quality_flags))
@@ -482,7 +546,7 @@ class FairValueRunner:
                 symbol, ts, ["spot_price", "fcf_ttm", "shares_outstanding",
                              "shares_diluted", "total_debt",
                              "cash_and_equivalents", "revenue_growth_ttm",
-                             "forward_growth_pct_1y",
+                             "forward_growth_pct_1y", "operating_margin_ttm",
                              "eps_ttm", "revenue_ttm", "revenue_forward"])
             rs = rfeatures.scalars or {}
             dcf_params = dict(self.registry.get("dcf_mega_cap").params or {})
@@ -498,7 +562,27 @@ class FairValueRunner:
                 shares_diluted=rs.get("shares_diluted"),
                 realized_growth=rs.get("revenue_growth_ttm"),
                 consensus_growth_pct_1y=rs.get("forward_growth_pct_1y"))
+            # negative-FCF blind spot — invert for the normalized margin
+            # and FCF-inflection year the price assumes instead of the
+            # growth rate there is no cash stream to solve
+            if reverse.get("reason") == "fcf_ttm_not_positive":
+                cg = rs.get("forward_growth_pct_1y")
+                growth_1y = (float(cg) / 100.0
+                             if cg is not None else rs.get("revenue_growth_ttm"))
+                margin_path = implied_margin_path(
+                    rs.get("revenue_ttm"), growth_1y,
+                    rs.get("operating_margin_ttm"),
+                    rs.get("shares_outstanding"),
+                    rs.get("cash_and_equivalents"), rs.get("spot_price"),
+                    wacc=float(dcf_params.get("wacc", 0.10)),
+                    terminal_growth=float(dcf_params.get("terminal_growth", 0.03)),
+                    total_debt=rs.get("total_debt"),
+                    shares_diluted=rs.get("shares_diluted"),
+                    margin_ceiling=industry_params.get(
+                        "industry_margin_ceiling"))
+                reverse["margin_path"] = margin_path
             _rflag = reverse.get("flag") or (
+                (reverse.get("margin_path") or {}).get("flag")) or (
                 reverse.get("reason")
                 if reverse.get("status") != "ok" else None)
             if _rflag:
@@ -570,6 +654,7 @@ class FairValueRunner:
             fair_value=blend.fair_value if any_ok else None,
             scenario_fair_values=scen if any_ok else {},
             expected_fair_value=expected if any_ok else None,
+            scenario_probs=scen_probs,
             quality_flags=quality_flags,
             regime=f"{category}:{regime}",
             classification=classification,

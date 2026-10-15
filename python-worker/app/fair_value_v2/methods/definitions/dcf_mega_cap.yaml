@@ -7,7 +7,6 @@ requires:
     - shares_outstanding
     - cash_and_equivalents
   optional_scalars:
-    - market_cap
     - revenue_growth_ttm
     - forward_growth_pct_1y
     - total_debt

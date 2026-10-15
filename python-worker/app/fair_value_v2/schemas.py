@@ -47,6 +47,9 @@ class FairValueV2Result(BaseModel):
     fair_value: Optional[float] = None
     scenario_fair_values: Dict[str, Optional[float]] = Field(default_factory=dict)
     expected_fair_value: Optional[float] = None
+    # regime-conditional weights actually applied to the scenario EV —
+    # static prior unless vix/regime/quality tilts fired
+    scenario_probs: Optional[Dict[str, float]] = None
     quality_flags: List[str] = Field(default_factory=list)
     regime: Optional[str] = None
     method_results: List[MethodResult] = Field(default_factory=list)

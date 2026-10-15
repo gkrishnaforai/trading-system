@@ -1,0 +1,193 @@
+method_key: dcf_quality_fade
+version: 1
+category: general
+# Growth-quality scaled DCF — the competitive-advantage period follows
+# the measured moat (gq_score), not a $200B market-cap cliff:
+#   gq ≥ 70 (wide moat):    10y flat growth + 10y fade to terminal
+#   gq 45–70:                7y flat + 5y fade
+#   gq < 45 / unmeasured:    3y flat + 2y aggressive compression
+# A commoditized hypergrowth name does not get a decade of excess
+# returns — growth and margins compress toward cost of capital fast.
+requires:
+  scalars:
+    - fcf_ttm
+    - shares_outstanding
+    - cash_and_equivalents
+  optional_scalars:
+    - gq_score
+    - revenue_growth_ttm
+    - forward_growth_pct_1y
+    - total_debt
+    - shares_diluted
+  series: []
+params:
+  wacc: 0.10
+  terminal_growth: 0.03
+  growth: 0.08                    # fallback when growth scalars absent
+  growth_cap: 0.20
+  growth_floor: 0.02
+  gq_high: 70
+  gq_mid: 45
+  gq_default: 50                  # unmeasured → mid tier, not the cliff
+  flat_high: 10
+  fade_high: 10
+  flat_mid: 7
+  fade_mid: 5
+  flat_low: 3
+  fade_low: 2
+  terminal_value_cap_share_of_ev: 0.75
+  wacc_bear_add: 0.01
+  growth_bear_add: -0.02
+  terminal_growth_bear_add: -0.005
+  wacc_bull_add: -0.01
+  growth_bull_add: 0.02
+  terminal_growth_bull_add: 0.005
+  wacc_explosive_add: -0.015
+  growth_explosive_add: 0.04
+  terminal_growth_explosive_add: 0.01
+formula:
+  bindings:
+    gq: {coalesce: [{var: gq_score}, {param: gq_default}]}
+    flat_yrs:
+      if:
+        cond: {gte: [{var: gq}, {param: gq_high}]}
+        then: {param: flat_high}
+        else:
+          if:
+            cond: {gte: [{var: gq}, {param: gq_mid}]}
+            then: {param: flat_mid}
+            else: {param: flat_low}
+    fade_yrs:
+      if:
+        cond: {gte: [{var: gq}, {param: gq_high}]}
+        then: {param: fade_high}
+        else:
+          if:
+            cond: {gte: [{var: gq}, {param: gq_mid}]}
+            then: {param: fade_mid}
+            else: {param: fade_low}
+    horizon_yrs: {add: [{var: flat_yrs}, {var: fade_yrs}]}
+    # low-quality growth gets a compressed CAP — surface it so the
+    # decision layer knows the fade assumption is punitive by design
+    flag_short_fade:
+      lt: [{var: gq}, {param: gq_mid}]
+    g_dyn:
+      clamp:
+        value:
+          coalesce:
+            - var: revenue_growth_ttm
+            - div: [{var: forward_growth_pct_1y}, 100]
+            - {param: growth}
+        lo: {param: growth_floor}
+        hi: {param: growth_cap}
+    g_dyn_bear:
+      clamp:
+        value:
+          add: [{var: g_dyn}, {param: growth_bear_add}]
+        lo: 0
+        hi: {param: growth_cap}
+    g_dyn_bull:
+      clamp:
+        value:
+          add: [{var: g_dyn}, {param: growth_bull_add}]
+        lo: {param: growth_floor}
+        hi: {param: growth_cap}
+    g_dyn_explosive:
+      clamp:
+        value:
+          add: [{var: g_dyn}, {param: growth_explosive_add}]
+        lo: {param: growth_floor}
+        hi: {param: growth_cap}
+  fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+          - lte:
+              - sub: [{param: wacc}, {param: terminal_growth}]
+              - 0
+      then: null
+      else:
+        dcf_fade_price:
+          wacc: {param: wacc}
+          terminal_growth: {param: terminal_growth}
+          growth: {var: g_dyn}
+          growth_cap: {param: growth_cap}
+          flat_years: {var: flat_yrs}
+          fade_years: {var: fade_yrs}
+          horizon_years: {var: horizon_yrs}
+          terminal_value_cap_share_of_ev: {param: terminal_value_cap_share_of_ev}
+  bear_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+          - lte:
+              - sub:
+                  - add: [{param: wacc}, {param: wacc_bear_add}]
+                  - add: [{param: terminal_growth}, {param: terminal_growth_bear_add}]
+              - 0
+      then: null
+      else:
+        dcf_fade_price:
+          wacc: {add: [{param: wacc}, {param: wacc_bear_add}]}
+          terminal_growth: {add: [{param: terminal_growth}, {param: terminal_growth_bear_add}]}
+          growth: {var: g_dyn_bear}
+          growth_cap: {param: growth_cap}
+          flat_years: {var: flat_yrs}
+          fade_years: {var: fade_yrs}
+          horizon_years: {var: horizon_yrs}
+          terminal_value_cap_share_of_ev: {param: terminal_value_cap_share_of_ev}
+  bull_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+          - lte:
+              - sub:
+                  - add: [{param: wacc}, {param: wacc_bull_add}]
+                  - add: [{param: terminal_growth}, {param: terminal_growth_bull_add}]
+              - 0
+      then: null
+      else:
+        dcf_fade_price:
+          wacc: {add: [{param: wacc}, {param: wacc_bull_add}]}
+          terminal_growth: {add: [{param: terminal_growth}, {param: terminal_growth_bull_add}]}
+          growth: {var: g_dyn_bull}
+          growth_cap: {param: growth_cap}
+          flat_years: {var: flat_yrs}
+          fade_years: {var: fade_yrs}
+          horizon_years: {var: horizon_yrs}
+          terminal_value_cap_share_of_ev: {param: terminal_value_cap_share_of_ev}
+  explosive_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{var: fcf_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+          - lte:
+              - sub:
+                  - add: [{param: wacc}, {param: wacc_explosive_add}]
+                  - add: [{param: terminal_growth}, {param: terminal_growth_explosive_add}]
+              - 0
+      then: null
+      else:
+        dcf_fade_price:
+          wacc: {add: [{param: wacc}, {param: wacc_explosive_add}]}
+          terminal_growth: {add: [{param: terminal_growth}, {param: terminal_growth_explosive_add}]}
+          growth: {var: g_dyn_explosive}
+          growth_cap: {param: growth_cap}
+          flat_years: {var: flat_yrs}
+          fade_years: {var: fade_yrs}
+          horizon_years: {var: horizon_yrs}
+          terminal_value_cap_share_of_ev: {param: terminal_value_cap_share_of_ev}
+  report:
+    gq_score: {var: gq}
+    flat_years: {var: flat_yrs}
+    fade_years: {var: fade_yrs}
+    horizon_years: {var: horizon_yrs}
+    growth_used: {var: g_dyn}
+validations: []

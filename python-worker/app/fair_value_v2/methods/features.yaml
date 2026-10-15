@@ -24,6 +24,9 @@ allow_table_columns:
   cash_flow_statements:
     as_of_columns: [fiscal_date_ending]
     columns: [operating_cash_flow, free_cash_flow, capital_expenditures]
+  growth_quality_runs:
+    as_of_columns: [as_of]
+    columns: [score, percentile]
   raw_market_data_intraday:
     as_of_columns: [ts]
     columns: [close, interval]
@@ -94,6 +97,10 @@ units:
   forward_growth_pct_1y: percent
   spot_price: usd_per_share
   tnx_yield: percent
+  vix_close: percent
+  capex_ttm: usd
+  sales_to_capital: decimal
+  gq_score: count
 
 features:
   book_value_per_share:
@@ -790,3 +797,55 @@ features:
     max_age_days: 45
     column: tnx_yield
     as_of: data_date
+
+  vix_close:
+    type: macro_column
+    max_age_days: 45
+    column: vix_close
+    as_of: data_date
+
+  # capital intensity of growth — the reinvestment-binding inputs.
+  # capex lands negative in the cash-flow statement; the derivation
+  # takes |capex|.
+  capex_ttm:
+    type: coalesce
+    max_age_days: 400
+    sources:
+      - type: snapshot_json_path
+        source: fmp_fundamentals
+        path: [fundamentals, statements, cash_flow, 0, capitalExpenditure]
+      - type: table_column
+        table: cash_flow_statements
+        column: capital_expenditures
+        as_of: fiscal_date_ending
+        order_by: fiscal_date_ending
+        where_not_null: true
+
+  # realized sales-to-capital: Δrevenue over the trailing year per $1 of
+  # reinvestment (capex proxy). growth binds to capital — a name scaling
+  # revenue without reinvestment capacity is priced on free scaling.
+  sales_to_capital:
+    type: derived
+    max_age_days: 400
+    name: sales_to_capital
+    params:
+      revenue:
+        type: feature_ref
+        name: revenue_ttm
+      growth:
+        type: feature_ref
+        name: revenue_growth_ttm
+      reinvestment:
+        type: feature_ref
+        name: capex_ttm
+
+  # growth-quality composite — drives the competitive-advantage-period
+  # fade in dcf_quality_fade: wide moats hold growth longer
+  gq_score:
+    type: table_column
+    max_age_days: 45
+    table: growth_quality_runs
+    column: score
+    as_of: as_of
+    order_by: as_of
+    where_not_null: true
