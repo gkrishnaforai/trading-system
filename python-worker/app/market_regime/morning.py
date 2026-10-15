@@ -303,6 +303,9 @@ invalidations = the 2-3 conditions that would flip the regime.
 qqq_lean: the AI/growth sleeve — rate moves hit it ~1.3x SPY.
 Cross-asset evidence (yields, credit, dollar, breakevens, VVIX) lives
 under macro.detail — cite it as macro.detail.<key>.
+EVENTS: days_away<=0 with an "actual" is a RELEASED print — the
+market is digesting it now; its "reading" is the deterministic
+surprise direction. Cite it via macro when it drives a call.
 
 SCORE: SCORE_PLACEHOLDER · REGIME: REGIME_PLACEHOLDER
 CONFIRMATION: CONF_PLACEHOLDER · EVENT_RISK: EVRISK_PLACEHOLDER
@@ -422,7 +425,7 @@ def _explain_llm(score: int, regime: str, ctx: dict) -> dict[str, Any]:
         model = getattr(settings, "litellm_model", None) or \
             "gpt-4o-mini"
         compact = json.dumps(ctx.get("buckets") or {}, default=str)[:2800]
-        evts = json.dumps(ctx.get("events") or [], default=str)[:600]
+        evts = json.dumps(ctx.get("events") or [], default=str)[:1400]
         r = completion(
             model=model, temperature=0.1, timeout=30, max_tokens=450,
             messages=[{"role": "user", "content": _PROMPT
