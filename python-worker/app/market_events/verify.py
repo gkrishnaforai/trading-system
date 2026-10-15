@@ -19,16 +19,35 @@ from app.observability.logging import get_logger
 logger = get_logger("macro_event_verify")
 
 # Finnhub event-name substring → (our kind, display name, severity, time_et)
+# Patterns are deliberately broad — Finnhub says "CPI"/"PPI", FMP says
+# "Inflation Rate (MoM|YoY)"/"Producer Price Index"; the _rank tie-break
+# then picks the headline YoY print among the variants per release.
 _KIND_RULES = [
-    (r"consumer price|cpi",        ("cpi",  "CPI inflation",        "high",    "08:30")),
+    (r"consumer price|cpi|inflation rate",
+                                   ("cpi",  "CPI inflation",        "high",    "08:30")),
     (r"producer price|ppi",        ("ppi",  "PPI producer prices",  "high",    "08:30")),
-    (r"nonfarm|non-farm|employment situation|nfp",
+    (r"nonfarm|non-farm|employment situation|nfp|payroll",
                                    ("nfp",  "Jobs report (NFP)",    "high",    "08:30")),
     (r"fomc|interest rate decision|fed.*rate",
                                    ("fomc", "FOMC rate decision",   "extreme", "14:00")),
     (r"personal consumption|core pce|pce price|pce",
                                    ("pce",  "PCE inflation",        "high",    "08:30")),
 ]
+
+
+def _rank(raw_name: str) -> int:
+    """Among provider rows that collapse to one (kind, date), prefer
+    the headline YoY print — non-core, non-index-level."""
+    n = (raw_name or "").lower()
+    s = 0
+    if "yoy" in n or "y/y" in n:
+        s += 4
+    if "core" not in n and " ex" not in n and "s.a" not in n \
+            and "n.s.a" not in n:
+        s += 2
+    if "index" not in n:
+        s += 1
+    return s
 
 _US_ONLY = {"US", "USA", "United States"}
 
@@ -69,10 +88,17 @@ def reading_for(kind: str, actual, estimate) -> Optional[str]:
     return None
 
 
+# nowcasts/speeches look like releases by name — never let them stand
+# in for the actual print
+_SKIP = re.compile(r"cleveland|nowcast|speech|speaks|testimony|hearing")
+
+
 def _classify(event_name: str, country: str) -> Optional[tuple]:
     if country and country.upper() not in _US_ONLY:
         return None
     name = (event_name or "").lower()
+    if _SKIP.search(name):
+        return None
     for pattern, spec in _KIND_RULES:
         if re.search(pattern, name):
             return spec
@@ -144,7 +170,19 @@ def verify_and_store(days: int = 45) -> Dict[str, Any]:
                        "severity": sev, "time_et": t,
                        "actual": r.get("actual"),
                        "estimate": r.get("estimate"),
-                       "prev": r.get("prev")})
+                       "prev": r.get("prev"),
+                       "source": r.get("source"),
+                       "raw_name": r["event"]})
+
+    # providers emit several variants per release (CPI index, MoM, YoY,
+    # core, s.a) — one row per (kind, date), headline YoY preferred
+    best: Dict[tuple, Dict[str, Any]] = {}
+    for m in mapped:
+        key = (m["kind"], m["date"].isoformat())
+        cur = best.get(key)
+        if cur is None or _rank(m["raw_name"]) > _rank(cur["raw_name"]):
+            best[key] = m
+    mapped = list(best.values())
 
     baseline: Dict[str, List[str]] = {}
     for e in upcoming_macro_events(days):
@@ -153,11 +191,17 @@ def verify_and_store(days: int = 45) -> Dict[str, Any]:
     for m in mapped:
         bases = baseline.get(m["kind"], [])
         moved = bool(bases) and m["date"].isoformat() not in bases
-        # original_date = nearest baseline date this release replaced
-        base = (min(bases, key=lambda b: abs(
-                    (date.fromisoformat(b) - m["date"]).days))
-                if moved else None)
-        status = "rescheduled" if moved else "confirmed"
+        # original_date = nearest baseline this release replaced —
+        # bounded: a provider event >20d off any baseline is its own
+        # release, not a reschedule of one
+        base = None
+        if moved and bases:
+            nearest = min(bases, key=lambda b: abs(
+                (date.fromisoformat(b) - m["date"]).days))
+            if abs((date.fromisoformat(nearest)
+                    - m["date"]).days) <= 20:
+                base = nearest
+        status = "rescheduled" if base else "confirmed"
         db.execute_update(
             """INSERT INTO macro_event_overrides
                    (kind, name, event_date, original_date, status, source,
