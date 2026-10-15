@@ -13,7 +13,9 @@ thing it watches.
 cd /opt && git clone https://github.com/gkrishnaforai/trading-system.git
 cd trading-system
 
-# minimal env — the watcher only reads these
+# minimal env — the watcher only reads these (file is optional for
+# startup, but without it there are no email alerts and the API is
+# unauthenticated)
 cat > .env <<'EOF'
 POSTGRES_USER=trading
 POSTGRES_PASSWORD=<db-password>

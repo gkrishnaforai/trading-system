@@ -16,7 +16,8 @@ services:
       dockerfile: custodian-watch/Dockerfile
     container_name: trading-system-custodian-watch
     env_file:
-      - ../.env
+      - path: ../.env
+        required: false # alerts/API need the vars, but the watcher itself runs without them
     environment:
       - DATABASE_URL=${WATCH_DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@host.docker.internal:${PGBOUNCER_PORT:-6432}/${POSTGRES_DB:-trading_system}?sslmode=disable}
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
