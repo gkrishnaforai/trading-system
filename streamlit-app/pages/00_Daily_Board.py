@@ -551,6 +551,50 @@ if p:
                 _chg = (_vd.get("changes") or [])
                 if _chg:
                     st.caption("**Δ today:** " + " · ".join(_chg[:6]))
+                # released prints → what they did to the tape — the
+                # deterministic read (reading/impact) plus the judge's
+                # graded reaction (SPY move, debrief) once it exists
+                _prints = [e for e in _mev
+                           if e.get("actual") is not None
+                           and isinstance(e.get("days_away"), int)
+                           and e["days_away"] <= 0]
+                if _prints:
+                    st.markdown("**🗞️ released prints → tape effect**")
+                for _e in _prints[:3]:
+                    try:
+                        _ep = (f"printed **{float(_e['actual']):g}**"
+                               + (f" vs est {float(_e['estimate']):g}"
+                                  if _e.get('estimate') is not None
+                                  else "")
+                               + (f" (prior {float(_e['prev']):g})"
+                                  if _e.get('prev') is not None else ""))
+                    except (TypeError, ValueError):
+                        _ep = "printed"
+                    _ej = _e.get("judge") or {}
+                    _rx = ""
+                    if _ej.get("verdict"):
+                        _rx = (f" · judge "
+                               f"**{str(_ej['verdict']).upper()}**"
+                               + (f" ({_ej['confidence']}%)"
+                                  if _ej.get('confidence') is not None
+                                  else ""))
+                    if _ej.get("spy_ret") is not None:
+                        try:
+                            _rx += (f" · SPY "
+                                    f"{float(_ej['spy_ret']) * 100:+.2f}%"
+                                    + (" ✓" if _ej.get("correct") else
+                                       " ✗" if _ej.get("correct")
+                                       is False else ""))
+                        except (TypeError, ValueError):
+                            pass
+                    st.caption(
+                        f"`{_e['date']}` {_e['name']} — {_ep}"
+                        + (f" — **{_e['reading']}**"
+                           if _e.get('reading') else "") + _rx)
+                    if _e.get("impact"):
+                        st.caption(f"   ↳ {_e['impact']}")
+                    if _ej.get("debrief"):
+                        st.caption(f"   ↳ debrief: {_ej['debrief']}")
                 # structural strip — the slow monitors' current read
                 _sx = (_bkts.get("structural") or {}) \
                     if isinstance(_bkts, dict) else {}
