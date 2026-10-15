@@ -26,13 +26,14 @@ services:
       - ALERT_EMAIL=${ALERT_EMAIL:-}
       - HEALTHCHECKS_URL=${HEALTHCHECKS_URL:-}
       - WATCH_POLL_SECONDS=${WATCH_POLL_SECONDS:-60}
-      - WATCH_PROJECT=${WATCH_PROJECT:-}      # pin to one compose project if set
-      - WATCH_PORT=8100
+      - WATCH_PROJECT=${WATCH_PROJECT:-} # pin to one compose project if set
+      # no WATCH_PORT — code honors PORT (Coolify may inject the routed
+      # port) then falls back to 8100
       - WATCH_TOKEN=${WATCH_TOKEN:-}
     extra_hosts:
-      - "host.docker.internal:host-gateway"   # reach host-loopback pgbouncer
+      - "host.docker.internal:host-gateway" # reach host-loopback pgbouncer
     ports:
-      - "${WATCH_HOST_PORT:-8100}:8100"       # status API — Bearer WATCH_TOKEN
+      - "${WATCH_HOST_PORT:-8100}:8100" # status API — Bearer WATCH_TOKEN
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - custodian_data:/data

@@ -49,7 +49,9 @@ POLL_SECONDS = int(os.getenv("WATCH_POLL_SECONDS", "60"))
 HEALTHCHECKS_URL = os.getenv("HEALTHCHECKS_URL", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 HEARTBEAT = "/data/heartbeat"
-WATCH_PORT = int(os.getenv("WATCH_PORT", "8100"))
+# PORT last: PaaS (Coolify) may inject its own routed port — honoring it
+# makes the proxy<->listener agree without config drift.
+WATCH_PORT = int(os.getenv("WATCH_PORT") or os.getenv("PORT") or "8100")
 WATCH_TOKEN = os.getenv("WATCH_TOKEN", "")   # Bearer token for the API
 
 _STARTED = time.time()
@@ -452,7 +454,13 @@ class _Handler(BaseHTTPRequestHandler):
     def _auth(self) -> bool:
         if not WATCH_TOKEN:
             return True   # no token configured → open (dev), logged at boot
-        return self.headers.get("Authorization") == f"Bearer {WATCH_TOKEN}"
+        if self.headers.get("Authorization") == f"Bearer {WATCH_TOKEN}":
+            return True
+        # browsers can't send Bearer headers — ?token= lets the HTML
+        # board be bookmarked (trade-off: token lands in proxy logs)
+        from urllib.parse import parse_qs, urlparse
+        return (parse_qs(urlparse(self.path).query)
+                .get("token", [""])[0] == WATCH_TOKEN)
 
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
