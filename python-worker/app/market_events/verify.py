@@ -215,7 +215,7 @@ def verify_and_store(days: int = 45) -> Dict[str, Any]:
                ON CONFLICT (kind, event_date) DO UPDATE SET
                    name=excluded.name, original_date=excluded.original_date,
                    status=excluded.status, time_et=excluded.time_et,
-                   severity=excluded.severity,
+                   severity=excluded.severity, source=excluded.source,
                    actual=COALESCE(excluded.actual,
                                    macro_event_overrides.actual),
                    estimate=COALESCE(excluded.estimate,
