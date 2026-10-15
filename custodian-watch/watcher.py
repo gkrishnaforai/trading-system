@@ -32,9 +32,11 @@ import os
 import smtplib
 import socket
 import sqlite3
+import threading
 import time
 from datetime import datetime, timezone
 from email.message import EmailMessage
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
 logging.basicConfig(level=logging.INFO,
@@ -47,6 +49,11 @@ POLL_SECONDS = int(os.getenv("WATCH_POLL_SECONDS", "60"))
 HEALTHCHECKS_URL = os.getenv("HEALTHCHECKS_URL", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 HEARTBEAT = "/data/heartbeat"
+WATCH_PORT = int(os.getenv("WATCH_PORT", "8100"))
+WATCH_TOKEN = os.getenv("WATCH_TOKEN", "")   # Bearer token for the API
+
+_STARTED = time.time()
+_LAST_PASS: dict[str, Any] = {"at": None, "findings": 0, "error": None}
 
 # restart-count growth per poll that counts as a crash loop
 RESTART_LOOP_DELTA = 2
@@ -129,6 +136,7 @@ def _db() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")  # API thread reads while loop writes
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS incidents (
             signature   TEXT PRIMARY KEY,
@@ -349,6 +357,128 @@ def _resolve_absent(conn, seen: set[str]) -> None:
         (_now(), *seen))
 
 
+# ── status API ─────────────────────────────────────────────────────────
+# Exporter-pattern read surface: /health is public (uptime checks),
+# everything else needs Authorization: Bearer $WATCH_TOKEN. Stdlib
+# http.server in a daemon thread — no framework, no deps.
+
+
+def _incidents_json() -> dict:
+    conn = _db()
+    try:
+        op = [dict(r) for r in conn.execute(
+            "SELECT * FROM incidents WHERE status != 'resolved' "
+            "ORDER BY last_seen DESC")]
+        res = [dict(r) for r in conn.execute(
+            "SELECT signature,severity,status,occurrences,resolved_at,"
+            "last_seen FROM incidents WHERE status='resolved' "
+            "ORDER BY resolved_at DESC LIMIT 10")]
+        acts = [dict(r) for r in conn.execute(
+            "SELECT * FROM actions ORDER BY id DESC LIMIT 30")]
+        return {"generated_at": _now(), "uptime_s": int(time.time() - _STARTED),
+                "last_pass": _LAST_PASS, "open": op,
+                "resolved": res, "actions": acts}
+    finally:
+        conn.close()
+
+
+_PAGE = """<!doctype html><meta charset=utf-8><title>custodian-watch</title>
+<style>body{{font:13px/1.4 ui-monospace,monospace;max-width:1100px;margin:24px auto;padding:0 12px}}
+table{{border-collapse:collapse;width:100%;margin:8px 0 24px}}td,th{{border:1px solid #444;padding:4px 8px;text-align:left;vertical-align:top}}
+th{{background:#222;color:#eee}}.hi{{color:#c0392b;font-weight:700}}.med{{color:#e67e22}}.ok{{color:#27ae60}}
+pre{{white-space:pre-wrap;font-size:11px;color:#888;max-height:120px;overflow:auto}}</style>
+<h2>custodian-watch <span class=ok>&#9679;</span></h2>
+<p>up {uptime}s &middot; last pass {last} &middot; {nfind} finding(s) &middot; {proj}</p>
+<h3>open incidents</h3>{open_t}<h3>recently resolved</h3>{res_t}
+<h3>actions</h3>{act_t}<p style=color:#888>JSON: /incidents &middot; liveness: /health</p>"""
+
+
+def _row_html(r, cols):
+    sev = r.get("severity", "")
+    cls = ' class="hi"' if sev == "high" else ' class="med"' if sev in ("medium",) else ""
+    cells = "".join(
+        f"<td{cls if c == 'severity' else ''}>"
+        + (f"<pre>{r[c]}</pre>" if c == "log" else str(r.get(c, "") or ""))
+        + "</td>" for c in cols)
+    return f"<tr>{cells}</tr>"
+
+
+def _incidents_html() -> str:
+    d = _incidents_json()
+    def tbl(rows, cols):
+        head = "".join(f"<th>{c}" for c in cols)
+        body = "".join(_row_html(r, cols) for r in rows) or \
+            f"<tr><td colspan={len(cols)} class=ok>none</td></tr>"
+        return f"<table><tr>{head}</tr>{body}</table>"
+    for r in d["open"]:
+        try:
+            r["log"] = json.loads(r.get("detail") or "{}").get("log_tail", "")
+        except Exception:
+            r["log"] = ""
+    return _PAGE.format(
+        uptime=d["uptime_s"], last=d["last_pass"]["at"],
+        nfind=d["last_pass"]["findings"], proj=os.uname().nodename,
+        open_t=tbl(d["open"], ["signature", "severity", "status",
+                              "occurrences", "last_seen", "log"]),
+        res_t=tbl(d["resolved"], ["signature", "severity", "occurrences",
+                                  "resolved_at"]),
+        act_t=tbl(d["actions"], ["created_at", "signature", "action",
+                                 "result"]))
+
+
+class _Handler(BaseHTTPRequestHandler):
+    def _send(self, code: int, body: str, ctype: str = "application/json") -> None:
+        data = body.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _auth(self) -> bool:
+        if not WATCH_TOKEN:
+            return True   # no token configured → open (dev), logged at boot
+        return self.headers.get("Authorization") == f"Bearer {WATCH_TOKEN}"
+
+    def do_GET(self) -> None:
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path == "/health":
+            self._send(200, json.dumps({"ok": True,
+                                        "uptime_s": int(time.time() - _STARTED),
+                                        "last_pass": _LAST_PASS}))
+            return
+        if not self._auth():
+            self._send(401, json.dumps({"error": "unauthorized"}))
+            return
+        try:
+            if path == "/incidents":
+                self._send(200, json.dumps(_incidents_json()))
+            elif path == "/containers":
+                project = _project_name()
+                out = [{"name": (c.get("Names") or ["?"])[0].lstrip("/"),
+                        "status": c.get("State"), "health": c.get("Status")}
+                       for c in _list_containers()
+                       if not project or (c.get("Labels") or {}).get(
+                           "com.docker.compose.project") == project]
+                self._send(200, json.dumps({"containers": out}))
+            elif path == "/":
+                self._send(200, _incidents_html(), "text/html")
+            else:
+                self._send(404, json.dumps({"error": "not found"}))
+        except Exception as exc:
+            self._send(500, json.dumps({"error": str(exc)[:300]}))
+
+    def log_message(self, *a) -> None:   # quiet — access logs add noise
+        pass
+
+
+def _serve() -> None:
+    srv = ThreadingHTTPServer(("0.0.0.0", WATCH_PORT), _Handler)
+    logger.info("status API on :%d%s", WATCH_PORT,
+                "" if WATCH_TOKEN else " (NO WATCH_TOKEN — open)")
+    srv.serve_forever()
+
+
 # ── supervisor loop ────────────────────────────────────────────────────
 
 
@@ -356,10 +486,13 @@ def main() -> None:
     logger.info("custodian-watch up — poll %ss, db %s", POLL_SECONDS, DB_PATH)
     project = _project_name()
     logger.info("compose project: %s", project or "(unfiltered)")
+    threading.Thread(target=_serve, daemon=True).start()
     while True:
         try:
             open(HEARTBEAT, "w").write(_now())
             findings = _sense(project)
+            _LAST_PASS.update({"at": _now(), "findings": len(findings),
+                               "error": None})
             conn = _db()
             seen = set()
             for f in findings:
@@ -401,6 +534,7 @@ def main() -> None:
                 logger.info("pass: %d finding(s)", len(findings))
         except Exception as exc:
             # the watcher must never die — log and keep watching
+            _LAST_PASS.update({"at": _now(), "error": str(exc)[:200]})
             logger.exception("pass failed: %s", exc)
         time.sleep(POLL_SECONDS)
 

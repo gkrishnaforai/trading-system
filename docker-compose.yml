@@ -471,6 +471,10 @@ services:
       - ALERT_EMAIL=${ALERT_EMAIL:-}
       - HEALTHCHECKS_URL=${HEALTHCHECKS_URL:-}
       - WATCH_POLL_SECONDS=${WATCH_POLL_SECONDS:-60}
+      - WATCH_PORT=8100
+      - WATCH_TOKEN=${WATCH_TOKEN:-}
+    ports:
+      - "${WATCH_HOST_PORT:-8100}:8100" # status API — Bearer WATCH_TOKEN
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - custodian_data:/data
