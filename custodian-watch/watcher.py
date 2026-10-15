@@ -44,6 +44,9 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger("custodian-watch")
 
 DOCKER_SOCK = os.getenv("DOCKER_SOCK", "/var/run/docker.sock")
+# DOCKER_HOST=tcp://<socket-proxy>:2375 — read-only docker API through a
+# socket-proxy sidecar, for platforms that strip the raw sock bind
+DOCKER_HOST = os.getenv("DOCKER_HOST", "")
 DB_PATH = os.getenv("WATCH_DB", "/data/custodian.db")
 POLL_SECONDS = int(os.getenv("WATCH_POLL_SECONDS", "60"))
 HEALTHCHECKS_URL = os.getenv("HEALTHCHECKS_URL", "")
@@ -99,7 +102,11 @@ class _DockerConn(http.client.HTTPConnection):
 
 
 def _docker(path: str) -> bytes:
-    c = _DockerConn("localhost")
+    if DOCKER_HOST.startswith(("tcp://", "http://")):
+        host = DOCKER_HOST.split("://", 1)[1]
+        c = http.client.HTTPConnection(host, timeout=20)
+    else:
+        c = _DockerConn("localhost")
     try:
         c.request("GET", path)
         r = c.getresponse()
@@ -412,6 +419,11 @@ def _incidents_json() -> dict:
         op = [dict(r) for r in conn.execute(
             "SELECT * FROM incidents WHERE status != 'resolved' "
             "ORDER BY last_seen DESC")]
+        for r in op:
+            try:
+                r["detail"] = json.loads(r.get("detail") or "{}")
+            except Exception:
+                pass
         res = [dict(r) for r in conn.execute(
             "SELECT signature,severity,status,occurrences,resolved_at,"
             "last_seen FROM incidents WHERE status='resolved' "
@@ -454,15 +466,15 @@ def _incidents_html() -> str:
             f"<tr><td colspan={len(cols)} class=ok>none</td></tr>"
         return f"<table><tr>{head}</tr>{body}</table>"
     for r in d["open"]:
-        try:
-            r["log"] = json.loads(r.get("detail") or "{}").get("log_tail", "")
-        except Exception:
-            r["log"] = ""
+        det = r.get("detail") or {}
+        r["log"] = (det.get("log_tail") or det.get("error")
+                    or json.dumps(det)[:400]) if isinstance(det, dict) \
+            else str(det)[:400]
     return _PAGE.format(
         uptime=d["uptime_s"], last=d["last_pass"]["at"],
         nfind=d["last_pass"]["findings"], proj=os.uname().nodename,
-        open_t=tbl(d["open"], ["signature", "severity", "status",
-                              "occurrences", "last_seen", "log"]),
+        open_t=tbl(d["open"], ["signature", "severity", "diagnosis",
+                              "log", "manual_steps", "last_seen"]),
         res_t=tbl(d["resolved"], ["signature", "severity", "occurrences",
                                   "resolved_at"]),
         act_t=tbl(d["actions"], ["created_at", "signature", "action",

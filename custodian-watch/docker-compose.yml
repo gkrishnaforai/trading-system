@@ -26,6 +26,8 @@ services:
       - ALERT_EMAIL=${ALERT_EMAIL:-}
       - HEALTHCHECKS_URL=${HEALTHCHECKS_URL:-}
       - WATCH_POLL_SECONDS=${WATCH_POLL_SECONDS:-60}
+      - DOCKER_HOST=${DOCKER_HOST:-} # tcp://sock-proxy:2375 fallback if the raw sock bind is stripped
+      - DOCKER_SOCK=${DOCKER_SOCK:-/var/run/docker.sock}
       - WATCH_PROJECT=${WATCH_PROJECT:-} # pin to one compose project if set
       # no WATCH_PORT — code honors PORT (Coolify may inject the routed
       # port) then falls back to 8100
