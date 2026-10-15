@@ -161,7 +161,8 @@ def verify_and_store(days: int = 45) -> Dict[str, Any]:
         db.execute_update(
             """INSERT INTO macro_event_overrides
                    (kind, name, event_date, original_date, status, source,
-                    time_et, severity, verified_at)
+                    time_et, severity, actual, estimate, prev,
+                    verified_at)
                VALUES (:kind, :name, :d, :orig, :status, :src,
                        :t, :sev, :act, :est, :prev, now())
                ON CONFLICT (kind, event_date) DO UPDATE SET
