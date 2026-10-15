@@ -460,6 +460,15 @@ def snapshot() -> Optional[dict[str, Any]]:
         "AND event_kind = %s", (today, ev["kind"]))
     if prior:
         return read_call(today)
+    # Don't journal before 07:00 ET — a call frozen in the overnight
+    # session locks premarket_spy near zero and wastes the market's
+    # first real vote on the print (05:00 ET is when US futures/
+    # premarket flow becomes meaningful). Pre-07:00 the day is simply
+    # uncalled; the first fetch/job tick after the gate journals it.
+    now_et = datetime.now(timezone.utc).astimezone(
+        __import__("zoneinfo").ZoneInfo("America/New_York"))
+    if (now_et.hour, now_et.minute) < (7, 0):
+        return None
     ctx = gather_context()
     ctx["print_data"] = _the_print(ev["kind"])   # actual vs estimate
     call = judge(ctx, ev)
