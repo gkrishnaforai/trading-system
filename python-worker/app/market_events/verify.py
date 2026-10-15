@@ -112,11 +112,14 @@ def _provider_rows(today: date, days: int) -> Optional[List[Dict[str, Any]]]:
     when only the FMP key is provisioned."""
     from app.config import settings
 
+    # look back over the release window too — a print delivered
+    # yesterday must be fetched, not just upcoming dates
+    start = today - timedelta(days=7)
     if getattr(settings, "finnhub_api_key", None):
         from app.providers.finnhub.client import FinnhubClient
         client = FinnhubClient.from_settings()
         return client.fetch_economic_calendar(
-            today.isoformat(),
+            start.isoformat(),
             (today + timedelta(days=days)).isoformat())
 
     if not getattr(settings, "fmp_api_key", None):
@@ -125,7 +128,7 @@ def _provider_rows(today: date, days: int) -> Optional[List[Dict[str, Any]]]:
         import requests
         r = requests.get(
             f"{settings.fmp_base_url}/economic-calendar",
-            params={"from": today.isoformat(),
+            params={"from": start.isoformat(),
                     "to": (today + timedelta(days=days)).isoformat(),
                     "apikey": settings.fmp_api_key},
             timeout=20)
