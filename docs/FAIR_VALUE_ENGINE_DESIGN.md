@@ -68,7 +68,11 @@ Manual override: `fair_value_v2_category_overrides` table (admin endpoint).
 | 7 | standard | fallback |
 
 Fallback chain for method selection: `(category, regime)` →
-`(category, standard)` → `(value, standard)`.
+`(category, standard)` → `(value, actual_regime)` → `(value, standard)`.
+The regime-preserving middle step matters: without it a pre-earnings
+healthcare/consumer/unknown name fell to `(value, standard)` PE methods
+that refuse on negative EPS — `no_fair_value` instead of the survival
+tree. Fixed; regression test `TestRegimeFallback`.
 
 ## 3. Method selection matrix (`regime_methods.yaml`)
 
@@ -84,8 +88,10 @@ Fallback chain for method selection: `(category, regime)` →
 | cyclical | pe_cyc .85 + pe_fwd .15 | pe_cyc 1.0 | survival .7 + ev_sales_growth .3 | pe_cyc .85 + pe_fwd .15 | — | — |
 
 `financials` matches the dedicated `bank` regime (not standard):
-pb_bank 1.0. Cells with `—` fall back to `(category, standard)` then
-`(value, standard)`.
+pb_bank 1.0. Cells with `—` fall back per §2.2 — `(category, standard)`
+then `(value, regime)` then `(value, standard)`; `consumer` and
+`healthcare` have no rows at all, so they always resolve through the
+fallback (pre_earnings → survival tree via `(value, pre_earnings)`).
 
 Weights sum to <1.0 in several cells — the remainder is intentionally
 unpriced (the blend renormalizes over what resolves).

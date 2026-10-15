@@ -3,12 +3,19 @@ version: 1
 # Methods are selected by (category, regime). If there is no exact match,
 # selection falls back to (category, default_regime) and then (default_category, default_regime)
 # only if the fallback chain is explicitly configured.
+#
+# The middle step preserves the DETECTED regime at the default category:
+# without it a pre-earnings name in a category with no pre_earnings cell
+# (healthcare, consumer, unknown, future categories) fell to
+# (value, standard) — PE/EV-FCF methods that refuse on negative EPS/FCF,
+# leaving the run unpriced instead of routing to the survival tree.
 
 default_category: value
 default_regime: standard
 
 fallback_chain:
   - {category: "{category}", regime: "{default_regime}"}
+  - {category: "{default_category}", regime: "{regime}"}
   - {category: "{default_category}", regime: "{default_regime}"}
 
 selections:

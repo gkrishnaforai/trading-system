@@ -217,3 +217,47 @@ class TestOrdering:
         out, flags = enforce_scenario_order(scen)
         assert out["base"] >= out["bear"]
         assert any("ordering_violation" in f for f in flags)
+
+
+# -------------------------------------------- regime fallback (P-gap)
+
+class TestRegimeFallback:
+    """The fallback chain must preserve the detected regime — a
+    pre-earnings name in a category with no pre_earnings cell
+    (healthcare, consumer, unknown, future) must still reach the
+    survival tree, not value/standard PE methods that refuse on
+    negative EPS."""
+
+    @pytest.fixture(scope="class")
+    def rr(self):
+        import os as _os
+        from app.fair_value_v2.regime_router import RegimeRouter
+        md = _os.path.join(_os.path.dirname(__file__), "..",
+                           "app", "fair_value_v2", "methods")
+        return RegimeRouter(
+            regime_router_path=_os.path.join(md, "regime_router.yaml"),
+            regime_methods_path=_os.path.join(md, "regime_methods.yaml"))
+
+    def _keys(self, rr, cat, regime):
+        return [mw.method_key for mw in
+                rr.methods_for(category=cat, regime=regime)]
+
+    def test_unmapped_category_pre_earnings_gets_survival(self, rr):
+        keys = self._keys(rr, "healthcare", "pre_earnings")
+        assert "ev_sales_survival" in keys
+
+    def test_unmapped_category_cyclical_gets_normalized_eps(self, rr):
+        keys = self._keys(rr, "consumer", "cyclical")
+        assert "pe_cyclical" in keys
+
+    def test_mapped_category_unchanged(self, rr):
+        # a category WITH a standard row keeps same-archetype standard
+        # methods over the default category's regime row
+        keys = self._keys(rr, "growth", "high_growth")
+        assert "dcf_quality_fade" in keys
+
+    def test_unmapped_regime_still_lands_on_standard(self, rr):
+        # value has no high_growth cell — regime-preserving fallback
+        # misses too, then (value, standard) catches it
+        keys = self._keys(rr, "consumer", "high_growth")
+        assert keys  # pe_value / pe_basic / ev_fcf via (value, standard)
