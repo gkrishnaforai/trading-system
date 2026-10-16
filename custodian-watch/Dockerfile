@@ -3,7 +3,9 @@
 # for the best-effort mirror into the shared incidents table.
 FROM python:3.11-slim
 
-RUN pip install --disable-pip-version-check --no-cache-dir psycopg2-binary==2.9.10
+# pyyaml: web-editable log-scan rules (stored as YAML in sqlite)
+RUN pip install --disable-pip-version-check --no-cache-dir \
+    psycopg2-binary==2.9.10 pyyaml==6.0.2
 
 WORKDIR /app
 COPY custodian-watch/watcher.py .

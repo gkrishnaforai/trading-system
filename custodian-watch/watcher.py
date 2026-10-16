@@ -35,7 +35,7 @@ import socket
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
@@ -57,6 +57,10 @@ HEARTBEAT = "/data/heartbeat"
 # makes the proxy<->listener agree without config drift.
 WATCH_PORT = int(os.getenv("WATCH_PORT") or os.getenv("PORT") or "8100")
 WATCH_TOKEN = os.getenv("WATCH_TOKEN", "")   # Bearer token for the API
+# keep_firing_for (Prometheus semantics): a log-derived finding stays
+# open this long after its evidence line rotates out of the tail — a
+# failing job that spams then goes quiet is not "recovered"
+KEEP_FIRING_S = int(os.getenv("WATCH_LOG_KEEP_FIRING_S", "1800"))
 
 _STARTED = time.time()
 _LAST_PASS: dict[str, Any] = {"at": None, "findings": 0, "error": None,
@@ -207,7 +211,10 @@ def _db() -> sqlite3.Connection:
             restart_count INTEGER,
             status TEXT,
             health TEXT,
-            updated TEXT);""")
+            updated TEXT);
+        CREATE TABLE IF NOT EXISTS config (
+            key TEXT PRIMARY KEY,
+            value TEXT);""")
     return conn
 
 
@@ -236,65 +243,151 @@ def _classify(tail: str, ins: dict) -> tuple[str, str]:
     return ("container unhealthy/exited — see attached log tail", "high")
 
 
-# log-scan signatures for HEALTHY containers — a bad provider key or a
+# log-scan rules for HEALTHY containers — a bad provider key or a
 # rate-limited plan leaves the process alive while the data pipeline
 # silently dies; docker health alone can't see it.
-_PROVIDER_RE = re.compile(
+#
+# Rules are YAML, stored in sqlite (survives rebuilds on the named
+# volume) and editable at /rules on the board — add a signature without
+# a code change. Schema per rule:
+#   kind            label in the `app:<container>:<kind>` signature
+#   pattern         python regex, matched case-insensitive per line
+#   severity        high | medium | low
+#   diagnosis       shown on the board; prepend provider name when found
+#   needs_provider  require a provider token in the line (kills
+#                   proxy/access-log 401 false positives)
+#   keep_firing_s   per-rule override of KEEP_FIRING_S
+_DEFAULT_RULES_YAML = """\
+# custodian-watch log-scan rules — edit via GET/POST /rules
+# provider_pattern gates 'needs_provider' rules (provider must be named)
+provider_pattern: 'fmp|financial.?modeling|alpha.?vantage|massive|polygon|tiingo|finnhub|fred\\b|yahoo'
+rules:
+  - kind: api-key
+    severity: high
+    needs_provider: false
+    pattern: 'invalid api ?key|api ?key.*invalid|not.*valid.*api.?key'
+    diagnosis: 'provider rejected its API key — fix the key in .env and recreate the service (env changes need up -d --force-recreate, not restart)'
+  - kind: http-auth
+    severity: high
+    needs_provider: true
+    pattern: 'status=(401|403)\\b|http.{0,10}(401|403)|unauthorized|forbidden'
+    diagnosis: 'provider auth errors (401/403) — verify API key / entitlements in .env; some FMP endpoints are plan-gated'
+  - kind: rate-limit
+    severity: medium
+    needs_provider: true
+    keep_firing_s: 3600
+    pattern: 'rate.?limit|status=429|too many requests'
+    diagnosis: 'provider rate-limiting — check plan tier / call volume; persistent 429s need budget rework, not retries'
+  - kind: db-conn
+    severity: high
+    needs_provider: false
+    pattern: 'could not connect to (server|database)|connection refused.*(5432|6432|db)|psycopg.*operationalerror'
+    diagnosis: 'app cannot reach postgres — check pgbouncer/postgres health and DATABASE_URL'
+  - kind: disk-full
+    severity: high
+    needs_provider: false
+    pattern: 'no space left on device|disk quota exceeded'
+    diagnosis: 'host disk full — docker system df; prune images/logs or expand volume'
+  - kind: oom-logs
+    severity: high
+    needs_provider: false
+    pattern: 'killed process.*out of memory|memoryerror'
+    diagnosis: 'memory exhaustion visible in app logs — raise the service limit or reduce concurrency'
+"""
+
+_FALLBACK_PROVIDER_RE = re.compile(
     r"fmp|financial.?modeling|alpha.?vantage|massive|polygon|tiingo|"
     r"finnhub|fred\b|yahoo", re.I)
-_LOG_SIGNS = [
-    ("api-key", re.compile(r"invalid api ?key|api ?key.*invalid", re.I),
-     "high",
-     "provider rejected its API key — fix the key in .env "
-     "(FMP_API_KEY / provider key) and recreate the service "
-     "(env changes need up -d --force-recreate, not restart)"),
-    ("http-auth", re.compile(r"status=(401|403)\b|\bhttp.{0,10}(401|403)\b",
-                             re.I),
-     "high",
-     "provider returning auth errors (401/403) — verify API key / "
-     "entitlements in .env; some FMP endpoints are plan-gated (402/403)"),
-    ("rate-limit", re.compile(r"rate.?limit|status=429|too many requests",
-                              re.I),
-     "medium",
-     "provider rate-limiting — check plan tier / call volume; "
-     "persistent 429s mean the budget math needs rework, not retries"),
-]
+
+_rules_cache: dict = {"text": None, "rules": [], "provider": None}
 
 
-def _scan_app_logs(cid: str, name: str) -> list[dict]:
-    """Scan a running container's log tail for provider/config error
+def _rules_yaml(conn) -> str:
+    row = conn.execute(
+        "SELECT value FROM config WHERE key='log_rules'").fetchone()
+    if row:
+        return row["value"]
+    conn.execute("INSERT INTO config VALUES ('log_rules', ?)",
+                 (_DEFAULT_RULES_YAML,))
+    conn.commit()
+    return _DEFAULT_RULES_YAML
+
+
+def _compile_rules(txt: str) -> tuple[list[dict], Any]:
+    """YAML → compiled rules. Raises on any invalid rule — callers
+    decide whether to keep last-good (scan) or reject the save (UI)."""
+    import yaml
+    doc = yaml.safe_load(txt) or {}
+    prov = _FALLBACK_PROVIDER_RE
+    if doc.get("provider_pattern"):
+        prov = re.compile(str(doc["provider_pattern"]), re.I)
+    rules = []
+    for i, r in enumerate(doc.get("rules") or []):
+        if not r.get("kind") or not r.get("pattern"):
+            raise ValueError(f"rule {i}: needs kind + pattern")
+        rules.append({
+            "kind": str(r["kind"]),
+            "pattern": re.compile(str(r["pattern"]), re.I),
+            "severity": str(r.get("severity") or "medium"),
+            "diagnosis": str(r.get("diagnosis") or "log error"),
+            "needs_provider": bool(r.get("needs_provider", True)),
+            "keep_firing_s": int(r.get("keep_firing_s") or 0),
+        })
+    return rules, prov
+
+
+def _log_rules(conn) -> tuple[list[dict], Any]:
+    """Compiled rules, re-parsed only when the stored YAML changes."""
+    txt = _rules_yaml(conn)
+    if txt == _rules_cache["text"]:
+        return _rules_cache["rules"], _rules_cache["provider"]
+    try:
+        rules, prov = _compile_rules(txt)
+    except Exception as exc:
+        logger.warning("log_rules yaml invalid — keeping last-good: %s",
+                       exc)
+        if _rules_cache["rules"]:
+            return _rules_cache["rules"], _rules_cache["provider"]
+        rules, prov = _compile_rules(_DEFAULT_RULES_YAML)
+    _rules_cache.update(text=txt, rules=rules, provider=prov)
+    return rules, prov
+
+
+def _scan_app_logs(conn, cid: str, name: str) -> list[dict]:
+    """Scan a running container's log tail for rule-matched error
     signatures — the failures that leave docker 'healthy'."""
     try:
         tail = _logs(cid, tail=80)
     except Exception:
         return []
+    rules, prov_re = _log_rules(conn)
     hits: dict[str, list[str]] = {}
     for line in tail.splitlines():
-        low = line.lower()
-        for kind, pat, _sev, _diag in _LOG_SIGNS:
-            if not pat.search(line):
+        for r in rules:
+            if not r["pattern"].search(line):
                 continue
-            # auth/throttle classes need a provider hint — otherwise
-            # proxy/access-log 401s would false-positive
-            if kind != "api-key" and not _PROVIDER_RE.search(line):
+            if r["needs_provider"] and not prov_re.search(line):
                 continue
-            hits.setdefault(kind, []).append(line.strip()[:160])
+            hits.setdefault(r["kind"], []).append(line.strip()[:160])
             break  # one signature per line is enough
     findings = []
     for kind, lines in hits.items():
-        sev, diag = next(
-            (s, d) for k, _p, s, d in _LOG_SIGNS if k == kind)
+        r = next(x for x in rules if x["kind"] == kind)
         prov = ""
         for line in lines:
-            m = _PROVIDER_RE.search(line)
+            m = prov_re.search(line)
             if m:
                 prov = m.group(0).lower().replace(" ", "")
                 break
+        det = {"diagnosis": (f"{prov}: " if prov else "")
+               + r["diagnosis"],
+               "log_tail": "\n".join(lines[-3:])}
+        if r["keep_firing_s"]:
+            det["keep_firing_s"] = r["keep_firing_s"]
         findings.append({
             "signature": f"app:{name}:{kind}",
-            "source": "watch", "severity": sev,
-            "detail": {"diagnosis": (f"{prov}: " if prov else "") + diag,
-                       "log_tail": "\n".join(lines[-3:])}})
+            "source": "watch", "severity": r["severity"],
+            "detail": det})
     return findings
 
 
@@ -386,7 +479,7 @@ def _sense(own_project: str) -> list[dict[str, Any]]:
         # healthy-by-docker but config-dead — bad provider keys, plan
         # 401/403s, persistent 429s all leave the process running
         elif status == "running":
-            findings.extend(_scan_app_logs(c["Id"], name))
+            findings.extend(_scan_app_logs(conn, c["Id"], name))
     conn.commit()
     conn.close()
     return findings
@@ -473,14 +566,32 @@ def _record(conn, f: dict) -> tuple[bool, str]:
 
 
 def _resolve_absent(conn, seen: set[str]) -> None:
-    conn.execute(
-        "UPDATE incidents SET status='resolved', resolved_at=? "
-        "WHERE status != 'resolved'",
-        (_now(),)) if not seen else conn.execute(
-        f"UPDATE incidents SET status='resolved', resolved_at=? "
-        f"WHERE status != 'resolved' AND signature NOT IN "
-        f"({','.join('?' * len(seen))})",
-        (_now(), *seen))
+    """Resolve signatures absent this pass — except log-derived `app:`
+    findings get keep_firing_for semantics (Prometheus): the evidence
+    line can rotate out of the 80-line tail while the config fault
+    persists, so they stay open until absent for keep_firing_s (rule
+    override else KEEP_FIRING_S), clocked off last_seen."""
+    now = _now()
+    for r in conn.execute(
+            "SELECT signature, detail, last_seen FROM incidents "
+            "WHERE status != 'resolved'").fetchall():
+        sig = r["signature"]
+        if sig in seen:
+            continue
+        if sig.startswith("app:"):
+            try:
+                grace = int(json.loads(r["detail"] or "{}")
+                            .get("keep_firing_s") or KEEP_FIRING_S)
+            except Exception:
+                grace = KEEP_FIRING_S
+            cutoff = (datetime.now(timezone.utc)
+                      - timedelta(seconds=grace)).isoformat(
+                          timespec="seconds")
+            if (r["last_seen"] or "") > cutoff:
+                continue                    # still inside keep-firing
+        conn.execute(
+            "UPDATE incidents SET status='resolved', resolved_at=? "
+            "WHERE signature=?", (now, sig))
 
 
 # ── status API ─────────────────────────────────────────────────────────
@@ -521,7 +632,7 @@ pre{{white-space:pre-wrap;font-size:11px;color:#888;max-height:120px;overflow:au
 <h2>custodian-watch <span class=ok>&#9679;</span></h2>
 <p>up {uptime}s &middot; last pass {last} &middot; {nfind} finding(s) &middot; {proj}</p>
 <h3>open incidents</h3>{open_t}<h3>recently resolved</h3>{res_t}
-<h3>actions</h3>{act_t}<p style=color:#888>JSON: /incidents &middot; liveness: /health</p>"""
+<h3>actions</h3>{act_t}<p style=color:#888>JSON: /incidents &middot; liveness: /health &middot; <a href="/rules{tok}">edit log rules</a></p>"""
 
 
 def _row_html(r, cols):
@@ -554,6 +665,7 @@ def _incidents_html(token: str = "") -> str:
     return _PAGE.format(
         uptime=d["uptime_s"], last=d["last_pass"]["at"],
         nfind=d["last_pass"]["findings"], proj=os.uname().nodename,
+        tok=(f"?token={token}" if token else ""),
         open_t=tbl(d["open"], ["signature", "severity", "diagnosis",
                               "log", "live", "manual_steps",
                               "last_seen"]),
@@ -561,6 +673,34 @@ def _incidents_html(token: str = "") -> str:
                                   "resolved_at"]),
         act_t=tbl(d["actions"], ["created_at", "signature", "action",
                                  "result"]))
+
+
+_RULES_PAGE = """<!doctype html><meta charset=utf-8><title>watch rules</title>
+<style>body{{font:13px/1.4 ui-monospace,monospace;max-width:900px;margin:24px auto;padding:0 12px}}
+textarea{{width:100%;height:60vh;font:12px ui-monospace,monospace;background:#111;color:#ddd;border:1px solid #444}}
+button{{padding:6px 18px;margin:8px 0}}.err{{color:#c0392b}}.ok{{color:#27ae60}}</style>
+<h2>log-scan rules</h2>
+<p>YAML matched per-line against every running container's log tail.
+Fields: <b>kind</b> (signature suffix) &middot; <b>pattern</b> (regex)
+&middot; <b>severity</b> &middot; <b>diagnosis</b> &middot;
+<b>needs_provider</b> (require provider name in the line)
+&middot; <b>keep_firing_s</b>. Saved rules apply on the next pass.</p>
+{msg}
+<form method=post action="/rules{tok}">
+<textarea name=rules>{rules}</textarea><br>
+<button type=submit>save</button></form>
+<p><a href="/{tok}">&larr; board</a></p>"""
+
+
+def _rules_html(token: str, msg: str = "") -> str:
+    import html as _h
+    conn = _db()
+    try:
+        txt = _rules_yaml(conn)
+    finally:
+        conn.close()
+    tok = f"?token={token}" if token else ""
+    return _RULES_PAGE.format(rules=_h.escape(txt), tok=tok, msg=msg)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -638,6 +778,11 @@ class _Handler(BaseHTTPRequestHandler):
                 else:
                     body = _logs(hit["Id"], tail=tail)
                     self._send(200, body, "text/plain; charset=utf-8")
+            elif path == "/rules":
+                from urllib.parse import parse_qs, urlparse
+                tok = parse_qs(urlparse(self.path).query).get(
+                    "token", [""])[0]
+                self._send(200, _rules_html(tok), "text/html")
             elif path == "/":
                 from urllib.parse import parse_qs, urlparse
                 tok = parse_qs(urlparse(self.path).query).get(
@@ -647,6 +792,42 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(404, json.dumps({"error": "not found"}))
         except Exception as exc:
             self._send(500, json.dumps({"error": str(exc)[:300]}))
+
+    def do_POST(self) -> None:
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if not self._auth():
+            self._send(401, json.dumps({"error": "unauthorized"}))
+            return
+        if path != "/rules":
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        from urllib.parse import parse_qs, urlparse
+        tok = parse_qs(urlparse(self.path).query).get("token", [""])[0]
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(min(length, 1 << 16)).decode()
+            txt = parse_qs(body).get("rules", [""])[0]
+            rules, _ = _compile_rules(txt)      # raises → not saved
+            if not rules:
+                raise ValueError("no valid rules — refusing to save")
+        except Exception as exc:
+            self._send(200, _rules_html(
+                tok, f'<p class=err>invalid: {exc} — not saved</p>'),
+                "text/html")
+            return
+        conn = _db()
+        try:
+            conn.execute(
+                "INSERT INTO config VALUES ('log_rules', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=?", (txt, txt))
+            conn.commit()
+        finally:
+            conn.close()
+        _rules_cache["text"] = None            # recompile on next pass
+        logger.info("log_rules updated via web (%d rules)", len(rules))
+        self._send(200, _rules_html(
+            tok, f'<p class=ok>saved — {len(rules)} rules active on '
+                 f'next pass</p>'), "text/html")
 
     def log_message(self, *a) -> None:   # quiet — access logs add noise
         pass
