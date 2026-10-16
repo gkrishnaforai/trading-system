@@ -64,7 +64,8 @@ KEEP_FIRING_S = int(os.getenv("WATCH_LOG_KEEP_FIRING_S", "1800"))
 
 _STARTED = time.time()
 _LAST_PASS: dict[str, Any] = {"at": None, "findings": 0, "error": None,
-                              "docker_ok": None, "watched": None}
+                              "docker_ok": None, "watched": None,
+                              "log_scanned": None, "rules": None}
 
 # restart-count growth per poll that counts as a crash loop
 RESTART_LOOP_DELTA = 2
@@ -439,6 +440,8 @@ def _scan_app_logs(conn, cid: str, name: str) -> list[dict]:
     except Exception:
         return []
     rules, prov_re = _log_rules(conn)
+    _LAST_PASS["rules"] = len(rules)   # expose the active rule count —
+    # verifies stored sqlite rules actually refreshed after edits/reset
     hits: dict[str, list[str]] = {}
     for line in tail.splitlines():
         for r in rules:
@@ -486,6 +489,7 @@ def _sense(own_project: str) -> list[dict[str, Any]]:
 
     watched = _watched(containers, own_project)
     _LAST_PASS["watched"] = len(watched)
+    _LAST_PASS["log_scanned"] = 0
     if not watched:
         findings.append({
             "signature": "stack:no-watched-containers",
@@ -557,6 +561,7 @@ def _sense(own_project: str) -> list[dict[str, Any]]:
         # healthy-by-docker but config-dead — bad provider keys, plan
         # 401/403s, persistent 429s all leave the process running
         elif status == "running":
+            _LAST_PASS["log_scanned"] += 1
             findings.extend(_scan_app_logs(conn, c["Id"], name))
     conn.commit()
     conn.close()
