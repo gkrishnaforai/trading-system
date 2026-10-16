@@ -755,7 +755,11 @@ Fields: <b>kind</b> (signature suffix) &middot; <b>pattern</b> (regex)
 {msg}
 <form method=post action="/rules{tok}">
 <textarea name=rules>{rules}</textarea><br>
-<button type=submit>save</button></form>
+<button type=submit>save</button>
+<button type=submit name=reset value=1
+  formnovalidate
+  onclick="return confirm('reset rules to built-in defaults?')">
+  reset to defaults</button></form>
 <p><a href="/{tok}">&larr; board</a></p>"""
 
 
@@ -873,10 +877,14 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(min(length, 1 << 16)).decode()
-            txt = parse_qs(body).get("rules", [""])[0]
-            rules, _ = _compile_rules(txt)      # raises → not saved
-            if not rules:
-                raise ValueError("no valid rules — refusing to save")
+            form = parse_qs(body)
+            if form.get("reset"):
+                txt, rules = _DEFAULT_RULES_YAML, None
+            else:
+                txt = form.get("rules", [""])[0]
+                rules, _ = _compile_rules(txt)  # raises → not saved
+                if not rules:
+                    raise ValueError("no valid rules — refusing to save")
         except Exception as exc:
             self._send(200, _rules_html(
                 tok, f'<p class=err>invalid: {exc} — not saved</p>'),
@@ -891,9 +899,11 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
         _rules_cache["text"] = None            # recompile on next pass
-        logger.info("log_rules updated via web (%d rules)", len(rules))
+        n = len(rules) if rules is not None \
+            else len(_compile_rules(_DEFAULT_RULES_YAML)[0])
+        logger.info("log_rules updated via web (%d rules)", n)
         self._send(200, _rules_html(
-            tok, f'<p class=ok>saved — {len(rules)} rules active on '
+            tok, f'<p class=ok>saved — {n} rules active on '
                  f'next pass</p>'), "text/html")
 
     def log_message(self, *a) -> None:   # quiet — access logs add noise
