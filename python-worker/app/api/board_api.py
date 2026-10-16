@@ -1119,10 +1119,19 @@ def _pulse_action(mom, mom_prev, fund, fv_up, det, gq_flags,
     return ("hold", "no leg failing, no setup triggering")
 
 
+_flow_map_cache: tuple = (0.0, {})
+
+
 def _sector_flow_map() -> dict:
     """ETF → {flow, score} — the sector-rotation board's math run on
-    cached daily_bars (no provider fetch), so Pulse can tag each row
-    with its sector's capital-flow state."""
+    cached daily_bars (no provider fetch), so Pulse / Stock Health can
+    tag each row with its sector's capital-flow state. Memoized 300s —
+    bars refresh daily; repeated per-symbol lookups are near-free."""
+    import time
+    global _flow_map_cache
+    ts, cached = _flow_map_cache
+    if cached and time.time() - ts < 300:
+        return cached
     from app.database import db
     from app.market_regime.rotation import (
         SECTOR_NAMES, _flow_tag, _momentum_score)
@@ -1160,6 +1169,7 @@ def _sector_flow_map() -> dict:
                 r5, r20, r60, vs_spy20, above50,
                 bool(above200) if above200 is not None else False,
                 vr, r1), 1)}
+    _flow_map_cache = (time.time(), out)
     return out
 
 

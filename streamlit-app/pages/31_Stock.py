@@ -79,6 +79,21 @@ st.caption(f"verdict: **{v.get('verdict','—')}** — {v.get('why','')}"
               if H.get('market_cap') else f" · {H.get('sector') or ''}"))
 if H.get("next_earnings"):
     st.caption(f"📅 earnings: {H['next_earnings']}")
+_sf = H.get("sector_flow")
+if _sf and _sf.get("etf"):
+    _HINT = {"🔥 inflow": "money arriving — sector tailwind",
+             "↩ rotating in": "early rotation — capital arriving before momentum confirms",
+             "📈 leading": "sector leading the tape",
+             "📉 outflow": "distribution — sector headwind",
+             "💤 quiet": "no flow signal"}
+    st.caption(f"🔄 sector **{_sf['etf']}**"
+               + (f" ({_sf['name']})" if _sf.get("name") else "")
+               + f": {_sf.get('flow') or '—'}"
+               + (f" · score {_sf['score']}"
+                  if _sf.get("score") is not None else "")
+               + f" — {_HINT.get(_sf.get('flow'), 'context, not an entry signal')}")
+elif H.get("sector"):
+    st.caption("🔄 sector flow unavailable — no sector-ETF mapping")
 
 # ------------------------------------------------------------ the card
 t, f, g = st.columns(3)

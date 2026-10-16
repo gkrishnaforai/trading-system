@@ -287,8 +287,26 @@ def card(sym: str) -> dict[str, Any]:
                 or (tw_top.get("hit_count") or 0) >= 3,
         }
 
+    # sector flow — which capital-flow state this stock's sector ETF is
+    # in (inflow / rotating in / outflow / quiet). Same cached map the
+    # pulse board uses; context for "is rotation reaching this name",
+    # not an entry signal.
+    sector_flow = None
+    try:
+        from app.api.board_api import _sector_flow_map, _SECTOR_TO_ETF
+        from app.market_regime.rotation import SECTOR_NAMES
+        _etf = _SECTOR_TO_ETF.get((st.get("sector") or "").lower())
+        if _etf:
+            _m = _sector_flow_map().get(_etf)
+            sector_flow = {"etf": _etf, "name": SECTOR_NAMES.get(_etf),
+                           "flow": (_m or {}).get("flow"),
+                           "score": (_m or {}).get("score")}
+    except Exception:
+        pass
+
     return {"symbol": s, "name": st.get("company_name"),
             "sector": st.get("sector"),
+            "sector_flow": sector_flow,
             "market_cap": st.get("market_cap"),
             "spot": spot,
             "next_earnings": (str(st.get("next_earnings_date"))
