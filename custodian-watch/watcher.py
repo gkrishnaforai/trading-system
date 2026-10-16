@@ -262,6 +262,7 @@ _DEFAULT_RULES_YAML = """\
 # provider_pattern gates 'needs_provider' rules (provider must be named)
 provider_pattern: 'fmp|financial.?modeling|alpha.?vantage|massive|polygon|tiingo|finnhub|fred\\b|yahoo'
 rules:
+  # --- provider / data feed ---
   - kind: api-key
     severity: high
     needs_provider: false
@@ -270,7 +271,7 @@ rules:
   - kind: http-auth
     severity: high
     needs_provider: true
-    pattern: 'status=(401|403)\\b|http.{0,10}(401|403)|unauthorized|forbidden'
+    pattern: 'status=(401|403)\\b|http.{0,10}(401|403)|unauthorized|forbidden|payment required'
     diagnosis: 'provider auth errors (401/403) — verify API key / entitlements in .env; some FMP endpoints are plan-gated'
   - kind: rate-limit
     severity: medium
@@ -278,16 +279,82 @@ rules:
     keep_firing_s: 3600
     pattern: 'rate.?limit|status=429|too many requests'
     diagnosis: 'provider rate-limiting — check plan tier / call volume; persistent 429s need budget rework, not retries'
+  # --- database ---
   - kind: db-conn
     severity: high
     needs_provider: false
-    pattern: 'could not connect to (server|database)|connection refused.*(5432|6432|db)|psycopg.*operationalerror'
+    pattern: 'could not connect to (server|database)|connection refused.*(5432|6432)|psycopg.*operationalerror|timeout.*connecting.*(postgres|database)'
     diagnosis: 'app cannot reach postgres — check pgbouncer/postgres health and DATABASE_URL'
+  - kind: db-auth
+    severity: high
+    needs_provider: false
+    pattern: 'password authentication failed|no pg_hba.conf entry|pooler error|authentication.*failed.*(db|postgres|pgbouncer|database)'
+    diagnosis: 'database auth rejected — wrong user/password in DATABASE_URL or stale pgbouncer auth_file; container stays healthy while every query fails'
+  - kind: db-pool-exhausted
+    severity: high
+    needs_provider: false
+    pattern: 'pool.*exhausted|timeout waiting for connection|too many connections for role|remaining connection slots'
+    diagnosis: 'database connection pool full — reduce app concurrency or raise pgbouncer pool_size'
+  - kind: db-migration-error
+    severity: high
+    needs_provider: false
+    pattern: 'failed to apply migration|failed to run migrations|migration.*(failed|error)|dirty database|relation.*does not exist|column.*does not exist|unterminated quoted string'
+    diagnosis: 'migration/schema failure — the log tail names the bad migration file; fix the SQL and redeploy'
+  # --- web / proxy ---
+  - kind: gateway-error
+    severity: high
+    needs_provider: false
+    pattern: '502 bad gateway|504 gateway time-out|upstream prematurely closed connection'
+    diagnosis: 'proxy cannot reach the backend — upstream container crashed, rebooting, or not listening on the routed port'
+  - kind: worker-timeout
+    severity: medium
+    needs_provider: false
+    pattern: 'worker timeout|critical worker timeout|gunicorn.*timeout|uwsgi.*harakiri'
+    diagnosis: 'web worker killed mid-request — raise the worker timeout or fix the slow endpoint named in the tail'
+  # --- language runtimes ---
+  - kind: go-panic
+    severity: high
+    needs_provider: false
+    pattern: 'panic:|fatal error: runtime|goroutine \\d+ \\['
+    diagnosis: 'go process panicked — read the goroutine stack in the log tail; usually nil deref or config cast'
+  - kind: python-runtime-crash
+    severity: high
+    needs_provider: false
+    pattern: 'modulenotfounderror|importerror|nameerror: name|syntaxerror'
+    diagnosis: 'python crash — missing dep in requirements or a code bug; the log tail has the import/stack line'
+  # --- jobs / broker ---
+  - kind: broker-conn
+    severity: high
+    needs_provider: false
+    pattern: 'redis.*connectionerror|connection refused.*(6379|amqp)|kombu\\.exceptions'
+    diagnosis: 'worker cannot reach the broker (redis) — check redis container health and REDIS_URL'
+  - kind: job-failed
+    severity: medium
+    needs_provider: false
+    keep_firing_s: 7200
+    pattern: 'job .{0,40}failed|failed.{0,20}job|task .{0,40}failed'
+    diagnosis: 'a scheduled job failed — the job stays registered but its output goes stale; the log tail names it'
+  # --- infra ---
+  - kind: dns-resolution-error
+    severity: high
+    needs_provider: false
+    pattern: 'name or service not known|temporary failure in name resolution|eai_again'
+    diagnosis: 'container DNS failure — docker bridge or host resolv.conf misconfigured'
   - kind: disk-full
     severity: high
     needs_provider: false
     pattern: 'no space left on device|disk quota exceeded'
     diagnosis: 'host disk full — docker system df; prune images/logs or expand volume'
+  - kind: fs-degraded
+    severity: high
+    needs_provider: false
+    pattern: 'read-only file system|input/output error'
+    diagnosis: 'filesystem degraded — disk remounted read-only on error; check host dmesg / SMART'
+  - kind: tls-cert
+    severity: medium
+    needs_provider: false
+    pattern: 'certificate.*(expired|verify failed)|x509|ssl.*handshake.*fail|tls.*handshake.*fail'
+    diagnosis: 'TLS failure — expired cert or host clock skew; check cert validity and host time'
   - kind: oom-logs
     severity: high
     needs_provider: false
