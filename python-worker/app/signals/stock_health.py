@@ -640,12 +640,21 @@ def board() -> dict[str, Any]:
                         {"raw": r["score"], "norm": r["score"]}}}
                    if key == "leap_put" else pe.rank(key, _rk_c))
             fails = [x["line"] for x in r["rules"] if not x["ok"]]
+            _sw = (det.get("swing") or {}) if isinstance(det, dict) \
+                else {}
             sections[key].append({
                 "symbol": s, "name": st.get("company_name"),
                 "state": r["state"], "score": r["score"],
                 "of": r["of"], "fails": fails,
                 "rank": _rk["rank"], "parts": _rk["parts"],
                 "mom": st.get("momentum_state"),
+                # swing structure as first-class fields — so the board
+                # can filter confirmed / higher_low-forming / broken
+                # names directly, not just read it inside a check line
+                "swing_phase": _sw.get("phase"),
+                "confirm_level": _sw.get("confirm_level"),
+                "avwap": _sw.get("avwap"),
+                "prior_low": _sw.get("prior_low"),
                 "fund": st.get("fundamental_state"),
                 "fv_upside": fv_up,
                 "mcap_b": round((st.get("market_cap") or 0) / 1e9, 1),

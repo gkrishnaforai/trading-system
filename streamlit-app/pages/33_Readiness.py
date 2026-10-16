@@ -109,6 +109,17 @@ if only == "ready":
 elif only == "ready + close":
     rows = [r for r in rows if r["state"] in ("ready", "close")]
 
+if uc == "swing":
+    _PH = {"all": "all phases", "confirmed": "✅ confirmed",
+           "higher_low": "🔄 forming HL", "broken": "🧨 broken",
+           "none": "unmapped"}
+    ph = st.segmented_control(
+        "swing phase", list(_PH), format_func=lambda k: _PH[k],
+        default="all")
+    if ph != "all":
+        rows = [r for r in rows
+                if (r.get("swing_phase") or "none") == ph]
+
 funds = st.text_input("filter", placeholder="symbol or name…").lower()
 if funds:
     rows = [r for r in rows if funds in r["symbol"].lower()
@@ -132,6 +143,11 @@ for r in rows:
         + (f" · PUT_ENTRY **{r['score']}** `{r['pe_band']}` "
            f"({'A' if r.get('pe_cat') == 'valuation_put' else 'B'})"
            if r.get("pe_band") else "")
+        + (f" · swing `{r['swing_phase']}`"
+           + (f" needs {r['confirm_level']}"
+              if r.get("swing_phase") != "confirmed"
+              and r.get("confirm_level") else "")
+           if r.get("swing_phase") else "")
         + (f" · **{r['catalyst']}**" if r.get("catalyst") else ""))
     note = ("blocking: " + " · ".join(r["fails"][:2])) \
         if r.get("fails") else ""
