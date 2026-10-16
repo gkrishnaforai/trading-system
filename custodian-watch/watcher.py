@@ -322,6 +322,17 @@ rules:
     needs_provider: false
     pattern: 'modulenotfounderror|importerror|nameerror: name|syntaxerror'
     diagnosis: 'python crash — missing dep in requirements or a code bug; the log tail has the import/stack line'
+  - kind: code-bug
+    severity: high
+    needs_provider: false
+    pattern: '(attributeerror|typeerror|keyerror|indexerror|zerodivisionerror): '
+    diagnosis: 'unhandled code exception in logs — a code bug, not config; the traceback line names the file:line'
+  - kind: api-5xx
+    severity: medium
+    needs_provider: false
+    keep_firing_s: 900
+    pattern: '" (500|502|503)( |$)|] (500|502|503)( |$)|status=5\\d\\d|internal server error'
+    diagnosis: 'HTTP 5xx in app logs — requests failing server-side; check which endpoint and its traceback'
   # --- jobs / broker ---
   - kind: broker-conn
     severity: high
