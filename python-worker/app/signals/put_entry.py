@@ -375,10 +375,15 @@ def score(det: dict, mom: Optional[str], fund: Optional[str],
     band = ("major" if total >= 85 else "add" if total >= 70
             else "starter" if total >= 55 else "watch" if total >= 40
             else "none")
-    # 'already broke' no-chase: broke down AND deep 3mo decline — the
-    # entry was earlier; buying the put now is paying for yesterday
+    # 'already broke' no-chase: broke down AND deep decline — the
+    # entry was earlier; buying the put now is paying for yesterday.
+    # r3m alone misses crash-from-extended-high (a -20% flush off a
+    # +80% quarter keeps r3m positive) — dd52w / swing pullback_pct
+    # measure the drop off the peak regardless of the 3-month base.
     chase = (mom in ("knife", "capitulation", "breakdown")
-             and (r3m or 0) < -0.20)
+             and ((r3m or 0) < -0.20
+                  or (dd or 0) < -0.15
+                  or (pbk is not None and pbk < -0.15)))
     if chase:
         band = "none"
 
