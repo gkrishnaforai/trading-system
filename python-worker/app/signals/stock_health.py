@@ -640,8 +640,10 @@ def board() -> dict[str, Any]:
                         {"raw": r["score"], "norm": r["score"]}}}
                    if key == "leap_put" else pe.rank(key, _rk_c))
             fails = [x["line"] for x in r["rules"] if not x["ok"]]
-            _sw = (det.get("swing") or {}) if isinstance(det, dict) \
-                else {}
+            _sw = det.get("swing") if isinstance(det, dict) else None
+            # jsonb is free-form — a string/list swing value would
+            # 500 the whole board on .get; only dict carries levels
+            _sw = _sw if isinstance(_sw, dict) else {}
             sections[key].append({
                 "symbol": s, "name": st.get("company_name"),
                 "state": r["state"], "score": r["score"],

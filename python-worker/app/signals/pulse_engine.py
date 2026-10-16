@@ -78,6 +78,11 @@ def _normalize(row: dict) -> dict:
     if isinstance(det, str):
         import json
         det = json.loads(det)
+    if not isinstance(det, dict):
+        det = {}
+    # free-form jsonb: swing can arrive as a string/list — normalizing
+    # once here keeps every (det.get("swing") or {}).get() below safe
+    _sw = det.get("swing") if isinstance(det.get("swing"), dict) else {}
     return {
         "tape": _state(row.get("mom_state")),
         "tape_dir": row.get("tape_dir"),          # improving|degrading|flat
@@ -106,12 +111,10 @@ def _normalize(row: dict) -> dict:
                          if row.get("hist_dir") is None
                          else row.get("hist_dir")),
         "swing_struct": bool(
-            (det.get("swing") or {}).get("hl_seq")
-            or (det.get("swing") or {}).get("phase")
-            or (det.get("swing") or {}).get("confirm_level")),
-        "swing_phase": (det.get("swing") or {}).get("phase"),
-        "confirm_level": _num((det.get("swing") or {})
-                              .get("confirm_level")),
+            _sw.get("hl_seq") or _sw.get("phase")
+            or _sw.get("confirm_level")),
+        "swing_phase": _sw.get("phase"),
+        "confirm_level": _num(_sw.get("confirm_level")),
         "rev_growth": _num(row.get("rev_growth")),
         "eps_growth": _num(row.get("eps_growth")),
         "future_score": _num(row.get("future_score")),
@@ -123,8 +126,8 @@ def _normalize(row: dict) -> dict:
         "vol_dip": _num(det.get("vol_dip")),
         "atr_pct": _num(det.get("atr_pct")),
         "px": _num(row.get("px") or row.get("close")),
-        "swing_low": _num((det.get("swing") or {}).get("swing_low")),
-        "prior_low": _num((det.get("swing") or {}).get("prior_low")),
+        "swing_low": _num(_sw.get("swing_low")),
+        "prior_low": _num(_sw.get("prior_low")),
         "gq_pct": _num(row.get("gq_pct")),
         "emerging": _state(row.get("emerging_growth")),
         "beat_streak": _num(row.get("beat_streak")),
