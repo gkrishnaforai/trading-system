@@ -75,6 +75,14 @@ _MANUAL_STEPS = [
      "the app's deploy was rolled back/removed (check Coolify deploy "
      "logs) or WATCH_PROJECT is filtering them out. docker ps -a on "
      "the host shows which."),
+    ("app:",
+     "Config/provider failure inside a healthy container — docker sees "
+     "nothing wrong, the data pipeline is dead. 1. Read the attached "
+     "log lines for the provider name. 2. API-key errors → fix the key "
+     "in .env and 'docker compose up -d --force-recreate' the service "
+     "(env is baked at create time; restart alone won't pick it up). "
+     "3. 429s → check plan tier or reduce call volume. 4. Incident "
+     "auto-resolves when the lines stop appearing in the tail."),
     ("container:",
      "1. Coolify/Docker logs for the named container — the log tail is "
      "attached.  2. 'Failed to apply migration' → fix the migration SQL "
@@ -228,6 +236,68 @@ def _classify(tail: str, ins: dict) -> tuple[str, str]:
     return ("container unhealthy/exited — see attached log tail", "high")
 
 
+# log-scan signatures for HEALTHY containers — a bad provider key or a
+# rate-limited plan leaves the process alive while the data pipeline
+# silently dies; docker health alone can't see it.
+_PROVIDER_RE = re.compile(
+    r"fmp|financial.?modeling|alpha.?vantage|massive|polygon|tiingo|"
+    r"finnhub|fred\b|yahoo", re.I)
+_LOG_SIGNS = [
+    ("api-key", re.compile(r"invalid api ?key|api ?key.*invalid", re.I),
+     "high",
+     "provider rejected its API key — fix the key in .env "
+     "(FMP_API_KEY / provider key) and recreate the service "
+     "(env changes need up -d --force-recreate, not restart)"),
+    ("http-auth", re.compile(r"status=(401|403)\b|\bhttp.{0,10}(401|403)\b",
+                             re.I),
+     "high",
+     "provider returning auth errors (401/403) — verify API key / "
+     "entitlements in .env; some FMP endpoints are plan-gated (402/403)"),
+    ("rate-limit", re.compile(r"rate.?limit|status=429|too many requests",
+                              re.I),
+     "medium",
+     "provider rate-limiting — check plan tier / call volume; "
+     "persistent 429s mean the budget math needs rework, not retries"),
+]
+
+
+def _scan_app_logs(cid: str, name: str) -> list[dict]:
+    """Scan a running container's log tail for provider/config error
+    signatures — the failures that leave docker 'healthy'."""
+    try:
+        tail = _logs(cid, tail=80)
+    except Exception:
+        return []
+    hits: dict[str, list[str]] = {}
+    for line in tail.splitlines():
+        low = line.lower()
+        for kind, pat, _sev, _diag in _LOG_SIGNS:
+            if not pat.search(line):
+                continue
+            # auth/throttle classes need a provider hint — otherwise
+            # proxy/access-log 401s would false-positive
+            if kind != "api-key" and not _PROVIDER_RE.search(line):
+                continue
+            hits.setdefault(kind, []).append(line.strip()[:160])
+            break  # one signature per line is enough
+    findings = []
+    for kind, lines in hits.items():
+        sev, diag = next(
+            (s, d) for k, _p, s, d in _LOG_SIGNS if k == kind)
+        prov = ""
+        for line in lines:
+            m = _PROVIDER_RE.search(line)
+            if m:
+                prov = m.group(0).lower().replace(" ", "")
+                break
+        findings.append({
+            "signature": f"app:{name}:{kind}",
+            "source": "watch", "severity": sev,
+            "detail": {"diagnosis": (f"{prov}: " if prov else "") + diag,
+                       "log_tail": "\n".join(lines[-3:])}})
+    return findings
+
+
 def _sense(own_project: str) -> list[dict[str, Any]]:
     findings = []
     try:
@@ -312,6 +382,11 @@ def _sense(own_project: str) -> list[dict[str, Any]]:
                 "detail": {"exit_code": st.get("ExitCode"),
                            "oom": st.get("OOMKilled"),
                            "log_tail": tail[-1500:], "diagnosis": diag}})
+
+        # healthy-by-docker but config-dead — bad provider keys, plan
+        # 401/403s, persistent 429s all leave the process running
+        elif status == "running":
+            findings.extend(_scan_app_logs(c["Id"], name))
     conn.commit()
     conn.close()
     return findings
@@ -471,7 +546,8 @@ def _incidents_html(token: str = "") -> str:
         r["log"] = (det.get("log_tail") or det.get("error")
                     or json.dumps(det)[:400]) if isinstance(det, dict) \
             else str(det)[:400]
-        m = re.match(r"^container:([^:]+):", r.get("signature") or "")
+        m = re.match(r"^(?:container|app):([^:]+):",
+                     r.get("signature") or "")
         r["live"] = (f'<a href="/logs/{m.group(1)}?tail=200'
                      + (f"&token={token}" if token else "")
                      + '">live&nbsp;tail</a>') if m else ""
