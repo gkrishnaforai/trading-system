@@ -317,10 +317,15 @@ def _rules_verdict(ctx: dict) -> dict[str, Any]:
                "red" if score <= -4 else "choppy")
     conf = min(75, int(35 + abs(score)))
     s = max(-30, min(30, score))        # soft probs — rules are crude
-    pg, pr = 33 + s * 1.1, 33 - s * 1.1
+    # floor each leg: a 0% claim is indefensible and Brier-punishing —
+    # rules get "likely", never "certain"
+    pg, pc, pr = (max(5.0, 33 + s * 1.1), 34.0,
+                  max(5.0, 33 - s * 1.1))
+    tot = pg + pc + pr
     return {"verdict": verdict, "confidence": conf,
-            "probs": {"p_green": round(pg, 1), "p_red": round(pr, 1),
-                      "p_choppy": 34.0},
+            "probs": {"p_green": round(pg / tot * 100, 1),
+                      "p_red": round(pr / tot * 100, 1),
+                      "p_choppy": round(pc / tot * 100, 1)},
             "regime_read": binding or "rules",
             "qqq_lean": "up" if score > 0 else "down" if score < 0
             else "flat",
