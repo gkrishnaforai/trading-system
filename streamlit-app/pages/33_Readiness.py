@@ -93,22 +93,48 @@ if rd_tr or pu_tr:
                            f"{r['symbol']} ({r['use_case']})"
                            for r in dem[:20]))
 
-_UC = {"swing": "🎯 Swing — dip-buy entries",
+_UC = {"priority": "★ Top picks — all use cases",
+       "swing": "🎯 Swing — dip-buy entries",
        "invest": "🏦 Investing — long-hold entries",
        "leap_call": "📞 LEAP calls — 12-18mo bullish",
        "leap_put": "📕 LEAP puts — hedge/short"}
+_UC_ICON = {"swing": "🎯", "invest": "🏦", "leap_call": "📞",
+            "leap_put": "📕"}
+_ORD = {"ready": 0, "close": 1, "no": 2}
 _RI = {"ready": "🟢 ready", "close": "🟡 close", "no": "🔴 blocked"}
 
 uc = st.radio("use case", list(_UC), format_func=lambda k: _UC[k],
               horizontal=True, label_visibility="collapsed")
-c = counts.get(uc) or {}
-st.caption(f"**{c.get('ready',0)}** ready · **{c.get('close',0)}** "
-           f"close · **{c.get('no',0)}** blocked of "
-           f"{len(secs.get(uc) or [])} tracked")
+
+# ★ merged view — dedupe symbols across use cases, keep the best state
+# + best rank per name, carry the badges of which lanes it's ready in
+if uc == "priority":
+    merged = {}
+    for uc_k, urows in secs.items():
+        for r in urows:
+            e = merged.get(r["symbol"])
+            if not e:
+                e = merged[r["symbol"]] = {**r, "ucs": [],
+                                         "rank": 0, "state": "no"}
+            e["ucs"].append((uc_k, r["state"]))
+            e["rank"] = max(e["rank"], r.get("rank") or 0)
+            e["state"] = min(e["state"], r["state"],
+                             key=lambda s: _ORD.get(s, 3))
+    rows = sorted(merged.values(),
+                  key=lambda r: (_ORD.get(r["state"], 3),
+                                 -(r["rank"] or 0), r["symbol"]))
+    _rd = sum(1 for r in merged.values() if r["state"] == "ready")
+    st.caption(f"**{_rd}** ready in at least one lane · "
+               f"{len(merged)} tracked")
+else:
+    c = counts.get(uc) or {}
+    st.caption(f"**{c.get('ready',0)}** ready · **{c.get('close',0)}** "
+               f"close · **{c.get('no',0)}** blocked of "
+               f"{len(secs.get(uc) or [])} tracked")
+    rows = secs.get(uc) or []
 
 only = st.segmented_control("show", ["ready", "ready + close", "all"],
                             default="ready + close")
-rows = secs.get(uc) or []
 if only == "ready":
     rows = [r for r in rows if r["state"] == "ready"]
 elif only == "ready + close":
@@ -134,6 +160,20 @@ _rt = st.segmented_control(
 if _rt != "any":
     rows = [r for r in rows if (r.get("rank") or 0) >= _rt]
 
+# order priority — inside each state bucket (ready first always)
+_SORTS = {"rank": "rank", "checklist": "checklist", "fv": "fv upside",
+          "name": "name"}
+_sort = st.segmented_control("sort", list(_SORTS),
+                             format_func=lambda k: _SORTS[k],
+                             default="rank")
+_SK = {"rank": lambda r: -(r.get("rank") or 0),
+      "checklist": lambda r: -(r.get("score") or 0),
+      "fv": lambda r: -(r.get("fv_upside") or -999),
+      "name": lambda r: r["symbol"]}
+if _sort != "rank":                     # rank order is already applied
+    rows = sorted(rows, key=lambda r: (_ORD.get(r["state"], 3),
+                                       _SK[_sort](r), r["symbol"]))
+
 funds = st.text_input("filter", placeholder="symbol or name…").lower()
 if funds:
     rows = [r for r in rows if funds in r["symbol"].lower()
@@ -147,8 +187,11 @@ for r in rows:
         st.markdown(f"### {_RI.get(cur, cur)}")
     head, why = st.columns([2, 3])
     fv = r.get("fv_upside")
+    _lanes = (" " + " ".join(
+        f"{_UC_ICON[k]}{'✅' if s_ == 'ready' else '🟡'}"
+        for k, s_ in (r.get("ucs") or []))) if r.get("ucs") else ""
     head.markdown(
-        f"{sym_md(r['symbol'])} — {r.get('name') or ''} · "
+        f"{sym_md(r['symbol'])} — {r.get('name') or ''}{_lanes} · "
         f"`{r.get('mom') or '—'}` tape · `{r.get('fund') or '—'}` fund · "
         f"{r.get('score')}/{r.get('of')} rules"
         + (f" · rank **{r['rank']}**"
@@ -163,8 +206,13 @@ for r in rows:
               and r.get("confirm_level") else "")
            if r.get("swing_phase") else "")
         + (f" · **{r['catalyst']}**" if r.get("catalyst") else ""))
-    note = ("blocking: " + " · ".join(r["fails"][:2])) \
-        if r.get("fails") else ""
+    if r.get("ucs"):
+        note = " · ".join(
+            f"{_UC_ICON[k]} {_UC[k].split(' — ')[0].strip()} {s_}"
+            for k, s_ in r["ucs"])
+    else:
+        note = ("blocking: " + " · ".join(r["fails"][:2])) \
+            if r.get("fails") else ""
     if r.get("catalyst"):
         note += (" · " if note else "") + \
             "channel signal — pre-revenue evidence, unconfirmed"
