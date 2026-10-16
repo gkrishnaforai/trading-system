@@ -6,8 +6,11 @@ knife = 'watch, don't catch the knife').
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def _verdict(fund: Optional[str], mom: Optional[str],
@@ -579,91 +582,100 @@ def board() -> dict[str, Any]:
     sections: dict[str, list] = {"swing": [], "invest": [],
                                  "leap_call": [], "leap_put": []}
     latest = None
+    skipped: list[str] = []
     for st in stocks:
         s = st["symbol"]
-        det = st.get("momentum_detail") or {}
-        if isinstance(det, str):
-            det = json.loads(det)
-        fv_v, px_v = fv.get(s), px.get(s)
-        fv_up = round((fv_v / px_v - 1) * 100, 1) \
-            if fv_v and px_v else None
-        fl = fly.get(s) or {}
-        val = ("extreme" if (fl.get("fwd_pe") or 0) > 60 else
-               "elevated" if (fl.get("fwd_pe") or 0) > 35 else
-               "reasonable" if fl.get("fwd_pe") else None)
-        rd = _readiness(st.get("momentum_state"), det,
-                        st.get("fundamental_state"), fl,
-                        {}, conv.get(s) or {}, fv_up, val,
-                        {"pe": put_entry.score(
-                            det, st.get("momentum_state"),
+        try:
+            det = st.get("momentum_detail") or {}
+            if isinstance(det, str):
+                det = json.loads(det)
+            fv_v, px_v = fv.get(s), px.get(s)
+            fv_up = round((fv_v / px_v - 1) * 100, 1) \
+                if fv_v and px_v else None
+            fl = fly.get(s) or {}
+            val = ("extreme" if (fl.get("fwd_pe") or 0) > 60 else
+                   "elevated" if (fl.get("fwd_pe") or 0) > 35 else
+                   "reasonable" if fl.get("fwd_pe") else None)
+            rd = _readiness(st.get("momentum_state"), det,
                             st.get("fundamental_state"), fl,
-                            scen_map.get(s) or {}, px_v, regime)},
-                        gq_map.get(s), st.get("priced_status"))
-        upd = st.get("momentum_updated_at")
-        if upd and (latest is None or str(upd) > str(latest)):
-            latest = str(upd)
-        twr = tw_map.get(s)
-        catalyst = (f"✦{twr['channel']}({twr['tier']},"
-                    f"{twr['hit_count']}src)" if twr else None)
-        # rank ctx — normalized + stage0 once per symbol. The
-        # checklist is the binary gate; rank is the continuous order
-        # the planner deploys capital by. leap_put ranks by its
-        # put-entry score (already 0-100).
-        gq = gq_map.get(s) or {}
-        prev = st.get("prev_state")
-        cur = st.get("momentum_state")
-        _rk_c = pe._normalize({
-            "mom_state": cur,
-            "fund_state": st.get("fundamental_state"),
-            "revision_grade": st.get("revision_grade"),
-            "priced_status": st.get("priced_status"),
-            "fv_upside": fv_up,
-            "emerging_growth": st.get("emerging_growth"),
-            "earn_days": ((st["next_earnings_date"] - today).days
-                          if st.get("next_earnings_date") else None),
-            "tape_dir": ("improving" if prev and cur != prev
-                         and cur in ("pullback", "recovery", "basing",
-                                     "uptrend", "breakout")
-                         else "flat"),
-            "momentum_detail": det,
-            "px": px_v,
-            "gq_pct": gq.get("percentile"),
-            "beat_streak": fl.get("beat_streak"),
-            "est_revision_pct": fl.get("est_revision_pct"),
-            "sector_score": _flow.get(
-                _SECTOR_TO_ETF.get((st.get("sector") or "").lower(),
-                                   "SPY"), {}).get("score")})
-        _rk_c.update(pe._stage0(_rk_c))
-        for key in sections:
-            r = rd[key]
-            _rk = ({"rank": r["score"], "parts": {"put_entry":
-                        {"raw": r["score"], "norm": r["score"]}}}
-                   if key == "leap_put" else pe.rank(key, _rk_c))
-            fails = [x["line"] for x in r["rules"] if not x["ok"]]
-            _sw = det.get("swing") if isinstance(det, dict) else None
-            # jsonb is free-form — a string/list swing value would
-            # 500 the whole board on .get; only dict carries levels
-            _sw = _sw if isinstance(_sw, dict) else {}
-            sections[key].append({
-                "symbol": s, "name": st.get("company_name"),
-                "state": r["state"], "score": r["score"],
-                "of": r["of"], "fails": fails,
-                "rank": _rk["rank"], "parts": _rk["parts"],
-                "mom": st.get("momentum_state"),
-                # swing structure as first-class fields — so the board
-                # can filter confirmed / higher_low-forming / broken
-                # names directly, not just read it inside a check line
-                "swing_phase": _sw.get("phase"),
-                "confirm_level": _sw.get("confirm_level"),
-                "avwap": _sw.get("avwap"),
-                "prior_low": _sw.get("prior_low"),
-                "fund": st.get("fundamental_state"),
+                            {}, conv.get(s) or {}, fv_up, val,
+                            {"pe": put_entry.score(
+                                det, st.get("momentum_state"),
+                                st.get("fundamental_state"), fl,
+                                scen_map.get(s) or {}, px_v, regime)},
+                            gq_map.get(s), st.get("priced_status"))
+            upd = st.get("momentum_updated_at")
+            if upd and (latest is None or str(upd) > str(latest)):
+                latest = str(upd)
+            twr = tw_map.get(s)
+            catalyst = (f"✦{twr['channel']}({twr['tier']},"
+                        f"{twr['hit_count']}src)" if twr else None)
+            # rank ctx — normalized + stage0 once per symbol. The
+            # checklist is the binary gate; rank is the continuous order
+            # the planner deploys capital by. leap_put ranks by its
+            # put-entry score (already 0-100).
+            gq = gq_map.get(s) or {}
+            prev = st.get("prev_state")
+            cur = st.get("momentum_state")
+            _rk_c = pe._normalize({
+                "mom_state": cur,
+                "fund_state": st.get("fundamental_state"),
+                "revision_grade": st.get("revision_grade"),
+                "priced_status": st.get("priced_status"),
                 "fv_upside": fv_up,
-                "mcap_b": round((st.get("market_cap") or 0) / 1e9, 1),
-                "catalyst": catalyst,
-                "pe_band": r.get("band"), "pe_cat": r.get("category"),
-                "stage_txt": r.get("stage_txt"),
-            })
+                "emerging_growth": st.get("emerging_growth"),
+                "earn_days": ((st["next_earnings_date"] - today).days
+                              if st.get("next_earnings_date") else None),
+                "tape_dir": ("improving" if prev and cur != prev
+                             and cur in ("pullback", "recovery", "basing",
+                                         "uptrend", "breakout")
+                             else "flat"),
+                "momentum_detail": det,
+                "px": px_v,
+                "gq_pct": gq.get("percentile"),
+                "beat_streak": fl.get("beat_streak"),
+                "est_revision_pct": fl.get("est_revision_pct"),
+                "sector_score": _flow.get(
+                    _SECTOR_TO_ETF.get((st.get("sector") or "").lower(),
+                                       "SPY"), {}).get("score")})
+            _rk_c.update(pe._stage0(_rk_c))
+            for key in sections:
+                r = rd[key]
+                _rk = ({"rank": r["score"], "parts": {"put_entry":
+                            {"raw": r["score"], "norm": r["score"]}}}
+                       if key == "leap_put" else pe.rank(key, _rk_c))
+                fails = [x["line"] for x in r["rules"] if not x["ok"]]
+                _sw = det.get("swing") if isinstance(det, dict) else None
+                # jsonb is free-form — a string/list swing value would
+                # 500 the whole board on .get; only dict carries levels
+                _sw = _sw if isinstance(_sw, dict) else {}
+                sections[key].append({
+                    "symbol": s, "name": st.get("company_name"),
+                    "state": r["state"], "score": r["score"],
+                    "of": r["of"], "fails": fails,
+                    "rank": _rk["rank"], "parts": _rk["parts"],
+                    "mom": st.get("momentum_state"),
+                    # swing structure as first-class fields — so the
+                    # board can filter confirmed / higher_low-forming /
+                    # broken names directly, not just inside a check line
+                    "swing_phase": _sw.get("phase"),
+                    "confirm_level": _sw.get("confirm_level"),
+                    "avwap": _sw.get("avwap"),
+                    "prior_low": _sw.get("prior_low"),
+                    "fund": st.get("fundamental_state"),
+                    "fv_upside": fv_up,
+                    "mcap_b": round((st.get("market_cap") or 0) / 1e9, 1),
+                    "catalyst": catalyst,
+                    "pe_band": r.get("band"), "pe_cat": r.get("category"),
+                    "stage_txt": r.get("stage_txt"),
+                })
+        except Exception as exc:
+            # one corrupt row must not 500 the whole board — skip the
+            # symbol, log the failure (the custodian code-bug rule sees
+            # it in the tail), and surface the skipped list in the
+            # payload so the page can warn
+            logger.warning("readiness row skipped %s: %r", s, exc)
+            skipped.append(s)
     for key in sections:
         # ready-first, then continuous rank desc — symbol is the
         # final tiebreak only. Checklist score no longer orders
@@ -696,6 +708,7 @@ def board() -> dict[str, Any]:
     except Exception:
         pass
     return {"as_of": latest, "sections": sections,
+            "skipped": skipped,
             "counts": {k: {s: sum(1 for r in v if r["state"] == s)
                            for s in ("ready", "close", "no")}
                        for k, v in sections.items()}}

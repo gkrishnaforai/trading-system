@@ -43,6 +43,11 @@ if B.get("as_of"):
     st.caption(f"technicals as of {str(B['as_of'])[:16]}Z — the hourly "
                "momentum job refreshes the inputs")
 
+_sk = B.get("skipped") or []
+if _sk:
+    st.caption(f"⚠ {len(_sk)} symbol(s) skipped on bad stored rows — "
+               f"{', '.join(_sk[:12])}{'…' if len(_sk) > 12 else ''}")
+
 # --------------------------------------------- 🆕 movements
 # journal diffs — readiness_evals (universe) + pulse_rule_evals
 # (portfolio actions). Promotions first: no→ready is the money move.
