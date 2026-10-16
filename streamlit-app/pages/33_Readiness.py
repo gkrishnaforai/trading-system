@@ -120,6 +120,15 @@ if uc == "swing":
         rows = [r for r in rows
                 if (r.get("swing_phase") or "none") == ph]
 
+_RT = {"any": "any rank", 40: "rank ≥ 40", 60: "rank ≥ 60",
+       80: "rank ≥ 80"}
+_rt = st.segmented_control(
+    "min rank" + (" — put-entry score" if uc == "leap_put"
+                  else " — best first"), list(_RT),
+    format_func=lambda k: _RT[k], default="any")
+if _rt != "any":
+    rows = [r for r in rows if (r.get("rank") or 0) >= _rt]
+
 funds = st.text_input("filter", placeholder="symbol or name…").lower()
 if funds:
     rows = [r for r in rows if funds in r["symbol"].lower()

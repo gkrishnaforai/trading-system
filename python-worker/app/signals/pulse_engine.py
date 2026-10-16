@@ -570,6 +570,12 @@ _RANK_NORM = {
 }
 
 
+_RANK_RAW_ALIAS = {"revision_grade": "rev", "priced_status": "priced"}
+                   # yaml component name → normalized ctx key; without
+                   # the alias the presence check reads a key that never
+                   # exists and the weight silently drops out
+
+
 def _rank_raw(k: str, c: dict):
     """Presence + raw value for `parts`. None → the component drops
     out and its weight renormalizes (missing ≠ zero)."""
@@ -587,7 +593,7 @@ def _rank_raw(k: str, c: dict):
         return f"%B={c.get('pct_b')}·rsi={c.get('rsi')}"
     if k == "earn_risk":
         return c.get("earn_days")
-    return c.get(k)
+    return c.get(_RANK_RAW_ALIAS.get(k, k))
 
 
 def rank(use_case: str, c: dict) -> dict:

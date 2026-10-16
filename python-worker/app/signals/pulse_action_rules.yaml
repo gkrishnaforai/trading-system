@@ -647,6 +647,11 @@ rank_weights:
       - {k: tape_dir,     w: 15}   # state transition improving
       - {k: vol_dip,      w: 10}   # volume dry-up on the pullback
       - {k: sector_score, w: 10}   # industry-group capital flow
+      - {k: revision_grade, w: 10} # estimate momentum — the growth leg:
+                                   # a swing on A-grade revisions has a
+                                   # fundamental tailwind behind the tape
+      - {k: fwd_flags,    w: 5}    # emerging_growth + beat streak —
+                                   # forward growth confirmation
       - {k: earn_risk,    w: -15}  # flat penalty — earnings ≤7d
     caps:
       - {when: {fund_in: fund_bad_hard}, cap: 40}
