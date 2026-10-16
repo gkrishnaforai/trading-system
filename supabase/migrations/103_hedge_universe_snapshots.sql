@@ -25,14 +25,14 @@ CREATE TABLE IF NOT EXISTS hedge_universe_snapshots (
     hedge_roi      jsonb,              -- BS-priced −30% scenario:
                                        -- premium/value_after/roi
     thin_chain     boolean,
-    extension      double precision,   -- 0-15 the 'ATH + overbought'
+    extension      double precision,   -- 0-15 the ATH + overbought
                                        -- leg: dd52w/RSI/%B/vs_sma50
     setup          text,               -- put-window label: extension
                                        -- picks the candidate,
                                        -- rolling_over marks entry
     -- graded later: did it hedge?
     ret_20d        double precision,
-    target_ret_20d double precision,   -- target's own move over 20d
+    target_ret_20d double precision,   -- target own move over 20d
     capture_20d    double precision,   -- sym move ÷ target move —
                                        -- high = it fell when target fell
     created_at     timestamptz NOT NULL DEFAULT now(),

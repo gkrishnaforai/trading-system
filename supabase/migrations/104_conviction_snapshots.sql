@@ -1,7 +1,7 @@
--- Conviction List daily journal — the meta-engine's nightly pick.
+-- Conviction List daily journal — the meta-engine nightly pick.
 -- Every row is a point-in-time "best idea" so performance review is
 -- a query: which daily/weekly/monthly picks actually paid, and is
--- 'watch' (expensive early compounders) outperforming 'deploy'?
+-- watch (expensive early compounders) outperforming deploy?
 CREATE TABLE IF NOT EXISTS conviction_snapshots (
     id             bigserial PRIMARY KEY,
     snap_date      date NOT NULL,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS conviction_snapshots (
     valuation      text,               -- reasonable|elevated|extreme
     momentum_state text,
     dd52w          double precision,   -- distance off 52w high
-    daily_pick     boolean,            -- today's best-2
+    daily_pick     boolean,            -- today best-2
     future_score   double precision,   -- 0-95 future-compounder:
                                        -- thesis exposure + evidence
                                        -- + headroom (ranks watch)

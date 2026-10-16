@@ -308,6 +308,17 @@ func splitSQLStatements(sql string) []string {
 		}
 
 		// Not inside any quoted context.
+		// Line comments must not participate in quote tracking — an
+		// apostrophe inside a "--" comment flipped inSingleQuote and
+		// split a statement mid-literal (see 149_event_day_cron incident)
+		if c == '-' && i+1 < len(bytes) && bytes[i+1] == '-' {
+			for i < len(bytes) && bytes[i] != '\n' {
+				current.WriteByte(bytes[i])
+				i++
+			}
+			continue
+		}
+
 		if c == '\'' {
 			inSingleQuote = true
 			current.WriteByte(c)
