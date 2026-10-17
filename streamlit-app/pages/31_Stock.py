@@ -159,10 +159,25 @@ with f:
         st.caption(f"⚠️ flywheel inputs "
                    f"{fdet.get('flywheel_age_days')}d stale")
     if fd.get("as_of"):
-        st.caption(f"refreshed {str(fd['as_of'])[:16].replace('T',' ')}"
+        st.caption(f"scored {str(fd['as_of'])[:16].replace('T',' ')}"
                    f"Z — 🧬 button below recomputes from provider")
     else:
         st.caption("never classified — press 🧬 refresh fundamentals")
+    # provider-data clock — the score above may be fresh while the
+    # underlying payload is months stale; show both or 'refreshed'
+    # reads as fresher than the data really is
+    if fd.get("data_as_of"):
+        try:
+            _dage = (date.today() - date.fromisoformat(
+                str(fd["data_as_of"])[:10])).days
+            st.caption(
+                f"provider data `{fd['data_as_of']}`"
+                + (f" ⚠ {_dage}d old — score computed on stale inputs"
+                   if _dage > 45 else ""))
+        except Exception:
+            st.caption(f"provider data `{fd['data_as_of']}`")
+    else:
+        st.caption("provider data: no fundamentals snapshot stored")
 with t:
     td = H.get("technical") or {}
     det = td.get("detail") or {}

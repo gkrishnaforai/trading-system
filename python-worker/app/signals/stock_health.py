@@ -237,6 +237,7 @@ def card(sym: str) -> dict[str, Any]:
     # feed PUT_ENTRY's bull-case-distance asymmetry
     fv_up, scen, spot = None, {}, None
     fv_detail = {}
+    _fund_as_of = _fundamentals_data_as_of(s)
     try:
         r = db.execute_query(
             "SELECT symbol, fair_value, scenario_fair_values,"
@@ -257,7 +258,7 @@ def card(sym: str) -> dict[str, Any]:
         if isinstance(sc, dict):
             scen = sc
         if r:
-            fv_detail = _fv_detail(r[0], spot)
+            fv_detail = _fv_detail(r[0], spot, _fund_as_of)
     except Exception:
         pass
 
@@ -321,6 +322,7 @@ def card(sym: str) -> dict[str, Any]:
                             "as_of": (str(st.get("fundamental_updated_at"))
                                       if st.get("fundamental_updated_at")
                                       else None),
+                            "data_as_of": _fund_as_of,
                             "detail": fdet},
             "technical": {"state": st.get("momentum_state"),
                           "as_of": (str(st.get("momentum_updated_at"))
@@ -397,7 +399,24 @@ def _method_explain(method_key: str, inputs: dict,
     return out
 
 
-def _fv_detail(run_row: dict, spot) -> dict:
+def _fundamentals_data_as_of(sym: str) -> str | None:
+    """Latest raw fundamentals snapshot date for the symbol — the
+    provider-data clock, distinct from fundamental_updated_at (the
+    scoring clock). A score recomputed today on a 5-month-old payload
+    is stale data, not fresh analysis."""
+    try:
+        from app.database import db
+        fr = db.execute_query(
+            "SELECT MAX(as_of_date) AS d FROM fundamentals_snapshots"
+            " WHERE symbol=:s", {"s": sym})
+        if fr and fr[0].get("d"):
+            return str(fr[0]["d"])[:10]
+    except Exception:
+        pass
+    return None
+
+
+def _fv_detail(run_row: dict, spot, fund_as_of=None) -> dict:
     """The scenario ladder with provenance: each target carries the
     per-method contributions and an implied-multiple explanation, so
     'why this number' is reconstructible from the run itself."""
@@ -436,16 +455,6 @@ def _fv_detail(run_row: dict, spot) -> dict:
     # freshness — the FV run timestamp, the input watermark it ran
     # against, and the raw fundamentals snapshot the features resolve
     # from. Three different clocks; a stale number must be legible.
-    fund_as_of = None
-    try:
-        from app.database import db
-        fr = db.execute_query(
-            "SELECT MAX(as_of_date) AS d FROM fundamentals_snapshots"
-            " WHERE symbol=:s", {"s": run_row["symbol"]})
-        if fr and fr[0].get("d"):
-            fund_as_of = str(fr[0]["d"])[:10]
-    except Exception:
-        pass
     return {
         "as_of": str(run_row.get("as_of") or "")[:19],
         "inputs_as_of": str(run_row.get("inputs_watermark") or "")[:10]
