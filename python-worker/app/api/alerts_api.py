@@ -33,11 +33,32 @@ async def list_alerts(
     hours: int = Query(default=72, ge=1, le=24 * 30),
     limit: int = Query(default=100, ge=1, le=500),
 ):
-    """Ranked alert inbox — newest/highest priority first."""
+    """Ranked alert inbox — newest/highest priority first.
+    Lazy-kicks a background scan when the inbox is empty and no scan
+    has run recently — nothing else schedules the catalyst scan, so
+    without this the inbox stays empty forever."""
+    items = await asyncio.to_thread(
+        service.inbox, status=status, symbol=symbol, hours=hours,
+        limit=limit)
+    if not items:
+        st = service.scan_status()
+        last = st.get("last_run_at")
+        stale = True
+        if last:
+            try:
+                from datetime import datetime, timezone
+                stale = (datetime.now(timezone.utc)
+                         - datetime.fromisoformat(last)
+                         ).total_seconds() > 1800
+            except (ValueError, TypeError):
+                pass
+        if stale and not st.get("running"):
+            asyncio.create_task(service.run_scan_job())
     return {
-        "count": 0,
-        "items": service.inbox(status=status, symbol=symbol, hours=hours, limit=limit),
+        "count": len(items),
+        "items": items,
         "regime": service.regime_card(),
+        "scan": service.scan_status(),
     }
 
 

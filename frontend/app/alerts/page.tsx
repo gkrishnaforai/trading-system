@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { api, type AlertItem } from '@/lib/api'
 import { fmtShort } from '@/components/regime'
+import { ScanButton } from '@/components/scan-button'
 
 const DIR_TONE: Record<string, string> = {
   positive: 'text-aggressive', up: 'text-aggressive',
@@ -91,6 +92,7 @@ function AlertRow({ a }: { a: AlertItem }) {
 export default async function AlertsPage() {
   const data = await api.alerts({ hours: 168 })
   const items = data?.items ?? []
+  const scan = (data as { scan?: { running?: boolean } } | null)?.scan
   const newItems = items.filter((a) => a.status !== 'dismissed')
   const high = newItems.filter(
     (a) => String(a.materiality).toLowerCase() === 'high',
@@ -110,6 +112,9 @@ export default async function AlertsPage() {
           filings, momentum breaks — filtered to the names you hold and
           watch. Held names get the orange badge.
         </p>
+        <div className="pt-4">
+          <ScanButton running={scan?.running ?? false} />
+        </div>
       </header>
 
       <section className="grid grid-cols-3 gap-6 rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
@@ -142,7 +147,9 @@ export default async function AlertsPage() {
       <div className="border-t border-hairline">
         {newItems.length === 0 ? (
           <p className="py-8 text-sm text-muted">
-            Quiet week — no undismissed alerts in the last 7 days.
+            {scan?.running
+              ? 'Scanning for catalysts — refresh in a moment.'
+              : 'Quiet week — no undismissed alerts in the last 7 days. A scan may be running in the background.'}
           </p>
         ) : (
           <div className="divide-y divide-hairline/60">
