@@ -69,6 +69,9 @@ _LAST_PASS: dict[str, Any] = {"at": None, "findings": 0, "error": None,
 
 # restart-count growth per poll that counts as a crash loop
 RESTART_LOOP_DELTA = 2
+# a container lingering in 'created' this long means start() failed
+# (port bind/mount/env) — normal compose-up passes through in seconds
+CREATED_WEDGE_S = int(os.getenv("WATCH_CREATED_WEDGE_S", "300"))
 
 _MANUAL_STEPS = [
     ("watch:docker-socket",
@@ -557,6 +560,37 @@ def _sense(own_project: str) -> list[dict[str, Any]]:
                 "detail": {"exit_code": st.get("ExitCode"),
                            "oom": st.get("OOMKilled"),
                            "log_tail": tail[-1500:], "diagnosis": diag}})
+
+        # created-wedge: compose/Coolify created the container but the
+        # start failed — port bind conflict, missing mount, bad env.
+        # No logs, no exit event, no healthcheck: invisible to every
+        # sensor above. Docker leaves it in 'created' indefinitely.
+        elif status == "created":
+            try:
+                # docker Created is RFC3339-nanos UTC — 19 chars gives
+                # "YYYY-MM-DDTHH:MM:SS", tz attached explicitly
+                created = datetime.fromisoformat(
+                    (ins.get("Created") or "")[:19]
+                ).replace(tzinfo=timezone.utc)
+                age_s = (datetime.now(timezone.utc)
+                         - created).total_seconds()
+            except Exception:
+                age_s = None
+            if age_s is not None and age_s > CREATED_WEDGE_S:
+                findings.append({
+                    "signature": f"container:{name}:created-wedge",
+                    "source": "watch", "severity": "high",
+                    "detail": {
+                        "status": "created",
+                        "age_s": round(age_s),
+                        "diagnosis": ("container created but never "
+                                      "started — 'docker start' failed "
+                                      "(port bind conflict, missing "
+                                      "mount, or bad env). The error is "
+                                      "in the deploy/Coolify log, not "
+                                      "container logs: 'docker inspect "
+                                      f"{name}' + 'docker ps --filter "
+                                      "publish' to find the collision")}})
 
         # healthy-by-docker but config-dead — bad provider keys, plan
         # 401/403s, persistent 429s all leave the process running
