@@ -340,6 +340,7 @@ def card(sym: str) -> dict[str, Any]:
             "fv_v1": _try_fv_v1(s, spot),
             "lt_power": _try_lt_power(s),
             "growth_quality": gq,
+            "capex": _try_capex(s),
             "readiness": readiness,
             "tailwinds": tws, "watches": _try_watches(s),
             "diagnosis": tape_diagnosis.diagnose(
@@ -500,6 +501,26 @@ def _try_fv_v1(sym: str, spot) -> dict:
             out["upside_pct"] = round(
                 (float(res.fair_value) / spot - 1) * 100, 1)
         return out
+    except Exception:
+        return {}
+
+
+def _try_capex(sym: str) -> dict:
+    """AI capex-cycle context for the card — this symbol's basket
+    exposure against the live engine reading. Display context only;
+    the score/flags are owned by the engine, nothing here feeds the
+    readiness checklists."""
+    try:
+        from app.signals import capex_cycle as _cx
+        p = _cx.read() or {}
+        if not p.get("band"):
+            return {}
+        return {"score": p.get("score"), "band": p.get("band"),
+                "flags": p.get("flags") or [],
+                "d3m": p.get("d3m"),
+                "exposure": _cx.symbol_exposure(sym),
+                "flag": _cx.symbol_flag(sym, p),
+                "as_of": str(p.get("as_of") or "")[:19]}
     except Exception:
         return {}
 

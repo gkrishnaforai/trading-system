@@ -95,6 +95,28 @@ if _sf and _sf.get("etf"):
 elif H.get("sector"):
     st.caption("🔄 sector flow unavailable — no sector-ETF mapping")
 
+_cx = H.get("capex") or {}
+if _cx.get("band"):
+    _expo = _cx.get("exposure") or []
+    _FLAG_NOTE = {
+        "capex-beta": "new-build exposure — a capex slowdown hits "
+                      "this name first",
+        "rotation-candidate": "operator/lifecycle — where spend "
+                              "rotates TO in a slowdown",
+        "capex-watch": "early-warning flag on this basket"}
+    _fl = _cx.get("flag")
+    st.caption(
+        f"🏗 AI capex cycle: **{_cx['band']}** "
+        f"{_cx.get('score')}/100"
+        + (f" ({_cx['d3m']:+.1f} 3m)" if _cx.get("d3m") is not None else "")
+        + (f" · {', '.join(_expo)}" if _expo else
+           " · not in a capex basket")
+        + (f" — {_FLAG_NOTE.get(_fl, _fl)}" if _fl else "")
+        + " — context, not an entry signal")
+    if _cx.get("flags"):
+        st.caption("　└ engine flags: "
+                   + ", ".join(f"`{f}`" for f in _cx["flags"]))
+
 # ------------------------------------------------------------ the card
 t, f, g = st.columns(3)
 with f:

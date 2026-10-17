@@ -1,13 +1,16 @@
 """AI capex-cycle engine — detect a pacing slowdown 3-6 months before
 reported revenue shows it.
 
-Composite 0-100 (higher = stronger slowdown evidence) across seven
+Composite 0-100 (higher = stronger slowdown evidence) across eight
 convergent components:
 
     hyperscaler capex trajectory  20%  reported YoY growth DECELERATION
     AI monetization               18%  revenue growth vs capex growth
     equipment orders proxy        18%  basket revenue-growth decel
+                                       (+ ASML bookings override)
     market-implied rotation       14%  new-build vs operator RS, 63d
+    TSM monthly revenue           10%  manual monthly input / quarterly
+                                       proxy — earliest hard demand print
     data-center construction      10%  manual CBRE input + EQIX/DLR proxy
     semis AI demand               10%  MU/NVDA/AVGO/MRVL decel + RS
     financing / macro             10%  ^TYX level+delta, HYG/LQD stress
@@ -53,9 +56,11 @@ _CONSTRUCTION_PROXY = ["EQIX"]          # DLR absent from daily_bars
 _CREDIT = ["HYG", "LQD"]                # high-yield / IG credit ETFs
 _RATES = ["^TYX", "^TNX"]
 
+# renormalized by total at composite time — legs can be added without
+# rebalancing the sum to 1.0
 _WEIGHTS = {"capex": 0.20, "monetization": 0.18, "equipment": 0.18,
-            "market": 0.14, "construction": 0.10, "semis": 0.10,
-            "financing": 0.10}
+            "market": 0.14, "tsm": 0.10, "construction": 0.10,
+            "semis": 0.10, "financing": 0.10}
 _FUND_TTL_DAYS = 7                       # statements are quarterly
 
 
@@ -169,7 +174,7 @@ def _fundamentals() -> dict[str, Any]:
         pass
     per = {}
     for sym in set(HYPERSCALERS + EQUIPMENT + SEMIS_AI +
-                   _CONSTRUCTION_PROXY):
+                   _CONSTRUCTION_PROXY + ["TSM"]):
         cg_now, cg_prior = _q_capex_growth(sym)
         rg_now, rg_prior = _q_rev_growth(sym)
         per[sym] = {"capex_yoy": _rnd(cg_now), "capex_yoy_prev":
@@ -245,20 +250,35 @@ def _equipment_component(per: dict, lang: dict | None = None) -> dict:
     blended 30% with transcript order/backlog language when scored —
     the language often turns a quarter before the revenue print."""
     lang = lang or {}
+    # ASML bookings are the cleanest equipment-orders number but only
+    # exist in the quarterly release — manual input slot:
+    # engine_weights['capex:manual'].asml_bookings =
+    #   {"yoy": 86.0, "prev_yoy": 54.0, "quarter": "Q4'26"}
+    asml_bk = (_get("capex:manual") or {}).get("asml_bookings")
     scores, rows = [], []
     for sym in EQUIPMENT:
         p = per.get(sym) or {}
         s = _decel_score(p.get("rev_yoy"), p.get("rev_yoy_prev"))
+        bk_note = None
+        if sym == "ASML" and isinstance(asml_bk, dict) and \
+                isinstance(asml_bk.get("yoy"), (int, float)):
+            s = _decel_score(float(asml_bk["yoy"]), asml_bk.get("prev_yoy")
+                             if isinstance(asml_bk.get("prev_yoy"),
+                                           (int, float)) else None)
+            bk_note = (f"bookings {asml_bk['yoy']:+.0f}% YoY "
+                       f"({asml_bk.get('quarter') or '?'}) — measured")
         lg = (lang.get(sym) or {}).get("slowdown")
         blended = round(0.7 * s + 0.3 * lg, 1) if lg is not None else s
         scores.append(blended)
         rows.append({"sym": sym, "rev_yoy": p.get("rev_yoy"),
                      "prev": p.get("rev_yoy_prev"), "score": round(s),
                      "lang": lg, "blended": round(blended),
+                     "bookings": bk_note,
                      "orders_language":
                          (lang.get(sym) or {}).get("orders_language")})
     return {"score": round(sum(scores) / len(scores), 1),
-            "detail": rows, "kind": "proxy:rev-decel + order language"}
+            "detail": rows, "kind": "proxy:rev-decel + order language"
+            + (" + ASML bookings" if asml_bk else "")}
 
 
 def _market_component() -> dict:
@@ -327,6 +347,37 @@ def _construction_component(per: dict) -> dict:
     base = sum(scores) / len(scores) if scores else 30.0
     return {"score": round(base, 1), "detail": rows,
             "kind": "proxy:EQIX (awaiting manual CBRE input)"}
+
+
+def _tsm_component(per: dict) -> dict:
+    """TSM revenue — the 'advanced-node utilization' step of the chain.
+    TSMC publishes monthly revenue ~the 10th, roughly a quarter ahead
+    of the wafer-out prints — the earliest hard demand read available.
+    No API carries it → manual monthly input wins:
+        engine_weights['capex:manual'].tsm_monthly =
+            {"yoy": 22.4, "prev_yoy": 35.1, "month": "2026-09"}
+    FMP quarterly TSM revenue decel is the fallback proxy."""
+    manual = (_get("capex:manual") or {}).get("tsm_monthly")
+    if isinstance(manual, dict) and isinstance(manual.get("yoy"),
+                                              (int, float)):
+        s = _decel_score(float(manual["yoy"]),
+                         manual.get("prev_yoy") if isinstance(
+                             manual.get("prev_yoy"), (int, float))
+                         else None)
+        return {"score": s,
+                "detail": {"month": manual.get("month"),
+                           "monthly_rev_yoy": manual["yoy"],
+                           "prev_yoy": manual.get("prev_yoy")},
+                "kind": "measured:TSM monthly revenue (manual input)"}
+    p = per.get("TSM") or {}
+    s = _decel_score(p.get("rev_yoy"), p.get("rev_yoy_prev"))
+    return {"score": s,
+            "detail": {"sym": "TSM", "rev_yoy": p.get("rev_yoy"),
+                       "prev": p.get("rev_yoy_prev"),
+                       "note": "quarterly proxy — monthly revenue not "
+                               "API-visible; enter via capex:manual "
+                               ".tsm_monthly"},
+            "kind": "proxy:TSM quarterly rev decel"}
 
 
 def _semis_component(per: dict) -> dict:
@@ -458,6 +509,10 @@ def _guidance(score: float, band: str, flags: list[str],
     if legs.get("equipment", 0) >= 50:
         watch.append("equipment orders proxy decelerating — next VRT/"
                      "ETN/CRDO backlog language is the confirmation")
+    if legs.get("tsm", 0) >= 50:
+        watch.append("TSM leg elevated — foundry revenue decel is the "
+                     "earliest hard demand print; next monthly release "
+                     "is the confirmation")
     if not watch:
         watch.append("next hyperscaler prints — capex growth-rate "
                      "DECELERATION (+80→+60→+30) is the trigger, not "
@@ -524,10 +579,12 @@ def refresh() -> dict[str, Any]:
              "monetization": _monetization_component(per),
              "equipment": _equipment_component(per, lang),
              "market": _market_component(),
+             "tsm": _tsm_component(per),
              "construction": _construction_component(per),
              "semis": _semis_component(per),
              "financing": _financing_component()}
-    score = sum(comps[k]["score"] * w for k, w in _WEIGHTS.items())
+    score = (sum(comps[k]["score"] * w for k, w in _WEIGHTS.items())
+             / sum(_WEIGHTS.values()))
     n_elevated = sum(1 for c in comps.values() if c["score"] >= 50)
     hist = _history()
     d3 = _delta(hist, 91)
@@ -576,6 +633,20 @@ def refresh() -> dict[str, Any]:
 
 def read() -> dict[str, Any]:
     return _get("capex:cycle") or {}
+
+
+_ROLE_MAP = (("hyperscaler", HYPERSCALERS),
+             ("equipment/orders", EQUIPMENT),
+             ("semis/AI-silicon", SEMIS_AI),
+             ("new-build", NEW_BUILD),
+             ("operator/lifecycle", OPERATORS))
+
+
+def symbol_exposure(sym: str) -> list[str]:
+    """Which capex baskets this symbol sits in — display layer, so a
+    stock page can say 'new-build capex-beta' even when no flag is
+    currently firing."""
+    return [role for role, basket in _ROLE_MAP if sym in basket]
 
 
 def symbol_flag(sym: str, payload: dict | None = None) -> str | None:
