@@ -250,4 +250,23 @@ export const api = {
     getRaw<{ success?: boolean; count?: number; data?: EarningsRow[] }>(
       `/admin/earnings-calendar?start_date=${start}&end_date=${end}`,
     ),
+  posts: (opts: { kind?: string; limit?: number; sym?: string } = {}) =>
+    get<{ posts?: PostRow[] }>(
+      `/posts?limit=${opts.limit ?? 50}` +
+      (opts.kind ? `&kind=${opts.kind}` : '') +
+      (opts.sym ? `&sym=${encodeURIComponent(opts.sym)}` : ''),
+    ),
+  post: (slug: string) => get<Post>(`/posts/${encodeURIComponent(slug)}`),
 }
+
+export type PostRow = {
+  slug: string
+  kind: string
+  title: string
+  dek?: string
+  symbols?: string[]
+  as_of?: string
+  published_at?: string
+}
+
+export type Post = PostRow & { body_md?: string; tier?: string }

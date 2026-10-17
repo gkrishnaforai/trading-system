@@ -1,6 +1,6 @@
 """
 Blog Generation Page (Elite & Admin)
-AI-powered blog generation for market insights
+Post engine — deterministic insights published to /insights
 """
 import streamlit as st
 import sys
@@ -11,47 +11,71 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils import setup_page_config, render_sidebar
-from api_client import get_go_api_client, APIError
+from api_client import get_python_api_client, APIError
 
 setup_page_config("Blog Generation", "📝")
 
-st.title("📝 Blog Generation (Elite & Admin)")
+st.title("📝 Insights / Blog Generation (Elite & Admin)")
 
 # Sidebar
 subscription_level = render_sidebar()
 
 if subscription_level not in ["elite", "admin"]:
-    st.warning("⚠️ Blog Generation is available for Elite and Admin users only.")
+    st.warning("⚠️ Blog generation is available for Elite and Admin users only.")
     st.info("💡 Upgrade to Elite to access blog generation features.")
 else:
-    col1, col2 = st.columns([1, 1])
-    
+    client = get_python_api_client()
+
+    col1, col2 = st.columns([1, 2])
+
     with col1:
-        user_id = st.text_input("User ID", value="user1", key="blog_user")
-        symbol = st.text_input("Symbol (optional)", key="blog_symbol")
-        topic_type = st.selectbox("Topic Type", ["signal_change", "trend_breakout", "earnings_alert"], key="blog_topic")
-        
-        if st.button("Generate Blog", key="generate_blog", type="primary"):
-            st.info("Blog generation is not triggered from Streamlit in Go-only mode. Fetching existing LLM blog from Go API if available...")
+        st.subheader("Generate")
+        st.caption(
+            "Posts are deterministic — built from journaled regime "
+            "snapshots, graded board calls, and stock health cards. "
+            "Idempotent by slug; re-running refreshes today's posts.")
+        sym = st.text_input("Mover explainer for symbol (optional)",
+                            key="post_sym").strip().upper()
+        if st.button("Generate posts", type="primary",
+                     key="gen_posts"):
             try:
-                go_client = get_go_api_client()
-                response = go_client.get(f"api/v1/llm_blog/{symbol.upper()}", timeout=60)
-                st.session_state["blog_result"] = response
-                st.success("✅ Blog fetched!")
+                path = "api/v1/board/posts/generate"
+                if sym:
+                    path += f"?sym={sym}"
+                res = client.post(path)
+                st.session_state["post_gen"] = res
+                st.success("✅ Posts generated")
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ Failed to fetch blog from Go API: {e}")
-    
-    with col2:
-        if "blog_result" in st.session_state:
-            st.subheader("Generated Blog")
-            result = st.session_state["blog_result"]
-            if result.get('draft'):
-                draft = result['draft']
-                st.write(f"**Title:** {draft.get('title', 'N/A')}")
-                st.write(f"**Slug:** {draft.get('slug', 'N/A')}")
-                st.markdown(f"**Content:**\n\n{draft.get('content', 'N/A')}")
-                st.write(f"**Tags:** {', '.join(draft.get('tags', []))}")
-            else:
-                st.json(result)
+                st.error(f"❌ Generation failed: {e}")
+        if st.session_state.get("post_gen"):
+            st.json(st.session_state["post_gen"].get("generated", {}))
 
+    with col2:
+        st.subheader("Published")
+        kind = st.selectbox(
+            "Kind",
+            ["all", "daily_brief", "receipts", "mover",
+             "event_verdict", "explainer"],
+            key="post_kind")
+        try:
+            q = "api/v1/board/posts?limit=50"
+            if kind != "all":
+                q += f"&kind={kind}"
+            data = client.get(q)
+            posts = (data or {}).get("posts", [])
+            if not posts:
+                st.info("No posts yet — hit Generate posts.")
+            for p in posts:
+                with st.expander(
+                        f"{p.get('as_of','')} · {p.get('kind','')} — "
+                        f"{p.get('title','')}"):
+                    st.caption(p.get("dek") or "")
+                    try:
+                        full = client.get(
+                            f"api/v1/board/posts/{p['slug']}")
+                        st.markdown(full.get("body_md", ""))
+                    except Exception as e:
+                        st.warning(f"couldn't load body: {e}")
+        except Exception as e:
+            st.error(f"❌ Failed to list posts: {e}")

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException
@@ -2525,3 +2525,61 @@ async def planner_books():
         " regime, status, created_at FROM planner_books"
         " ORDER BY id DESC LIMIT 20")
     return {"books": [dict(r) for r in rows]}
+
+
+@router.get("/posts")
+async def posts(kind: str | None = None, limit: int = 50,
+                sym: str | None = None):
+    """Published insights — daily briefs, receipts recaps, mover
+    explainers. Lazy-publishes today's brief when missing so the
+    insights page never waits on a cron."""
+    from app.signals import post_engine
+    today_slug = f"daily-brief-{date.today().isoformat()}"
+    rows = await asyncio.to_thread(post_engine.list_posts, kind, limit)
+    if not any(r["slug"] == today_slug for r in rows):
+        await asyncio.to_thread(post_engine.run)
+        rows = await asyncio.to_thread(post_engine.list_posts, kind,
+                                       limit)
+    if sym:
+        mslug = f"mover-{sym.lower()}-{date.today().isoformat()}"
+        if not any(r["slug"] == mslug for r in rows):
+            try:
+                from app.signals import stock_health
+                card = await asyncio.to_thread(stock_health.card, sym)
+                if card:
+                    await asyncio.to_thread(post_engine.mover_post,
+                                            sym, card)
+                    rows = await asyncio.to_thread(
+                        post_engine.list_posts, kind, limit)
+            except Exception:
+                pass
+    return {"posts": rows}
+
+
+@router.get("/posts/{slug}")
+async def post(slug: str):
+    from app.signals import post_engine
+    r = await asyncio.to_thread(post_engine.get_post, slug)
+    if not r:
+        raise HTTPException(status_code=404, detail="post not found")
+    return r
+
+
+@router.post("/posts/generate")
+async def posts_generate(sym: str | None = None):
+    """Manual post generation — daily brief, receipts recap, and
+    optionally a mover explainer for one symbol."""
+    from app.signals import post_engine
+    made = await asyncio.to_thread(post_engine.run)
+    if sym:
+        try:
+            from app.signals import stock_health
+            card = await asyncio.to_thread(stock_health.card, sym)
+            if card:
+                r = await asyncio.to_thread(post_engine.mover_post,
+                                            sym, card)
+                if r:
+                    made["mover"] = r["slug"]
+        except Exception as exc:
+            made["mover_error"] = str(exc)
+    return {"generated": made}
