@@ -385,6 +385,30 @@ if fvd.get("scenarios") and fvd.get("spot"):
                "(bear 25% · base 50% · bull 20% · explosive 5%) — "
                "a probability-weighted value, not just the base case")
 
+    # freshness — three clocks: when the engine ran, the input data
+    # watermark, and the raw fundamentals snapshot it resolved from.
+    # A stale FV is a different thing than a low FV — show which.
+    _fresh = []
+    if fvd.get("as_of"):
+        _fresh.append(f"run `{str(fvd['as_of'])[:10]}`")
+    if fvd.get("fundamentals_as_of"):
+        try:
+            _fage = (date.today() - date.fromisoformat(
+                str(fvd["fundamentals_as_of"])[:10])).days
+            _fresh.append(
+                f"fundamentals snapshot `{fvd['fundamentals_as_of']}`"
+                + (f" ⚠ {_fage}d old" if _fage > 45 else ""))
+        except Exception:
+            _fresh.append(
+                f"fundamentals snapshot `{fvd['fundamentals_as_of']}`")
+    if _fresh:
+        st.caption("🕐 " + " · ".join(_fresh))
+    if fvd.get("spot_at_run") and abs(
+            float(fvd["spot_at_run"]) / _sp - 1) > 0.03:
+        st.caption(f"🕐 spot at run was ${float(fvd['spot_at_run']):.2f}"
+                   f" — price moved {float(_sp)/float(fvd['spot_at_run'])-1:+.0%}"
+                   " since; FV vs *today's* price drifts until the next run")
+
     # v1 legacy engine — still computes inside /fair-value; shown here
     # for comparison. Different math (regime keyword heuristics +
     # hardcoded blend), so divergence itself is signal.

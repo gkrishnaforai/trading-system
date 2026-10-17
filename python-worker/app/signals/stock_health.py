@@ -241,7 +241,8 @@ def card(sym: str) -> dict[str, Any]:
         r = db.execute_query(
             "SELECT symbol, fair_value, scenario_fair_values,"
             " expected_fair_value,"
-            " quality_flags, regime, method_results, decision, as_of"
+            " quality_flags, regime, method_results, decision, as_of,"
+            " inputs_watermark, spot_at_run"
             " FROM fair_value_v2_runs WHERE symbol=:s"
             " ORDER BY as_of DESC LIMIT 1", {"s": s})
         p = db.execute_query(
@@ -432,8 +433,25 @@ def _fv_detail(run_row: dict, spot) -> dict:
             analyst["as_of"] = str(ar[0].get("consensus_date") or "")
     except Exception:
         pass
+    # freshness — the FV run timestamp, the input watermark it ran
+    # against, and the raw fundamentals snapshot the features resolve
+    # from. Three different clocks; a stale number must be legible.
+    fund_as_of = None
+    try:
+        from app.database import db
+        fr = db.execute_query(
+            "SELECT MAX(as_of_date) AS d FROM fundamentals_snapshots"
+            " WHERE symbol=:s", {"s": run_row["symbol"]})
+        if fr and fr[0].get("d"):
+            fund_as_of = str(fr[0]["d"])[:10]
+    except Exception:
+        pass
     return {
         "as_of": str(run_row.get("as_of") or "")[:19],
+        "inputs_as_of": str(run_row.get("inputs_watermark") or "")[:10]
+                        or None,
+        "fundamentals_as_of": fund_as_of,
+        "spot_at_run": run_row.get("spot_at_run"),
         "regime": run_row.get("regime"),
         "scenarios": scen,
         "expected": run_row.get("expected_fair_value"),
