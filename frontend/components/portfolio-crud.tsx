@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const input =
   'rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none'
@@ -132,11 +132,19 @@ export function HoldingRow({ p, h }: {
   }
 }) {
   const [edit, setEdit] = useState(false)
+  const [arm, setArm] = useState(false)
   const [shares, setShares] = useState(String(h.shares_held ?? ''))
   const [cost, setCost] = useState(String(h.average_cost ?? ''))
   const [busy, setBusy] = useState(false)
   const router = useRouter()
   const sym = h.symbol.toUpperCase()
+
+  // armed delete auto-reverts — a stray ✕ tap can't leave a loaded gun
+  useEffect(() => {
+    if (!arm) return
+    const t = setTimeout(() => setArm(false), 6000)
+    return () => clearTimeout(t)
+  }, [arm])
 
   return (
     <div className="flex items-center justify-between gap-3 py-2.5 text-sm">
@@ -179,6 +187,32 @@ export function HoldingRow({ p, h }: {
           <button type="button" onClick={() => setEdit(false)}
             className="text-faint hover:text-ink">✕</button>
         </form>
+      ) : arm ? (
+        <div className="flex items-center gap-2.5">
+          <span className="text-xs text-defensive">
+            remove {sym}?
+          </span>
+          <button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true)
+              const ok = await call(
+                `portfolios/${p}/holdings/${sym}`, 'DELETE')
+              setBusy(false)
+              if (ok) { setArm(false); router.refresh() }
+            }}
+            className="rounded-full bg-defensive px-2.5 py-0.5 text-[11px] font-semibold text-canvas transition-opacity disabled:opacity-40"
+          >
+            {busy ? '…' : 'yes'}
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => setArm(false)}
+            className="text-[11px] font-medium text-faint hover:text-ink"
+          >
+            no
+          </button>
+        </div>
       ) : (
         <div className="flex items-center gap-3 font-mono text-xs text-muted">
           <span>{h.shares_held ?? '—'} sh</span>
@@ -189,13 +223,7 @@ export function HoldingRow({ p, h }: {
             title="edit"
           >✎</button>
           <button
-            onClick={async () => {
-              if (busy) return
-              setBusy(true)
-              await call(`portfolios/${p}/holdings/${sym}`, 'DELETE')
-              setBusy(false)
-              router.refresh()
-            }}
+            onClick={() => setArm(true)}
             className="text-faint hover:text-defensive"
             title="remove"
           >✕</button>
