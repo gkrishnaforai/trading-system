@@ -137,6 +137,69 @@ export type RegimeReceipt = {
   lead_correct?: boolean | null
 }
 
+export type PulseRow = {
+  symbol?: string
+  portfolio?: string
+  kind?: string
+  shares?: number
+  avg_cost?: number
+  price?: number
+  pnl_pct?: number | null
+  mom_state?: string
+  mom_prev?: string
+  fund_state?: string
+  revision_grade?: string
+  fv_upside?: number | null
+  gq_pct?: number
+  fwd_pe?: number
+  sector?: string
+  sector_etf?: string
+  sector_flow?: string
+  spec?: boolean
+  action?: string
+  bucket?: string
+  why?: string[]
+  action_label?: string
+  action_confidence?: number
+  next_earnings_date?: string
+}
+
+export type PulseBook = {
+  positions?: number
+  cost?: number
+  value?: number
+  pnl?: number
+  pnl_pct?: number | null
+  target_pct?: number
+  on_pace?: boolean
+  track_days?: number
+  track_ret_pct?: number
+  track_target_pct?: number
+  spy_ret_pct?: number
+  excess_pct?: number
+  goal_month?: number
+}
+
+export type AlertItem = {
+  id?: string
+  symbol?: string
+  event_type?: string
+  direction?: string
+  materiality?: string
+  title?: string
+  detail?: Record<string, unknown>
+  source?: string
+  in_portfolio?: boolean
+  in_watchlist?: boolean
+  status?: string
+  priority_score?: number
+  created_at?: string
+  rating_action?: string
+  momentum?: string
+  fund_state?: string
+  fund_alert?: string
+}
+
 async function getRaw<T>(path: string): Promise<T | null> {
   try {
     const res = await fetch(`${BASE}${path}`, {
@@ -158,6 +221,16 @@ export const api = {
   receipts: (limit = 100) =>
     get<{ decisions?: Receipt[]; regime?: RegimeReceipt[] }>(
       `/receipts?limit=${limit}`,
+    ),
+  portfolioPulse: () =>
+    get<{ as_of?: string; rows?: PulseRow[]; book?: PulseBook }>(
+      '/portfolio-pulse',
+    ),
+  alerts: (opts: { hours?: number; symbol?: string; status?: string } = {}) =>
+    getRaw<{ count?: number; items?: AlertItem[] }>(
+      `/api/v1/alerts?hours=${opts.hours ?? 168}` +
+      (opts.symbol ? `&symbol=${encodeURIComponent(opts.symbol)}` : '') +
+      (opts.status ? `&status=${opts.status}` : ''),
     ),
   stockHealth: (sym: string) =>
     get<Record<string, unknown>>(

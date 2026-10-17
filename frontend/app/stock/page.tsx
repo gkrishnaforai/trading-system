@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { api } from '@/lib/api'
 import { Chip, Gate, Kv, Section, Stat, Val, fmtShort } from '@/components/regime'
+import { WatchToggle } from '@/components/watchlist'
 
 function money(v: unknown, dec = 2) {
   const n = Number(v)
@@ -74,7 +75,10 @@ export default async function StockPage({
     )
   }
 
-  const card = await api.stockHealth(sym)
+  const [card, alerts] = await Promise.all([
+    api.stockHealth(sym),
+    api.alerts({ symbol: sym, hours: 168 }),
+  ])
   if (!card) {
     return (
       <main className="mx-auto max-w-3xl px-5 pb-20 pt-10">
@@ -117,7 +121,10 @@ export default async function StockPage({
       {/* hero */}
       <header className="pb-8">
         <div className="flex items-baseline justify-between gap-4">
-          <h1 className="font-semibold text-display text-ink">{sym}</h1>
+          <h1 className="font-semibold text-display text-ink">
+            {sym}
+            <span className="ml-3 align-middle"><WatchToggle sym={sym} /></span>
+          </h1>
           <div className="text-right">
             <div className="font-mono text-2xl text-ink">
               {money(card.spot)}
@@ -331,6 +338,36 @@ export default async function StockPage({
       {/* expandable depth */}
       <div className="mt-8">
         <Gate feature="detail_sections">
+          {(alerts?.items ?? []).length > 0 && (
+            <Section title="Alerts on this name" subtitle="last 7 days" defaultOpen>
+              <div className="divide-y divide-hairline/60">
+                {(alerts?.items ?? []).slice(0, 8).map((a, i) => (
+                  <div key={a.id ?? i} className="py-2.5 text-sm">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className={
+                        String(a.direction).toLowerCase() === 'negative'
+                          ? 'text-defensive'
+                          : String(a.direction).toLowerCase() === 'positive'
+                            ? 'text-aggressive'
+                            : 'text-ink'
+                      }>
+                        {a.title ?? '—'}
+                      </span>
+                      <span className="shrink-0 font-mono text-[11px] text-faint">
+                        {a.event_type != null &&
+                          String(a.event_type).replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                    {a.detail != null && (
+                      <div className="pt-0.5 text-xs text-muted">
+                        {fmtShort(a.detail).slice(0, 180)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
           {fvMethods.length > 0 && (
             <Section title="Valuation methods" subtitle={`${fvMethods.length} blended`}>
               <div className="divide-y divide-transparent">
