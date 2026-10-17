@@ -244,6 +244,49 @@ def evaluate_regime(days_back: int = 120) -> dict:
     return {"evaluated": done}
 
 
+def receipts(limit: int = 100) -> dict:
+    """The public ledger — every journaled decision with its graded
+    outcomes, newest first. Hits and misses in the same list; the
+    honesty is the product."""
+    from app.database import db
+    rows = db.execute_query(
+        """
+        SELECT d.id, d.as_of, d.symbol, d.action, d.instrument,
+               d.score, d.momentum_state, d.posture, d.price,
+               d.entry, d.stop, d.target,
+               o5.ret_pct  AS r5,  o10.ret_pct AS r10,
+               o20.ret_pct AS r20, o40.ret_pct AS r40,
+               o60.ret_pct AS r60,
+               o5.mfe_pct AS mfe,  o5.mae_pct AS mae
+        FROM board_decisions d
+        LEFT JOIN board_outcomes o5  ON o5.decision_id = d.id
+                                    AND o5.horizon_days = 5
+        LEFT JOIN board_outcomes o10 ON o10.decision_id = d.id
+                                    AND o10.horizon_days = 10
+        LEFT JOIN board_outcomes o20 ON o20.decision_id = d.id
+                                    AND o20.horizon_days = 20
+        LEFT JOIN board_outcomes o40 ON o40.decision_id = d.id
+                                    AND o40.horizon_days = 40
+        LEFT JOIN board_outcomes o60 ON o60.decision_id = d.id
+                                    AND o60.horizon_days = 60
+        ORDER BY d.as_of DESC, d.id DESC
+        LIMIT :n
+        """,
+        {"n": limit})
+    regime = db.execute_query(
+        """
+        SELECT as_of, stance, lead_scenario, spy_ret_20d, spy_ret_60d,
+               lead_correct
+        FROM regime_snapshots
+        ORDER BY as_of DESC LIMIT 60
+        """)
+    for r in rows:
+        r["as_of"] = str(r.get("as_of") or "")[:10]
+    for r in regime:
+        r["as_of"] = str(r.get("as_of") or "")[:10]
+    return {"decisions": rows, "regime": regime}
+
+
 def instrument_record() -> dict:
     """Did the instrument suggestions work — LEAPS calls/puts vs stock
     actions, per horizon. The 'were we right' ledger for the board's

@@ -106,6 +106,37 @@ export type EarningsRow = {
   [k: string]: unknown
 }
 
+export type Receipt = {
+  id?: number
+  as_of?: string
+  symbol?: string
+  action?: string
+  instrument?: string
+  score?: number
+  momentum_state?: string
+  posture?: string
+  price?: number
+  entry?: number
+  stop?: number
+  target?: number
+  r5?: number | null
+  r10?: number | null
+  r20?: number | null
+  r40?: number | null
+  r60?: number | null
+  mfe?: number | null
+  mae?: number | null
+}
+
+export type RegimeReceipt = {
+  as_of?: string
+  stance?: string
+  lead_scenario?: string
+  spy_ret_20d?: number | null
+  spy_ret_60d?: number | null
+  lead_correct?: boolean | null
+}
+
 async function getRaw<T>(path: string): Promise<T | null> {
   try {
     const res = await fetch(`${BASE}${path}`, {
@@ -124,6 +155,10 @@ export const api = {
   macroEvents: () =>
     get<{ events?: MacroEvent[] } | MacroEvent[]>('/macro-events'),
   daily: () => get<DailyBoard>('/daily'),
+  receipts: (limit = 100) =>
+    get<{ decisions?: Receipt[]; regime?: RegimeReceipt[] }>(
+      `/receipts?limit=${limit}`,
+    ),
   stockHealth: (sym: string) =>
     get<Record<string, unknown>>(
       `/symbol/${encodeURIComponent(sym)}/health`,

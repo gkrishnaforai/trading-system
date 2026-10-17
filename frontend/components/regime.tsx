@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { canSee, tierLabel } from '@/lib/tier'
 
 export function Chevron() {
   return (
@@ -155,6 +156,29 @@ export function Val({ v, depth = 0 }: { v: unknown; depth?: number }) {
           </span>
         </div>
       ))}
+    </div>
+  )
+}
+
+/** Tier gate — renders children when the current tier allows, else a
+    subscribe teaser. Auth isn't wired yet (currentTier() = pro), so
+    this annotates the sections for the day it is. */
+export function Gate({
+  feature,
+  children,
+}: {
+  feature: string
+  children: React.ReactNode
+}) {
+  if (canSee(feature)) return <>{children}</>
+  return (
+    <div className="rounded-xl border border-dashed border-accent/50 bg-accent/[0.04] px-5 py-6 text-center">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">
+        {tierLabel(feature)}
+      </div>
+      <p className="pt-2 text-sm text-muted">
+        This section is part of the {tierLabel(feature)} plan.
+      </p>
     </div>
   )
 }

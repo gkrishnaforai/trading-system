@@ -2008,6 +2008,15 @@ async def track_record():
     return out
 
 
+@router.get("/receipts")
+async def receipts(limit: int = 100):
+    """The public ledger — every journaled board pick with its graded
+    forward returns at 5/10/20d (LEAPS out to 60d), plus the regime
+    calls. Hits and misses in the same list."""
+    from app.signals import board_tracking as bt
+    return await asyncio.to_thread(bt.receipts, limit)
+
+
 @router.get("/hedge")
 async def hedge_state():
     """The insurance card — coverage vs regime-scaled target, spend

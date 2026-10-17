@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { api, type BoardItem } from '@/lib/api'
-import { Chip, Stat } from '@/components/regime'
+import { Chip, Gate, Stat } from '@/components/regime'
 
 const ACTION_TONE: Record<string, string> = {
   EXIT: 'border-defensive/40 text-defensive',
@@ -148,18 +148,20 @@ export default async function BoardPage() {
       </section>
 
       <div className="mt-8 border-t border-hairline">
-        {items.length === 0 ? (
-          <p className="py-8 text-sm text-muted">
-            No board actions today — the board only surfaces when the
-            evidence meets the bar. No trade is a valid outcome.
-          </p>
-        ) : (
-          <div className="divide-y divide-hairline/60">
-            {items.map((it, i) => (
-              <BoardRow key={`${it.symbol}-${i}`} it={it} />
-            ))}
-          </div>
-        )}
+        <Gate feature="board">
+          {items.length === 0 ? (
+            <p className="py-8 text-sm text-muted">
+              No board actions today — the board only surfaces when the
+              evidence meets the bar. No trade is a valid outcome.
+            </p>
+          ) : (
+            <div className="divide-y divide-hairline/60">
+              {items.map((it, i) => (
+                <BoardRow key={`${it.symbol}-${i}`} it={it} />
+              ))}
+            </div>
+          )}
+        </Gate>
       </div>
 
       <footer className="mt-16 border-t border-hairline pt-6 flex justify-between text-[11px] text-faint">

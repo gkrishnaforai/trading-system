@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { api } from '@/lib/api'
-import { Chip, Kv, Section, Stat, Val, fmtShort } from '@/components/regime'
+import { Chip, Gate, Kv, Section, Stat, Val, fmtShort } from '@/components/regime'
 
 function money(v: unknown, dec = 2) {
   const n = Number(v)
@@ -330,53 +330,55 @@ export default async function StockPage({
 
       {/* expandable depth */}
       <div className="mt-8">
-        {fvMethods.length > 0 && (
-          <Section title="Valuation methods" subtitle={`${fvMethods.length} blended`}>
-            <div className="divide-y divide-transparent">
-              {fvMethods.map((m, i) => (
-                <Kv
-                  key={i}
-                  k={String(m.key ?? 'method') +
-                    (m.w != null ? ` (w ${Number(m.w).toFixed(2)})` : '')}
-                  v={money(m.fv)}
-                />
-              ))}
-            </div>
-          </Section>
-        )}
+        <Gate feature="detail_sections">
+          {fvMethods.length > 0 && (
+            <Section title="Valuation methods" subtitle={`${fvMethods.length} blended`}>
+              <div className="divide-y divide-transparent">
+                {fvMethods.map((m, i) => (
+                  <Kv
+                    key={i}
+                    k={String(m.key ?? 'method') +
+                      (m.w != null ? ` (w ${Number(m.w).toFixed(2)})` : '')}
+                    v={money(m.fv)}
+                  />
+                ))}
+              </div>
+            </Section>
+          )}
 
-        {(tailwinds.length > 0 || themes.length > 0) && (
-          <Section title="Tailwinds & themes">
-            <div className="flex flex-wrap gap-2">
-              {tailwinds.slice(0, 12).map((t, i) => (
-                <Chip key={`t${i}`} label={fmtShort(t)} tone="ok" />
-              ))}
-              {themes.slice(0, 12).map((t, i) => (
-                <Chip key={`h${i}`} label={fmtShort(t)} />
-              ))}
-            </div>
-          </Section>
-        )}
+          {(tailwinds.length > 0 || themes.length > 0) && (
+            <Section title="Tailwinds & themes">
+              <div className="flex flex-wrap gap-2">
+                {tailwinds.slice(0, 12).map((t, i) => (
+                  <Chip key={`t${i}`} label={fmtShort(t)} tone="ok" />
+                ))}
+                {themes.slice(0, 12).map((t, i) => (
+                  <Chip key={`h${i}`} label={fmtShort(t)} />
+                ))}
+              </div>
+            </Section>
+          )}
 
-        {fundamental?.detail != null && (
-          <Section title="Fundamentals detail">
-            <div className="divide-y divide-transparent">
-              {Object.entries(obj(fundamental.detail) ?? {}).slice(0, 24).map(([k, v]) => (
-                <Kv key={k} k={k.replace(/_/g, ' ')} v={v} />
-              ))}
-            </div>
-          </Section>
-        )}
+          {fundamental?.detail != null && (
+            <Section title="Fundamentals detail">
+              <div className="divide-y divide-transparent">
+                {Object.entries(obj(fundamental.detail) ?? {}).slice(0, 24).map(([k, v]) => (
+                  <Kv key={k} k={k.replace(/_/g, ' ')} v={v} />
+                ))}
+              </div>
+            </Section>
+          )}
 
-        {technical?.detail != null && (
-          <Section title="Tape detail">
-            <div className="divide-y divide-transparent">
-              {Object.entries(obj(technical.detail) ?? {}).slice(0, 24).map(([k, v]) => (
-                <Kv key={k} k={k.replace(/_/g, ' ')} v={v} />
-              ))}
-            </div>
-          </Section>
-        )}
+          {technical?.detail != null && (
+            <Section title="Tape detail">
+              <div className="divide-y divide-transparent">
+                {Object.entries(obj(technical.detail) ?? {}).slice(0, 24).map(([k, v]) => (
+                  <Kv key={k} k={k.replace(/_/g, ' ')} v={v} />
+                ))}
+              </div>
+            </Section>
+          )}
+        </Gate>
       </div>
 
       <footer className="mt-16 border-t border-hairline pt-6 flex justify-between text-[11px] text-faint">
