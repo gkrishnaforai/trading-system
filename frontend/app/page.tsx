@@ -52,6 +52,17 @@ export default async function RegimePage() {
       ? (today.buckets as Record<string, unknown>)
       : null
 
+  // structural layer — capex/macro/language journaled under buckets;
+  // pull capex out for a real section instead of a JSON blob
+  const structural =
+    buckets && typeof buckets.structural === 'object' && buckets.structural !== null
+      ? (buckets.structural as Record<string, unknown>)
+      : null
+  const capex =
+    structural && typeof structural.capex === 'object' && structural.capex !== null
+      ? (structural.capex as Record<string, unknown>)
+      : null
+
   const todayExtras = today
     ? Object.entries(today).filter(
       ([k]) =>
@@ -116,14 +127,81 @@ export default async function RegimePage() {
         </section>
       )}
 
+      {/* AI capex cycle — the structural leg under the tape regime:
+          hyperscaler spend decel → orders → TSM → ASML chain, scored
+          0-100 (higher = slowdown). Sits next to the score strip. */}
+      {capex && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="flex items-baseline justify-between">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              AI capex cycle
+            </div>
+            {capex.age_days != null && (
+              <span className="font-mono text-[11px] text-faint">
+                {String(capex.age_days)}d old
+              </span>
+            )}
+          </div>
+          <div className="pt-4 grid grid-cols-2 sm:grid-cols-4 gap-6">
+            <Stat label="Band" value={String(capex.band ?? '—')} />
+            <Stat
+              label="Score"
+              value={capex.score != null ? String(capex.score) : '—'}
+            />
+            <Stat
+              label="Δ 3m"
+              value={
+                capex.d3m != null
+                  ? `${Number(capex.d3m) >= 0 ? '+' : ''}${String(capex.d3m)}`
+                  : '—'
+              }
+            />
+            <Stat
+              label="Legs elevated"
+              value={
+                capex.n_elevated != null
+                  ? `${String(capex.n_elevated)} / 8`
+                  : '—'
+              }
+            />
+          </div>
+          {Array.isArray(capex.flags) && capex.flags.length > 0 && (
+            <div className="pt-4 flex flex-wrap gap-2">
+              {(capex.flags as unknown[]).map((f) => (
+                <Chip key={String(f)} label={String(f)} tone="warn" />
+              ))}
+            </div>
+          )}
+          {capex.guidance != null && (
+            <p className="pt-3 text-xs leading-relaxed text-muted">
+              {String(capex.guidance)}
+            </p>
+          )}
+        </section>
+      )}
+
       {/* expandable depth */}
       <div className="mt-10">
+        {capex?.components != null &&
+          typeof capex.components === 'object' && (
+            <Section title="Capex legs" subtitle="≥50 counts as elevated">
+              <div className="divide-y divide-transparent">
+                {Object.entries(
+                  capex.components as Record<string, unknown>,
+                ).map(([k, v]) => (
+                  <Kv key={k} k={k.replace(/_/g, ' ')} v={v} />
+                ))}
+              </div>
+            </Section>
+          )}
         {buckets && (
           <Section title="What's driving it" subtitle="regime inputs">
             <div className="divide-y divide-transparent">
-              {Object.entries(buckets).map(([k, v]) => (
-                <Kv key={k} k={k.replace(/_/g, ' ')} v={v} />
-              ))}
+              {Object.entries(buckets)
+                .filter(([k]) => k !== 'structural')
+                .map(([k, v]) => (
+                  <Kv key={k} k={k.replace(/_/g, ' ')} v={v} />
+                ))}
             </div>
           </Section>
         )}
