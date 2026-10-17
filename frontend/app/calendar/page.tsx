@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { api, type MacroEvent, type EarningsRow } from '@/lib/api'
 import { Section } from '@/components/regime'
 
@@ -153,9 +154,8 @@ export default async function CalendarPage() {
               return (
                 <div key={day}>
                   <div
-                    className={`pb-1.5 text-[11px] font-semibold uppercase tracking-wider ${
-                      isToday ? 'text-accent' : 'text-faint'
-                    }`}
+                    className={`pb-1.5 text-[11px] font-semibold uppercase tracking-wider ${isToday ? 'text-accent' : 'text-faint'
+                      }`}
                   >
                     {fmtDay(day)}{isToday && ' — today'}
                   </div>
@@ -169,9 +169,12 @@ export default async function CalendarPage() {
                           key={`${r.symbol}-${i}`}
                           className="flex items-baseline justify-between gap-4 text-sm"
                         >
-                          <span className="font-medium text-ink">
+                          <Link
+                            href={`/stock?sym=${encodeURIComponent(String(r.symbol ?? ''))}`}
+                            className="font-medium text-ink hover:text-accent transition-colors"
+                          >
                             {String(r.symbol ?? '—')}
-                          </span>
+                          </Link>
                           <span className="font-mono text-xs text-muted text-right">
                             {time != null && `${String(time).toUpperCase()}`}
                             {epsEst != null && ` · EPS est ${String(epsEst)}`}

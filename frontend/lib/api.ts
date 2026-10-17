@@ -124,6 +124,10 @@ export const api = {
   macroEvents: () =>
     get<{ events?: MacroEvent[] } | MacroEvent[]>('/macro-events'),
   daily: () => get<DailyBoard>('/daily'),
+  stockHealth: (sym: string) =>
+    get<Record<string, unknown>>(
+      `/symbol/${encodeURIComponent(sym)}/health`,
+    ),
   earningsCalendar: (start: string, end: string) =>
     getRaw<{ success?: boolean; count?: number; data?: EarningsRow[] }>(
       `/admin/earnings-calendar?start_date=${start}&end_date=${end}`,

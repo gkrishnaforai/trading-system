@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { api, type BoardItem } from '@/lib/api'
 import { Chip, Stat } from '@/components/regime'
 
@@ -40,9 +41,12 @@ function BoardRow({ it }: { it: BoardItem }) {
           >
             {action}
           </span>
-          <span className="font-semibold text-ink">
+          <Link
+            href={`/stock?sym=${encodeURIComponent(String(it.symbol ?? ''))}`}
+            className="font-semibold text-ink hover:text-accent transition-colors"
+          >
             {String(it.symbol ?? '—')}
-          </span>
+          </Link>
           {it.in_portfolio && (
             <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
               held
