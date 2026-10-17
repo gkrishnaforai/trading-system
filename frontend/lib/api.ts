@@ -226,6 +226,16 @@ export const api = {
     get<{ as_of?: string; rows?: PulseRow[]; book?: PulseBook }>(
       '/portfolio-pulse',
     ),
+  strategy: () => get<Record<string, unknown>>('/strategy'),
+  conviction: () => get<Record<string, unknown>>('/conviction'),
+  convictionHistory: (days = 30) =>
+    get<{ rows?: Record<string, unknown>[] }>(
+      `/conviction/history?days=${days}`,
+    ),
+  hiddenGems: () => get<Record<string, unknown>>('/hidden-gems'),
+  tailwindCandidates: () =>
+    get<Record<string, unknown>>('/tailwind-candidates'),
+  dailySheet: () => get<Record<string, unknown>>('/daily-sheet'),
   alerts: (opts: { hours?: number; symbol?: string; status?: string } = {}) =>
     getRaw<{ count?: number; items?: AlertItem[] }>(
       `/api/v1/alerts?hours=${opts.hours ?? 168}` +
