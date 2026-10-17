@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { api } from '@/lib/api'
 import { Chip, Gate, Kv, Section, Stat, Val, fmtShort } from '@/components/regime'
+import { FundPanel, TapePanel } from '@/components/panels'
 import { WatchToggle } from '@/components/watchlist'
 
 function money(v: unknown, dec = 2) {
@@ -281,61 +282,83 @@ export default async function StockPage({
         </section>
       )}
 
-      {/* fundamentals + technical + capex strip */}
-      <section className="mt-2 grid sm:grid-cols-3 gap-2">
+      {/* fundamentals + tape panels */}
+      <section className="mt-2 grid lg:grid-cols-2 gap-2">
         <div className="rounded-xl border border-hairline bg-card px-5 py-4">
-          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
-            Fundamentals
+          <div className="flex items-baseline justify-between">
+            <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              Fundamentals
+            </span>
+            <span className="flex items-baseline gap-2">
+              {fundamental?.risk != null && (
+                <span className="font-mono text-[11px] text-caution">
+                  risk {String(fundamental.risk).replace(/_/g, ' ')}
+                </span>
+              )}
+              <Fresh date={fundamental?.data_as_of ? String(fundamental.data_as_of) : null} />
+            </span>
           </div>
-          <div className={`pt-2 text-sm font-medium ${stateTone(fundamental?.state)}`}>
-            {String(fundamental?.state ?? '—')}
-          </div>
-          {fundamental?.risk != null && (
-            <div className="pt-1 text-xs text-muted">
-              risk {String(fundamental.risk)}
-            </div>
-          )}
-          <div className="pt-2 space-y-1">
-            <Fresh date={fundamental?.data_as_of ? String(fundamental.data_as_of) : null} />
-            {fundamental?.as_of != null && (
-              <div className="font-mono text-[11px] text-faint">
-                scored {String(fundamental.as_of).slice(0, 10)}
+          <div className="pt-3">
+            {obj(fundamental?.detail) ? (
+              <FundPanel d={{
+                ...(obj(fundamental?.detail) ?? {}),
+                state: fundamental?.state,
+              }} />
+            ) : (
+              <div className={`text-sm font-medium ${stateTone(fundamental?.state)}`}>
+                {String(fundamental?.state ?? '—')}
               </div>
             )}
           </div>
         </div>
         <div className="rounded-xl border border-hairline bg-card px-5 py-4">
-          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
-            Tape
+          <div className="flex items-baseline justify-between">
+            <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              Tape
+            </span>
+            {technical?.as_of != null && (
+              <span className="font-mono text-[11px] text-faint">
+                {String(technical.as_of).slice(0, 10)}
+              </span>
+            )}
           </div>
-          <div className={`pt-2 text-sm font-medium ${stateTone(technical?.state)}`}>
-            {String(technical?.state ?? '—')}
-          </div>
-          {technical?.as_of != null && (
-            <div className="pt-2 font-mono text-[11px] text-faint">
-              {String(technical.as_of).slice(0, 10)}
-            </div>
-          )}
-        </div>
-        <div className="rounded-xl border border-hairline bg-card px-5 py-4">
-          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
-            AI capex
-          </div>
-          {capex ? (
-            <>
-              <div className="pt-2 text-sm font-medium text-ink">
-                {String(capex.exposure ?? capex.bucket ?? capex.category ?? 'tracked')}
+          <div className="pt-3">
+            {obj(technical?.detail) ? (
+              <TapePanel
+                d={{
+                  ...(obj(technical?.detail) ?? {}),
+                  state: technical?.state,
+                }}
+                spot={Number.isFinite(Number(card.spot)) ? Number(card.spot) : undefined}
+              />
+            ) : (
+              <div className={`text-sm font-medium ${stateTone(technical?.state)}`}>
+                {String(technical?.state ?? '—')}
               </div>
-              <div className="pt-1 text-xs text-muted">
-                cycle {String(capex.band ?? '—')}
-                {capex.score != null && ` ${String(capex.score)}/100`}
-              </div>
-            </>
-          ) : (
-            <div className="pt-2 text-sm text-muted">not in a capex basket</div>
-          )}
+            )}
+          </div>
         </div>
       </section>
+
+      {/* AI capex */}
+      <div className="mt-2 rounded-xl border border-hairline bg-card px-5 py-3.5 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+          AI capex
+        </span>
+        {capex ? (
+          <>
+            <span className="text-sm font-medium text-ink">
+              {String(capex.exposure ?? capex.bucket ?? capex.category ?? 'tracked')}
+            </span>
+            <span className="text-xs text-muted">
+              cycle {String(capex.band ?? '—')}
+              {capex.score != null && ` ${String(capex.score)}/100`}
+            </span>
+          </>
+        ) : (
+          <span className="text-sm text-muted">not in a capex basket</span>
+        )}
+      </div>
 
       {/* expandable depth */}
       <div className="mt-8">
