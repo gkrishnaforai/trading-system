@@ -32,16 +32,14 @@ function fmtDate(d?: string) {
 }
 
 export default async function RegimePage() {
-  const [posture, morning, events] = await Promise.all([
+  const [posture, morning] = await Promise.all([
     api.posture(),
     api.morningRegime(),
-    api.macroEvents(),
   ])
 
   const p = posture ?? {}
   const today = morning?.today
   const record = morning?.record ?? []
-  const evList = Array.isArray(events) ? events : (events?.events ?? [])
 
   const tone = TONE[p.posture ?? 'neutral'] ?? 'text-neutral'
   const label = LABEL[p.posture ?? 'neutral'] ?? 'Unknown'
@@ -73,11 +71,7 @@ export default async function RegimePage() {
 
   return (
     <main className="mx-auto max-w-3xl px-5 pb-20">
-      {/* masthead */}
-      <header className="flex items-baseline justify-between pt-8 pb-10">
-        <span className="text-[13px] font-semibold tracking-[0.28em] text-muted">
-          MARKETPULSE
-        </span>
+      <header className="flex items-baseline justify-end pt-6 pb-8">
         <span className="font-mono text-xs text-faint">{fmtDate(asOf)}</span>
       </header>
 
@@ -235,68 +229,6 @@ export default async function RegimePage() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          </Section>
-        )}
-
-        {evList.length > 0 && (
-          <Section title="On the calendar" subtitle="macro events">
-            <div className="divide-y divide-transparent">
-              {evList.slice(0, 8).map((e, i) => {
-                const moved = e.rescheduled && e.rescheduled_from
-                const dateStr = e.when ?? e.date ?? e.importance ?? ''
-                const tag =
-                  e.days_away === 0 ? 'today'
-                    : e.days_away === 1 ? 'tomorrow'
-                      : e.days_away === -1 ? 'yesterday'
-                        : typeof e.days_away === 'number'
-                          ? e.days_away < 0
-                            ? `${-e.days_away}d ago`
-                            : `${e.days_away}d`
-                          : ''
-                const judge = e.judge
-                return (
-                  <div key={i}>
-                    <Kv
-                      k={String(e.title ?? e.name ?? 'event') +
-                        (e.unconfirmed ? ' ·?' : '')}
-                      v={`${dateStr}${tag ? ` · ${tag}` : ''}` +
-                        (moved ? ` ⟵ was ${e.rescheduled_from}` : '') +
-                        (e.actual != null
-                          ? ` · printed ${e.actual}${e.estimate != null ? ` vs est ${e.estimate}` : ''}`
-                          : e.estimate != null ? ` · est ${e.estimate}` : '') +
-                        (e.reading ? ` — ${e.reading}` : '')}
-                    />
-                    {(e.impact || e.source_url || judge?.verdict) && (
-                      <div className="pb-2 pl-3 text-xs text-muted space-y-0.5">
-                        {e.impact && <div>{e.impact}</div>}
-                        {judge?.verdict && (
-                          <div>
-                            judge: {String(judge.verdict).toUpperCase()}
-                            {judge.confidence != null &&
-                              ` (${judge.confidence}%)`}
-                            {judge.spy_ret != null &&
-                              ` · SPY ${(Number(judge.spy_ret) * 100).toFixed(2)}%`}
-                            {judge.thesis && ` — ${judge.thesis}`}
-                          </div>
-                        )}
-                        {e.source_url && (
-                          <div>
-                            <a
-                              className="underline underline-offset-2 text-faint hover:text-ink"
-                              href={String(e.source_url)}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              official release ↗
-                            </a>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
             </div>
           </Section>
         )}

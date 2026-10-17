@@ -70,9 +70,62 @@ async function get<T>(path: string): Promise<T | null> {
   }
 }
 
+export type BoardItem = {
+  symbol?: string
+  action?: string
+  score?: number
+  momentum?: string
+  instrument?: string
+  entry_status?: string
+  why?: string[]
+  gain_pct?: number
+  price?: number
+  entry?: number
+  stop?: number
+  target?: number
+  days_to_earnings?: number
+  in_portfolio?: boolean
+  [k: string]: unknown
+}
+
+export type DailyBoard = {
+  posture?: {
+    stance?: string; note?: string; vix?: number;
+    spy?: number; spy_vs_200?: number; size_multiplier?: number
+  }
+  items?: BoardItem[]
+  equity?: number
+  suggested_tranche?: number
+  counts?: Record<string, number>
+  as_of?: string
+}
+
+export type EarningsRow = {
+  symbol?: string
+  earnings_date?: string
+  [k: string]: unknown
+}
+
+async function getRaw<T>(path: string): Promise<T | null> {
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      next: { revalidate: 120 },
+    })
+    if (!res.ok) return null
+    return (await res.json()) as T
+  } catch {
+    return null
+  }
+}
+
 export const api = {
   posture: () => get<Posture>('/posture'),
   morningRegime: () => get<MorningRegime>('/morning-regime'),
   macroEvents: () =>
     get<{ events?: MacroEvent[] } | MacroEvent[]>('/macro-events'),
+  daily: () => get<DailyBoard>('/daily'),
+  earningsCalendar: (start: string, end: string) =>
+    getRaw<{ success?: boolean; count?: number; data?: EarningsRow[] }>(
+      `/admin/earnings-calendar?start_date=${start}&end_date=${end}`,
+    ),
 }
