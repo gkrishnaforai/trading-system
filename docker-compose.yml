@@ -439,7 +439,7 @@ services:
       - trading-network
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD-SHELL", "wget -qO- --timeout=2 http://127.0.0.1:3000/ >/dev/null || exit 1" ]
+      test: [ "CMD-SHELL", "wget -qO- --timeout=2 http://127.0.0.1:3000/api/health >/dev/null || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 3
