@@ -216,9 +216,27 @@ def _db() -> sqlite3.Connection:
             status TEXT,
             health TEXT,
             updated TEXT);
+        CREATE TABLE IF NOT EXISTS runbook (
+            kind        TEXT PRIMARY KEY,   -- 'log-scan:api-key', 'docker:unhealthy'
+            detector    TEXT,               -- which sensor caught it
+            title       TEXT,
+            system_diagnosis TEXT,          -- latest auto diagnosis
+            sample_log  TEXT,               -- latest log tail / error
+            resolution_steps TEXT,          -- user-written, preserved
+            times_seen  INTEGER NOT NULL DEFAULT 1,
+            last_signature TEXT,
+            last_seen   TEXT,
+            created_at  TEXT);
         CREATE TABLE IF NOT EXISTS config (
             key TEXT PRIMARY KEY,
             value TEXT);""")
+    # columns added after first deploy — ALTER is idempotent-by-exception
+    for ddl in ("ALTER TABLE incidents ADD COLUMN resolution_note TEXT",
+                "ALTER TABLE incidents ADD COLUMN resolved_by TEXT"):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass
     return conn
 
 
@@ -660,6 +678,39 @@ def _mirror_pg(sig: str, sev: str, detail: dict, status: str,
         logger.debug("pg mirror skipped (%s): %s", sig, exc)
 
 
+def _runbook_key(sig: str) -> tuple[str, str]:
+    """Signature → (detector, kind). The runbook aggregates by the
+    sensor+kind that caught it — a next-ssr-error on any frontend
+    shares one entry, so a fix recorded once applies everywhere."""
+    if sig.startswith("app:"):
+        return ("log-scan", sig.rsplit(":", 1)[-1])
+    if sig.startswith("container:"):
+        return ("docker", sig.rsplit(":", 1)[-1])
+    return (sig.split(":", 1)[0] or "watch", sig.rsplit(":", 1)[-1])
+
+
+def _runbook_bump(conn, sig: str, severity: str, detail: dict) -> None:
+    """Auto-fill the runbook entry for this finding kind — diagnosis
+    and evidence land automatically; user-written steps are preserved."""
+    detector, kind = _runbook_key(sig)
+    rb_key = f"{detector}:{kind}"
+    diag = (detail.get("diagnosis") or "watch finding")[:500]
+    sample = (detail.get("log_tail") or detail.get("error")
+              or "")[:1200]
+    conn.execute(
+        "INSERT INTO runbook (kind,detector,title,system_diagnosis,"
+        "sample_log,times_seen,last_signature,last_seen,created_at) "
+        "VALUES (?,?,?,?,?,1,?,?,?) "
+        "ON CONFLICT(kind) DO UPDATE SET "
+        "system_diagnosis=excluded.system_diagnosis, "
+        "sample_log=excluded.sample_log, "
+        "times_seen=times_seen+1, "
+        "last_signature=excluded.last_signature, "
+        "last_seen=excluded.last_seen",
+        (rb_key, detector, f"{detector} — {kind}", diag, sample,
+         sig, _now(), _now()))
+
+
 def _record(conn, f: dict) -> tuple[bool, str]:
     """Upsert incident; returns (should_alert, status)."""
     sig, now = f["signature"], _now()
@@ -677,6 +728,7 @@ def _record(conn, f: dict) -> tuple[bool, str]:
             "WHERE signature=?",
             (now, json.dumps(f["detail"]), f["severity"],
              1 if reopened else 0, reopened, sig))
+        _runbook_bump(conn, sig, f["severity"], f["detail"])
         return row["alerted_at"] is None or reopened, "open"
     conn.execute(
         "INSERT INTO incidents (signature,source,severity,detail,"
@@ -684,6 +736,7 @@ def _record(conn, f: dict) -> tuple[bool, str]:
         "VALUES (?,?,?,?,?,?,?,?)",
         (sig, f["source"], f["severity"], json.dumps(f["detail"]),
          diag, steps, now, now))
+    _runbook_bump(conn, sig, f["severity"], f["detail"])
     return True, "open"
 
 
@@ -712,8 +765,8 @@ def _resolve_absent(conn, seen: set[str]) -> None:
             if (r["last_seen"] or "") > cutoff:
                 continue                    # still inside keep-firing
         conn.execute(
-            "UPDATE incidents SET status='resolved', resolved_at=? "
-            "WHERE signature=?", (now, sig))
+            "UPDATE incidents SET status='resolved', resolved_at=?, "
+            "resolved_by='auto' WHERE signature=?", (now, sig))
 
 
 # ── status API ─────────────────────────────────────────────────────────
@@ -733,10 +786,18 @@ def _incidents_json() -> dict:
                 r["detail"] = json.loads(r.get("detail") or "{}")
             except Exception:
                 pass
+            rb = conn.execute(
+                "SELECT kind, resolution_steps, times_seen "
+                "FROM runbook WHERE kind=?",
+                (f"{_runbook_key(r['signature'])[0]}:"
+                 f"{_runbook_key(r['signature'])[1]}",)).fetchone()
+            if rb:
+                r["runbook"] = dict(rb)
         res = [dict(r) for r in conn.execute(
             "SELECT signature,severity,status,occurrences,resolved_at,"
-            "last_seen FROM incidents WHERE status='resolved' "
-            "ORDER BY resolved_at DESC LIMIT 10")]
+            "resolved_by,resolution_note,last_seen FROM incidents "
+            "WHERE status='resolved' ORDER BY resolved_at DESC "
+            "LIMIT 10")]
         acts = [dict(r) for r in conn.execute(
             "SELECT * FROM actions ORDER BY id DESC LIMIT 30")]
         return {"generated_at": _now(), "uptime_s": int(time.time() - _STARTED),
@@ -754,7 +815,7 @@ pre{{white-space:pre-wrap;font-size:11px;color:#888;max-height:120px;overflow:au
 <h2>custodian-watch <span class=ok>&#9679;</span></h2>
 <p>up {uptime}s &middot; last pass {last} &middot; {nfind} finding(s) &middot; {proj}</p>
 <h3>open incidents</h3>{open_t}<h3>recently resolved</h3>{res_t}
-<h3>actions</h3>{act_t}<p style=color:#888>JSON: /incidents &middot; liveness: /health &middot; <a href="/rules{tok}">edit log rules</a></p>"""
+<h3>actions</h3>{act_t}<p style=color:#888>JSON: /incidents &middot; liveness: /health &middot; <a href="/rules{tok}">edit log rules</a> &middot; <a href="/runbook{tok}">runbook</a></p>"""
 
 
 def _row_html(r, cols):
@@ -774,6 +835,8 @@ def _incidents_html(token: str = "") -> str:
         body = "".join(_row_html(r, cols) for r in rows) or \
             f"<tr><td colspan={len(cols)} class=ok>none</td></tr>"
         return f"<table><tr>{head}</tr>{body}</table>"
+    import html as _h
+    tok_q = (f"?token={token}" if token else "")
     for r in d["open"]:
         det = r.get("detail") or {}
         r["log"] = (det.get("log_tail") or det.get("error")
@@ -784,15 +847,34 @@ def _incidents_html(token: str = "") -> str:
         r["live"] = (f'<a href="/logs/{m.group(1)}?tail=200'
                      + (f"&token={token}" if token else "")
                      + '">live&nbsp;tail</a>') if m else ""
+        # recorded fix from the runbook — the detector+kind learning
+        rb = r.get("runbook") or {}
+        if rb.get("resolution_steps"):
+            r["fix"] = (f'<pre>{_h.escape(str(rb["resolution_steps"]))}'
+                        f'</pre><div style="color:#27ae60">recorded fix'
+                        f' — seen {rb.get("times_seen", 1)}&times;</div>')
+        else:
+            rbk = str(rb.get("kind") or f"{_runbook_key(r.get('signature') or '')[0]}:{_runbook_key(r.get('signature') or '')[1]}")
+            r["fix"] = (f'<a href="/runbook{tok_q}'
+                        f'#{_h.escape(rbk)}">'
+                        f'write fix &rarr;</a>')
+        sig_esc = _h.escape(str(r.get("signature") or ""), quote=True)
+        r["manage"] = (
+            f'<form method=post action="/incidents/close{tok_q}" '
+            f'style="margin:0">'
+            f'<input type=hidden name=sig value="{sig_esc}">'
+            f'<input name=note size=14 placeholder="note (optional)">'
+            f'<button type=submit>close</button></form>')
     return _PAGE.format(
         uptime=d["uptime_s"], last=d["last_pass"]["at"],
         nfind=d["last_pass"]["findings"], proj=os.uname().nodename,
         tok=(f"?token={token}" if token else ""),
         open_t=tbl(d["open"], ["signature", "severity", "diagnosis",
-                              "log", "live", "manual_steps",
-                              "last_seen"]),
+                              "log", "live", "fix", "manual_steps",
+                              "last_seen", "manage"]),
         res_t=tbl(d["resolved"], ["signature", "severity", "occurrences",
-                                  "resolved_at"]),
+                                  "resolved_at", "resolved_by",
+                                  "resolution_note"]),
         act_t=tbl(d["actions"], ["created_at", "signature", "action",
                                  "result"]))
 
@@ -827,6 +909,57 @@ def _rules_html(token: str, msg: str = "") -> str:
         conn.close()
     tok = f"?token={token}" if token else ""
     return _RULES_PAGE.format(rules=_h.escape(txt), tok=tok, msg=msg)
+
+
+_RUNBOOK_PAGE = """<!doctype html><meta charset=utf-8><title>watch runbook</title>
+<style>body{{font:13px/1.4 ui-monospace,monospace;max-width:1000px;margin:24px auto;padding:0 12px}}
+.entry{{border:1px solid #444;margin:14px 0;padding:10px 14px}}
+textarea{{width:100%;height:90px;font:12px ui-monospace,monospace;background:#111;color:#ddd;border:1px solid #444}}
+pre{{white-space:pre-wrap;font-size:11px;color:#888;max-height:100px;overflow:auto;background:#161616;padding:6px}}
+button{{padding:4px 14px}}.ok{{color:#27ae60}}.hi{{color:#c0392b}}
+.k{{color:#e67e22}}</style>
+<h2>runbook — what we learned</h2>
+<p>Entries auto-fill when an incident fires (detector, diagnosis,
+evidence). Add your fix steps once — they surface on every future
+incident of the same kind, whichever container hit it.{msg}</p>
+{entries}
+<p><a href="/{tok}">&larr; board</a></p>"""
+
+
+def _runbook_html(token: str, msg: str = "") -> str:
+    import html as _h
+    conn = _db()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM runbook ORDER BY times_seen DESC")]
+    finally:
+        conn.close()
+    tok = f"?token={token}" if token else ""
+    if not rows:
+        entries = ('<p style="color:#888">empty — entries appear the '
+                   'first time each finding kind fires.</p>')
+    else:
+        parts = []
+        for r in rows:
+            parts.append(
+                f'<div class=entry id="{_h.escape(str(r["kind"]))}">'
+                f'<b class=k>{_h.escape(str(r["kind"]))}</b>'
+                f' &middot; seen {r["times_seen"]}&times;'
+                f' &middot; last <code>{_h.escape(str(r["last_signature"] or ""))}</code>'
+                f' &middot; {_h.escape(str(r["last_seen"] or ""))}'
+                f'<div style="padding:6px 0;color:#bbb">'
+                f'{_h.escape(str(r["system_diagnosis"] or ""))}</div>'
+                + (f'<pre>{_h.escape(str(r["sample_log"]))}</pre>'
+                   if r.get("sample_log") else "")
+                + f'<form method=post action="/runbook{tok}">'
+                f'<input type=hidden name=kind '
+                f'value="{_h.escape(str(r["kind"]), quote=True)}">'
+                f'<textarea name=steps placeholder="fix steps — what '
+                f'worked, in order">'
+                f'{_h.escape(str(r["resolution_steps"] or ""))}</textarea>'
+                f'<button type=submit>save steps</button></form></div>')
+        entries = "".join(parts)
+    return _RUNBOOK_PAGE.format(entries=entries, tok=tok, msg=msg)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -909,6 +1042,11 @@ class _Handler(BaseHTTPRequestHandler):
                 tok = parse_qs(urlparse(self.path).query).get(
                     "token", [""])[0]
                 self._send(200, _rules_html(tok), "text/html")
+            elif path == "/runbook":
+                from urllib.parse import parse_qs, urlparse
+                tok = parse_qs(urlparse(self.path).query).get(
+                    "token", [""])[0]
+                self._send(200, _runbook_html(tok), "text/html")
             elif path == "/":
                 from urllib.parse import parse_qs, urlparse
                 tok = parse_qs(urlparse(self.path).query).get(
@@ -924,11 +1062,60 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._auth():
             self._send(401, json.dumps({"error": "unauthorized"}))
             return
+        from urllib.parse import parse_qs, urlparse
+        tok = parse_qs(urlparse(self.path).query).get("token", [""])[0]
+
+        if path == "/incidents/close":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(min(length, 1 << 16)).decode()
+            form = parse_qs(body)
+            sig = (form.get("sig") or [""])[0]
+            note = (form.get("note") or [""])[0].strip()
+            if sig:
+                conn = _db()
+                try:
+                    conn.execute(
+                        "UPDATE incidents SET status='resolved', "
+                        "resolved_at=?, resolution_note=?, "
+                        "resolved_by='manual' WHERE signature=?",
+                        (_now(), note or None, sig))
+                    conn.execute(
+                        "INSERT INTO actions (signature,action,result,"
+                        "created_at) VALUES (?,?,?,?)",
+                        (sig, "close:manual", note or "closed", _now()))
+                    conn.commit()
+                finally:
+                    conn.close()
+            self.send_response(303)
+            self.send_header("Location", f"/{tok}")
+            self.end_headers()
+            return
+
+        if path == "/runbook":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(min(length, 1 << 16)).decode()
+            form = parse_qs(body)
+            kind = (form.get("kind") or [""])[0]
+            steps = (form.get("steps") or [""])[0]
+            if kind:
+                conn = _db()
+                try:
+                    conn.execute(
+                        "UPDATE runbook SET resolution_steps=?, "
+                        "last_seen=? WHERE kind=?",
+                        (steps.strip() or None, _now(), kind))
+                    conn.commit()
+                finally:
+                    conn.close()
+            self.send_response(303)
+            self.send_header("Location",
+                             f"/runbook{tok}#{kind}")
+            self.end_headers()
+            return
+
         if path != "/rules":
             self._send(404, json.dumps({"error": "not found"}))
             return
-        from urllib.parse import parse_qs, urlparse
-        tok = parse_qs(urlparse(self.path).query).get("token", [""])[0]
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(min(length, 1 << 16)).decode()
