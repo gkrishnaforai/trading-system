@@ -3,6 +3,10 @@ import { api, type PulseRow } from '@/lib/api'
 import { Section, Stat } from '@/components/regime'
 import { WatchlistCard } from '@/components/watchlist'
 import { TIER_LIMITS, currentTier } from '@/lib/tier'
+import { listPortfolios, listHoldings } from '@/lib/portfolio'
+import {
+  AddHoldingForm, HoldingRow as UserHoldingRow, NewPortfolioForm,
+} from '@/components/portfolio-crud'
 
 const BUCKET_ORDER = [
   'reduce', 'trim', 'avoid', 'attention', 'add', 'stalk', 'hold',
@@ -62,8 +66,10 @@ function SectorBar({ rows }: { rows: PulseRow[] }) {
         {segs.map(([s, v], i) => (
           <div
             key={s}
-            style={{ width: `${(v / total) * 100}%`,
-              background: hues[i % hues.length] }}
+            style={{
+              width: `${(v / total) * 100}%`,
+              background: hues[i % hues.length]
+            }}
             title={`${s} ${((v / total) * 100).toFixed(1)}%`}
           />
         ))}
@@ -162,12 +168,23 @@ function HoldingRow({ r, bookValue }: { r: PulseRow; bookValue: number }) {
   )
 }
 
-export default async function PortfolioPage() {
-  const pulse = await api.portfolioPulse()
+export default async function PortfolioPage({
+  searchParams,
+}: {
+  searchParams: { p?: string }
+}) {
+  const [pulse, portfolios] = await Promise.all([
+    api.portfolioPulse(),
+    listPortfolios(),
+  ])
   const rows = pulse?.rows ?? []
   const book = pulse?.book
   const tier = currentTier()
   const limit = TIER_LIMITS[tier].portfolios
+
+  const sel = searchParams.p ?? 'book'
+  const selected = portfolios.find((p) => p.id === sel)
+  const holdings = selected ? await listHoldings(selected.id) : null
 
   const groups = BUCKET_ORDER
     .map((b) => [b, rows.filter((r) => r.bucket === b)] as const)
@@ -181,84 +198,158 @@ export default async function PortfolioPage() {
             Portfolio
           </span>
           <span className="font-mono text-[11px] text-faint">
-            1 of {limit} books · {pulse?.as_of}
+            {portfolios.length} of {limit} books · {pulse?.as_of}
           </span>
         </div>
-        <div className="pt-3 flex items-baseline gap-4">
-          <h1 className="font-semibold text-display text-ink">
-            {money(book?.value)}
-          </h1>
-          <span className={`font-mono text-xl ${tone(book?.pnl_pct)}`}>
-            {pct(book?.pnl_pct)}
-          </span>
-        </div>
-        {book?.on_pace != null && (
-          <div className="pt-2 flex flex-wrap items-center gap-2 text-xs">
-            <span
-              className={`rounded-full px-2.5 py-1 font-medium ${book.on_pace
-                ? 'bg-aggressive/10 text-aggressive'
-                : 'bg-accent/10 text-accent'
+
+        {/* book selector */}
+        <div className="pt-3 flex flex-wrap items-center gap-2">
+          <Link
+            href="/portfolio"
+            className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${!selected
+              ? 'bg-ink text-canvas'
+              : 'border border-hairline text-muted hover:text-accent'
+              }`}
+          >
+            The book
+          </Link>
+          {portfolios.map((p) => (
+            <Link
+              key={p.id}
+              href={`/portfolio?p=${p.id}`}
+              className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${selected?.id === p.id
+                ? 'bg-ink text-canvas'
+                : 'border border-hairline text-muted hover:text-accent'
                 }`}
             >
-              {book.on_pace ? 'on pace' : 'behind pace'} vs{' '}
-              {book.target_pct}% target
-            </span>
-            {book.track_ret_pct != null && (
-              <span className="text-muted">
-                {pct(book.track_ret_pct)} over {book.track_days}d
-                {book.excess_pct != null && (
-                  <span className={tone(book.excess_pct)}>
-                    {' '}({pct(book.excess_pct)} vs SPY)
-                  </span>
-                )}
-              </span>
-            )}
-          </div>
-        )}
-        <SectorBar rows={rows} />
+              {p.name}
+              {p.holdings_count != null && (
+                <span className="ml-1 font-mono text-[10px] opacity-70">
+                  {p.holdings_count}
+                </span>
+              )}
+            </Link>
+          ))}
+          <NewPortfolioForm used={portfolios.length} limit={limit} />
+        </div>
       </header>
 
-      <section className="grid grid-cols-2 sm:grid-cols-4 gap-6 rounded-xl border border-hairline bg-card px-5 py-4">
-        <Stat label="Positions" value={String(book?.positions ?? 0)} />
-        <Stat label="Cost" value={money(book?.cost)} />
-        <Stat label="Unrealized" value={money(book?.pnl)} />
-        <Stat label="Goal /mo" value={money(book?.goal_month)} />
-      </section>
-
-      <Section title="Holdings" subtitle="attention first" defaultOpen>
-        {rows.length === 0 ? (
-          <p className="text-sm text-muted">
-            No positions on the book. When holdings are journaled they
-            appear here with tape state, FV gap and action hints.
-          </p>
-        ) : (
-          groups.map(([bucket, rs]) => (
-            <div key={bucket} className="mb-5 last:mb-0">
-              <div
-                className={`pb-1.5 text-[11px] font-semibold uppercase tracking-wider ${BUCKET_TONE[bucket]}`}
-              >
-                {BUCKET_LABEL[bucket] ?? bucket} · {rs.length}
-              </div>
-              <div className="divide-y divide-hairline/60">
-                {rs.map((r) => (
-                  <HoldingRow key={r.symbol} r={r}
-                    bookValue={book?.value ?? 0} />
-                ))}
-              </div>
+      {selected ? (
+        /* ---- a user book: its holdings + CRUD ---- */
+        <>
+          <div className="flex items-baseline justify-between pb-4">
+            <h1 className="font-semibold text-display text-ink">
+              {selected.name}
+            </h1>
+            <span className="font-mono text-xs text-muted">
+              {selected.initial_capital != null &&
+                `$${Number(selected.initial_capital).toLocaleString()}`}
+              {selected.portfolio_type &&
+                ` · ${selected.portfolio_type}`}
+            </span>
+          </div>
+          <section className="rounded-xl border border-hairline bg-card px-5 py-4">
+            <AddHoldingForm portfolioId={selected.id} />
+            <div className="mt-3 divide-y divide-hairline/60">
+              {(holdings ?? []).length === 0 ? (
+                <p className="py-4 text-sm text-muted">
+                  Empty book — add a symbol above (the pulse checks it
+                  against tape + fundamentals on next read).
+                </p>
+              ) : (
+                (holdings ?? []).map((h) => (
+                  <UserHoldingRow key={h.symbol} p={selected.id} h={h} />
+                ))
+              )}
             </div>
-          ))
-        )}
-      </Section>
+          </section>
+          <div className="mt-6">
+            <WatchlistCard />
+          </div>
+          <footer className="mt-16 border-t border-hairline pt-6 text-[11px] text-faint">
+            advisory — your book, your call. Rename/delete for books
+            lands with account sign-in.
+          </footer>
+        </>
+      ) : (
+        /* ---- the system book: pulse view ---- */
+        <>
+          <div className="pt-3 flex items-baseline gap-4">
+            <h1 className="font-semibold text-display text-ink">
+              {money(book?.value)}
+            </h1>
+            <span className={`font-mono text-xl ${tone(book?.pnl_pct)}`}>
+              {pct(book?.pnl_pct)}
+            </span>
+          </div>
+          {book?.on_pace != null && (
+            <div className="pt-2 flex flex-wrap items-center gap-2 text-xs">
+              <span
+                className={`rounded-full px-2.5 py-1 font-medium ${book.on_pace
+                  ? 'bg-aggressive/10 text-aggressive'
+                  : 'bg-accent/10 text-accent'
+                  }`}
+              >
+                {book.on_pace ? 'on pace' : 'behind pace'} vs{' '}
+                {book.target_pct}% target
+              </span>
+              {book.track_ret_pct != null && (
+                <span className="text-muted">
+                  {pct(book.track_ret_pct)} over {book.track_days}d
+                  {book.excess_pct != null && (
+                    <span className={tone(book.excess_pct)}>
+                      {' '}({pct(book.excess_pct)} vs SPY)
+                    </span>
+                  )}
+                </span>
+              )}
+            </div>
+          )}
+          <SectorBar rows={rows} />
 
-      <div className="mt-6">
-        <WatchlistCard />
-      </div>
+          <section className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-6 rounded-xl border border-hairline bg-card px-5 py-4">
+            <Stat label="Positions" value={String(book?.positions ?? 0)} />
+            <Stat label="Cost" value={money(book?.cost)} />
+            <Stat label="Unrealized" value={money(book?.pnl)} />
+            <Stat label="Goal /mo" value={money(book?.goal_month)} />
+          </section>
 
-      <footer className="mt-16 border-t border-hairline pt-6 text-[11px] text-faint">
-        advisory — the action hints are deterministic evals; the trade is
-        yours. Per-user books (1 member · 5 pro · 20 elite) turn on with
-        sign-in.
-      </footer>
+          <Section title="Holdings" subtitle="attention first" defaultOpen>
+            {rows.length === 0 ? (
+              <p className="text-sm text-muted">
+                No positions on the book. When holdings are journaled they
+                appear here with tape state, FV gap and action hints.
+              </p>
+            ) : (
+              groups.map(([bucket, rs]) => (
+                <div key={bucket} className="mb-5 last:mb-0">
+                  <div
+                    className={`pb-1.5 text-[11px] font-semibold uppercase tracking-wider ${BUCKET_TONE[bucket]}`}
+                  >
+                    {BUCKET_LABEL[bucket] ?? bucket} · {rs.length}
+                  </div>
+                  <div className="divide-y divide-hairline/60">
+                    {rs.map((r) => (
+                      <HoldingRow key={r.symbol} r={r}
+                        bookValue={book?.value ?? 0} />
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </Section>
+
+          <div className="mt-6">
+            <WatchlistCard />
+          </div>
+
+          <footer className="mt-16 border-t border-hairline pt-6 text-[11px] text-faint">
+            advisory — the action hints are deterministic evals; the trade is
+            yours. Per-user books (1 member · 5 pro · 20 elite) turn on with
+            sign-in.
+          </footer>
+        </>
+      )}
     </main>
   )
 }

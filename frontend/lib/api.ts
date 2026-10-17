@@ -1,4 +1,4 @@
-const BASE =
+export const BASE =
   process.env.WORKER_URL ||
   process.env.NEXT_PUBLIC_WORKER_URL ||
   'http://localhost:8001'
