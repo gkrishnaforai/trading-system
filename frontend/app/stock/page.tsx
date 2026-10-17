@@ -60,9 +60,11 @@ function obj(v: unknown): Record<string, unknown> | null {
 export default async function StockPage({
   searchParams,
 }: {
-  searchParams: { sym?: string }
+  searchParams: { sym?: string | string[] }
 }) {
-  const sym = (searchParams.sym ?? '').toUpperCase().trim()
+  const raw = searchParams.sym
+  const sym = (Array.isArray(raw) ? raw[0] : raw ?? '')
+    .toUpperCase().trim()
 
   if (!sym) {
     return (

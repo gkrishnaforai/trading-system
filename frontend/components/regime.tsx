@@ -1,6 +1,3 @@
-'use client'
-
-import { useState } from 'react'
 import { canSee, tierLabel } from '@/lib/tier'
 
 export function Chevron() {

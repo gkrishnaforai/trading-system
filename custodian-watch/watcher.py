@@ -331,6 +331,11 @@ rules:
     needs_provider: false
     pattern: '(attributeerror|typeerror|keyerror|indexerror|zerodivisionerror): '
     diagnosis: 'unhandled code exception in logs — a code bug, not config; the traceback line names the file:line'
+  - kind: next-ssr-error
+    severity: high
+    needs_provider: false
+    pattern: 'unhandledrejection|digest: \d+|prerender.error|export encountered errors|⨯|error occurred prerendering|server-side exception'
+    diagnosis: 'Next.js server render failure — the browser sees "Application error"; the named digest/page in the tail points at the SSR code path (common cause: calling a non-component export from a use-client module)'
   - kind: api-5xx
     severity: medium
     needs_provider: false
@@ -439,7 +444,7 @@ def _scan_app_logs(conn, cid: str, name: str) -> list[dict]:
     """Scan a running container's log tail for rule-matched error
     signatures — the failures that leave docker 'healthy'."""
     try:
-        tail = _logs(cid, tail=80)
+        tail = _logs(cid, tail=200)
     except Exception:
         return []
     rules, prov_re = _log_rules(conn)
