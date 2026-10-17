@@ -2583,3 +2583,12 @@ async def posts_generate(sym: str | None = None):
         except Exception as exc:
             made["mover_error"] = str(exc)
     return {"generated": made}
+
+
+@router.get("/passive")
+async def passive_board():
+    """Passive-investor overlay — monthly DCA verdict, model ETF book
+    with journaled tilt suggestion, drawdown context. Advisory only;
+    tilts are journaled in passive_tilts for later grading."""
+    from app.signals import passive
+    return await asyncio.to_thread(passive.payload)

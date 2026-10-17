@@ -12,6 +12,7 @@ const LINKS = [
   { href: '/desk', label: 'Desk' },
   { href: '/insights', label: 'Insights' },
   { href: '/alerts', label: 'Alerts' },
+  { href: '/hold', label: 'Hold' },
 ]
 
 export function Nav() {
@@ -33,7 +34,7 @@ export function Nav() {
               <Link
                 key={l.href}
                 href={l.href}
-                className={`relative px-3 py-1.5 text-[13px] font-medium transition-colors ${active ? 'text-accent' : 'text-muted hover:text-ink'
+                className={`relative px-2 py-1.5 text-[12.5px] font-medium transition-colors ${active ? 'text-accent' : 'text-muted hover:text-ink'
                   }`}
               >
                 {l.label}

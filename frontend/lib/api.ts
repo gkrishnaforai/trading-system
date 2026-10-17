@@ -259,6 +259,35 @@ export const api = {
       (opts.sym ? `&sym=${encodeURIComponent(opts.sym)}` : ''),
     ),
   post: (slug: string) => get<Post>(`/posts/${encodeURIComponent(slug)}`),
+  passive: () => get<PassiveBoard>('/passive'),
+}
+
+export type PassiveBoard = {
+  as_of?: string
+  posture?: string
+  matched?: string
+  verdict?: {
+    action?: string
+    tone?: string
+    headline?: string
+    note?: string
+    flipped?: boolean
+  }
+  book?: {
+    name?: string
+    base?: Record<string, number>
+    tilt?: Record<string, number>
+    reason?: string
+    note?: string
+  }
+  context?: {
+    spy_vs_200?: number
+    lead_scenario?: string
+    dip_character?: string
+    p_deeper_dip?: number
+    verdict_line?: string
+  }
+  tilt_history?: { as_of?: string; posture?: string; tilt?: Record<string, number>; reason?: string }[]
 }
 
 export type PostRow = {
