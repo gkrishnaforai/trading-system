@@ -62,6 +62,7 @@ async function get<T>(path: string): Promise<T | null> {
   try {
     const res = await fetch(`${BASE}/api/v1/board${path}`, {
       next: { revalidate: 120 },
+      signal: AbortSignal.timeout(20_000),
     })
     if (!res.ok) return null
     return (await res.json()) as T
@@ -204,6 +205,7 @@ async function getRaw<T>(path: string): Promise<T | null> {
   try {
     const res = await fetch(`${BASE}${path}`, {
       next: { revalidate: 120 },
+      signal: AbortSignal.timeout(20_000),
     })
     if (!res.ok) return null
     return (await res.json()) as T

@@ -53,13 +53,24 @@ async def list_alerts(
             except (ValueError, TypeError):
                 pass
         if stale and not st.get("running"):
-            asyncio.create_task(service.run_scan_job())
+            _kick_scan()
     return {
         "count": len(items),
         "items": items,
         "regime": service.regime_card(),
         "scan": service.scan_status(),
     }
+
+
+def _kick_scan(**kwargs) -> None:
+    """Run the scan job on a daemon thread — the job does blocking
+    provider calls inside coroutines, so running it on the API's event
+    loop would freeze every other endpoint (stock pages 500'd)."""
+    import threading
+    threading.Thread(
+        target=lambda: asyncio.run(service.run_scan_job(**kwargs)),
+        daemon=True,
+    ).start()
 
 
 @router.post("/scan")
@@ -72,12 +83,12 @@ async def run_scan(request: ScanRequest | None = None):
     req = request or ScanRequest()
     if service.scan_status()["running"]:
         return {"status": "already_running", **service.scan_status()}
-    asyncio.create_task(service.run_scan_job(
+    _kick_scan(
         lookback_days=req.lookback_days,
         auto_review_enabled=req.auto_review,
         max_reviews=req.max_reviews,
         portfolio_only=req.portfolio_only,
-    ))
+    )
     return {"status": "started"}
 
 
