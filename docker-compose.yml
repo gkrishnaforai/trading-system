@@ -426,6 +426,10 @@ services:
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
+      # standalone server.js binds to $HOSTNAME — Docker injects the
+      # container id (eth0 IP), which leaves 127.0.0.1 dead and breaks
+      # loopback healthchecks. Bind all interfaces instead.
+      - HOSTNAME=0.0.0.0
       - WORKER_URL=${WORKER_URL:-http://python-worker:8001}
       - NEXT_PUBLIC_API_URL=${GO_API_URL:-http://go-api:8000}
       - NEXT_PUBLIC_GRPC_URL=${GRPC_URL:-http://go-api:50051}
