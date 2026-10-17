@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { api } from '@/lib/api'
-import { Chip, Kv, Section, Stat } from '@/components/regime'
+import { Chip, Kv, Section, Stat, Val, fmtShort } from '@/components/regime'
 
 function money(v: unknown, dec = 2) {
   const n = Number(v)
@@ -181,11 +181,13 @@ export default async function StockPage({
             </ul>
           )}
           {diagnosis != null && (
-            <p className="pt-3 border-t border-hairline/60 mt-3 text-xs text-muted">
-              {typeof diagnosis === 'object'
-                ? JSON.stringify(diagnosis)
-                : String(diagnosis)}
-            </p>
+            <div className="pt-3 border-t border-hairline/60 mt-3 text-xs">
+              {typeof diagnosis === 'object' ? (
+                <Val v={diagnosis} depth={1} />
+              ) : (
+                <span className="text-muted">{String(diagnosis)}</span>
+              )}
+            </div>
           )}
         </section>
       )}
@@ -199,14 +201,14 @@ export default async function StockPage({
           <div className="pt-3 flex flex-wrap gap-2">
             {Object.entries(readiness).map(([lane, v]) => {
               const r = obj(v)
-              const state = r?.state ?? r?.readiness ?? v
+              const state = fmtShort(r?.state ?? r?.readiness ?? v)
               return (
                 <span
                   key={lane}
                   className={`inline-flex items-center gap-1.5 rounded-full border border-hairline px-3 py-1 text-xs ${stateTone(state)}`}
                 >
                   <span className="text-muted">{lane.replace(/_/g, ' ')}</span>
-                  {String(state)}
+                  {state}
                 </span>
               )
             })}
@@ -347,10 +349,10 @@ export default async function StockPage({
           <Section title="Tailwinds & themes">
             <div className="flex flex-wrap gap-2">
               {tailwinds.slice(0, 12).map((t, i) => (
-                <Chip key={`t${i}`} label={String(typeof t === 'object' ? JSON.stringify(t) : t)} tone="ok" />
+                <Chip key={`t${i}`} label={fmtShort(t)} tone="ok" />
               ))}
               {themes.slice(0, 12).map((t, i) => (
-                <Chip key={`h${i}`} label={String(typeof t === 'object' ? JSON.stringify(t) : t)} />
+                <Chip key={`h${i}`} label={fmtShort(t)} />
               ))}
             </div>
           </Section>

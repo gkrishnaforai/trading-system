@@ -1,5 +1,5 @@
 import { api } from '@/lib/api'
-import { Chip, Kv, Section, Stat } from '@/components/regime'
+import { Chip, Kv, Section, Stat, fmtShort } from '@/components/regime'
 
 const TONE: Record<string, string> = {
   aggressive: 'text-aggressive',
@@ -218,11 +218,7 @@ export default async function RegimePage() {
                     <tr key={i} className="border-t border-hairline/60">
                       {Object.values(r).slice(0, 6).map((v, j) => (
                         <td key={j} className="py-2 pr-4 font-mono text-muted">
-                          {v === null || v === undefined
-                            ? '—'
-                            : typeof v === 'object'
-                              ? JSON.stringify(v)
-                              : String(v)}
+                          {fmtShort(v)}
                         </td>
                       ))}
                     </tr>

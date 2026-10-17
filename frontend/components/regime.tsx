@@ -79,17 +79,103 @@ export function Stat({ label, value }: { label: string; value: string }) {
   )
 }
 
-export function Kv({ k, v }: { k: string; v: unknown }) {
-  return (
-    <div className="flex justify-between gap-4 border-b border-hairline/60 py-2 text-sm last:border-0">
-      <span className="text-muted">{k}</span>
-      <span className="font-mono text-ink text-right">
-        {v === null || v === undefined
-          ? '—'
-          : typeof v === 'object'
-            ? JSON.stringify(v)
-            : String(v)}
+function fmtNum(n: number) {
+  if (!Number.isFinite(n)) return String(n)
+  return n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+}
+
+const isScalar = (v: unknown) =>
+  v === null || v === undefined ||
+  typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'
+
+function scalarText(v: unknown) {
+  if (v === null || v === undefined) return '—'
+  if (typeof v === 'number') return fmtNum(v)
+  if (typeof v === 'boolean') return v ? 'yes' : 'no'
+  return String(v)
+}
+
+/** Compact one-liner — used in table cells, chips, labels. */
+export function fmtShort(v: unknown, depth = 0): string {
+  if (isScalar(v)) return scalarText(v)
+  if (depth > 2) return '…'
+  if (Array.isArray(v)) {
+    if (!v.length) return '—'
+    return v.map((x) => fmtShort(x, depth + 1)).join(' · ')
+  }
+  if (typeof v === 'object') {
+    const parts = Object.entries(v as Record<string, unknown>)
+      .filter(([, x]) => x !== null && x !== undefined)
+      .map(([k, x]) => `${k.replace(/_/g, ' ')} ${fmtShort(x, depth + 1)}`)
+    return parts.length ? parts.join(' · ') : '—'
+  }
+  return String(v)
+}
+
+/** Recursive readable renderer — objects become key/value rows,
+    arrays become '·' items or bullet lists. No raw JSON anywhere. */
+export function Val({ v, depth = 0 }: { v: unknown; depth?: number }) {
+  if (isScalar(v)) {
+    return (
+      <span className={v === null || v === undefined ? 'text-faint' : 'text-ink'}>
+        {scalarText(v)}
       </span>
+    )
+  }
+  if (Array.isArray(v)) {
+    if (!v.length) return <span className="text-faint">—</span>
+    if (v.every(isScalar)) {
+      return (
+        <span className="text-ink">
+          {v.map(scalarText).join(' · ')}
+        </span>
+      )
+    }
+    return (
+      <ul className="space-y-1">
+        {v.map((x, i) => (
+          <li key={i} className="flex gap-1.5">
+            <span className="text-faint">·</span>
+            <Val v={x} depth={depth + 1} />
+          </li>
+        ))}
+      </ul>
+    )
+  }
+  const entries = Object.entries(v as Record<string, unknown>)
+    .filter(([, x]) => x !== null && x !== undefined && x !== '')
+  if (!entries.length) return <span className="text-faint">—</span>
+  return (
+    <div className={depth > 0 ? 'pl-3 border-l-2 border-hairline/70' : ''}>
+      {entries.map(([k, x]) => (
+        <div key={k} className="flex justify-between items-baseline gap-4 py-0.5">
+          <span className="text-muted shrink-0">{k.replace(/_/g, ' ')}</span>
+          <span className="text-right min-w-0">
+            <Val v={x} depth={depth + 1} />
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function Kv({ k, v }: { k: string; v: unknown }) {
+  const simple = isScalar(v) ||
+    (Array.isArray(v) && v.every(isScalar))
+  if (simple) {
+    return (
+      <div className="flex justify-between gap-4 border-b border-hairline/60 py-2 text-sm last:border-0">
+        <span className="text-muted">{k}</span>
+        <span className="font-mono text-ink text-right">
+          <Val v={v} />
+        </span>
+      </div>
+    )
+  }
+  return (
+    <div className="border-b border-hairline/60 py-2 text-sm last:border-0">
+      <div className="text-muted pb-1">{k}</div>
+      <Val v={v} depth={1} />
     </div>
   )
 }
