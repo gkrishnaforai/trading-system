@@ -29,15 +29,17 @@ function daysOld(d?: string | null) {
   return Math.max(0, Math.round((Date.now() - t) / 86400000))
 }
 
-function Fresh({ date }: { date?: string | null }) {
+function Fresh({
+  date, warnDays = 90, prefix,
+}: { date?: string | null; warnDays?: number; prefix?: string }) {
   const age = daysOld(date)
   if (age == null) return null
-  const stale = age > 90
+  const stale = age > warnDays
   return (
     <span
       className={`font-mono text-[11px] ${stale ? 'text-caution' : 'text-faint'}`}
     >
-      {stale && '⚠ '}{String(date).slice(0, 10)} · {age}d old
+      {stale && '⚠ '}{prefix ?? ''}{String(date).slice(0, 10)} · {age}d old
     </span>
   )
 }
@@ -299,7 +301,11 @@ export default async function StockPage({
                   risk {String(fundamental.risk).replace(/_/g, ' ')}
                 </span>
               )}
-              <Fresh date={fundamental?.data_as_of ? String(fundamental.data_as_of) : null} />
+              <Fresh
+                date={fundamental?.data_as_of ? String(fundamental.data_as_of) : null}
+                warnDays={120}
+                prefix="data through "
+              />
             </span>
           </div>
           <div className="pt-3">
