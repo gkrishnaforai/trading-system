@@ -218,6 +218,12 @@ def card(sym: str) -> dict[str, Any]:
     except Exception:
         pass
     sec = sec or None
+    review = None
+    try:
+        from app.signals import event_review
+        review = event_review.latest(s)
+    except Exception:
+        pass
 
     from app.signals.conviction import _quality, _future
     q = _quality(s)
@@ -366,6 +372,7 @@ def card(sym: str) -> dict[str, Any]:
             "growth_quality": gq,
             "capex": _try_capex(s),
             "sec": sec,
+            "review": review,
             "readiness": readiness,
             "tailwinds": tws, "watches": _try_watches(s),
             "diagnosis": tape_diagnosis.diagnose(

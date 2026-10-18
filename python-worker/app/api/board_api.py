@@ -558,6 +558,16 @@ async def _j_sec_filings() -> dict:
     return await asyncio.to_thread(earnings_release.run, symbols)
 
 
+async def _j_weekly_review() -> dict:
+    """Weekly 5-question review — what changed / funding / earnings
+    outlook / market recognition / action, journaled per symbol so
+    each verdict is gradable. Deterministic; events between Sundays
+    trigger the same review via alert/SEC hooks."""
+    from app.signals import event_review
+    symbols = await _tracked_symbols()
+    return await asyncio.to_thread(event_review.run_universe, symbols)
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -626,6 +636,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
                      _j_sec_facts),
     "sec-filings":  ("8-K earnings-release extraction",
                      _j_sec_filings),
+    "weekly-review": ("Weekly 5-question review",
+                      _j_weekly_review),
 }
 
 # order matters for 'all': posture first, then signals, then evals
@@ -659,6 +671,7 @@ _JOB_TIMEOUT = {
     "econ-cal-poll": 2 * 60, "fv-backtest": 20 * 60,
     "fund-journal": 60 * 60, "hedge-universe": 15 * 60,
     "sec-facts": 20 * 60, "sec-filings": 20 * 60,
+    "weekly-review": 15 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
     "theme-rotation": 5 * 60,

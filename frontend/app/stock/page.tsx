@@ -107,6 +107,7 @@ export default async function StockPage({
   const sectorFlow = obj(card.sector_flow)
   const capex = obj(card.capex)
   const sec = obj(card.sec)
+  const review = obj(card.review)
   const readiness = obj(card.readiness)
   const diagnosis = card.diagnosis
   const tailwinds = Array.isArray(card.tailwinds) ? card.tailwinds : []
@@ -435,6 +436,60 @@ export default async function StockPage({
             )}
           </div>
         </div>
+      )}
+
+      {/* latest review — the standing 5 questions */}
+      {review && (
+        <section className="mt-2 rounded-xl border border-hairline bg-card px-5 py-4">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              Latest review
+              {review.trigger != null && (
+                <span className="ml-2 normal-case tracking-normal text-faint">
+                  {String(review.trigger)} · {String(review.as_of ?? '').slice(0, 10)}
+                </span>
+              )}
+            </span>
+            {review.verdict != null && (
+              <span className={`text-sm font-medium ${stateTone(review.verdict)}`}>
+                {String(review.verdict)}
+                {review.score != null && (
+                  <span className="ml-1 font-mono text-[11px] text-faint">
+                    {Number(review.score) >= 0 ? '+' : ''}{Number(review.score).toFixed(1)}
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
+          <div className="pt-3 space-y-2.5">
+            {(['q1', 'q2', 'q3', 'q4'] as const).map((q) => {
+              const ans = obj((obj(review?.answers) ?? {})[q])
+              const lines = Array.isArray(ans?.lines) ? ans.lines : []
+              if (!lines.length) return null
+              const label = { q1: 'what changed', q2: 'funding', q3: 'earnings outlook', q4: 'market read' }[q]
+              return (
+                <div key={q}>
+                  <div className="text-[11px] uppercase tracking-wide text-faint">{label}</div>
+                  <ul className="pt-0.5 space-y-0.5 text-xs text-muted leading-relaxed">
+                    {lines.slice(0, 4).map((l, i) => (
+                      <li key={i}>{String(l)}</li>
+                    ))}
+                  </ul>
+                </div>
+              )
+            })}
+            {Array.isArray(review.reasons) && review.reasons.length > 0 && (
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-faint">action basis</div>
+                <ul className="pt-0.5 space-y-0.5 text-xs text-muted leading-relaxed">
+                  {(review.reasons as unknown[]).slice(0, 6).map((r, i) => (
+                    <li key={i}>{String(r)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </section>
       )}
 
       {/* expandable depth */}

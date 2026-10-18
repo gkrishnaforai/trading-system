@@ -205,6 +205,7 @@ def ensure_table() -> None:
 def run(symbols: list[str]) -> dict[str, Any]:
     """Weekly-ish refresh over the tracked universe. Sequential —
     the provider self-throttles; EDGAR is free and patient."""
+    from app.database import db
     ensure_table()
     ok = no_cik = 0
     splits, errors = [], []
@@ -214,10 +215,19 @@ def run(symbols: list[str]) -> dict[str, Any]:
             if not f:
                 no_cik += 1
                 continue
+            prev = db.execute_query(
+                "SELECT split_suspect FROM symbol_sec_facts"
+                " WHERE symbol=:s", {"s": sym})
+            was_split = bool(prev and prev[0]["split_suspect"])
             persist(sym, f)
             ok += 1
             if f.get("split_suspect"):
                 splits.append(sym)
+                # newly-detected split = material event — per-share
+                # basis changed; fire the deep review
+                if not was_split:
+                    from app.signals import event_review
+                    event_review.maybe_review(sym, "sec:split")
         except Exception as exc:
             errors.append(f"{sym}: {exc}")
             if len(errors) >= 10:

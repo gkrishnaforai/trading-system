@@ -55,6 +55,10 @@ def run(symbols: list[str], days: int = 120) -> dict[str, Any]:
                      "f": rel["filed"], "u": rel["url"], "c": n})
                 analyzed += 1
                 claims += n
+                # a new earnings release IS a material event — the
+                # review picks up guidance claims now journaled
+                from app.signals import event_review
+                event_review.maybe_review(sym, "sec:8k")
             except Exception as exc:
                 errors.append(f"{sym} {rel['accession']}: {exc}")
                 if len(errors) >= 10:
