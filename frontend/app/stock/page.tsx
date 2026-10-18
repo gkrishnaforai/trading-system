@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { api } from '@/lib/api'
 import { Chip, Gate, Kv, Section, Stat, Val, fmtShort } from '@/components/regime'
 import { FundPanel, TapePanel } from '@/components/panels'
+import { TheCall } from '@/components/thecall'
 import { WatchToggle } from '@/components/watchlist'
 
 function money(v: unknown, dec = 2) {
@@ -182,6 +183,9 @@ export default async function StockPage({
                 {String(verdict.verdict)}
               </span>
             )}
+          </div>
+          <div className="pt-3">
+            <TheCall card={card} />
           </div>
           {Array.isArray(verdict.why) && verdict.why.length > 0 && (
             <ul className="pt-3 space-y-1 text-sm text-muted leading-relaxed">
