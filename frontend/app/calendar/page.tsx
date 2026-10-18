@@ -18,6 +18,27 @@ function fmtDay(d?: string) {
   }
 }
 
+function fmtMoney(v: unknown) {
+  const n = Number(v)
+  if (!isFinite(n)) return null
+  const a = Math.abs(n)
+  if (a >= 1e12) return `$${(n / 1e12).toFixed(1)}T`
+  if (a >= 1e9) return `$${(n / 1e9).toFixed(1)}B`
+  if (a >= 1e6) return `$${(n / 1e6).toFixed(0)}M`
+  return `$${n}`
+}
+
+function relTag(daysAway: number | null | undefined, day: string, todayStr: string) {
+  const d =
+    typeof daysAway === 'number'
+      ? daysAway
+      : Math.round((Date.parse(`${day}T12:00:00Z`) - Date.parse(`${todayStr}T12:00:00Z`)) / 86400000)
+  if (d === 0) return 'today'
+  if (d === 1) return 'tomorrow'
+  if (d === -1) return 'yesterday'
+  return d < 0 ? `${-d}d ago` : `in ${d}d`
+}
+
 function pick(r: EarningsRow, keys: string[]) {
   for (const k of keys) {
     const v = r[k]
@@ -26,163 +47,282 @@ function pick(r: EarningsRow, keys: string[]) {
   return null
 }
 
-function MacroRow({ e }: { e: MacroEvent }) {
-  const moved = e.rescheduled && e.rescheduled_from
-  const isToday = e.days_away === 0
-  const dateStr = e.when ?? e.date ?? ''
-  const tag =
-    e.days_away === 0 ? 'today'
-      : e.days_away === 1 ? 'tomorrow'
-        : e.days_away === -1 ? 'yesterday'
-          : typeof e.days_away === 'number'
-            ? e.days_away < 0 ? `${-e.days_away}d ago` : `in ${e.days_away}d`
-            : ''
+function timeChip(t?: string | null) {
+  if (!t) return null
+  const s = String(t).toLowerCase()
+  if (s.includes('before')) return 'BMO'
+  if (s.includes('after')) return 'AMC'
+  return String(t)
+}
+
+function SevDot({ sev }: { sev?: string }) {
+  const c =
+    sev === 'extreme' ? 'bg-defensive'
+      : sev === 'high' ? 'bg-caution'
+        : 'bg-faint'
+  return <span className={`inline-block h-1.5 w-1.5 rounded-full ${c}`} />
+}
+
+function EarningsLine({ r }: { r: EarningsRow }) {
+  const sym = String(r.symbol ?? '—')
+  const name = pick(r, ['company_name', 'name'])
+  const chip = timeChip(
+    String(pick(r, ['earnings_time', 'time', 'session', 'timing', 'hour']) ?? ''),
+  )
+  const epsEst = pick(r, ['eps_estimate', 'eps_est', 'estimated_eps'])
+  const revEst = pick(r, ['revenue_estimate', 'rev_est'])
+  const epsAct = pick(r, ['eps_actual'])
+  return (
+    <div className="flex items-baseline justify-between gap-4 text-sm">
+      <span className="min-w-0 truncate">
+        <Link
+          href={`/stock?sym=${encodeURIComponent(sym)}`}
+          className="font-semibold text-ink hover:text-accent transition-colors"
+        >
+          {sym}
+        </Link>
+        {name && String(name) !== sym && (
+          <span className="ml-2 text-xs text-faint">{String(name)}</span>
+        )}
+        {chip && (
+          <span className={`ml-2 rounded-full px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-wider ${chip === 'BMO' ? 'bg-caution/15 text-caution' : 'bg-accent/10 text-accent'}`}>
+            {chip}
+          </span>
+        )}
+      </span>
+      <span className="shrink-0 text-right font-mono text-xs text-muted">
+        {epsAct != null
+          ? `EPS ${String(epsAct)}${epsEst != null ? ` vs ${String(epsEst)}` : ''}`
+          : epsEst != null && `EPS est ${String(epsEst)}`}
+        {revEst != null && fmtMoney(revEst) && ` · rev est ${fmtMoney(revEst)}`}
+      </span>
+    </div>
+  )
+}
+
+function MacroLine({ e, detailed }: { e: MacroEvent; detailed?: boolean }) {
   const judge = e.judge
   const judgeTone =
     judge?.verdict === 'green' ? 'text-aggressive'
       : judge?.verdict === 'red' ? 'text-defensive'
-        : judge?.verdict ? 'text-caution' : 'text-muted'
+        : 'text-caution'
   return (
-    <div className={`py-2.5 ${isToday ? 'border-l-2 border-accent pl-3' : ''}`}>
-      <div className="flex justify-between gap-4 text-sm">
-        <span className="text-ink">
-          {e.title ?? e.name ?? 'event'}
-          {e.unconfirmed && (
-            <span className="text-caution"> ·?</span>
-          )}
-          {isToday && (
-            <span className="ml-2 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent">
-              today
-            </span>
-          )}
+    <div className="py-1.5">
+      <div className="flex items-center justify-between gap-4 text-sm">
+        <span className="flex min-w-0 items-center gap-2 text-ink">
+          <SevDot sev={String(e.severity ?? '')} />
+          <span className="truncate">
+            {e.title ?? e.name ?? 'event'}
+            {e.unconfirmed && <span className="text-caution"> ·?</span>}
+          </span>
         </span>
-        <span className="font-mono text-xs text-muted text-right shrink-0">
-          {fmtDay(dateStr)}{tag && !isToday ? ` · ${tag}` : ''}
-          {moved && (
-            <span className="text-caution"> ⟵ was {e.rescheduled_from}</span>
-          )}
+        <span className="shrink-0 font-mono text-xs text-muted">
+          {e.time_et ? <span className="text-faint">{String(e.time_et)} ET · </span> : null}
+          {e.actual != null
+            ? `printed ${e.actual}${e.estimate != null ? ` vs est ${e.estimate}` : ''}`
+            : e.estimate != null && `est ${e.estimate}`}
+          {e.prev != null && ` · prev ${e.prev}`}
         </span>
       </div>
-      <div className="pt-0.5 text-xs text-muted space-y-0.5">
-        {(e.actual != null || e.estimate != null) && (
-          <div className="font-mono">
-            {e.actual != null
-              ? `printed ${e.actual}${e.estimate != null ? ` vs est ${e.estimate}` : ''}`
-              : `est ${e.estimate}`}
-            {e.prev != null && ` · prev ${e.prev}`}
-          </div>
-        )}
-        {e.impact && <div>{e.impact}</div>}
-        {e.reading && <div>{e.reading}</div>}
-        {judge?.verdict && (
-          <div className={judgeTone}>
-            judge: {String(judge.verdict).toUpperCase()}
-            {judge.confidence != null && ` (${judge.confidence}%)`}
-            {judge.spy_ret != null &&
-              ` · SPY ${(Number(judge.spy_ret) * 100).toFixed(2)}%`}
-            {judge.thesis && ` — ${judge.thesis}`}
-            {judge.correct === true && ' ✓'}
-            {judge.correct === false && ' ✗'}
-          </div>
-        )}
-        {e.source_url && (
-          <div>
-            <a
-              className="underline underline-offset-2 text-faint hover:text-accent"
-              href={String(e.source_url)}
-              target="_blank"
-              rel="noreferrer"
-            >
-              official release ↗
-            </a>
-          </div>
-        )}
-      </div>
+      {detailed && (
+        <div className="space-y-0.5 pl-3.5 pt-0.5 text-xs text-muted">
+          {e.rescheduled && e.rescheduled_from && (
+            <div className="text-caution">rescheduled — was {e.rescheduled_from}</div>
+          )}
+          {e.impact && <div>{e.impact}</div>}
+          {e.reading && <div>{e.reading}</div>}
+          {judge?.verdict && (
+            <div className={judgeTone}>
+              judge: {String(judge.verdict).toUpperCase()}
+              {judge.confidence != null && ` (${judge.confidence}%)`}
+              {judge.spy_ret != null &&
+                ` · SPY ${(Number(judge.spy_ret) * 100).toFixed(2)}%`}
+              {judge.thesis && ` — ${judge.thesis}`}
+              {judge.correct === true && ' ✓'}
+              {judge.correct === false && ' ✗'}
+            </div>
+          )}
+          {e.source_url && (
+            <div>
+              <a
+                className="text-faint underline underline-offset-2 hover:text-accent"
+                href={String(e.source_url)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                official release ↗
+              </a>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
 export default async function CalendarPage() {
   const now = new Date()
-  const start = isoDay(now)
+  const todayStr = isoDay(now)
   const end = isoDay(new Date(now.getTime() + 14 * 86400000))
-  const todayStr = start
 
   const [events, earnings] = await Promise.all([
     api.macroEvents(),
-    api.earningsCalendar(start, end),
+    api.earningsCalendar(todayStr, end),
   ])
 
   const evList = Array.isArray(events) ? events : (events?.events ?? [])
   const erList = earnings?.data ?? []
 
-  // group earnings by date
-  const byDay = new Map<string, EarningsRow[]>()
+  const earnByDay = new Map<string, EarningsRow[]>()
   for (const r of erList) {
     const day = String(r.earnings_date ?? '').slice(0, 10)
     if (!day) continue
-    byDay.set(day, [...(byDay.get(day) ?? []), r])
+    earnByDay.set(day, [...(earnByDay.get(day) ?? []), r])
   }
-  const days = [...byDay.keys()].sort()
+  const macroByDay = new Map<string, MacroEvent[]>()
+  for (const e of evList) {
+    const day = String(e.date ?? e.when ?? '').slice(0, 10)
+    if (!day) continue
+    macroByDay.set(day, [...(macroByDay.get(day) ?? []), e])
+  }
+
+  // this week — Mon→Sun strip
+  const dow = (now.getUTCDay() + 6) % 7
+  const weekStart = new Date(now.getTime() - dow * 86400000)
+  const week = Array.from({ length: 7 }, (_, i) =>
+    isoDay(new Date(weekStart.getTime() + i * 86400000)),
+  )
+
+  // upcoming days = union of earnings + macro days >= today, sorted
+  const upcoming = [...new Set([...earnByDay.keys(), ...macroByDay.keys()])]
+    .filter((d) => d >= todayStr && d <= end)
+    .sort()
+  const future = upcoming.filter((d) => d > todayStr)
+  const prints = evList
+    .filter((e) => typeof e.days_away === 'number' && e.days_away < 0)
+    .sort((a, b) => (b.days_away ?? 0) - (a.days_away ?? 0))
+    .slice(0, 10)
+
+  const todayEarn = earnByDay.get(todayStr) ?? []
+  const todayMacro = macroByDay.get(todayStr) ?? []
+  const todayEmpty = todayEarn.length === 0 && todayMacro.length === 0
+  const nextDay = future[0]
+  const weekend = now.getUTCDay() === 0 || now.getUTCDay() === 6
 
   return (
     <main className="mx-auto max-w-3xl px-5 pb-20">
-      <header className="pt-6 pb-8">
+      <header className="pt-6 pb-6">
         <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
-          Today&apos;s calendar
+          Earnings hub
         </div>
         <h1 className="pt-3 font-semibold text-display text-ink">
           Earnings &amp; <span className="text-accent">Macro</span>
         </h1>
-        <p className="pt-4 max-w-xl text-[15px] leading-relaxed text-muted">
-          What prints on which day — earnings on the book&apos;s symbols plus
-          the macro releases the regime engine watches.
-        </p>
       </header>
 
-      {/* earnings — grouped by day, today highlighted */}
-      <Section title="Earnings" subtitle="next 14 days" defaultOpen>
-        {days.length === 0 ? (
+      {/* this week — strip */}
+      <section className="grid grid-cols-7 gap-1 pb-8">
+        {week.map((d) => {
+          const isToday = d === todayStr
+          const nEarn = earnByDay.get(d)?.length ?? 0
+          const macros = macroByDay.get(d) ?? []
+          const worst = macros.some((m) => m.severity === 'extreme')
+            ? 'extreme'
+            : macros.some((m) => m.severity === 'high') ? 'high' : null
+          const isWknd = [5, 6].includes(week.indexOf(d))
+          return (
+            <div
+              key={d}
+              className={`rounded-lg border px-1.5 py-2 text-center ${isToday
+                ? 'border-accent bg-accent/5'
+                : 'border-hairline'
+                } ${isWknd ? 'opacity-45' : ''}`}
+            >
+              <div className="text-[10px] font-medium uppercase tracking-wider text-faint">
+                {new Date(`${d}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short' })}
+              </div>
+              <div className={`font-mono text-sm ${isToday ? 'font-semibold text-accent' : 'text-ink'}`}>
+                {Number(d.slice(8))}
+              </div>
+              <div className="flex h-3.5 items-center justify-center gap-1 pt-0.5">
+                {nEarn > 0 && (
+                  <span className="rounded-full bg-accent/15 px-1 text-[9px] font-semibold text-accent">
+                    {nEarn}
+                  </span>
+                )}
+                {worst && <SevDot sev={worst} />}
+              </div>
+            </div>
+          )
+        })}
+      </section>
+
+      {/* today — the focus card */}
+      <section className="rounded-xl border border-hairline bg-elevated p-5">
+        <div className="flex items-baseline justify-between">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">
+            Today — {fmtDay(todayStr)}
+          </div>
+          {!todayEmpty && (
+            <div className="font-mono text-xs text-faint">
+              {todayEarn.length > 0 && `${todayEarn.length} earnings`}
+              {todayEarn.length > 0 && todayMacro.length > 0 && ' · '}
+              {todayMacro.length > 0 && `${todayMacro.length} macro`}
+            </div>
+          )}
+        </div>
+        {todayEmpty ? (
+          <div className="pt-4">
+            <p className="text-sm text-muted">
+              {weekend
+                ? 'Weekend — markets are closed. Nothing scheduled.'
+                : 'Nothing on the tape today.'}
+            </p>
+            {nextDay && (
+              <p className="pt-2 text-xs text-faint">
+                Next up: {fmtDay(nextDay)} ({relTag(null, nextDay, todayStr)})
+                {earnByDay.get(nextDay)?.length
+                  ? ` — ${earnByDay.get(nextDay)!.map((r) => String(r.symbol)).join(', ')}`
+                  : macroByDay.get(nextDay)?.length
+                    ? ` — ${macroByDay.get(nextDay)!.map((e) => e.title ?? e.name).join(', ')}`
+                    : ''}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-1 pt-4">
+            {todayMacro.map((e, i) => <MacroLine key={i} e={e} detailed />)}
+            {todayEarn.map((r, i) => <EarningsLine key={i} r={r} />)}
+          </div>
+        )}
+      </section>
+
+      {/* upcoming — merged day-by-day */}
+      <Section title="Next up" subtitle="next 14 days" defaultOpen>
+        {future.length === 0 ? (
           <p className="text-sm text-muted">
-            No earnings on the tracked book&apos;s calendar for the next two
+            Nothing scheduled on the book&apos;s calendar for the next two
             weeks.
           </p>
         ) : (
-          <div className="space-y-4">
-            {days.map((day) => {
-              const isToday = day === todayStr
+          <div className="space-y-5">
+            {future.map((day) => {
+              const macros = macroByDay.get(day) ?? []
+              const earns = earnByDay.get(day) ?? []
+              const extreme = macros.some((m) => m.severity === 'extreme')
               return (
                 <div key={day}>
-                  <div
-                    className={`pb-1.5 text-[11px] font-semibold uppercase tracking-wider ${isToday ? 'text-accent' : 'text-faint'
-                      }`}
-                  >
-                    {fmtDay(day)}{isToday && ' — today'}
+                  <div className="flex items-baseline gap-3 pb-2">
+                    <span className={`text-[11px] font-semibold uppercase tracking-wider ${extreme ? 'text-defensive' : 'text-faint'}`}>
+                      {fmtDay(day)}
+                    </span>
+                    <span className="font-mono text-[10px] text-faint">
+                      {relTag(null, day, todayStr)}
+                    </span>
                   </div>
-                  <div className={`space-y-1.5 ${isToday ? 'border-l-2 border-accent pl-3' : ''}`}>
-                    {byDay.get(day)!.map((r, i) => {
-                      const time = pick(r, ['time', 'session', 'timing', 'hour'])
-                      const epsEst = pick(r, ['eps_estimate', 'eps_est', 'estimated_eps'])
-                      const revEst = pick(r, ['revenue_estimate', 'rev_est'])
-                      return (
-                        <div
-                          key={`${r.symbol}-${i}`}
-                          className="flex items-baseline justify-between gap-4 text-sm"
-                        >
-                          <Link
-                            href={`/stock?sym=${encodeURIComponent(String(r.symbol ?? ''))}`}
-                            className="font-medium text-ink hover:text-accent transition-colors"
-                          >
-                            {String(r.symbol ?? '—')}
-                          </Link>
-                          <span className="font-mono text-xs text-muted text-right">
-                            {time != null && `${String(time).toUpperCase()}`}
-                            {epsEst != null && ` · EPS est ${String(epsEst)}`}
-                            {revEst != null && ` · rev est ${String(revEst)}`}
-                          </span>
-                        </div>
-                      )
-                    })}
+                  <div className={`space-y-1 ${extreme ? 'border-l-2 border-defensive/60 pl-3' : ''}`}>
+                    {macros.map((e, i) => <MacroLine key={i} e={e} detailed />)}
+                    {earns.map((r, i) => <EarningsLine key={i} r={r} />)}
                   </div>
                 </div>
               )
@@ -191,19 +331,27 @@ export default async function CalendarPage() {
         )}
       </Section>
 
-      {/* macro events — judge verdicts ride along */}
-      <Section title="Macro events" subtitle="event-day judge verdicts" defaultOpen>
-        {evList.length === 0 ? (
-          <p className="text-sm text-muted">No macro events on the calendar.</p>
+      {/* recent prints — judged receipts */}
+      <Section title="Recent prints" subtitle="what already landed" defaultOpen={false}>
+        {prints.length === 0 ? (
+          <p className="text-sm text-muted">No recent prints on record.</p>
         ) : (
           <div className="divide-y divide-hairline/60">
-            {evList.map((e, i) => <MacroRow key={i} e={e} />)}
+            {prints.map((e, i) => (
+              <div key={i}>
+                <div className="pt-1 font-mono text-[10px] uppercase tracking-wider text-faint">
+                  {fmtDay(e.date ?? e.when ?? '')} · {relTag(e.days_away, String(e.date ?? ''), todayStr)}
+                </div>
+                <MacroLine e={e} detailed />
+              </div>
+            ))}
           </div>
         )}
       </Section>
 
       <footer className="mt-16 border-t border-hairline pt-6 text-[11px] text-faint">
-        advisory — scheduled events, not signals; today highlighted in orange
+        advisory — scheduled events, not signals; dots mark macro severity
+        (red extreme · yellow high), numbers mark earnings count
       </footer>
     </main>
   )
