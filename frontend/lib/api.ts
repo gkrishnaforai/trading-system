@@ -201,10 +201,12 @@ export type AlertItem = {
   fund_alert?: string
 }
 
-async function getRaw<T>(path: string): Promise<T | null> {
+export async function getRaw<T>(
+  path: string, opts?: { fresh?: boolean },
+): Promise<T | null> {
   try {
     const res = await fetch(`${BASE}${path}`, {
-      next: { revalidate: 120 },
+      ...(opts?.fresh ? { cache: 'no-store' as const } : { next: { revalidate: 120 } }),
       signal: AbortSignal.timeout(20_000),
     })
     if (!res.ok) return null
