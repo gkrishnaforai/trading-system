@@ -24,7 +24,7 @@ const config: Config = {
         mono: ['var(--font-mono)', 'ui-monospace', 'monospace'],
       },
       fontSize: {
-        display: ['clamp(1.7rem,4vw,2.8rem)', { lineHeight: '1.05', letterSpacing: '-0.03em' }],
+        display: ['clamp(1.25rem,2.4vw,1.8rem)', { lineHeight: '1.1', letterSpacing: '-0.02em' }],
       },
     },
   },
