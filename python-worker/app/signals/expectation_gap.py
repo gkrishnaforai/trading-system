@@ -49,6 +49,11 @@ def _fundamental_accel(fmp, sym: str) -> dict:
     eps = [q.get("eps") or q.get("epsDiluted") for q in inc]
     gm = [(_div(q.get("grossProfit"), q.get("revenue")))
           for q in inc]
+    # R&D intensity — for software names R&D IS the buildout; EPS/FCF
+    # compression from a rising R&D ratio is investment, not demand
+    # decay. rd_slope = latest ratio minus the year-ago quarter.
+    rd = [(_div(q.get("researchAndDevelopmentExpenses"),
+                q.get("revenue"))) for q in inc]
     rev_yoy = [(_div(rev[i], rev[i + 4])) - 1 if rev[i] and rev[i + 4]
                else None for i in range(4)]
     # growth % only meaningful when both periods share a sign and the
@@ -136,6 +141,9 @@ def _fundamental_accel(fmp, sym: str) -> dict:
         "eps_growth": eps_yoy[0],
         "eps_accel": _accel(eps_yoy[0], eps_yoy[1]),
         "eps_growth_ttm": eps_ttm_growth,
+        "rd_rev": rd[0],
+        "rd_slope": (rd[0] - rd[4] if rd[0] is not None
+                     and rd[4] is not None else None),
         "capex_eff": (_div(gp_delta, capex_ttm)
                       if gp_delta is not None else None),
         "capex_rev": (_div(capex_ttm, rev_ttm)
@@ -460,11 +468,11 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             " net_debt_ebitda, debt_to_equity, rev_breadth_30d,"
             " surprise_trend, roic, roe, capex_eff, capex_rev,"
             " eps_growth_ttm, fcf_ttm, fcf_margin, fcf_growth,"
-            " acq_spend_ttm, acq_rev_pct) "
+            " acq_spend_ttm, acq_rev_pct, rd_rev, rd_slope) "
             "VALUES (:s,:rg,:ra,:gm,:gms,:gmq,:eg,:ea,:bs,:asp,:lsp,:lrd,"
             ":fe,:fr,:na,:er,:fpe,:mr,:gs,CAST(:gd AS jsonb),"
             ":nde,:dte,:rb,:str,:roic,:roe,:ceff,:crev,:egt,"
-            ":ft,:fm,:fg,:aspd,:arp) "
+            ":ft,:fm,:fg,:aspd,:arp,:rdr,:rds) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "rev_growth=COALESCE(EXCLUDED.rev_growth,"
             " symbol_flywheel.rev_growth),"
@@ -550,6 +558,9 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             " symbol_flywheel.acq_spend_ttm),"
             " acq_rev_pct=COALESCE(EXCLUDED.acq_rev_pct,"
             " symbol_flywheel.acq_rev_pct),"
+            " rd_rev=COALESCE(EXCLUDED.rd_rev, symbol_flywheel.rd_rev),"
+            " rd_slope=COALESCE(EXCLUDED.rd_slope,"
+            " symbol_flywheel.rd_slope),"
             " updated_at=now(), as_of=now()",
             {"s": sym, "rg": m.get("rev_growth"),
              "ra": m.get("rev_accel"), "gm": m.get("gm_now"),
@@ -574,6 +585,7 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
              "fg": m.get("fcf_growth"),
              "aspd": m.get("acq_spend_ttm"),
              "arp": m.get("acq_rev_pct"),
+             "rdr": m.get("rd_rev"), "rds": m.get("rd_slope"),
              "gd": __import__("json").dumps(det)})
     except Exception as exc:
         logger.debug("flywheel persist %s: %s", sym, exc)

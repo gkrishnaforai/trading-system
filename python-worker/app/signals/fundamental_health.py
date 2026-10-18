@@ -56,6 +56,9 @@ def _decel_cause(m: dict, n_neg: int) -> Optional[str]:
       demand_deterioration  revenue itself decaying (not just margins)
       capacity_investment   capex-heavy + demand strong + revisions ok
                             — compression is the buildout, not demand
+      rd_investment         R&D ratio rising + demand strong — for
+                            software names the R&D ramp IS the buildout;
+                            EPS/FCF compression is opex, not decay
       base_normalization    decel fired but level still >40% growth
       mixed                 anything else"""
     rg, ra = m.get("rev_growth"), m.get("rev_accel")
@@ -63,6 +66,7 @@ def _decel_cause(m: dict, n_neg: int) -> Optional[str]:
     er = m.get("est_revision_pct")
     gms, gmq = m.get("gm_slope"), m.get("gm_qoq")
     cr = m.get("capex_rev")
+    rds = m.get("rd_slope")
 
     decel = ((ra is not None and ra < -0.05)
              or (ea is not None and ea < -0.05))
@@ -84,6 +88,10 @@ def _decel_cause(m: dict, n_neg: int) -> Optional[str]:
             and rg is not None and rg > 0.20
             and (er is None or er > 0)):
         return "capacity_investment"
+    if (rds is not None and rds > 0.01
+            and rg is not None and rg > 0.15
+            and (er is None or er > -0.02)):
+        return "rd_investment"
     if rg is not None and rg > 0.40 and n_neg <= 3:
         return "base_normalization"     # high base decel — but a real
         # hard-negative pile (EPS collapse + margin loss + cuts) isn't
@@ -193,6 +201,11 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
         cav.append(
             f"acq spend ~{arp * 100:.0f}% of rev TTM — organic share "
             "of reported growth unverifiable")
+    rds_ev = m.get("rd_slope")
+    if rds_ev is not None and rds_ev > 0.02:
+        cav.append(
+            f"R&D intensity +{rds_ev * 100:.0f}pts YoY — margin/EPS "
+            "compression may be investment, not demand")
 
     # forward axis — what the street is doing to estimates, kept
     # distinct from the trailing legs so trailing×forward quadrants
@@ -349,6 +362,10 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
     if cause == "capacity_investment":
         monitor = ["margin fails to recover next print",
                    "rev growth falls below 20%",
+                   "estimate revisions turn negative"]
+    elif cause == "rd_investment":
+        monitor = ["R&D ratio keeps rising without rev accel",
+                   "EPS/FCF margins fail to stabilize next print",
                    "estimate revisions turn negative"]
     elif cause == "demand_deterioration":
         monitor = ["rev growth continues lower",
