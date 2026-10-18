@@ -461,9 +461,27 @@ def _fv_detail(run_row: dict, spot, fund_as_of=None) -> dict:
             analyst["as_of"] = str(ar[0].get("consensus_date") or "")
     except Exception:
         pass
-    # freshness — the FV run timestamp, the input watermark it ran
-    # against, and the raw fundamentals snapshot the features resolve
-    # from. Three different clocks; a stale number must be legible.
+    # valuation gate — a blend is decision-grade only when its inputs
+    # are fresh AND its methods agree within reason. Stale fundamentals
+    # (>120d, past a quarter cycle) or a method >3x away from its peers
+    # (split/unit bugs land here) demote the read to needs_validation.
+    issues: list[str] = []
+    if fund_as_of:
+        try:
+            age = (date.today()
+                   - date.fromisoformat(str(fund_as_of)[:10])).days
+            if age > 120:
+                issues.append(f"stale_inputs:{age}d")
+        except Exception:
+            pass
+    fvs = sorted(m["fv"] for m in methods if m.get("fv"))
+    if len(fvs) >= 3:
+        med = fvs[len(fvs) // 2]
+        for m in methods:
+            fv = m.get("fv")
+            if fv and (fv < med * 0.35 or fv > med * 3):
+                m["outlier"] = True
+                issues.append(f"outlier_method:{m['key']}")
     return {
         "as_of": str(run_row.get("as_of") or "")[:19],
         "inputs_as_of": str(run_row.get("inputs_watermark") or "")[:10]
@@ -478,6 +496,8 @@ def _fv_detail(run_row: dict, spot, fund_as_of=None) -> dict:
         "methods": methods,
         "analyst": analyst,
         "decision": run_row.get("decision"),
+        "valuation_status": "ok" if not issues else "needs_validation",
+        "valuation_issues": issues,
     }
 
 

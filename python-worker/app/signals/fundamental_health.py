@@ -130,7 +130,10 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
     if ea is not None and ea < -0.10:
         neg.append(f"eps decel {ea * 100:+.0f}pts")
     if gms is not None and gms < -0.01:
-        neg.append(f"margin down {gms * 100:+.1f}pts")
+        # slope = trend across the 8q window, not last-quarter QoQ —
+        # the panels quote gm_qoq too; an unlabeled number invites the
+        # "why two different margins?" audit finding
+        neg.append(f"margin trend {gms * 100:+.1f}pts over 8q")
     elif gmq is not None and gmq < -0.01:
         # sequential margin drop without YoY deterioration — one leg,
         # not two; the QoQ-vs-YoY divergence itself is the capacity-

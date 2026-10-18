@@ -244,14 +244,32 @@ export default async function StockPage({
               {fv.fundamentals_as_of != null && (
                 <span className="font-mono text-[11px] text-faint">
                   inputs{' '}
-                  <Fresh date={String(fv.fundamentals_as_of)} />
+                  <Fresh date={String(fv.fundamentals_as_of)} warnDays={120} />
                 </span>
               )}
             </div>
           </div>
+          {String(fv.valuation_status ?? '') === 'needs_validation' && (
+            <div className="mt-3 rounded-lg border border-caution/40 bg-caution/5 px-3 py-2 text-xs text-caution">
+              <span className="font-semibold">valuation flagged — directional only, not decision-grade.</span>
+              {Array.isArray(fv.valuation_issues) && (
+                <span className="text-muted">
+                  {' '}·{' '}
+                  {(fv.valuation_issues as unknown[]).map((i) =>
+                    String(i).startsWith('stale_inputs')
+                      ? `stale inputs (${String(i).split(':')[1]})`
+                      : String(i).startsWith('outlier_method')
+                        ? `outlier method ${String(i).split(':')[1]}`
+                        : String(i),
+                  ).join(' · ')}
+                </span>
+              )}
+              <span className="text-faint"> — fundamentals &amp; tape stand alone until this clears</span>
+            </div>
+          )}
           <div className="pt-4 grid grid-cols-2 sm:grid-cols-4 gap-6">
             <Stat label="Spot" value={money(card.spot ?? fv.spot)} />
-            <Stat label="Expected FV" value={money(fv.expected)} />
+            <Stat label="Expected FV · prob-weighted" value={money(fv.expected)} />
             {fvScen?.bear != null && (
               <Stat label="Bear" value={money(fvScen.bear)} />
             )}
@@ -262,6 +280,7 @@ export default async function StockPage({
           {fvScen?.base != null && (
             <div className="pt-3 text-xs text-muted font-mono">
               base {money(fvScen.base)}
+              <span className="text-faint"> (central scenario)</span>
               {fv.regime != null && ` · regime ${String(fv.regime)}`}
               {fv.spot_at_run != null &&
                 Number(fv.spot_at_run) !== Number(card.spot) &&
@@ -410,7 +429,8 @@ export default async function StockPage({
                   <Kv
                     key={i}
                     k={String(m.key ?? 'method') +
-                      (m.w != null ? ` (w ${Number(m.w).toFixed(2)})` : '')}
+                      (m.w != null ? ` (w ${Number(m.w).toFixed(2)})` : '') +
+                      (m.outlier ? ' ⚠ outlier' : '')}
                     v={money(m.fv)}
                   />
                 ))}
