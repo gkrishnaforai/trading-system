@@ -6,6 +6,7 @@ requires:
     - eps_ttm
   optional_scalars:
     - forward_growth_pct_1y
+    - eps_forward
   series: []
 params:
   pe_floor: 10.0
@@ -77,4 +78,13 @@ formula:
       then: null
       else:
         mul: [{var: eps_ttm}, {param: explosive_eps_shock}, {var: pe_explosive}]
-validations: []
+validations:
+  - name: eps_basis_divergent
+    when:
+      and:
+        - gt: [{coalesce: [{var: eps_ttm}, 0]}, 0]
+        - gt: [{coalesce: [{var: eps_forward}, 0]}, 0]
+        - or:
+            - gt: [{div: [{coalesce: [{var: eps_ttm}, 1]}, {coalesce: [{var: eps_forward}, 1]}]}, 4]
+            - gt: [{div: [{coalesce: [{var: eps_forward}, 1]}, {coalesce: [{var: eps_ttm}, 1]}]}, 4]
+    reason: "trailing and forward EPS diverge >4x — split-adjusted basis mismatch or stale snapshot, not growth"

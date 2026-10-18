@@ -538,6 +538,36 @@ async def _j_fv_backtest() -> dict:
     return await asyncio.to_thread(refresh_forwards)
 
 
+async def _j_sec_facts() -> dict:
+    """SEC XBRL fundamentals — RPO/backlog, goodwill, acquisition
+    cash, and share-count split detection (the NOW 5:1 that poisoned
+    eps_ttm gets caught at the source). Free EDGAR data, ~4 req/s
+    self-throttled, sequential over the tracked universe."""
+    from app.signals import sec_fundamentals
+    symbols = await _tracked_symbols()
+    return await asyncio.to_thread(sec_fundamentals.run, symbols)
+
+
+async def _j_sec_filings() -> dict:
+    """8-K earnings-release extraction — item 2.02 press releases
+    through doc_extract: verbatim-quote validation, guidance →
+    thesis_watches, channels → tailwinds journal. Deduped on
+    accession; each release is analyzed exactly once."""
+    from app.signals import earnings_release
+    symbols = await _tracked_symbols()
+    return await asyncio.to_thread(earnings_release.run, symbols)
+
+
+async def _j_weekly_review() -> dict:
+    """Weekly 5-question review — what changed / funding / earnings
+    outlook / market recognition / action, journaled per symbol so
+    each verdict is gradable. Deterministic; events between Sundays
+    trigger the same review via alert/SEC hooks."""
+    from app.signals import event_review
+    symbols = await _tracked_symbols()
+    return await asyncio.to_thread(event_review.run_universe, symbols)
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -602,6 +632,12 @@ JOBS: dict[str, tuple[str, Callable]] = {
                      _j_posture_eval),
     "fv-backtest":  ("FV backtest forward-price refresh",
                      _j_fv_backtest),
+    "sec-facts":    ("SEC XBRL fundamentals",
+                     _j_sec_facts),
+    "sec-filings":  ("8-K earnings-release extraction",
+                     _j_sec_filings),
+    "weekly-review": ("Weekly 5-question review",
+                      _j_weekly_review),
 }
 
 # order matters for 'all': posture first, then signals, then evals
@@ -618,7 +654,7 @@ _ALL_ORDER = ["regime", "momentum", "morning-regime", "fred-macro",
               "theme-review", "daily-sheet", "outcomes",
               "leaps-mark", "priors", "pilot", "daily-calls",
               "daily-puts", "spec-incubator", "meta",
-              "custodian"]
+              "sec-facts", "custodian"]
 
 
 _JOB_TIMEOUT = {
@@ -634,6 +670,8 @@ _JOB_TIMEOUT = {
     "fred-macro": 3 * 60, "econ-cal-verify": 2 * 60,
     "econ-cal-poll": 2 * 60, "fv-backtest": 20 * 60,
     "fund-journal": 60 * 60, "hedge-universe": 15 * 60,
+    "sec-facts": 20 * 60, "sec-filings": 20 * 60,
+    "weekly-review": 15 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
     "theme-rotation": 5 * 60,

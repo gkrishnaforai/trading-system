@@ -197,6 +197,33 @@ def card(sym: str) -> dict[str, Any]:
         " FROM daily_calls WHERE symbol=:s"
         " ORDER BY call_date DESC LIMIT 1", {"s": s})
     call = dict(call[0]) if call else {}
+    sec = {}
+    try:
+        r = db.execute_query(
+            "SELECT rpo, crpo, rpo_period, goodwill,"
+            " goodwill_assets_pct, acq_spend_fy, shares_step_ratio,"
+            " split_suspect, as_of FROM symbol_sec_facts"
+            " WHERE symbol=:s", {"s": s})
+        if r:
+            sec = dict(r[0])
+            sec["as_of"] = str(sec["as_of"]) if sec.get("as_of") \
+                else None
+            sec["rpo_period"] = str(sec["rpo_period"]) \
+                if sec.get("rpo_period") else None
+        f2 = db.execute_query(
+            "SELECT fcf_ttm, fcf_margin, fcf_growth, acq_rev_pct"
+            " FROM symbol_flywheel WHERE symbol=:s", {"s": s})
+        if f2:
+            sec.update({k: f2[0][k] for k in f2[0]})
+    except Exception:
+        pass
+    sec = sec or None
+    review = None
+    try:
+        from app.signals import event_review
+        review = event_review.latest(s)
+    except Exception:
+        pass
 
     from app.signals.conviction import _quality, _future
     q = _quality(s)
@@ -344,6 +371,8 @@ def card(sym: str) -> dict[str, Any]:
             "lt_power": _try_lt_power(s),
             "growth_quality": gq,
             "capex": _try_capex(s),
+            "sec": sec,
+            "review": review,
             "readiness": readiness,
             "tailwinds": tws, "watches": _try_watches(s),
             "diagnosis": tape_diagnosis.diagnose(
@@ -461,9 +490,27 @@ def _fv_detail(run_row: dict, spot, fund_as_of=None) -> dict:
             analyst["as_of"] = str(ar[0].get("consensus_date") or "")
     except Exception:
         pass
-    # freshness — the FV run timestamp, the input watermark it ran
-    # against, and the raw fundamentals snapshot the features resolve
-    # from. Three different clocks; a stale number must be legible.
+    # valuation gate — a blend is decision-grade only when its inputs
+    # are fresh AND its methods agree within reason. Stale fundamentals
+    # (>120d, past a quarter cycle) or a method >3x away from its peers
+    # (split/unit bugs land here) demote the read to needs_validation.
+    issues: list[str] = []
+    if fund_as_of:
+        try:
+            age = (date.today()
+                   - date.fromisoformat(str(fund_as_of)[:10])).days
+            if age > 120:
+                issues.append(f"stale_inputs:{age}d")
+        except Exception:
+            pass
+    fvs = sorted(m["fv"] for m in methods if m.get("fv"))
+    if len(fvs) >= 3:
+        med = fvs[len(fvs) // 2]
+        for m in methods:
+            fv = m.get("fv")
+            if fv and (fv < med * 0.35 or fv > med * 3):
+                m["outlier"] = True
+                issues.append(f"outlier_method:{m['key']}")
     return {
         "as_of": str(run_row.get("as_of") or "")[:19],
         "inputs_as_of": str(run_row.get("inputs_watermark") or "")[:10]
@@ -478,6 +525,8 @@ def _fv_detail(run_row: dict, spot, fund_as_of=None) -> dict:
         "methods": methods,
         "analyst": analyst,
         "decision": run_row.get("decision"),
+        "valuation_status": "ok" if not issues else "needs_validation",
+        "valuation_issues": issues,
     }
 
 

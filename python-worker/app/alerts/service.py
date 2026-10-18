@@ -1,6 +1,7 @@
 """Alert service: inbox reads, swing-review orchestration, concise summaries."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -449,6 +450,16 @@ async def auto_review(
         run_id = uuid.uuid4().hex[:12]
         try:
             result = await run_swing_review(item.symbol, source="alert_auto", run_id=run_id)
+            # fundamental-relevant events also kick the 5-question
+            # event review — the swing graph answers "trade it now?",
+            # this answers "did the business change?" (deduped 20h)
+            if item.event_type in {"catalyst", "eps_revision"} or (
+                    item.event_type == "mover"
+                    and item.direction == "NEGATIVE"):
+                from app.signals import event_review
+                await asyncio.to_thread(
+                    event_review.maybe_review, item.symbol,
+                    f"alert:{item.event_type}")
             action = (result.get("decision") or {}).get("action")
             summary = format_summary(item, result)
             db.execute_update(
@@ -489,7 +500,6 @@ async def _do_review(alert_id: str):
 async def review_alert(alert_id: str) -> dict[str, Any]:
     """Kick the swing review as a background job (was: synchronous —
     timed out at 120s on heavy symbols)."""
-    import asyncio
     row = get_alert(alert_id)
     if not row:
         raise KeyError(f"alert not found: {alert_id}")
