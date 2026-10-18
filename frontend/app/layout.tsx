@@ -3,8 +3,9 @@ import { Nav } from '@/components/nav'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'MarketPulse — Regime',
-  description: 'Morning market condition brief — regime, posture, permissions.',
+  title: 'Osprey Desk — See everything. Decide yourself.',
+  description:
+    'Market cockpit — regime, posture, receipts. The desk sees everything; the call is yours.',
 }
 
 export default function RootLayout({

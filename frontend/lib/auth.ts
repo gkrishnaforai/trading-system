@@ -26,7 +26,7 @@ async function login(): Promise<string | null> {
       // first run — provision the local account, then log in
       await postJson('/api/v2/portfolio/users/register', {
         username: USERNAME, email: EMAIL,
-        password: PASSWORD, full_name: 'MarketPulse',
+        password: PASSWORD, full_name: 'Osprey Desk',
       })
       res = await postJson('/api/v2/portfolio/users/login',
         { username: USERNAME, password: PASSWORD })

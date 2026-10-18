@@ -24,7 +24,7 @@ export function Nav() {
           href="/"
           className="text-[13px] font-semibold tracking-[0.28em] text-ink"
         >
-          MARKET<span className="text-accent">PULSE</span>
+          OSPREY<span className="text-accent">DESK</span>
         </Link>
         <div className="flex items-center gap-1">
           {LINKS.map((l) => {

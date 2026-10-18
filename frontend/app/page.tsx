@@ -71,7 +71,10 @@ export default async function RegimePage() {
 
   return (
     <main className="mx-auto max-w-3xl px-5 pb-20">
-      <header className="flex items-baseline justify-end pt-6 pb-8">
+      <header className="flex items-baseline justify-between pt-6 pb-8">
+        <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+          See everything. Decide yourself.
+        </span>
         <span className="font-mono text-xs text-faint">{fmtDate(asOf)}</span>
       </header>
 
