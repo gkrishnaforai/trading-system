@@ -304,7 +304,7 @@ export default async function StockPage({
               <Fresh
                 date={fundamental?.data_as_of ? String(fundamental.data_as_of) : null}
                 warnDays={120}
-                prefix="data through "
+                prefix="last report "
               />
             </span>
           </div>
