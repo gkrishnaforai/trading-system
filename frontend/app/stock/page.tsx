@@ -106,6 +106,7 @@ export default async function StockPage({
   const technical = obj(card.technical)
   const sectorFlow = obj(card.sector_flow)
   const capex = obj(card.capex)
+  const sec = obj(card.sec)
   const readiness = obj(card.readiness)
   const diagnosis = card.diagnosis
   const tailwinds = Array.isArray(card.tailwinds) ? card.tailwinds : []
@@ -388,6 +389,53 @@ export default async function StockPage({
           <span className="text-sm text-muted">not in a capex basket</span>
         )}
       </div>
+
+      {/* SEC filings — backlog, goodwill, cash quality, split check */}
+      {sec && (
+        <div className="mt-2 rounded-xl border border-hairline bg-card px-5 py-3.5">
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              SEC filings
+            </span>
+            {sec.rpo != null && (
+              <span className="text-sm text-ink font-mono">
+                backlog ${(Number(sec.rpo) / 1e9).toFixed(1)}B
+              </span>
+            )}
+            {sec.crpo != null && (
+              <span className="text-sm text-muted font-mono">
+                cRPO ${(Number(sec.crpo) / 1e9).toFixed(1)}B
+              </span>
+            )}
+            {sec.fcf_ttm != null && (
+              <span className={`text-sm font-mono ${Number(sec.fcf_ttm) < 0 ? 'text-defensive' : 'text-muted'}`}>
+                FCF ${(Number(sec.fcf_ttm) / 1e9).toFixed(1)}B
+                {sec.fcf_margin != null && ` (${(Number(sec.fcf_margin) * 100).toFixed(0)}%)`}
+              </span>
+            )}
+            {sec.goodwill_assets_pct != null && Number(sec.goodwill_assets_pct) > 0.1 && (
+              <span className="text-sm text-muted font-mono">
+                goodwill {(Number(sec.goodwill_assets_pct) * 100).toFixed(0)}% of assets
+              </span>
+            )}
+            {sec.acq_rev_pct != null && Number(sec.acq_rev_pct) > 0.10 && (
+              <span className="text-xs text-caution">
+                acq spend ~{(Number(sec.acq_rev_pct) * 100).toFixed(0)}% of rev — organic share unverifiable
+              </span>
+            )}
+            {sec.split_suspect != null && Boolean(sec.split_suspect) && (
+              <span className="text-xs text-defensive font-medium">
+                ⚠ share-count step {sec.shares_step_ratio != null ? `${Number(sec.shares_step_ratio).toFixed(1)}×` : ''} — split detected; per-share history on mixed basis
+              </span>
+            )}
+            {sec.as_of != null && (
+              <span className="ml-auto font-mono text-[11px] text-faint">
+                facts thru {String(sec.as_of).slice(0, 10)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* expandable depth */}
       <div className="mt-8">

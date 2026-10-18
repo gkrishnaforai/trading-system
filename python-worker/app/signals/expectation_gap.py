@@ -94,13 +94,31 @@ def _fundamental_accel(fmp, sym: str) -> dict:
     gp_delta = (inc[0].get("grossProfit") - inc[4].get("grossProfit")
                 ) * 4 if (inc[0].get("grossProfit") is not None
                           and inc[4].get("grossProfit") is not None) else None
-    capex_ttm = None
+    capex_ttm = fcf_now = fcf_prev = acq_ttm = None
     try:
         # the -ttm endpoint is empty on this plan — sum quarters instead
         cf = fmp.get_cash_flow_statement(sym, "quarter") or []
         cx = [abs(float(q["capitalExpenditure"])) for q in cf[:4]
               if q.get("capitalExpenditure") is not None]
         capex_ttm = sum(cx) if len(cx) >= 3 else None
+
+        fcf = [q.get("freeCashFlow") for q in cf[:8]]
+        # freeCashFlow absent on some plan tiers → ocf − capex
+        if not any(v is not None for v in fcf):
+            fcf = [(q.get("operatingCashFlow") or 0)
+                   - abs(q.get("capitalExpenditure") or 0)
+                   if q.get("operatingCashFlow") is not None else None
+                   for q in cf[:8]]
+        _cur = [v for v in fcf[:4] if v is not None]
+        _prv = [v for v in fcf[4:8] if v is not None]
+        fcf_now = sum(_cur) if len(_cur) >= 3 else None
+        fcf_prev = sum(_prv) if len(_prv) >= 3 else None
+
+        # acquisitionsNet is the M&A cash line — TTM spend vs revenue
+        # is the organic-growth sanity check. Absent = no acq spend.
+        ax = [abs(float(q["acquisitionsNet"])) for q in cf[:4]
+              if q.get("acquisitionsNet") is not None]
+        acq_ttm = sum(ax) if ax else 0.0
     except Exception:
         pass
 
@@ -122,6 +140,16 @@ def _fundamental_accel(fmp, sym: str) -> dict:
                       if gp_delta is not None else None),
         "capex_rev": (_div(capex_ttm, rev_ttm)
                       if capex_ttm and rev_ttm else None),
+        "fcf_ttm": fcf_now,
+        "fcf_margin": (_div(fcf_now, rev_ttm)
+                       if fcf_now is not None and rev_ttm else None),
+        "fcf_growth": (fcf_now / fcf_prev - 1
+                       if fcf_now is not None and fcf_prev
+                       and abs(fcf_prev) > 1e6
+                       and (fcf_prev > 0) == (fcf_now > 0) else None),
+        "acq_spend_ttm": acq_ttm,
+        "acq_rev_pct": (_div(acq_ttm, rev_ttm)
+                        if acq_ttm and rev_ttm else 0.0),
     }
 
 
@@ -431,10 +459,12 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             " muted_reaction, gap_score, gap_detail, "
             " net_debt_ebitda, debt_to_equity, rev_breadth_30d,"
             " surprise_trend, roic, roe, capex_eff, capex_rev,"
-            " eps_growth_ttm) "
+            " eps_growth_ttm, fcf_ttm, fcf_margin, fcf_growth,"
+            " acq_spend_ttm, acq_rev_pct) "
             "VALUES (:s,:rg,:ra,:gm,:gms,:gmq,:eg,:ea,:bs,:asp,:lsp,:lrd,"
             ":fe,:fr,:na,:er,:fpe,:mr,:gs,CAST(:gd AS jsonb),"
-            ":nde,:dte,:rb,:str,:roic,:roe,:ceff,:crev,:egt) "
+            ":nde,:dte,:rb,:str,:roic,:roe,:ceff,:crev,:egt,"
+            ":ft,:fm,:fg,:aspd,:arp) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "rev_growth=COALESCE(EXCLUDED.rev_growth,"
             " symbol_flywheel.rev_growth),"
@@ -510,6 +540,16 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             " symbol_flywheel.capex_eff),"
             " capex_rev=COALESCE(EXCLUDED.capex_rev,"
             " symbol_flywheel.capex_rev),"
+            " fcf_ttm=COALESCE(EXCLUDED.fcf_ttm,"
+            " symbol_flywheel.fcf_ttm),"
+            " fcf_margin=COALESCE(EXCLUDED.fcf_margin,"
+            " symbol_flywheel.fcf_margin),"
+            " fcf_growth=COALESCE(EXCLUDED.fcf_growth,"
+            " symbol_flywheel.fcf_growth),"
+            " acq_spend_ttm=COALESCE(EXCLUDED.acq_spend_ttm,"
+            " symbol_flywheel.acq_spend_ttm),"
+            " acq_rev_pct=COALESCE(EXCLUDED.acq_rev_pct,"
+            " symbol_flywheel.acq_rev_pct),"
             " updated_at=now(), as_of=now()",
             {"s": sym, "rg": m.get("rev_growth"),
              "ra": m.get("rev_accel"), "gm": m.get("gm_now"),
@@ -530,6 +570,10 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
              "roic": m.get("roic"), "roe": m.get("roe"),
              "ceff": m.get("capex_eff"), "crev": m.get("capex_rev"),
              "egt": m.get("eps_growth_ttm"),
+             "ft": m.get("fcf_ttm"), "fm": m.get("fcf_margin"),
+             "fg": m.get("fcf_growth"),
+             "aspd": m.get("acq_spend_ttm"),
+             "arp": m.get("acq_rev_pct"),
              "gd": __import__("json").dumps(det)})
     except Exception as exc:
         logger.debug("flywheel persist %s: %s", sym, exc)

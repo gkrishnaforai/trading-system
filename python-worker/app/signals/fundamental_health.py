@@ -175,6 +175,25 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
     if m.get("muted_reaction"):
         pos.append("muted reaction")
 
+    # cash-generation + acquisition-quality legs — FCF is the receipts
+    # check on reported growth; negative FCF with a buildout excuse
+    # (capex_rev ≥30%) is already counted by the capex legs, so the
+    # burn flag only fires on unexplained burn. Heavy M&A spend against
+    # reported growth is a caveat, not deterioration — the reported
+    # number can't be trusted as organic without the split.
+    cav: list[str] = []
+    fcf_t, fcf_m = m.get("fcf_ttm"), m.get("fcf_margin")
+    if fcf_t is not None and fcf_t < 0 and not (
+            cr is not None and cr > 0.30):
+        neg.append("FCF negative TTM")
+    if fcf_m is not None and fcf_m > 0.20:
+        pos.append(f"FCF margin {fcf_m * 100:.0f}%")
+    arp = m.get("acq_rev_pct")
+    if arp is not None and arp > 0.10 and rg is not None and rg > 0.08:
+        cav.append(
+            f"acq spend ~{arp * 100:.0f}% of rev TTM — organic share "
+            "of reported growth unverifiable")
+
     # forward axis — what the street is doing to estimates, kept
     # distinct from the trailing legs so trailing×forward quadrants
     # (turnaround / pressured) are visible
@@ -338,6 +357,7 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
               "fwd": ("up" if fwd_up else "down" if fwd_dn else "flat"),
               "why": (neg[:3] + pos[:3] if n_neg >= 2 else pos[:4]
                       + neg[:2]), "cyclical_lean": None,
+              "caveats": cav,
               "decel_cause": cause,
               "accel_grade": accel_grade,
               "demand_health": demand,

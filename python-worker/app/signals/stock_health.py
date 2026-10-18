@@ -197,6 +197,27 @@ def card(sym: str) -> dict[str, Any]:
         " FROM daily_calls WHERE symbol=:s"
         " ORDER BY call_date DESC LIMIT 1", {"s": s})
     call = dict(call[0]) if call else {}
+    sec = {}
+    try:
+        r = db.execute_query(
+            "SELECT rpo, crpo, rpo_period, goodwill,"
+            " goodwill_assets_pct, acq_spend_fy, shares_step_ratio,"
+            " split_suspect, as_of FROM symbol_sec_facts"
+            " WHERE symbol=:s", {"s": s})
+        if r:
+            sec = dict(r[0])
+            sec["as_of"] = str(sec["as_of"]) if sec.get("as_of") \
+                else None
+            sec["rpo_period"] = str(sec["rpo_period"]) \
+                if sec.get("rpo_period") else None
+        f2 = db.execute_query(
+            "SELECT fcf_ttm, fcf_margin, fcf_growth, acq_rev_pct"
+            " FROM symbol_flywheel WHERE symbol=:s", {"s": s})
+        if f2:
+            sec.update({k: f2[0][k] for k in f2[0]})
+    except Exception:
+        pass
+    sec = sec or None
 
     from app.signals.conviction import _quality, _future
     q = _quality(s)
@@ -344,6 +365,7 @@ def card(sym: str) -> dict[str, Any]:
             "lt_power": _try_lt_power(s),
             "growth_quality": gq,
             "capex": _try_capex(s),
+            "sec": sec,
             "readiness": readiness,
             "tailwinds": tws, "watches": _try_watches(s),
             "diagnosis": tape_diagnosis.diagnose(
