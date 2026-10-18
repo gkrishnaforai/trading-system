@@ -400,15 +400,24 @@ def _method_explain(method_key: str, inputs: dict,
 
 
 def _fundamentals_data_as_of(sym: str) -> str | None:
-    """Latest raw fundamentals snapshot date for the symbol — the
+    """Latest raw fundamentals data date for the symbol — the
     provider-data clock, distinct from fundamental_updated_at (the
-    scoring clock). A score recomputed today on a 5-month-old payload
-    is stale data, not fresh analysis."""
+    scoring clock). Freshest of: the flywheel's last_report_date (the
+    earnings report the current analysis actually consumed) and the
+    fundamentals_snapshots period. A score recomputed today on a
+    5-month-old payload is stale data, not fresh analysis — but a
+    one-shot refresh that never writes snapshots shouldn't look stale
+    either."""
     try:
         from app.database import db
         fr = db.execute_query(
-            "SELECT MAX(as_of_date) AS d FROM fundamentals_snapshots"
-            " WHERE symbol=:s", {"s": sym})
+            "SELECT MAX(d) AS d FROM ("
+            "  SELECT last_report_date::date AS d FROM symbol_flywheel"
+            "    WHERE symbol=:s AND last_report_date IS NOT NULL"
+            "  UNION ALL"
+            "  SELECT as_of_date FROM fundamentals_snapshots"
+            "    WHERE symbol=:s"
+            ") t", {"s": sym})
         if fr and fr[0].get("d"):
             return str(fr[0]["d"])[:10]
     except Exception:

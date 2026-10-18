@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useEffect, useState } from 'react'
 
 const LINKS = [
   { href: '/', label: 'Regime' },
@@ -17,6 +18,13 @@ const LINKS = [
 
 export function Nav() {
   const path = usePathname()
+  const [isAdmin, setIsAdmin] = useState(false)
+  useEffect(() => {
+    fetch('/api/me')
+      .then((r) => r.json())
+      .then((u) => setIsAdmin(u?.role === 'admin'))
+      .catch(() => { })
+  }, [])
   return (
     <nav className="sticky top-0 z-20 border-b border-hairline bg-canvas/85 backdrop-blur">
       <div className="mx-auto flex max-w-3xl items-center justify-between px-5 py-3.5">
@@ -44,6 +52,18 @@ export function Nav() {
               </Link>
             )
           })}
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className={`relative px-2 py-1.5 text-[12.5px] font-medium transition-colors ${path.startsWith('/admin') ? 'text-accent' : 'text-muted hover:text-ink'
+                }`}
+            >
+              Admin
+              {path.startsWith('/admin') && (
+                <span className="absolute inset-x-3 -bottom-[13px] h-[2px] rounded-full bg-accent" />
+              )}
+            </Link>
+          )}
         </div>
       </div>
     </nav>

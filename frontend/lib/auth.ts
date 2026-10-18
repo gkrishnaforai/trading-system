@@ -57,6 +57,33 @@ export async function getToken(): Promise<string | null> {
   return fresh
 }
 
+function decodeClaims(token: string | null): Record<string, unknown> | null {
+  if (!token) return null
+  try {
+    const seg = token.split('.')[1]
+    return JSON.parse(Buffer.from(seg, 'base64url').toString())
+  } catch {
+    return null
+  }
+}
+
+/** Role + identity for the current session. Tokens minted before the
+    role claim existed fall through to a fresh login. UI gate only —
+    the worker independently verifies the claim server-side. */
+export async function getUser(): Promise<{ role: string; username?: string }> {
+  const first = decodeClaims(await getToken())
+  if (first?.role) {
+    return { role: String(first.role), username: first.username ? String(first.username) : undefined }
+  }
+  const fresh = await login()
+  if (fresh) setCookie(fresh)
+  const claims = decodeClaims(fresh)
+  return {
+    role: String(claims?.role ?? 'user'),
+    username: claims?.username ? String(claims.username) : undefined,
+  }
+}
+
 /** Authed fetch against the worker portfolio v2 API. */
 export async function authedFetch(
   path: string, init: RequestInit = {},

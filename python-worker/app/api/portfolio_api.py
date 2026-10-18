@@ -8,6 +8,7 @@ from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date, time
 import json
+import os
 from decimal import Decimal
 import uuid
 
@@ -260,8 +261,20 @@ async def login_user(login_data: LoginRequest, db=Depends(get_db)):
         {"now": datetime.now(), "user_id": user_data['id']}
     )
     
-    # Create access token
-    access_token = create_access_token(data={"sub": str(user_data['id'])})
+    # Create access token — embed the role claim so get_admin_user /
+    # role-gated surfaces actually work. MP_ADMIN_USERS (comma-sep
+    # usernames) overrides the stored role — survives DB resets for the
+    # device-local account.
+    admin_users = {u.strip() for u in
+                   os.getenv("MP_ADMIN_USERS", "").split(",") if u.strip()}
+    role = ("admin" if user_data['username'] in admin_users
+            else (user_data['role'] or "user"))
+    access_token = create_access_token(data={
+        "sub": str(user_data['id']),
+        "username": user_data['username'],
+        "role": role,
+        "email": user_data['email'],
+    })
     
     logger.info(f"Access token created for user: {login_data.username}")
     
@@ -273,7 +286,7 @@ async def login_user(login_data: LoginRequest, db=Depends(get_db)):
             "username": user_data['username'],
             "email": user_data['email'],
             "full_name": user_data['full_name'],
-            "role": user_data['role']
+            "role": role
         }
     }
 
