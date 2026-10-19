@@ -375,7 +375,7 @@ def card(sym: str) -> dict[str, Any]:
             "sec": sec,
             "review": review,
             "readiness": readiness,
-            "thesis": _try_thesis(s),
+            "thesis": _try_thesis(s, fv_up),
             "tailwinds": tws, "watches": _try_watches(s),
             "diagnosis": tape_diagnosis.diagnose(
                 s, sector=st.get("sector"),
@@ -612,27 +612,39 @@ def _try_capex(sym: str) -> dict:
         return {}
 
 
-def _try_thesis(sym: str) -> dict:
+def _try_thesis(sym: str, fv_up=None) -> dict:
     """Archetype thesis flag — status + direction vs the prior nightly
-    eval + which legs just confirmed/refuted."""
-    try:
-        from app.database import db
+    eval + which legs just confirmed/refuted + the deterministic
+    'like / want confirmed' report. Symbols outside the pilot get a
+    lazy first eval via the archetype fallback rules so the card works
+    for any tracked name."""
+    import json as _json
+    from app.database import db
+
+    def _load() -> dict:
         r = db.execute_query(
             "SELECT archetype, secondary, status, status_dir,"
-            " prev_status, status_since, hyp_changes, score,"
-            " detail, vetoes, as_of"
+            " prev_status, status_since, hyp_changes, hypotheses,"
+            " score, detail, vetoes, as_of"
             " FROM symbol_thesis WHERE symbol=:s", {"s": sym.upper()})
-        if not r:
+        return dict(r[0]) if r else {}
+
+    try:
+        t = _load()
+        if not t:
+            from app.signals import thesis_health
+            thesis_health.evaluate(sym.upper())
+            t = _load()
+        if not t:
             return {}
-        t = dict(r[0])
-        det = t.get("detail")
-        if isinstance(det, str):
-            import json
-            det = json.loads(det)
-        t["detail"] = det or {}
+        for k in ("detail", "hypotheses", "hyp_changes", "vetoes"):
+            if isinstance(t.get(k), str):
+                t[k] = _json.loads(t[k])
         for k in ("as_of", "status_since"):
             if t.get(k) is not None:
                 t[k] = str(t[k])
+        from app.signals.thesis_health import build_report
+        t["report"] = build_report(t, fv_up)
         return t
     except Exception:
         return {}

@@ -14,6 +14,14 @@ export type Thesis = {
   score?: number
   hyp_changes?: ThesisChange[]
   detail?: { unresolved?: string[] }
+  report?: {
+    stance?: string
+    likes?: string[]
+    confirm?: string[]
+    status?: string
+    dir?: string
+    archetype?: string
+  } | null
 }
 
 const STATUS_TONE: Record<string, string> = {

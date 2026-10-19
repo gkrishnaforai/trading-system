@@ -5,6 +5,7 @@ import { FundPanel, TapePanel } from '@/components/panels'
 import { TheCall } from '@/components/thecall'
 import { WatchToggle } from '@/components/watchlist'
 import { ThesisFlag } from '@/components/thesis-flag'
+import { ThesisReport } from '@/components/thesis-report'
 import FvRecompute from '@/components/fv-recompute'
 
 function money(v: unknown, dec = 2) {
@@ -345,6 +346,7 @@ export default async function StockPage({
                 {String(fundamental?.state ?? '—')}
               </div>
             )}
+            <ThesisReport report={thesis?.report ?? null} />
           </div>
         </div>
         <div className="rounded-xl border border-hairline bg-card px-5 py-4">

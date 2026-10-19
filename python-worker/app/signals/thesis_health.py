@@ -154,7 +154,7 @@ def _check(fly: dict, sec: dict, sym: str, m: dict) -> dict:
     elif op == "positive":
         ok = v > 0
     return {"status": "pass" if ok else "fail", "metric": name,
-            "value": round(v, 4),
+            "value": round(v, 4), "op": op, "target": target,
             "note": f"{name} {v:+.3f} vs {op} {target}"}
 
 
@@ -365,3 +365,135 @@ def run(symbols: Optional[list[str]] = None) -> dict:
         except Exception as exc:
             errs.append(f"{s}: {exc}")
     return {"symbols": syms, "status": out, "errors": errs}
+
+
+_METRIC_LABEL = {
+    "rev_growth": "revenue growth", "rev_accel": "revenue acceleration",
+    "fcf_margin": "FCF margin", "fcf_ttm": "free cash flow",
+    "om_slope": "operating-margin slope", "gm_slope": "gross-margin slope",
+    "est_revision_pct": "street revisions",
+    "rev_breadth_30d": "revision breadth",
+    "beat_streak": "consecutive beats",
+    "eps_rep_growth": "reported EPS growth",
+    "rpo_yoy": "backlog (RPO) growth",
+    "def_rev_yoy": "deferred-revenue growth",
+    "acq_rev_pct": "acquisition spend vs revenue",
+    "capex_eff": "capex efficiency",
+    "net_debt_ebitda": "net debt/EBITDA",
+    "shares_step_ratio": "share-count step",
+    # doc KPIs — company-defined, extracted only
+    "gmv_growth": "GMV growth", "take_rate": "take rate",
+    "delinquencies": "delinquencies", "charge_offs": "charge-offs",
+    "provisions": "loan-loss provisions",
+    "contracted_revenue": "contracted revenue",
+    "organic_growth": "disclosed organic growth",
+}
+
+
+def _label(metric: str) -> str:
+    return _METRIC_LABEL.get(metric, metric.replace("_", " "))
+
+
+def _fmt_val(metric: str, v) -> str:
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "n/a"
+    if metric in ("fcf_ttm",):
+        return f"${v / 1e9:.1f}B" if abs(v) >= 1e9 \
+            else f"${v / 1e6:.0f}M" if abs(v) >= 1e6 else f"${v:.0f}"
+    if abs(v) >= 1e9:
+        return f"${v / 1e9:.1f}B"
+    if abs(v) >= 1e6:
+        return f"${v / 1e6:.0f}M"
+    if metric in ("beat_streak",):
+        return f"{v:.0f}"
+    if metric in ("net_debt_ebitda", "rev_breadth_30d",
+                  "shares_step_ratio", "capex_eff"):
+        return f"{v:.1f}x"
+    return f"{v * 100:+.1f}%"
+
+
+def _check_line(c: dict) -> str:
+    """'revenue growth +48% vs ≥15% bar' — one passing/failing check."""
+    if c.get("status") == "evidence":
+        return f"{_label(c['metric'])} extracted ({c.get('note', '')[-40:]})"
+    v = c.get("value")
+    if v is None:
+        return _label(c["metric"])
+    out = f"{_label(c['metric'])} {_fmt_val(c['metric'], v)}"
+    if c.get("op") and c.get("target") is not None:
+        op = {"<=": "≤", ">=": "≥", "<": "<", ">": ">"}.get(
+            c["op"], c["op"])
+        out += f" vs {op} {_fmt_val(c['metric'], c['target']).lstrip('+')} bar"
+    return out
+
+
+def stance_for(status: str, fv_upside_pct: Optional[float]) -> str:
+    """Deterministic stance line — thesis status × whether the market
+    already paid for the improvement."""
+    if status == "broken":
+        return "Avoid — thesis broken"
+    if status == "deteriorating":
+        return "Reduce / no new adds — legs moving against the thesis"
+    if status == "unknown":
+        return "No standing thesis — insufficient data"
+    up = fv_upside_pct
+    cheap = up is not None and up >= 25
+    pricey = up is not None and up <= -20
+    if status == "on_track":
+        if cheap:
+            return "Accumulate candidate — confirmed and still cheap"
+        if pricey:
+            return "Hold — thesis on track, price already paid for it"
+        return "On track — hold / add on weakness"
+    if status == "improving":
+        if cheap:
+            return "Watch / staged entry — progress, unconfirmed legs, cheap"
+        if pricey:
+            return "Watch — improving but priced ahead of the evidence"
+        return "Watch / staged entry — improving, legs still open"
+    return "Watch — mixed evidence"
+
+
+def build_report(t: dict, fv_upside_pct: Optional[float] = None) -> dict:
+    """'What I like / what I want confirmed' — deterministic prose from
+    a persisted symbol_thesis row. Passing legs are the likes; unknown,
+    deteriorating or broken legs are the open confirmations. No LLM —
+    every line cites the check that produced it."""
+    likes, confirm = [], []
+    for h in (t.get("hypotheses") or []):
+        label = h.get("label") or h["id"].replace("_", " ")
+        st = h.get("status")
+        checks = h.get("checks") or []
+        passing = [c for c in checks if c.get("status") == "pass"]
+        failing = [c for c in checks if c.get("status") == "fail"]
+        unknown = [c for c in checks if c.get("status") == "unknown"]
+        if st in ("on_track", "improving"):
+            line = label[0].upper() + label[1:]
+            if passing:
+                line += f" — {_check_line(passing[0])}"
+            elif any(c.get("status") == "evidence" for c in checks):
+                line += " — supporting evidence extracted"
+            likes.append(line)
+        elif st == "broken":
+            why = (_check_line(failing[0]) if failing
+                   else (h.get("failure_condition") or "hard check failed"))
+            confirm.append(f"{label} — broken: {why}")
+        elif st == "deteriorating":
+            why = (_check_line(failing[0]) if failing
+                   else (h.get("failure_condition") or ""))
+            confirm.append(f"{label} — {why}".rstrip(" —"))
+        else:  # unknown — the 'want confirmed' list
+            need = ", ".join(_label(c["metric"]) for c in unknown) \
+                or "confirmation data"
+            fc = h.get("failure_condition")
+            line = f"{label} — awaiting {need}"
+            if fc:
+                line += f" (fails if: {fc})"
+            confirm.append(line)
+    return {"stance": stance_for(str(t.get("status") or "unknown"),
+                                 fv_upside_pct),
+            "likes": likes[:6], "confirm": confirm[:6],
+            "status": t.get("status"), "dir": t.get("status_dir"),
+            "archetype": t.get("archetype")}
