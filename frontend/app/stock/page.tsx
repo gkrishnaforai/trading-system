@@ -6,6 +6,7 @@ import { TheCall } from '@/components/thecall'
 import { WatchToggle } from '@/components/watchlist'
 import { ThesisFlag } from '@/components/thesis-flag'
 import { ThesisReport } from '@/components/thesis-report'
+import { SignalStrip, toneOf } from '@/components/signal-strip'
 import FvRecompute from '@/components/fv-recompute'
 
 function money(v: unknown, dec = 2) {
@@ -123,7 +124,7 @@ export default async function StockPage({
     : null : null
 
   return (
-    <main className="mx-auto max-w-3xl px-5 pb-20">
+    <main className="mx-auto max-w-5xl px-5 pb-20">
       <div className="pt-6 pb-2 text-xs">
         <Link href="/board" className="text-faint hover:text-accent">
           ← board
@@ -177,11 +178,28 @@ export default async function StockPage({
             </span>
           )}
         </div>
+        {/* glanceable flags — one chip per decision dimension */}
+        <div className="pt-4">
+          <SignalStrip
+            fundamental={fundamental?.state as string | null}
+            thesis={thesis}
+            technical={technical?.state as string | null}
+            fvUpside={typeof upside === 'number' ? upside : null}
+            reviewVerdict={review?.verdict as string | null}
+          />
+        </div>
       </header>
 
       {/* the call */}
       {verdict && (
-        <section className="rounded-xl border border-hairline bg-card px-5 py-4">
+        <section
+          className={`rounded-xl border border-hairline border-l-4 bg-card px-5 py-4 ${{
+            ok: 'border-l-aggressive', warn: 'border-l-caution',
+            bad: 'border-l-defensive', off: 'border-l-hairline'
+          }[
+            toneOf(verdict.verdict)]
+            }`}
+        >
           <div className="flex items-baseline justify-between">
             <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
               The call
@@ -314,9 +332,10 @@ export default async function StockPage({
         </section>
       )}
 
-      {/* fundamentals + tape panels */}
-      <section className="mt-2 grid lg:grid-cols-2 gap-2">
-        <div className="rounded-xl border border-hairline bg-card px-5 py-4">
+      {/* fundamentals + tape — fundamentals carries ~3x the data,
+          so it takes the wide column */}
+      <section className="mt-2 grid lg:grid-cols-5 gap-2">
+        <div className="rounded-xl border border-hairline bg-card px-5 py-4 lg:col-span-3">
           <div className="flex items-baseline justify-between">
             <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
               Fundamentals
@@ -349,7 +368,7 @@ export default async function StockPage({
             <ThesisReport report={thesis?.report ?? null} />
           </div>
         </div>
-        <div className="rounded-xl border border-hairline bg-card px-5 py-4">
+        <div className="rounded-xl border border-hairline bg-card px-5 py-4 lg:col-span-2">
           <div className="flex items-baseline justify-between">
             <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
               Tape
