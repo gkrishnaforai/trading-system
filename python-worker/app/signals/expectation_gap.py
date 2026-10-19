@@ -54,6 +54,11 @@ def _fundamental_accel(fmp, sym: str) -> dict:
     # decay. rd_slope = latest ratio minus the year-ago quarter.
     rd = [(_div(q.get("researchAndDevelopmentExpenses"),
                 q.get("revenue"))) for q in inc]
+    # operating margin — GM-vs-OM split is the discriminator between
+    # product economics (GM falls) and opex/acquisition burden
+    # (GM flat, OM falls). Deal amortization + integration land in OM.
+    om = [(_div(q.get("operatingIncome"), q.get("revenue")))
+          for q in inc]
     rev_yoy = [(_div(rev[i], rev[i + 4])) - 1 if rev[i] and rev[i + 4]
                else None for i in range(4)]
     # growth % only meaningful when both periods share a sign and the
@@ -99,13 +104,20 @@ def _fundamental_accel(fmp, sym: str) -> dict:
     gp_delta = (inc[0].get("grossProfit") - inc[4].get("grossProfit")
                 ) * 4 if (inc[0].get("grossProfit") is not None
                           and inc[4].get("grossProfit") is not None) else None
-    capex_ttm = fcf_now = fcf_prev = acq_ttm = None
+    capex_ttm = fcf_now = fcf_prev = acq_ttm = sbc_ttm = None
     try:
         # the -ttm endpoint is empty on this plan — sum quarters instead
         cf = fmp.get_cash_flow_statement(sym, "quarter") or []
         cx = [abs(float(q["capitalExpenditure"])) for q in cf[:4]
               if q.get("capitalExpenditure") is not None]
         capex_ttm = sum(cx) if len(cx) >= 3 else None
+
+        # SBC load — acquisition retention grants + comp inflation land
+        # in GAAP EPS but not the adjusted headline. High sbc/rev is the
+        # mechanical part of the GAAP-vs-adjusted gap.
+        sx = [abs(float(q["stockBasedCompensation"])) for q in cf[:4]
+              if q.get("stockBasedCompensation") is not None]
+        sbc_ttm = sum(sx) if len(sx) >= 3 else None
 
         fcf = [q.get("freeCashFlow") for q in cf[:8]]
         # freeCashFlow absent on some plan tiers → ocf − capex
@@ -144,6 +156,13 @@ def _fundamental_accel(fmp, sym: str) -> dict:
         "rd_rev": rd[0],
         "rd_slope": (rd[0] - rd[4] if rd[0] is not None
                      and rd[4] is not None else None),
+        "om_now": om[0],
+        "om_qoq": (om[0] - om[1] if om[0] is not None
+                   and om[1] is not None else None),
+        "om_slope": (om[0] - om[4] if om[0] is not None
+                     and om[4] is not None else None),
+        "sbc_rev": (_div(sbc_ttm, rev_ttm)
+                    if sbc_ttm and rev_ttm else None),
         "capex_eff": (_div(gp_delta, capex_ttm)
                       if gp_delta is not None else None),
         "capex_rev": (_div(capex_ttm, rev_ttm)
@@ -203,7 +222,18 @@ def _surprises(sym: str) -> dict:
     last_date = past.index[0].date() if len(past.index) else None
     trend = (surprises[0] - surprises[-1]
              if len(surprises) >= 3 else None)   # newest - oldest
-    return {"beat_streak": streak,
+    # reported (headline) EPS — non-GAAP for most issuers. YoY on the
+    # reported series vs GAAP eps growth is the accounting-effect gap:
+    # both falling = real decay; reported up / GAAP down = deal
+    # amortization + SBC noise, not demand deterioration.
+    rep = [float(v) for v in past["Reported EPS"].tolist()
+           if pd.notna(v)][:5]
+    rep_growth = (rep[0] / rep[4] - 1
+                  if len(rep) >= 5 and rep[4] and rep[4] > 0.05
+                  else None)
+    return {"eps_rep": rep[0] if rep else None,
+            "eps_rep_growth": rep_growth,
+            "beat_streak": streak,
             "surprise_trend": trend,
             "avg_surprise_pct": (sum(surprises) / len(surprises)
                                  if surprises else None),
@@ -468,11 +498,14 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             " net_debt_ebitda, debt_to_equity, rev_breadth_30d,"
             " surprise_trend, roic, roe, capex_eff, capex_rev,"
             " eps_growth_ttm, fcf_ttm, fcf_margin, fcf_growth,"
-            " acq_spend_ttm, acq_rev_pct, rd_rev, rd_slope) "
+            " acq_spend_ttm, acq_rev_pct, rd_rev, rd_slope,"
+            " om_now, om_qoq, om_slope, sbc_rev, eps_rep,"
+            " eps_rep_growth) "
             "VALUES (:s,:rg,:ra,:gm,:gms,:gmq,:eg,:ea,:bs,:asp,:lsp,:lrd,"
             ":fe,:fr,:na,:er,:fpe,:mr,:gs,CAST(:gd AS jsonb),"
             ":nde,:dte,:rb,:str,:roic,:roe,:ceff,:crev,:egt,"
-            ":ft,:fm,:fg,:aspd,:arp,:rdr,:rds) "
+            ":ft,:fm,:fg,:aspd,:arp,:rdr,:rds,"
+            ":omn,:omq,:oms,:sbcr,:erp,:erpg) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "rev_growth=COALESCE(EXCLUDED.rev_growth,"
             " symbol_flywheel.rev_growth),"
@@ -561,6 +594,16 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             " rd_rev=COALESCE(EXCLUDED.rd_rev, symbol_flywheel.rd_rev),"
             " rd_slope=COALESCE(EXCLUDED.rd_slope,"
             " symbol_flywheel.rd_slope),"
+            " om_now=COALESCE(EXCLUDED.om_now, symbol_flywheel.om_now),"
+            " om_qoq=COALESCE(EXCLUDED.om_qoq, symbol_flywheel.om_qoq),"
+            " om_slope=COALESCE(EXCLUDED.om_slope,"
+            " symbol_flywheel.om_slope),"
+            " sbc_rev=COALESCE(EXCLUDED.sbc_rev,"
+            " symbol_flywheel.sbc_rev),"
+            " eps_rep=COALESCE(EXCLUDED.eps_rep,"
+            " symbol_flywheel.eps_rep),"
+            " eps_rep_growth=COALESCE(EXCLUDED.eps_rep_growth,"
+            " symbol_flywheel.eps_rep_growth),"
             " updated_at=now(), as_of=now()",
             {"s": sym, "rg": m.get("rev_growth"),
              "ra": m.get("rev_accel"), "gm": m.get("gm_now"),
@@ -586,6 +629,9 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
              "aspd": m.get("acq_spend_ttm"),
              "arp": m.get("acq_rev_pct"),
              "rdr": m.get("rd_rev"), "rds": m.get("rd_slope"),
+             "omn": m.get("om_now"), "omq": m.get("om_qoq"),
+             "oms": m.get("om_slope"), "sbcr": m.get("sbc_rev"),
+             "erp": m.get("eps_rep"), "erpg": m.get("eps_rep_growth"),
              "gd": __import__("json").dumps(det)})
     except Exception as exc:
         logger.debug("flywheel persist %s: %s", sym, exc)

@@ -4,6 +4,7 @@ import { Chip, Gate, Kv, Section, Stat, Val, fmtShort } from '@/components/regim
 import { FundPanel, TapePanel } from '@/components/panels'
 import { TheCall } from '@/components/thecall'
 import { WatchToggle } from '@/components/watchlist'
+import FvRecompute from '@/components/fv-recompute'
 
 function money(v: unknown, dec = 2) {
   const n = Number(v)
@@ -242,6 +243,7 @@ export default async function StockPage({
               Fair value
             </span>
             <div className="flex gap-3 items-baseline">
+              <FvRecompute sym={sym} />
               <Fresh date={fv.as_of ? String(fv.as_of) : null} />
               {fv.fundamentals_as_of != null && (
                 <span className="font-mono text-[11px] text-faint">

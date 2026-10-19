@@ -1,6 +1,7 @@
 import { getUser } from '@/lib/auth'
 import { jobCatalog, jobRuns, incidents, type JobRow } from '@/lib/admin'
 import { JobActions, RunAll } from '@/components/admin-jobs'
+import AdminFv from '@/components/admin-fv'
 
 export const dynamic = 'force-dynamic'
 
@@ -172,6 +173,11 @@ export default async function AdminPage() {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* fair-value recompute */}
+      <section className="mt-6 rounded-xl border border-hairline bg-card px-5 py-4">
+        <AdminFv />
       </section>
 
       {/* custodian incidents */}

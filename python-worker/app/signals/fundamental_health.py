@@ -100,6 +100,55 @@ def _decel_cause(m: dict, n_neg: int) -> Optional[str]:
     return "mixed"
 
 
+def _eps_cause(m: dict) -> Optional[str]:
+    """WHY EPS is deteriorating — the cause ladder, called only when an
+    EPS leg actually fired. Revenue strong + EPS down is a syndrome with
+    distinct causes, not a verdict:
+
+      acquisition_burden  M&A spend material → deal costs/amortization
+                          land in GAAP EPS (NOW/Armis: guidance says
+                          -75bps OM, -200bps FCF margin)
+      gaap_gap            reported (non-GAAP) EPS still growing while
+                          GAAP falls — the gap IS the accounting effect
+      timing              single-quarter dip, TTM level intact
+      rd_investment       R&D ratio ramping — opex buildout
+      equity_comp_load    SBC >10% of revenue inflating the GAAP number
+      core_margin         GM *and* OM both softening — real economics
+      None                unexplained — stays a hard negative
+    """
+    eg = m.get("eps_growth")
+    egt = m.get("eps_growth_ttm")
+    erpg = m.get("eps_rep_growth")
+    arp = m.get("acq_rev_pct")
+    rds = m.get("rd_slope")
+    gms = m.get("gm_slope")
+    oms = m.get("om_slope")
+    sbcr = m.get("sbc_rev")
+
+    if arp is not None and arp > 0.08:
+        return "acquisition_burden — deal costs/amortization in GAAP EPS"
+    if (erpg is not None and egt is not None
+            and erpg > 0.02 and (erpg - egt) > 0.15):
+        return ("gaap_gap — reported EPS still growing; GAAP distorted "
+                "by amortization/SBC")
+    if eg is not None and eg < -0.15 and (egt is None or abs(egt) < 0.05):
+        return "timing — one-quarter GAAP dip, TTM level intact"
+    if rds is not None and rds > 0.01:
+        return "rd_investment"
+    if sbcr is not None and sbcr > 0.10:
+        return "equity_comp_load — SBC >10% of revenue in GAAP EPS"
+    if (gms is not None and gms < -0.01
+            and oms is not None and oms < -0.01):
+        return "core_margin — product/operating economics softening"
+    return None
+
+
+# causes that explain the EPS leg away from demand deterioration —
+# still evidence, but not a "hard" trailing negative
+_EPS_EXPLAINED = {"acquisition_burden", "gaap_gap", "timing",
+                  "rd_investment", "equity_comp_load"}
+
+
 def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
     """flywheel metrics + cyclical flag → (state, risk, detail).
 
@@ -130,9 +179,13 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
     # Quarterly stays as eps_accel momentum, not a level verdict.
     egt = m.get("eps_growth_ttm")
     eg_level = egt if egt is not None else eg
+    eps_cause = None
     if eg_level is not None and eg_level < -0.02:
+        eps_cause = _eps_cause(m)
         neg.append(f"eps shrinking {eg_level * 100:+.0f}%"
-                   + (" ttm" if egt is not None else ""))   # -1.5% is
+                   + (" ttm" if egt is not None else "")
+                   + (f" ({eps_cause.split(' — ')[0]})"
+                      if eps_cause else ""))   # -1.5% is
         # flat EPS, not shrinking — noise-threshold so mature growers
         # don't pick up phantom level-deterioration legs (INTU)
     if ea is not None and ea < -0.10:
@@ -206,6 +259,15 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
         cav.append(
             f"R&D intensity +{rds_ev * 100:.0f}pts YoY — margin/EPS "
             "compression may be investment, not demand")
+    # GAAP-vs-reported divergence is worth naming even when EPS isn't
+    # deteriorating — the gap is where deal amortization hides
+    erpg_ev, egt_ev = m.get("eps_rep_growth"), m.get("eps_growth_ttm")
+    if (erpg_ev is not None and egt_ev is not None
+            and abs(erpg_ev - egt_ev) > 0.15
+            and eps_cause != "gaap_gap"):
+        cav.append(
+            f"GAAP vs reported EPS diverging ({egt_ev * 100:+.0f}% vs "
+            f"{erpg_ev * 100:+.0f}%) — amortization/SBC in the gap")
 
     # forward axis — what the street is doing to estimates, kept
     # distinct from the trailing legs so trailing×forward quadrants
@@ -228,6 +290,12 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
         leg.startswith(p) for p in
         ("rev growth weak", "eps shrinking", "no recent beat",
          "margin down", "capex not converting")))
+    # an EPS decline with a named non-demand cause (acquisition burden,
+    # GAAP-vs-adjusted gap, timing, R&D ramp, SBC load) is evidence, not
+    # core deterioration — it keeps its neg leg but can't drive a
+    # breakdown label
+    if eps_cause in _EPS_EXPLAINED:
+        hard_neg -= 1
     # a qoq-only margin leg is decel, not level deterioration
     if gmq is not None and gmq < -0.01 and not (
             gms is not None and gms < -0.01):
@@ -375,6 +443,7 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
               "why": (neg[:3] + pos[:3] if n_neg >= 2 else pos[:4]
                       + neg[:2]), "cyclical_lean": None,
               "caveats": cav,
+              "eps_cause": eps_cause,
               "decel_cause": cause,
               "accel_grade": accel_grade,
               "demand_health": demand,

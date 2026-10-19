@@ -213,6 +213,9 @@ def _q3(c: dict) -> dict:
         lines.append(f"est {pe}: {d * 100:+.1f}% vs 60d ago")
     if rb is not None:
         lines.append(f"revision breadth {rb:+.0f} (30d up−down)")
+    epc = c["fdet"].get("eps_cause")
+    if epc:
+        lines.append(f"eps cause: {epc}")
     outlook = "unchanged"
     worst = min(drift.values()) if drift else 0
     best = max(drift.values()) if drift else 0
