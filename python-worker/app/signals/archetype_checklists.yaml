@@ -1,0 +1,214 @@
+version: 1
+
+# Archetype → standing upside thesis → falsifiable metric checks.
+# The checklist answers "what must improve for THIS business model to
+# deliver upside" — not "is the company good." A metric source:
+#   flywheel:<col>   symbol_flywheel (deterministic, always current)
+#   sec:<col>        symbol_sec_facts (XBRL-derived)
+#   doc:<kpi>        doc_extract claims (company-defined KPIs — NRR,
+#                    GMV, utilization live in slides, not XBRL; resolve
+#                    to the latest extracted value or 'unknown')
+# ops: >,>=,<,<=, improving (vs ~90d fundamental_snapshots), positive
+# `hard: true` on a metric = its failure breaks the hypothesis, not
+# just dents it. `vetoes` cap the overall thesis status regardless of
+# other greens (credit quality invalidating loan growth is the model
+# case — a veto beats a count of passes). A veto fires ONLY on its own
+# `when` evidence — {hypothesis: <id>} fires when that hypothesis is
+# deteriorating/broken; {metrics: [...]} fires when ALL conditions
+# evaluate true. Unknown evidence never fires a veto.
+
+symbols:                      # pilot map — explicit overrides first
+  NBIS:  ai_compute
+  IREN:  ai_compute
+  NOW:   saas
+  SE:    [marketplace, lender]      # Shopee GMV + Monee credit — both
+  ALAB:  semis
+  UBER:  marketplace
+  UPST:  lender
+  INTC:  turnaround
+  ZS:    saas
+  NET:   saas
+
+archetype_rules:              # fallback when no symbol override
+  - archetype: lender
+    when: {industry_contains: [bank, credit services, mortgage finance]}
+  - archetype: ai_compute
+    when: {industry_contains: [data center, communication equipment, fiber]}
+  - archetype: semis
+    when: {industry_contains: [semiconductor]}
+  - archetype: saas
+    when: {sector_contains: [technology], industry_contains: [software]}
+  - archetype: marketplace
+    when: {industry_contains: [internet retail, specialty retail]}
+
+archetypes:
+
+  ai_compute:
+    label: "AI compute / neocloud — contracted capacity must convert
+            to profitable revenue faster than the burn funds it"
+    hypotheses:
+      - id: contracted_demand
+        stage: signal
+        label: "Contracted demand is real and growing"
+        metrics:
+          - {source: sec, name: rpo_yoy, op: ">=", target: 0.0}
+          - {source: doc, name: contracted_revenue}
+        valuation_impact: "drives the revenue ramp priced in growth names"
+      - id: capacity_converts
+        stage: conversion
+        label: "Deployed capacity shows up as revenue"
+        metrics:
+          - {source: flywheel, name: rev_growth, op: ">=", target: 0.20, hard: true}
+          - {source: flywheel, name: capex_eff, op: ">=", target: -0.5}
+        failure_condition: "revenue growth <20% while capex stays >30% of revenue"
+      - id: funding_contained
+        stage: confirmation
+        label: "Burn is funded without terminal dilution"
+        metrics:
+          - {source: flywheel, name: fcf_ttm, op: "improving"}
+          - {source: flywheel, name: net_debt_ebitda, op: "<=", target: 6.0}
+        valuation_impact: "dilution/financing risk is THE bear case"
+    vetoes:
+      - id: split_or_issuance
+        flag: "share-count step >1.3x — verify dilution vs split basis"
+        cap: mixed
+        when:
+          metrics:
+            - {source: sec, name: shares_step_ratio, op: ">=", target: 1.3}
+
+  saas:
+    label: "SaaS — durable subscription growth converting to
+            expanding operating margin and FCF"
+    hypotheses:
+      - id: durable_growth
+        stage: conversion
+        label: "Demand durable: revenue + backlog growing together"
+        metrics:
+          - {source: flywheel, name: rev_growth, op: ">=", target: 0.15, hard: true}
+          - {source: sec, name: rpo_yoy, op: ">=", target: 0.05}
+          - {source: sec, name: def_rev_yoy, op: ">=", target: -0.05}
+        failure_condition: "rev growth <15% AND backlog shrinking"
+      - id: margins_expand
+        stage: confirmation
+        label: "Scale shows up as operating leverage"
+        metrics:
+          - {source: flywheel, name: fcf_margin, op: ">=", target: 0.15}
+          - {source: flywheel, name: eps_rep_growth, op: ">=", target: 0.0}
+      - id: organic_share
+        stage: signal
+        label: "Growth is organic, not bought"
+        metrics:
+          - {source: flywheel, name: acq_rev_pct, op: "<=", target: 0.10}
+          - {source: doc, name: organic_growth}
+        failure_condition: "acq spend >10% of revenue with no organic disclosure"
+
+  semis:
+    label: "Semis / AI connectivity — design wins convert to shipments
+            at held margins"
+    hypotheses:
+      - id: wins_convert
+        stage: conversion
+        label: "Design wins reach revenue"
+        metrics:
+          - {source: flywheel, name: rev_growth, op: ">=", target: 0.25, hard: true}
+          - {source: flywheel, name: rev_accel, op: ">=", target: -0.05}
+      - id: margin_holds
+        stage: confirmation
+        label: "Volume isn't bought with price"
+        metrics:
+          - {source: flywheel, name: gm_slope, op: ">=", target: -0.03}
+        failure_condition: "gross margin eroding >3pts while growth slows"
+      - id: backlog_real
+        stage: signal
+        metrics:
+          - {source: sec, name: rpo_yoy, op: ">=", target: -0.10}
+
+  marketplace:
+    label: "Marketplace — more transactions at held or improving
+            unit economics"
+    hypotheses:
+      - id: gmv_quality
+        stage: signal
+        label: "Volume growth is monetized"
+        metrics:
+          - {source: doc, name: gmv_growth}
+          - {source: doc, name: take_rate}
+          - {source: flywheel, name: rev_growth, op: ">=", target: 0.15}
+      - id: op_leverage
+        stage: confirmation
+        label: "Operating leverage emerging"
+        metrics:
+          - {source: flywheel, name: om_slope, op: ">=", target: -0.03}
+          - {source: flywheel, name: fcf_margin, op: ">=", target: 0.05}
+        failure_condition: "opex growing faster than revenue two quarters running"
+      - id: street_follows
+        stage: signal
+        metrics:
+          - {source: flywheel, name: est_revision_pct, op: ">=", target: -0.02}
+
+  lender:
+    label: "Lender — book grows while risk-adjusted returns hold"
+    hypotheses:
+      - id: book_grows
+        stage: conversion
+        metrics:
+          - {source: flywheel, name: rev_growth, op: ">=", target: 0.10}
+      - id: credit_quality
+        stage: confirmation
+        hard_thesis: true
+        label: "Credit quality does NOT deteriorate — the veto"
+        metrics:
+          - {source: doc, name: delinquencies}
+          - {source: doc, name: charge_offs}
+          - {source: doc, name: provisions}
+        failure_condition: "losses rising faster than book growth"
+        valuation_impact: "invalidates loan growth — loss math, not volume"
+      - id: funding_holds
+        stage: conversion
+        metrics:
+          - {source: flywheel, name: fcf_ttm, op: ">=", target: 0}
+    vetoes:
+      - id: credit_breaks
+        flag: "credit quality deteriorating caps thesis at mixed"
+        cap: mixed
+        when: {hypothesis: credit_quality}
+
+  turnaround:
+    label: "Turnaround — trailing damage stops, forward evidence turns first"
+    hypotheses:
+      - id: decline_stops
+        stage: signal
+        metrics:
+          - {source: flywheel, name: rev_growth, op: ">=", target: 0.0, hard: true}
+          - {source: flywheel, name: beat_streak, op: ">=", target: 1}
+      - id: forward_turns
+        stage: conversion
+        label: "Street starts revising up before results print"
+        metrics:
+          - {source: flywheel, name: est_revision_pct, op: ">=", target: -0.02}
+          - {source: flywheel, name: rev_breadth_30d, op: ">=", target: -2}
+      - id: cash_funds_it
+        stage: confirmation
+        metrics:
+          - {source: flywheel, name: fcf_ttm, op: ">=", target: 0}
+    vetoes:
+      - id: no_cash_no_time
+        flag: "FCF negative + shrinking revenue = no runway for the turn"
+        cap: deteriorating
+        when:
+          metrics:
+            - {source: flywheel, name: rev_growth, op: "<", target: 0}
+            - {source: flywheel, name: fcf_ttm, op: "<", target: 0}
+
+  generic:
+    label: "Default — growth, margins, cash, revisions"
+    hypotheses:
+      - id: growing
+        stage: conversion
+        metrics:
+          - {source: flywheel, name: rev_growth, op: ">=", target: 0.08}
+      - id: earning
+        stage: confirmation
+        metrics:
+          - {source: flywheel, name: fcf_margin, op: ">=", target: 0.0}
+          - {source: flywheel, name: est_revision_pct, op: ">=", target: -0.02}

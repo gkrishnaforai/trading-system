@@ -130,6 +130,13 @@ def _ctx(sym: str) -> dict[str, Any]:
             " ORDER BY as_of DESC LIMIT 1", {"s": sym})
     c["fv"] = dict(fv[0]) if fv else {}
 
+    try:
+        th = _q("SELECT archetype, status, score, hypotheses, vetoes"
+                " FROM symbol_thesis WHERE symbol=:s", {"s": sym})
+        c["thesis"] = dict(th[0]) if th else {}
+    except Exception:
+        c["thesis"] = {}
+
     spot = _q("SELECT close FROM daily_bars WHERE symbol=:s"
               " ORDER BY date DESC LIMIT 1", {"s": sym})
     c["spot"] = _f(spot[0]["close"]) if spot else None
@@ -234,6 +241,10 @@ def _q3(c: dict) -> dict:
     epc = c["fdet"].get("eps_cause")
     if epc:
         lines.append(f"eps cause: {epc}")
+    th = c.get("thesis") or {}
+    if th.get("status"):
+        lines.append(f"thesis ({th.get('archetype')}): {th['status']}"
+                     f" score {th.get('score')}")
     # disclosed organic growth — when the company states it (8-K/press
     # release → doc_extract fact claims), compare vs reported total
     for doc in c["claims"]:
@@ -336,6 +347,18 @@ def _verdict(c: dict, a: dict) -> tuple[str, float, list[str]]:
             add(1, "FCF margin >15%")
         elif _f(fly["fcf_ttm"]) < 0:
             add(-1, "FCF negative")
+
+    # thesis layer — the archetype-scoped "is the upside case
+    # progressing" read; a broken standing thesis is a hard leg, not a
+    # caution (a hypothesis's hard check failed by definition)
+    th = c.get("thesis") or {}
+    if th.get("status") in ("on_track", "improving"):
+        add(1, f"thesis {th['status']}")
+    elif th.get("status") == "deteriorating":
+        add(-1, "thesis deteriorating")
+    elif th.get("status") == "broken":
+        add(-2, "thesis broken")
+        flags.append("standing thesis broken — a hard check failed")
 
     for w in c["watches"]:
         if w["status"] == "refuted":
