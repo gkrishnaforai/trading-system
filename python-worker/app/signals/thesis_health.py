@@ -258,24 +258,69 @@ def evaluate(sym: str) -> dict:
     detail = {"unresolved": unresolved[:6],
               "archetype_label": ((cfg.get("archetypes") or {})
                                   .get(primary) or {}).get("label")}
+
+    # --- delta vs the prior nightly eval ----------------------------
+    # status_dir flags the direction of the thesis itself (improving
+    # vs deteriorating vs continuing); hyp_changes names WHICH legs
+    # moved so the UI can say "credit_quality: unknown→on_track —
+    # confirmed" rather than just "up".
+    prev = db.execute_query(
+        "SELECT status, hypotheses, status_since FROM symbol_thesis"
+        " WHERE symbol=:s", {"s": sym})
+    prev = dict(prev[0]) if prev else {}
+    prev_status = prev.get("status")
+    if not prev_status:
+        status_dir, status_since = "new", date.today().isoformat()
+    else:
+        d = _RANK[status] - _RANK.get(prev_status, 2)
+        status_dir = "up" if d > 0 else "down" if d < 0 else "flat"
+        status_since = (date.today().isoformat() if status_dir != "flat"
+                        else (prev.get("status_since")
+                              or date.today().isoformat()))
+    prev_hyps = prev.get("hypotheses")
+    if isinstance(prev_hyps, str):
+        import json as _json
+        prev_hyps = _json.loads(prev_hyps)
+    prev_hyp = {(h.get("archetype"), h.get("id")): h.get("status")
+                for h in (prev_hyps or [])}
+    hyp_changes = [{"id": h["id"], "archetype": h["archetype"],
+                    "from": prev_hyp.get((h["archetype"], h["id"]),
+                                         "new"),
+                    "to": h["status"]}
+                   for h in hyps
+                   if prev_hyp.get((h["archetype"], h["id"]))
+                   != h["status"]]
+    detail["status_dir"] = status_dir
+    detail["hyp_changes"] = hyp_changes[:8]
+
     row = {"symbol": sym, "archetype": primary, "secondary": secondary,
            "hypotheses": hyps, "status": status, "score": score,
+           "prev_status": prev_status, "status_dir": status_dir,
+           "status_since": status_since, "hyp_changes": hyp_changes,
            "vetoes": vetoes_fired or None, "detail": detail,
            "as_of": date.today().isoformat()}
     import json
     db.execute_update(
         "INSERT INTO symbol_thesis (symbol, archetype, secondary,"
-        " hypotheses, status, score, vetoes, detail, as_of)"
-        " VALUES (:s,:a,:sec,CAST(:h AS jsonb),:st,:sc,"
-        " CAST(:v AS jsonb),CAST(:d AS jsonb),:ao)"
+        " hypotheses, status, score, prev_status, status_dir,"
+        " status_since, hyp_changes, vetoes, detail, as_of,"
+        " checked_at)"
+        " VALUES (:s,:a,:sec,CAST(:h AS jsonb),:st,:sc,:ps,:sd,:ss,"
+        " CAST(:hc AS jsonb),CAST(:v AS jsonb),CAST(:d AS jsonb),:ao,"
+        " now())"
         " ON CONFLICT (symbol) DO UPDATE SET"
         " archetype=EXCLUDED.archetype, secondary=EXCLUDED.secondary,"
         " hypotheses=EXCLUDED.hypotheses, status=EXCLUDED.status,"
-        " score=EXCLUDED.score, vetoes=EXCLUDED.vetoes,"
+        " score=EXCLUDED.score, prev_status=EXCLUDED.prev_status,"
+        " status_dir=EXCLUDED.status_dir,"
+        " status_since=EXCLUDED.status_since,"
+        " hyp_changes=EXCLUDED.hyp_changes, vetoes=EXCLUDED.vetoes,"
         " detail=EXCLUDED.detail, as_of=EXCLUDED.as_of,"
-        " updated_at=now()",
+        " checked_at=now(), updated_at=now()",
         {"s": sym, "a": primary, "sec": secondary,
          "h": json.dumps(hyps), "st": status, "sc": score,
+         "ps": prev_status, "sd": status_dir, "ss": status_since,
+         "hc": json.dumps(hyp_changes) if hyp_changes else None,
          "v": json.dumps(vetoes_fired) if vetoes_fired else None,
          "d": json.dumps(detail), "ao": row["as_of"]})
     return row

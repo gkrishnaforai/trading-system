@@ -4,6 +4,7 @@ import { Chip, Gate, Kv, Section, Stat, Val, fmtShort } from '@/components/regim
 import { FundPanel, TapePanel } from '@/components/panels'
 import { TheCall } from '@/components/thecall'
 import { WatchToggle } from '@/components/watchlist'
+import { ThesisFlag } from '@/components/thesis-flag'
 import FvRecompute from '@/components/fv-recompute'
 
 function money(v: unknown, dec = 2) {
@@ -110,6 +111,7 @@ export default async function StockPage({
   const sec = obj(card.sec)
   const review = obj(card.review)
   const readiness = obj(card.readiness)
+  const thesis = obj(card.thesis) as import('@/components/thesis-flag').Thesis | null
   const diagnosis = card.diagnosis
   const tailwinds = Array.isArray(card.tailwinds) ? card.tailwinds : []
   const themes = Array.isArray(card.themes) ? card.themes : []
@@ -319,6 +321,7 @@ export default async function StockPage({
               Fundamentals
             </span>
             <span className="flex items-baseline gap-2">
+              <ThesisFlag thesis={thesis} />
               {fundamental?.risk != null && (
                 <span className="font-mono text-[11px] text-caution">
                   risk {String(fundamental.risk).replace(/_/g, ' ')}
