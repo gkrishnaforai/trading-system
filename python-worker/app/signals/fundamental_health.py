@@ -36,7 +36,12 @@ _METRICS = ("rev_growth", "rev_accel", "eps_growth", "eps_accel",
             "eps_growth_ttm", "gm_now", "gm_slope", "gm_qoq", "beat_streak",
             "est_revision_pct", "rev_breadth_30d", "surprise_trend",
             "capex_eff", "capex_rev",
-            "fwd_pe", "num_analysts", "muted_reaction")
+            "fwd_pe", "num_analysts", "muted_reaction",
+            # SEC-derived backlog/billings evidence (symbol_sec_facts) —
+            # the demand-vs-timing discriminators: backlog still building
+            # while revenue decelerates = conversion delay, not demand loss
+            "rpo", "rpo_yoy", "crpo_share", "def_rev_yoy",
+            "gw_impair_fy")
 
 _STATE_RANK = {"accelerating": 0, "growing": 1, "cyclical": 2,
                "watch": 3, "slowing": 4, "turnaround": 4, "pressured": 4,
@@ -59,6 +64,8 @@ def _decel_cause(m: dict, n_neg: int) -> Optional[str]:
       rd_investment         R&D ratio rising + demand strong — for
                             software names the R&D ramp IS the buildout;
                             EPS/FCF compression is opex, not decay
+      conversion_delay      rev decel + backlog/deferred-rev still
+                            building — recognition timing, not demand
       base_normalization    decel fired but level still >40% growth
       mixed                 anything else"""
     rg, ra = m.get("rev_growth"), m.get("rev_accel")
@@ -84,6 +91,17 @@ def _decel_cause(m: dict, n_neg: int) -> Optional[str]:
         # revenue data at all isn't evidence of revenue weakness
     if rg is not None and rg < 0.10:
         return "demand_deterioration"
+    # revenue decelerating but backlog/billings still building — the
+    # slip is between contract and recognition (supply-chain, delivery,
+    # deployment timing), not demand decay. Tests before the capex/R&D
+    # stories: direct backlog evidence beats an indirect spend theory
+    rpy, dfg = m.get("rpo_yoy"), m.get("def_rev_yoy")
+    backlog_building = ((rpy is not None and rpy > 0.05)
+                        or (dfg is not None and dfg > 0.05))
+    if (ra is not None and ra < -0.05 and backlog_building
+            and rg is not None and rg > 0.10
+            and (er is None or er > -0.02)):
+        return "conversion_delay"
     if (cr is not None and cr > 0.30
             and rg is not None and rg > 0.20
             and (er is None or er > 0)):
@@ -269,6 +287,27 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
             f"GAAP vs reported EPS diverging ({egt_ev * 100:+.0f}% vs "
             f"{erpg_ev * 100:+.0f}%) — amortization/SBC in the gap")
 
+    # backlog & billings — the demand-vs-timing discriminators. RPO
+    # growing while reported revenue decelerates means demand is
+    # contracted but not yet recognized (conversion_delay); backlog
+    # shrinking while revenue still grows means future demand is
+    # already decaying — the leading edge, not a hard trailing negative
+    rpy = m.get("rpo_yoy")
+    if rpy is not None:
+        if rpy > 0.10:
+            pos.append(f"backlog +{rpy * 100:.0f}% YoY (RPO)")
+        elif rpy < -0.05:
+            neg.append(f"backlog shrinking {rpy * 100:+.0f}% YoY")
+    dfg = m.get("def_rev_yoy")
+    if dfg is not None and dfg < -0.10:
+        cav.append(f"deferred revenue {dfg * 100:+.0f}% YoY — "
+                   "billings softness ahead of revenue")
+    gwi = m.get("gw_impair_fy")
+    if gwi is not None and gwi > 0:
+        cav.append(
+            f"goodwill impairment ${(gwi / 1e9 if gwi >= 1e9 else gwi / 1e6):.1f}"
+            f"{'B' if gwi >= 1e9 else 'M'} — prior deal wrote off")
+
     # forward axis — what the street is doing to estimates, kept
     # distinct from the trailing legs so trailing×forward quadrants
     # (turnaround / pressured) are visible
@@ -435,6 +474,10 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
         monitor = ["R&D ratio keeps rising without rev accel",
                    "EPS/FCF margins fail to stabilize next print",
                    "estimate revisions turn negative"]
+    elif cause == "conversion_delay":
+        monitor = ["backlog/deferred-rev growth stalls next print",
+                   "revenue fails to re-accelerate as backlog converts",
+                   "estimate revisions turn negative"]
     elif cause == "demand_deterioration":
         monitor = ["rev growth continues lower",
                    "revisions stay negative"]
@@ -588,16 +631,31 @@ def refresh_all(symbols: list[str] = None) -> dict:
     at the tail of the flywheel refresh job (and from the board's
     refresh panel)."""
     from app.database import db
-    rows = db.execute_query(
+    base_sql = (
         "SELECT f.symbol, f.rev_growth, f.rev_accel, f.eps_growth,"
         " f.eps_accel, f.eps_growth_ttm, f.gm_now, f.gm_slope, f.beat_streak,"
         " f.est_revision_pct, f.fwd_pe, f.num_analysts,"
         " f.muted_reaction, f.rev_breadth_30d, f.surprise_trend,"
         " f.gm_qoq,"
-        " f.capex_eff, f.capex_rev, s.cyclical, f.updated_at "
+        " f.capex_eff, f.capex_rev, s.cyclical, f.updated_at{extra} "
         "FROM symbol_flywheel f JOIN stocks s ON s.symbol = f.symbol"
-        + (" WHERE f.symbol = ANY(:syms)" if symbols else ""),
-        {"syms": symbols} if symbols else None)
+        "{join}"
+        + (" WHERE f.symbol = ANY(:syms)" if symbols else ""))
+    params = {"syms": symbols} if symbols else None
+    try:
+        rows = db.execute_query(
+            base_sql.format(
+                extra=", sf.rpo, sf.rpo_yoy, sf.crpo_share,"
+                      " sf.def_rev_yoy, sf.gw_impair_fy",
+                join=" LEFT JOIN symbol_sec_facts sf"
+                     " ON sf.symbol = f.symbol"),
+            params)
+    except Exception:
+        # sec_facts columns not provisioned yet (deploy ran ahead of
+        # the migration / first sec-facts run) — classify on flywheel
+        # alone rather than fail the whole refresh
+        rows = db.execute_query(
+            base_sql.format(extra="", join=""), params)
     prev = {r["symbol"]: r for r in db.execute_query(
         "SELECT DISTINCT ON (symbol) symbol, metrics, state "
         "FROM fundamental_snapshots WHERE as_of < :d "

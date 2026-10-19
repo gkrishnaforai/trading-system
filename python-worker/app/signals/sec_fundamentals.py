@@ -32,6 +32,24 @@ _RPO_TAGS = (
 _CRPO_TAGS = (
     "RevenueRemainingPerformanceObligationExpectedTimingOfSatisfactionPeriodOneYear",
 )
+# NOW files the % of RPO due within 12m instead of the $ — the share IS
+# the near-term conversion signal, and rpo × pct recovers the amount
+_CRPO_PCT_TAGS = (
+    "RevenueRemainingPerformanceObligationPercentage",
+)
+# current deferred revenue / contract liability — the billings-health
+# series. Falling deferred rev + slowing revenue = real demand decay;
+# rising deferred rev + a revenue miss = conversion timing, not demand
+_DEFREV_TAGS = (
+    "ContractWithCustomerLiabilityCurrent",
+    "DeferredRevenueCurrent",
+    "UnearnedRevenueCurrent",
+    "ContractWithCustomerLiability",
+)
+# acquisition value-creation check — a past deal that wrote off is the
+# counter-evidence to 'acquisitions compound' (annual duration fact)
+_GW_IMPAIR_TAGS = ("GoodwillImpairmentLosses",
+                   "GoodwillAndIntangibleAssetImpairment")
 _GOODWILL_TAGS = ("Goodwill",)
 _ASSETS_TAGS = ("Assets",)
 _ACQ_TAGS = ("PaymentsToAcquireBusinessesNetOfCashAcquired",
@@ -53,10 +71,10 @@ def _facts_tbl(blob: dict, ns: str, tag: str,
                   reverse=True)
 
 
-def _latest(blob: dict, tags: tuple, unit: str = "USD",
-            annual: bool = False) -> Optional[dict]:
-    """Newest fact across candidate tags. annual=True prefers ~1y
-    frames so quarterly fragments don't win."""
+def _first_series(blob: dict, tags: tuple, unit: str = "USD",
+                  annual: bool = False) -> tuple[Optional[str], list]:
+    """First candidate tag with data → (tag, newest-first rows). The
+    whole history is in the blob — YoY comes free off the series."""
     for tag in tags:
         for ns in ("us-gaap", "dei"):
             rows = _facts_tbl(blob, ns, tag, unit)
@@ -64,7 +82,41 @@ def _latest(blob: dict, tags: tuple, unit: str = "USD",
                 rows = [r for r in rows
                         if _span_days(r) and _span_days(r) > 300]
             if rows:
-                return {"tag": tag, **rows[0]}
+                return tag, rows
+    return None, []
+
+
+def _latest(blob: dict, tags: tuple, unit: str = "USD",
+            annual: bool = False) -> Optional[dict]:
+    """Newest fact across candidate tags. annual=True prefers ~1y
+    frames so quarterly fragments don't win."""
+    tag, rows = _first_series(blob, tags, unit, annual)
+    return {"tag": tag, **rows[0]} if tag and rows else None
+
+
+def _series_yoy(rows: list) -> Optional[float]:
+    """YoY off a newest-first instant series — latest vs the point
+    nearest one year back. 240–500d window absorbs filers whose
+    quarter-ends drift (52/53-week years)."""
+    if len(rows) < 2:
+        return None
+    try:
+        e0 = date.fromisoformat(str(rows[0]["end"]))
+        v0 = float(rows[0]["val"])
+    except Exception:
+        return None
+    best = None
+    for r in rows[1:]:
+        try:
+            d = (e0 - date.fromisoformat(str(r["end"]))).days
+            v = float(r["val"])
+        except Exception:
+            continue
+        if 240 <= d <= 500 and (best is None
+                                or abs(d - 365) < best[0]):
+            best = (abs(d - 365), v)
+    if best is not None and best[1] > 0:
+        return round(v0 / best[1] - 1, 4)
     return None
 
 
@@ -115,14 +167,45 @@ def extract(symbol: str) -> Optional[dict]:
         return None
     out: dict[str, Any] = {"cik": sec_edgar.cik_for(symbol)}
 
-    rpo = _latest(blob, _RPO_TAGS)
+    rpo_tag, rpo_rows = _first_series(blob, _RPO_TAGS)
+    rpo = {"tag": rpo_tag, **rpo_rows[0]} if rpo_tag else None
     if rpo:
         out["rpo"] = rpo.get("val")
         out["rpo_period"] = rpo.get("end")
         out["rpo_tag"] = rpo.get("tag")
+        out["rpo_yoy"] = _series_yoy(rpo_rows)
     crpo = _latest(blob, _CRPO_TAGS)
     if crpo:
         out["crpo"] = crpo.get("val")
+    # cRPO share — direct $ tag preferred; else the % of RPO due within
+    # 12m that filers like NOW report instead (unit 'pure', may arrive
+    # as 0.42 or 42)
+    pct = _latest(blob, _CRPO_PCT_TAGS, unit="pure")
+    if pct and pct.get("val") is not None:
+        try:
+            p = float(pct["val"])
+            out["crpo_share"] = round(p / 100 if p > 1.5 else p, 4)
+            if out.get("crpo") is None and out.get("rpo"):
+                out["crpo"] = round(out["rpo"] * out["crpo_share"])
+        except Exception:
+            pass
+    if out.get("crpo") and out.get("rpo") \
+            and out.get("crpo_share") is None:
+        out["crpo_share"] = round(out["crpo"] / out["rpo"], 4)
+
+    dr_tag, dr_rows = _first_series(blob, _DEFREV_TAGS)
+    if dr_tag:
+        out["def_rev_cur"] = dr_rows[0].get("val")
+        out["def_rev_tag"] = dr_tag
+        out["def_rev_yoy"] = _series_yoy(dr_rows)
+
+    imp = _latest(blob, _GW_IMPAIR_TAGS, annual=True)
+    if imp and imp.get("val") is not None:
+        try:
+            out["gw_impair_fy"] = float(imp["val"])
+            out["gw_impair_period"] = imp.get("end")
+        except Exception:
+            pass
     gw = _latest(blob, _GOODWILL_TAGS)
     ta = _latest(blob, _ASSETS_TAGS)
     if gw:
@@ -158,9 +241,11 @@ def persist(sym: str, f: dict) -> None:
         "INSERT INTO symbol_sec_facts "
         "(symbol, cik, rpo, crpo, rpo_period, goodwill,"
         " goodwill_assets_pct, acq_spend_fy, shares_out,"
-        " shares_step_ratio, split_suspect, facts, as_of, fetched_at)"
+        " shares_step_ratio, split_suspect, rpo_yoy, crpo_share,"
+        " def_rev_cur, def_rev_yoy, gw_impair_fy, facts, as_of,"
+        " fetched_at)"
         " VALUES (:s,:cik,:rpo,:crpo,:rp,:gw,:gap,:acq,:sh,:step,:sp,"
-        " CAST(:f AS jsonb),:ao,now())"
+        " :ry,:cs,:dr,:dy,:gi, CAST(:f AS jsonb),:ao,now())"
         " ON CONFLICT (symbol) DO UPDATE SET"
         " cik=EXCLUDED.cik, rpo=EXCLUDED.rpo, crpo=EXCLUDED.crpo,"
         " rpo_period=EXCLUDED.rpo_period,"
@@ -170,6 +255,10 @@ def persist(sym: str, f: dict) -> None:
         " shares_out=EXCLUDED.shares_out,"
         " shares_step_ratio=EXCLUDED.shares_step_ratio,"
         " split_suspect=EXCLUDED.split_suspect,"
+        " rpo_yoy=EXCLUDED.rpo_yoy, crpo_share=EXCLUDED.crpo_share,"
+        " def_rev_cur=EXCLUDED.def_rev_cur,"
+        " def_rev_yoy=EXCLUDED.def_rev_yoy,"
+        " gw_impair_fy=EXCLUDED.gw_impair_fy,"
         " facts=EXCLUDED.facts, as_of=EXCLUDED.as_of,"
         " fetched_at=now()",
         {"s": sym, "cik": f.get("cik"), "rpo": f.get("rpo"),
@@ -179,6 +268,9 @@ def persist(sym: str, f: dict) -> None:
          "acq": f.get("acq_spend_fy"), "sh": f.get("shares_out"),
          "step": f.get("shares_step_ratio"),
          "sp": bool(f.get("split_suspect")),
+         "ry": f.get("rpo_yoy"), "cs": f.get("crpo_share"),
+         "dr": f.get("def_rev_cur"), "dy": f.get("def_rev_yoy"),
+         "gi": f.get("gw_impair_fy"),
          "f": json.dumps(f), "ao": f.get("as_of")})
 
 
@@ -193,8 +285,19 @@ def ensure_table() -> None:
         " acq_spend_fy NUMERIC, shares_out NUMERIC,"
         " shares_step_ratio NUMERIC,"
         " split_suspect BOOLEAN NOT NULL DEFAULT FALSE,"
+        " rpo_yoy NUMERIC, crpo_share NUMERIC,"
+        " def_rev_cur NUMERIC, def_rev_yoy NUMERIC,"
+        " gw_impair_fy NUMERIC,"
         " facts JSONB, as_of DATE,"
         " fetched_at TIMESTAMPTZ NOT NULL DEFAULT now())")
+    # CREATE IF NOT EXISTS never adds columns to an existing table —
+    # idempotent ALTERs keep self-provision true on deployed DBs
+    for col in ("rpo_yoy NUMERIC", "crpo_share NUMERIC",
+                "def_rev_cur NUMERIC", "def_rev_yoy NUMERIC",
+                "gw_impair_fy NUMERIC"):
+        db.execute_update(
+            "ALTER TABLE symbol_sec_facts"
+            f" ADD COLUMN IF NOT EXISTS {col.split()[0]} {col.split()[1]}")
     db.execute_update(
         "CREATE TABLE IF NOT EXISTS sec_filings_processed ("
         " accession TEXT PRIMARY KEY, symbol TEXT NOT NULL,"

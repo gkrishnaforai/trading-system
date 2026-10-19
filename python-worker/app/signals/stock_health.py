@@ -202,7 +202,8 @@ def card(sym: str) -> dict[str, Any]:
         r = db.execute_query(
             "SELECT rpo, crpo, rpo_period, goodwill,"
             " goodwill_assets_pct, acq_spend_fy, shares_step_ratio,"
-            " split_suspect, as_of FROM symbol_sec_facts"
+            " split_suspect, rpo_yoy, crpo_share, def_rev_cur,"
+            " def_rev_yoy, gw_impair_fy, as_of FROM symbol_sec_facts"
             " WHERE symbol=:s", {"s": s})
         if r:
             sec = dict(r[0])

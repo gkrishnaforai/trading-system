@@ -403,11 +403,27 @@ export default async function StockPage({
             {sec.rpo != null && (
               <span className="text-sm text-ink font-mono">
                 backlog ${(Number(sec.rpo) / 1e9).toFixed(1)}B
+                {sec.rpo_yoy != null && (
+                  <span className={Number(sec.rpo_yoy) < 0 ? 'text-defensive' : 'text-aggressive'}>
+                    {' '}{(Number(sec.rpo_yoy) * 100) >= 0 ? '+' : ''}{(Number(sec.rpo_yoy) * 100).toFixed(0)}% yoy
+                  </span>
+                )}
               </span>
             )}
             {sec.crpo != null && (
               <span className="text-sm text-muted font-mono">
                 cRPO ${(Number(sec.crpo) / 1e9).toFixed(1)}B
+                {sec.crpo_share != null && ` (${(Number(sec.crpo_share) * 100).toFixed(0)}% of backlog)`}
+              </span>
+            )}
+            {sec.def_rev_yoy != null && (
+              <span className={`text-sm font-mono ${Number(sec.def_rev_yoy) < -0.05 ? 'text-defensive' : 'text-muted'}`}>
+                deferred rev {(Number(sec.def_rev_yoy) * 100) >= 0 ? '+' : ''}{(Number(sec.def_rev_yoy) * 100).toFixed(0)}% yoy
+              </span>
+            )}
+            {sec.gw_impair_fy != null && Number(sec.gw_impair_fy) > 0 && (
+              <span className="text-xs text-caution">
+                goodwill impairment ${(Number(sec.gw_impair_fy) / (Number(sec.gw_impair_fy) >= 1e9 ? 1e9 : 1e6)).toFixed(1)}{Number(sec.gw_impair_fy) >= 1e9 ? 'B' : 'M'} — prior deal wrote off
               </span>
             )}
             {sec.fcf_ttm != null && (
