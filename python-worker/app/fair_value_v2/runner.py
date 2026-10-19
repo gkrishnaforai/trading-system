@@ -111,6 +111,9 @@ class FairValueRunner:
             "revenue_growth_ttm",
             "forward_growth_pct_1y",
             "operating_margin_ttm",
+            "fcf_ttm",        # pre_earnings needs the actual burn —
+                            # GAAP-margin-negative but FCF-positive names
+                            # (NET) are self-funding, not survival cases
         ]
 
         # Decision-layer inputs — resolved once per run regardless of
