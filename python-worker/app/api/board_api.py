@@ -568,6 +568,15 @@ async def _j_weekly_review() -> dict:
     return await asyncio.to_thread(event_review.run_universe, symbols)
 
 
+async def _j_thesis_check() -> dict:
+    """Archetype thesis tracker — evaluates each pilot symbol's
+    standing hypotheses (what must improve for upside) against
+    flywheel/SEC/doc evidence, persists symbol_thesis, and syncs the
+    checks into thesis_watches for grading. Deterministic."""
+    from app.signals import thesis_health
+    return await asyncio.to_thread(thesis_health.run)
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -638,6 +647,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
                      _j_sec_filings),
     "weekly-review": ("Weekly 5-question review",
                       _j_weekly_review),
+    "thesis-check": ("Archetype thesis tracker", _j_thesis_check),
 }
 
 # order matters for 'all': posture first, then signals, then evals
@@ -672,6 +682,7 @@ _JOB_TIMEOUT = {
     "fund-journal": 60 * 60, "hedge-universe": 15 * 60,
     "sec-facts": 20 * 60, "sec-filings": 20 * 60,
     "weekly-review": 15 * 60,
+    "thesis-check": 5 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
     "theme-rotation": 5 * 60,

@@ -492,6 +492,9 @@ formula:
     survival_per_share: {var: surv_ps_base}
     distressed_floor_binds: {var: flag_distressed_floor_binds}
 validations:
+  - name: fcf_positive_no_burn
+    when: {gt: [{coalesce: [{var: fcf_ttm}, 0]}, 0]}
+    reason: "positive FCF — the company self-funds; a burn/dilution survival tree misprices it (NET: FCF +$324M produced $0.35 fair value)"
   - name: margin_impossible
     when: {or: [{gt: [{coalesce: [{var: net_profit_margin_ttm}, 0]}, 1.0]}, {gt: [{coalesce: [{var: operating_margin_ttm}, 0]}, 1.0]}]}
     reason: a margin above 100% of revenue is a data error, not a business

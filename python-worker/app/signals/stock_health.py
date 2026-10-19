@@ -202,7 +202,8 @@ def card(sym: str) -> dict[str, Any]:
         r = db.execute_query(
             "SELECT rpo, crpo, rpo_period, goodwill,"
             " goodwill_assets_pct, acq_spend_fy, shares_step_ratio,"
-            " split_suspect, as_of FROM symbol_sec_facts"
+            " split_suspect, rpo_yoy, crpo_share, def_rev_cur,"
+            " def_rev_yoy, gw_impair_fy, as_of FROM symbol_sec_facts"
             " WHERE symbol=:s", {"s": s})
         if r:
             sec = dict(r[0])
@@ -374,6 +375,7 @@ def card(sym: str) -> dict[str, Any]:
             "sec": sec,
             "review": review,
             "readiness": readiness,
+            "thesis": _try_thesis(s),
             "tailwinds": tws, "watches": _try_watches(s),
             "diagnosis": tape_diagnosis.diagnose(
                 s, sector=st.get("sector"),
@@ -610,6 +612,32 @@ def _try_capex(sym: str) -> dict:
         return {}
 
 
+def _try_thesis(sym: str) -> dict:
+    """Archetype thesis flag — status + direction vs the prior nightly
+    eval + which legs just confirmed/refuted."""
+    try:
+        from app.database import db
+        r = db.execute_query(
+            "SELECT archetype, secondary, status, status_dir,"
+            " prev_status, status_since, hyp_changes, score,"
+            " detail, vetoes, as_of"
+            " FROM symbol_thesis WHERE symbol=:s", {"s": sym.upper()})
+        if not r:
+            return {}
+        t = dict(r[0])
+        det = t.get("detail")
+        if isinstance(det, str):
+            import json
+            det = json.loads(det)
+        t["detail"] = det or {}
+        for k in ("as_of", "status_since"):
+            if t.get(k) is not None:
+                t[k] = str(t[k])
+        return t
+    except Exception:
+        return {}
+
+
 def _try_watches(sym: str) -> list:
     """Open thesis_watches — falsifiable checks a doc extraction set."""
     try:
@@ -674,6 +702,14 @@ def board() -> dict[str, Any]:
         "SELECT DISTINCT ON (symbol) symbol, score, percentile,"
         " components, flags FROM growth_quality_runs"
         " ORDER BY symbol, as_of DESC, id DESC")}
+    # archetype-thesis flags — status + direction so screener rows can
+    # show ▲/▼/● without a per-symbol lookup
+    try:
+        th_map = {r["symbol"]: dict(r) for r in db.execute_query(
+            "SELECT symbol, status, status_dir, prev_status"
+            " FROM symbol_thesis")}
+    except Exception:
+        th_map = {}
     # sector-flow scores — the industry-group leg of the rank. Same
     # math the pulse board runs on cached sector-ETF bars.
     try:
@@ -769,6 +805,8 @@ def board() -> dict[str, Any]:
                     "avwap": _sw.get("avwap"),
                     "prior_low": _sw.get("prior_low"),
                     "fund": st.get("fundamental_state"),
+                    "thesis": (th_map.get(s) or {}).get("status"),
+                    "thesis_dir": (th_map.get(s) or {}).get("status_dir"),
                     "fv_upside": fv_up,
                     "mcap_b": round((st.get("market_cap") or 0) / 1e9, 1),
                     "catalyst": catalyst,

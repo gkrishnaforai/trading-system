@@ -130,6 +130,13 @@ def _ctx(sym: str) -> dict[str, Any]:
             " ORDER BY as_of DESC LIMIT 1", {"s": sym})
     c["fv"] = dict(fv[0]) if fv else {}
 
+    try:
+        th = _q("SELECT archetype, status, score, hypotheses, vetoes"
+                " FROM symbol_thesis WHERE symbol=:s", {"s": sym})
+        c["thesis"] = dict(th[0]) if th else {}
+    except Exception:
+        c["thesis"] = {}
+
     spot = _q("SELECT close FROM daily_bars WHERE symbol=:s"
               " ORDER BY date DESC LIMIT 1", {"s": sym})
     c["spot"] = _f(spot[0]["close"]) if spot else None
@@ -160,6 +167,20 @@ def _q1(c: dict) -> dict:
     if sec.get("acq_spend_fy"):
         lines.append(f"M&A cash spend {_b(_f(sec['acq_spend_fy']))}"
                      " latest fiscal year")
+    rpo, rpy = _f(sec.get("rpo")), _f(sec.get("rpo_yoy"))
+    if rpo:
+        line = f"backlog (RPO) {_b(rpo)}"
+        if rpy is not None:
+            line += f" ({rpy * 100:+.0f}% YoY)"
+        cs = _f(sec.get("crpo_share"))
+        if cs is not None:
+            line += f" — {cs * 100:.0f}% due within 12m"
+        lines.append(line)
+    dy = _f(sec.get("def_rev_yoy"))
+    if dy is not None and abs(dy) >= 0.05:
+        lines.append(f"deferred revenue {dy * 100:+.0f}% YoY"
+                     + (" — billings softening" if dy < 0
+                        else " — billings building"))
     if not lines:
         lines.append("no material changes detected in window")
     return {"lines": lines[:10], "facts": {"alerts": facts}}
@@ -193,6 +214,10 @@ def _q2(c: dict) -> dict:
     if gw and gw > 0.10:
         lines.append(f"goodwill {gw * 100:.0f}% of assets — past-deal"
                      " residue, watch impairment on misses")
+    gwi = _f(sec.get("gw_impair_fy"))
+    if gwi and gwi > 0:
+        lines.append(f"goodwill impairment {_b(gwi)} latest FY — a"
+                     " prior deal already wrote off")
     return {"lines": lines,
             "facts": {"acq_ttm": acq_ttm, "fcf_ttm": fcf,
                       "net_debt_ebitda": nde,
@@ -216,6 +241,24 @@ def _q3(c: dict) -> dict:
     epc = c["fdet"].get("eps_cause")
     if epc:
         lines.append(f"eps cause: {epc}")
+    th = c.get("thesis") or {}
+    if th.get("status"):
+        lines.append(f"thesis ({th.get('archetype')}): {th['status']}"
+                     f" score {th.get('score')}")
+    # disclosed organic growth — when the company states it (8-K/press
+    # release → doc_extract fact claims), compare vs reported total
+    for doc in c["claims"]:
+        for cl in (_json(doc.get("claims")) or []):
+            met = str(cl.get("metric") or "").lower()
+            if "organic" in met and isinstance(
+                    cl.get("value"), (int, float)):
+                rg = _f(fly.get("rev_growth"))
+                v = cl["value"]
+                vv = v / 100 if abs(v) > 3 else v
+                gap = f" vs reported {rg * 100:+.0f}%" \
+                    if rg is not None else ""
+                lines.append(f"disclosed organic growth ~{vv * 100:.0f}%"
+                             f"{gap} — acq share ≈ the difference")
     outlook = "unchanged"
     worst = min(drift.values()) if drift else 0
     best = max(drift.values()) if drift else 0
@@ -304,6 +347,18 @@ def _verdict(c: dict, a: dict) -> tuple[str, float, list[str]]:
             add(1, "FCF margin >15%")
         elif _f(fly["fcf_ttm"]) < 0:
             add(-1, "FCF negative")
+
+    # thesis layer — the archetype-scoped "is the upside case
+    # progressing" read; a broken standing thesis is a hard leg, not a
+    # caution (a hypothesis's hard check failed by definition)
+    th = c.get("thesis") or {}
+    if th.get("status") in ("on_track", "improving"):
+        add(1, f"thesis {th['status']}")
+    elif th.get("status") == "deteriorating":
+        add(-1, "thesis deteriorating")
+    elif th.get("status") == "broken":
+        add(-2, "thesis broken")
+        flags.append("standing thesis broken — a hard check failed")
 
     for w in c["watches"]:
         if w["status"] == "refuted":

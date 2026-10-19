@@ -11,6 +11,12 @@ rules:
         - field: industry
           contains: bank
 
+  # pre-earnings = no earnings AND an actual cash burn to survive.
+  # fcf_ttm <= 0 is required: a GAAP-margin-negative name that still
+  # self-funds (NET: op margin -9.6% but FCF +$324M) is not a survival
+  # candidate — the survival tree priced it at $0.35. Missing FCF data
+  # fails the numeric test and falls through to growth/standard cells:
+  # 'can't price' is more honest than a fabricated distress value.
   - name: pre_earnings
     when:
       any:
@@ -19,6 +25,9 @@ rules:
         - field: eps_forward
           lte: 0
         - field: operating_margin_ttm
+          lte: 0
+      all:
+        - field: fcf_ttm
           lte: 0
 
   # profitable but the street forecasts a deep EPS decline — TTM
