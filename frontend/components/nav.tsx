@@ -8,6 +8,7 @@ const LINKS = [
   { href: '/', label: 'Regime' },
   { href: '/calendar', label: 'Calendar' },
   { href: '/board', label: 'Board' },
+  { href: '/plan', label: 'Plan' },
   { href: '/receipts', label: 'Receipts' },
   { href: '/portfolio', label: 'Portfolio' },
   { href: '/desk', label: 'Desk' },

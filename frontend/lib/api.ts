@@ -262,6 +262,81 @@ export const api = {
     ),
   post: (slug: string) => get<Post>(`/posts/${encodeURIComponent(slug)}`),
   passive: () => get<PassiveBoard>('/passive'),
+  incomePlan: (funds?: number) =>
+    get<IncomePlan>(`/income-plan${funds ? `?funds=${funds}` : ''}`),
+  tradePlans: () =>
+    get<{ open?: PlanRow[]; closed?: PlanRow[] }>('/trade-plans?all=1'),
+}
+
+export type IncomePlan = {
+  as_of?: string
+  posture?: {
+    posture?: string
+    new_longs?: boolean
+    note?: string
+    matched?: string
+    regime_as_of?: string
+  }
+  funds?: number | null
+  note?: string
+  lanes?: {
+    swing?: PlanSuggestion[]
+    leap_call?: PlanSuggestion[]
+    leap_put?: PlanSuggestion[]
+    csp?: PlanSuggestion[]
+    covered_call?: PlanSuggestion[]
+  }
+}
+
+export type PlanSuggestion = {
+  symbol: string
+  name?: string
+  instrument?: string
+  use_case?: string
+  score?: number
+  rank?: number
+  lane_state?: string
+  entry_px?: number
+  spot?: number
+  stop_px?: number
+  target_px?: number
+  rr?: number
+  strike?: number
+  collateral?: number
+  contracts?: number
+  shares?: number
+  dte?: string
+  iv_hv?: number
+  state?: string
+  dip_phase?: string
+  mom?: string
+  fund?: string
+  thesis?: string
+  thesis_dir?: string
+  earn_days?: number
+  flags?: string[]
+  evidence?: string[]
+  plan?: Record<string, unknown>
+}
+
+export type PlanRow = {
+  id: number
+  symbol: string
+  use_case?: string
+  direction?: string
+  entry_px?: number
+  entry_date?: string
+  stop_px?: number
+  target1_px?: number
+  target2_px?: number
+  thesis?: string
+  status?: string
+  last_status?: string
+  px?: number
+  r?: number
+  days?: number
+  dist_stop?: number
+  eval?: { status?: string; action_hint?: string; why?: string }
 }
 
 export type PassiveBoard = {

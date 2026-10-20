@@ -25,6 +25,11 @@ _USE_DEFAULTS = {
     "invest":    ("ema50", 60, "long"),
     "leap_call": ("hl_ratchet", 60, "long"),
     "leap_put":  ("hl_ratchet", 60, "short"),
+    # premium lanes — 'long' means the plan wants px ≥ strike; the
+    # tracked risk is assignment/underlying breakdown, the clock is
+    # the exit (~30-45d premium windows)
+    "csp":          ("premium", 45, "long"),
+    "covered_call": ("premium", 40, "long"),
 }
 
 

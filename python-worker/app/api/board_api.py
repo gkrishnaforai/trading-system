@@ -2328,6 +2328,15 @@ async def learning_lab():
 
 # ---------------- trade plans ----------------------------------------------
 
+@router.get("/income-plan")
+async def income_plan(funds: float | None = None):
+    """Daily income & swing plan — posture-gated suggestions across
+    swing / LEAP call / LEAP put / cash-secured put / covered call,
+    each bound to a trade-plans draft for one-click entry."""
+    from app.signals import income_plan as ip
+    return await asyncio.to_thread(ip.today, funds)
+
+
 @router.get("/trade-plans/suggest")
 async def tp_suggest(sym: str, uc: str = "swing",
                      px: float | None = None):
