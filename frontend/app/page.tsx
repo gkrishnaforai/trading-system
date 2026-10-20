@@ -2,6 +2,7 @@ import { api } from '@/lib/api'
 import { Chip, Kv, Section, Stat, fmtShort } from '@/components/regime'
 import { VolChips } from '@/components/vol-chips'
 import { TapeChips } from '@/components/tape-chips'
+import { RetryRefresh } from '@/components/retry-refresh'
 
 const TONE: Record<string, string> = {
   aggressive: 'text-aggressive',
@@ -73,6 +74,15 @@ export default async function RegimePage() {
     )
     : []
 
+  // which feeds actually answered — a null means the section below
+  // renders blank; name it instead of failing silently
+  const missing = [
+    posture ? null : 'posture',
+    morning ? null : 'regime',
+    tape ? null : 'tape',
+    alarms ? null : 'alarms',
+  ].filter(Boolean) as string[]
+
   return (
     <main className="mx-auto max-w-3xl px-5 pb-20">
       <header className="flex items-baseline justify-between pt-6 pb-8">
@@ -81,6 +91,16 @@ export default async function RegimePage() {
         </span>
         <span className="font-mono text-xs text-faint">{fmtDate(asOf)}</span>
       </header>
+
+      {missing.length > 0 && (
+        <div className="pb-6 flex items-center gap-2 text-xs text-caution">
+          <span>
+            live data unavailable ({missing.join(' · ')}) — retrying
+            once automatically;
+          </span>
+          <RetryRefresh />
+        </div>
+      )}
 
       {/* hero — the one thing you read first */}
       <section className="pb-10">

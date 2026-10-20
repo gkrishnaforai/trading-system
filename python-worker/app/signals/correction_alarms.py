@@ -355,7 +355,14 @@ def latest() -> dict[str, Any]:
     if not r:
         return {}
     row = r[0]
-    return {**(row["readings"] or {}), "as_of": str(row["as_of"])}
+    out = {**(row["readings"] or {}), "as_of": str(row["as_of"])}
+    # evals journaled before the action layer ship without it — the
+    # mapping is a pure function of character × severity, so derive it
+    # rather than re-running the whole eval (or leaving the UI blank)
+    if not out.get("action") and out.get("correction_character"):
+        out["action"] = _action(
+            out["correction_character"], out.get("severity") or "quiet")
+    return out
 
 
 if __name__ == "__main__":

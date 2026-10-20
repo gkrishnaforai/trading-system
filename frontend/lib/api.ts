@@ -61,16 +61,25 @@ export type MacroEvent = {
 }
 
 async function get<T>(path: string): Promise<T | null> {
-  try {
-    const res = await fetch(`${BASE}/api/v1/board${path}`, {
-      next: { revalidate: 120 },
-      signal: AbortSignal.timeout(20_000),
-    })
-    if (!res.ok) return null
-    return (await res.json()) as T
-  } catch {
-    return null
+  // one retry — a flaky 5xx/timeout shouldn't leave a whole section
+  // blank; the second attempt bypasses the Data Cache in case the
+  // failed response itself was cached
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${BASE}/api/v1/board${path}`, {
+        ...(attempt === 0
+          ? { next: { revalidate: 120 } }
+          : { cache: 'no-store' }),
+        signal: AbortSignal.timeout(20_000),
+      })
+      if (res.ok) return (await res.json()) as T
+    } catch {
+      // fall through to the retry
+    }
+    if (attempt === 0)
+      await new Promise((r) => setTimeout(r, 400))
   }
+  return null
 }
 
 export type BoardItem = {
