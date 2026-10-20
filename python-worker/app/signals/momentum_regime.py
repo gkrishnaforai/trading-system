@@ -64,10 +64,12 @@ STATES = {
 
 
 def classify(tech: dict, hist_prev: Optional[float],
-             bars=None) -> str:
+             bars=None, dip: Optional[dict] = None) -> str:
     """tech = _technicals(bars) output; hist_prev = _macd_hist_prev.
     bars optional — enables fresh-high/low detection (breakout/
-    breakdown) when provided."""
+    breakdown) when provided. dip = dip_health() output when the
+    caller computed it — lets the capitulation gate see the
+    down-day volume climax (vol_dip), not just price position."""
     px, s50, s200 = tech.get("price"), tech.get("sma50"), \
         tech.get("sma200")
     rsi, hist = tech.get("rsi14"), tech.get("macd_hist")
@@ -127,13 +129,21 @@ def classify(tech: dict, hist_prev: Optional[float],
     if not up and px < s200 and s50 < s200:
         return "downtrend"
     if not up:
-        # 'capitulation' needs a momentum signature, not just a big
-        # drawdown — a -15% dip with mid-band RSI is a downtrend, not
-        # a wash (SNPS fired capitulation on dd=-17% alone: rsi 47,
-        # %B 0.37, price on the 200dma). RSI/%B are the wash legs;
-        # drawdown alone only corroborates them.
+        # 'capitulation' needs a momentum signature AND wash evidence —
+        # a -15% dip with mid-band RSI is a downtrend, not a wash
+        # (SNPS fired capitulation on dd=-17% alone: rsi 47, %B 0.37,
+        # price on the 200dma). The wash signature is momentum
+        # (RSI/%B) corroborated by depth (30%+ drawdown), an extreme
+        # oversold print, or a down-day volume climax. Quiet selling
+        # in a shallow dip is just a downtrend.
         mom_washed = rsi <= 40 or (pct_b is not None and pct_b < 0.25)
-        return "capitulation" if mom_washed else "downtrend"
+        climax = (
+            (dd is not None and dd <= -0.30)
+            or rsi <= 30
+            or (pct_b is not None and pct_b <= 0.05)
+            or ((dip or {}).get("vol_dip") or 0) >= 1.25
+        )
+        return "capitulation" if (mom_washed and climax) else "downtrend"
     if tight:
         return "basing"
     if s50 < s200:
@@ -241,8 +251,8 @@ def refresh_symbol(sym: str, tech: dict, hist_prev,
     """Classify + persist. Called from any path that already computed
     bars/tech — free writes, zero extra fetches."""
     try:
-        state = classify(tech, hist_prev, bars)
         dip = dip_health(tech, hist_prev, bars)
+        state = classify(tech, hist_prev, bars, dip)
         # swing-point structure — higher-low detection only matters on
         # pullback-ish states; run it whenever bars are present so the
         # 'broken' phase can flag knives too
