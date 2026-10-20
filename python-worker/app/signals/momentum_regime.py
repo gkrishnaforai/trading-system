@@ -127,7 +127,13 @@ def classify(tech: dict, hist_prev: Optional[float],
     if not up and px < s200 and s50 < s200:
         return "downtrend"
     if not up:
-        return "capitulation" if washed else "downtrend"
+        # 'capitulation' needs a momentum signature, not just a big
+        # drawdown — a -15% dip with mid-band RSI is a downtrend, not
+        # a wash (SNPS fired capitulation on dd=-17% alone: rsi 47,
+        # %B 0.37, price on the 200dma). RSI/%B are the wash legs;
+        # drawdown alone only corroborates them.
+        mom_washed = rsi <= 40 or (pct_b is not None and pct_b < 0.25)
+        return "capitulation" if mom_washed else "downtrend"
     if tight:
         return "basing"
     if s50 < s200:
