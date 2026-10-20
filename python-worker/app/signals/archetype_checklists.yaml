@@ -85,6 +85,7 @@ archetypes:
         label: "Demand durable: revenue + backlog growing together"
         metrics:
           - {source: flywheel, name: rev_growth, op: ">=", target: 0.15, hard: true}
+          - {source: flywheel, name: rev_accel, op: ">=", target: -0.05}
           - {source: sec, name: rpo_yoy, op: ">=", target: 0.05}
           - {source: sec, name: def_rev_yoy, op: ">=", target: -0.05}
         failure_condition: "rev growth <15% AND backlog shrinking"
@@ -134,6 +135,7 @@ archetypes:
           - {source: doc, name: gmv_growth}
           - {source: doc, name: take_rate}
           - {source: flywheel, name: rev_growth, op: ">=", target: 0.15}
+          - {source: flywheel, name: rev_accel, op: ">=", target: -0.05}
       - id: op_leverage
         stage: confirmation
         label: "Operating leverage emerging"
@@ -205,8 +207,11 @@ archetypes:
     hypotheses:
       - id: growing
         stage: conversion
+        label: "Growing, not merely large — level AND direction"
         metrics:
           - {source: flywheel, name: rev_growth, op: ">=", target: 0.08}
+          - {source: flywheel, name: rev_accel, op: ">=", target: -0.05}
+        failure_condition: "revenue still growing but fading >5pp — that's 'slowing', not 'growing'"
       - id: earning
         stage: confirmation
         metrics:
