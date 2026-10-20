@@ -20,6 +20,32 @@ async function call(
   return res.ok
 }
 
+export function BookPicker({ options, selected }: {
+  options: { id: string; name: string; holdings_count?: number }[]
+  selected?: string | null
+}) {
+  const router = useRouter()
+  return (
+    <select
+      aria-label="choose portfolio"
+      value={selected ?? 'book'}
+      onChange={(e) => {
+        const v = e.target.value
+        router.push(v === 'book' ? '/portfolio' : `/portfolio?p=${v}`)
+      }}
+      className="rounded-full border border-hairline bg-canvas px-3.5 py-1.5 text-xs font-medium text-ink focus:border-accent focus:outline-none"
+    >
+      <option value="book">The book</option>
+      {options.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+          {p.holdings_count ? ` · ${p.holdings_count}` : ''}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 export function NewPortfolioForm({ used, limit }: {
   used: number; limit: number
 }) {

@@ -5,7 +5,8 @@ import { WatchlistCard } from '@/components/watchlist'
 import { TIER_LIMITS, currentTier } from '@/lib/tier'
 import { listPortfolios, listHoldings } from '@/lib/portfolio'
 import {
-  AddHoldingForm, HoldingRow as UserHoldingRow, NewPortfolioForm,
+  AddHoldingForm, BookPicker,
+  HoldingRow as UserHoldingRow, NewPortfolioForm,
 } from '@/components/portfolio-crud'
 
 const BUCKET_ORDER = [
@@ -203,33 +204,11 @@ export default async function PortfolioPage({
         </div>
 
         {/* book selector */}
-        <div className="pt-3 flex flex-wrap items-center gap-2">
-          <Link
-            href="/portfolio"
-            className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${!selected
-              ? 'bg-ink text-canvas'
-              : 'border border-hairline text-muted hover:text-accent'
-              }`}
-          >
-            The book
-          </Link>
-          {portfolios.map((p) => (
-            <Link
-              key={p.id}
-              href={`/portfolio?p=${p.id}`}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${selected?.id === p.id
-                ? 'bg-ink text-canvas'
-                : 'border border-hairline text-muted hover:text-accent'
-                }`}
-            >
-              {p.name}
-              {p.holdings_count != null && (
-                <span className="ml-1 font-mono text-[10px] opacity-70">
-                  {p.holdings_count}
-                </span>
-              )}
-            </Link>
-          ))}
+        <div className="pt-3 flex items-center gap-2">
+          <BookPicker
+            options={portfolios}
+            selected={selected?.id ?? 'book'}
+          />
           <NewPortfolioForm used={portfolios.length} limit={limit} />
         </div>
       </header>
