@@ -1,6 +1,7 @@
 import { api } from '@/lib/api'
 import { Chip, Kv, Section, Stat, fmtShort } from '@/components/regime'
 import { VolChips } from '@/components/vol-chips'
+import { TapeChips } from '@/components/tape-chips'
 
 const TONE: Record<string, string> = {
   aggressive: 'text-aggressive',
@@ -33,9 +34,10 @@ function fmtDate(d?: string) {
 }
 
 export default async function RegimePage() {
-  const [posture, morning] = await Promise.all([
+  const [posture, morning, tape] = await Promise.all([
     api.posture(),
     api.morningRegime(),
+    api.intraday(),
   ])
 
   const p = posture ?? {}
@@ -104,6 +106,9 @@ export default async function RegimePage() {
         </div>
         <div className="pt-3">
           <VolChips vol={p.vol} bias={p.bias} />
+        </div>
+        <div className="pt-2">
+          <TapeChips tape={tape} />
         </div>
       </section>
 
