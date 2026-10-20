@@ -286,13 +286,25 @@ export type IncomePlan = {
     csp?: PlanSuggestion[]
     covered_call?: PlanSuggestion[]
   }
+  sectors?: {
+    sector: string
+    lanes: {
+      swing?: PlanSuggestion[]
+      leap_call?: PlanSuggestion[]
+      leap_put?: PlanSuggestion[]
+      csp?: PlanSuggestion[]
+      covered_call?: PlanSuggestion[]
+    }
+  }[]
 }
 
 export type PlanSuggestion = {
   symbol: string
   name?: string
+  sector?: string
   instrument?: string
   use_case?: string
+  exit_rule?: string
   score?: number
   rank?: number
   lane_state?: string

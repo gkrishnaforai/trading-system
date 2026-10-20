@@ -14,10 +14,6 @@ function money(v?: number | null, dec = 2) {
     ? `$${Number(v).toFixed(dec)}` : '—'
 }
 
-function pct(v?: number | null) {
-  return v != null ? `${(Number(v) * 100).toFixed(0)}%` : '—'
-}
-
 function StateDot({ v }: { v?: string | null }) {
   return (
     <span
@@ -26,40 +22,72 @@ function StateDot({ v }: { v?: string | null }) {
   )
 }
 
-function Row({ s, funds }: { s: PlanSuggestion; funds?: number }) {
+function ThesisDot({ s }: { s: PlanSuggestion }) {
+  if (!s.thesis) return null
+  return (
+    <span className={`text-[11px] ${{
+        ok: 'text-aggressive', warn: 'text-caution',
+        bad: 'text-defensive', off: 'text-muted'
+      }[toneOf(s.thesis)]
+      }`}>
+      {String(s.thesis).replace(/_/g, ' ')}
+      {s.thesis_dir === 'up' ? ' ▲' : s.thesis_dir === 'down' ? ' ▼' : ''}
+    </span>
+  )
+}
+
+/** Levels text — enter / exit per instrument. */
+function Levels({ s }: { s: PlanSuggestion }) {
+  const parts: React.ReactNode[] = []
+  const isOptionSell = s.use_case === 'csp' || s.use_case === 'covered_call'
+  if (isOptionSell && s.strike != null) {
+    parts.push(<span key="e" className="text-ink">sell @{money(s.strike)}</span>)
+    parts.push(<span key="px" className="text-faint">px {money(s.spot)}</span>)
+    if (s.collateral != null)
+      parts.push(<span key="c">collat {money(s.collateral, 0)}</span>)
+    if (s.contracts != null && s.contracts > 0)
+      parts.push(<span key="n" className="text-ink">{s.contracts}ct</span>)
+    if (s.shares != null) parts.push(<span key="sh">{s.shares}sh</span>)
+    parts.push(<span key="x" className="text-aggressive">exit: {s.exit_rule}</span>)
+  } else {
+    const e = s.entry_px ?? s.spot
+    if (e != null)
+      parts.push(<span key="e" className="text-ink">in @{money(e)}</span>)
+    if (s.stop_px != null)
+      parts.push(<span key="s" className="text-defensive">stop {money(s.stop_px)}</span>)
+    if (s.target_px != null)
+      parts.push(<span key="t" className="text-aggressive">out {money(s.target_px)}</span>)
+    if (s.rr != null)
+      parts.push(<span key="r">R:R {Number(s.rr).toFixed(1)}</span>)
+    if (s.dte || s.instrument?.startsWith('LEAP'))
+      parts.push(<span key="d">{s.dte ?? '12–24mo'}</span>)
+  }
+  if (s.iv_hv != null)
+    parts.push(
+      <span key="iv" className={Number(s.iv_hv) >= 1 ? 'text-aggressive' : 'text-caution'}>
+        iv/hv {s.iv_hv}
+      </span>)
+  return <>{parts}</>
+}
+
+function Pick({ s }: { s: PlanSuggestion }) {
   const thesis = [
-    s.instrument,
-    s.strike ? `strike ${money(s.strike)}` : null,
+    s.instrument, s.strike ? `strike ${money(s.strike)}` : null,
     s.dte, s.iv_hv != null ? `iv/hv ${s.iv_hv}` : null,
     s.thesis ? `thesis ${s.thesis}` : null,
   ].filter(Boolean).join(' · ')
   return (
-    <div className="border-t border-hairline/60 py-2.5 first:border-0">
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <Link
-            href={`/stock?sym=${s.symbol}`}
-            className="font-semibold text-ink hover:text-accent"
-          >
+    <div className="py-1">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <StateDot v={s.state ?? s.mom} />
+          <Link href={`/stock?sym=${s.symbol}`}
+            className="font-semibold text-[13px] text-ink hover:text-accent">
             {s.symbol}
           </Link>
-          <span className="text-[10px] uppercase tracking-wider text-faint">
-            {s.instrument}
-          </span>
-          <StateDot v={s.state ?? s.mom} />
-          <span className="text-[11px] text-muted">
-            {s.state ?? s.mom ?? ''}
-            {s.dip_phase ? ` · ${s.dip_phase}` : ''}
-          </span>
-          {s.thesis && (
-            <span className={`text-[11px] ${
-              { ok: 'text-aggressive', warn: 'text-caution',
-                bad: 'text-defensive', off: 'text-muted' }[
-                toneOf(s.thesis)]
-            }`}>
-              thesis {String(s.thesis).replace(/_/g, ' ')}
-              {s.thesis_dir === 'up' ? ' ▲' : s.thesis_dir === 'down' ? ' ▼' : ''}
-            </span>
+          <ThesisDot s={s} />
+          {s.earn_days != null && s.earn_days >= 0 && s.earn_days <= 35 && (
+            <span className="text-[10px] text-caution">⚠EPS{s.earn_days}d</span>
           )}
         </div>
         <OpenPlanButton
@@ -74,55 +102,23 @@ function Row({ s, funds }: { s: PlanSuggestion; funds?: number }) {
           thesis={thesis}
         />
       </div>
-      {/* levels line */}
-      <div className="pt-1 flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-xs text-muted">
-        {s.spot != null && <span>px {money(s.spot)}</span>}
-        {s.strike != null && (
-          <span className="text-ink">strike {money(s.strike)}</span>
-        )}
-        {s.entry_px != null && <span>entry {money(s.entry_px)}</span>}
-        {s.stop_px != null && (
-          <span className="text-defensive">stop {money(s.stop_px)}</span>
-        )}
-        {s.target_px != null && (
-          <span className="text-aggressive">tgt {money(s.target_px)}</span>
-        )}
-        {s.rr != null && <span>R:R {Number(s.rr).toFixed(1)}</span>}
-        {s.dte != null && <span>{s.dte}</span>}
-        {s.iv_hv != null && (
-          <span className={Number(s.iv_hv) >= 1 ? 'text-aggressive' : 'text-caution'}>
-            iv/hv {s.iv_hv}
-          </span>
-        )}
-        {s.collateral != null && (
-          <span>collateral {money(s.collateral, 0)}</span>
-        )}
-        {s.contracts != null && s.contracts > 0 && (
-          <span className="text-ink">
-            {s.contracts} contract{s.contracts === 1 ? '' : 's'}
-          </span>
-        )}
-        {s.shares != null && <span>{s.shares} sh held</span>}
-        {s.score != null && <span className="text-faint">score {s.score}</span>}
-        {s.rank != null && <span className="text-faint">rank {Number(s.rank).toFixed(0)}</span>}
-        {s.earn_days != null && s.earn_days >= 0 && s.earn_days <= 35 && (
-          <span className="text-caution">⚠ EPS {s.earn_days}d</span>
-        )}
+      <div className="pl-3 flex flex-wrap gap-x-3 font-mono text-[11px] text-muted">
+        <Levels s={s} />
       </div>
       {(s.flags ?? []).map((f, i) => (
-        <div key={i} className="pt-0.5 text-[11px] text-caution">⚠ {f}</div>
+        <div key={i} className="pl-3 text-[10px] text-caution">⚠ {f}</div>
       ))}
-      {(s.evidence ?? []).slice(0, 3).map((e, i) => (
-        <div key={`e${i}`} className="pt-0.5 text-[11px] text-faint">· {e}</div>
-      ))}
-      {funds != null && s.use_case === 'csp' && s.contracts === 0 && (
-        <div className="pt-0.5 text-[11px] text-faint">
-          collateral {money(s.collateral, 0)} exceeds available funds
-        </div>
-      )}
     </div>
   )
 }
+
+const LANE_DEFS: { key: string; label: string }[] = [
+  { key: 'swing', label: 'swing' },
+  { key: 'csp', label: 'cash-secured put' },
+  { key: 'covered_call', label: 'covered call' },
+  { key: 'leap_call', label: 'LEAP call' },
+  { key: 'leap_put', label: 'LEAP put' },
+]
 
 const PLAN_ICON: Record<string, string> = {
   stop_hit: '🔴', invalidated: '🔴', target2_hit: '🟢',
@@ -140,19 +136,12 @@ export default async function PlanPage({
     api.incomePlan(funds),
     api.tradePlans(),
   ])
-  const lanes = plan?.lanes ?? {}
+  const sectors = plan?.sectors ?? []
   const pos = plan?.posture ?? {}
   const noLongs = pos.new_longs === false
   const openPlans = open?.open ?? []
-  const laneDefs: { key: keyof NonNullable<typeof lanes>; title: string; note: string }[] = [
-    { key: 'swing', title: 'Swing calls', note: 'top engine picks — 5–20d holds' },
-    { key: 'csp', title: 'Cash-secured puts', note: 'sell puts at support on sound names — premium or assignment at your price' },
-    { key: 'covered_call', title: 'Covered calls', note: 'sell calls on held lots — income into strength' },
-    { key: 'leap_call', title: 'LEAP calls', note: 'deep-ITM long-dated conviction' },
-    { key: 'leap_put', title: 'LEAP puts', note: 'long-dated downside expressions' },
-  ]
   return (
-    <main className="mx-auto max-w-5xl px-5 pb-20">
+    <main className="mx-auto max-w-6xl px-5 pb-20">
       <header className="pt-6 pb-6">
         <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
           Trading plan
@@ -161,8 +150,7 @@ export default async function PlanPage({
           Today&apos;s <span className="text-accent">plan</span>
         </h1>
         <div className="pt-3 flex flex-wrap items-center gap-2 text-xs">
-          <span className={`inline-flex items-center gap-1.5 rounded-full border border-hairline px-2.5 py-1 ${
-            noLongs ? 'text-defensive' : 'text-muted'}`}>
+          <span className={`inline-flex items-center gap-1.5 rounded-full border border-hairline px-2.5 py-1 ${noLongs ? 'text-defensive' : 'text-muted'}`}>
             <span className={`h-1.5 w-1.5 rounded-full ${noLongs ? 'bg-defensive' : 'bg-aggressive'}`} />
             posture {String(pos.posture ?? '—')}
             {pos.regime_as_of && (
@@ -191,28 +179,49 @@ export default async function PlanPage({
       </header>
 
       <Gate feature="board">
-        {laneDefs.map(({ key, title, note }) => {
-          const items = lanes[key] ?? []
-          return (
-            <section key={key} className="mt-4 rounded-xl border border-hairline bg-card px-5 py-4">
+        {sectors.length === 0 && (
+          <div className="rounded-xl border border-hairline bg-card px-5 py-8 text-center">
+            <p className="text-sm text-muted">
+              no sector qualified today — no-trade is a valid plan
+            </p>
+          </div>
+        )}
+        <div className="grid gap-4 lg:grid-cols-2">
+          {sectors.map(({ sector, lanes }) => (
+            <section key={sector}
+              className="rounded-xl border border-hairline bg-card px-5 py-4">
               <div className="flex items-baseline justify-between">
-                <span className="text-[11px] uppercase tracking-[0.2em] text-faint">{title}</span>
-                <span className="text-[11px] text-faint">{note}</span>
+                <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+                  {sector}
+                </span>
+                <span className="text-[11px] text-faint">
+                  top 3 per lane
+                </span>
               </div>
-              <div className="pt-2">
-                {items.length === 0 ? (
-                  <p className="text-xs text-muted">
-                    {noLongs && key !== 'covered_call' && key !== 'leap_put'
-                      ? 'posture blocks new longs'
-                      : 'nothing qualified today — no-trade is a valid plan'}
-                  </p>
-                ) : (
-                  items.map((s) => <Row key={s.symbol + key} s={s} funds={funds} />)
-                )}
+              <div className="pt-2 space-y-3">
+                {LANE_DEFS.map(({ key, label }) => {
+                  const items = (lanes as Record<string, PlanSuggestion[]>)[key] ?? []
+                  return (
+                    <div key={key}>
+                      <div className="text-[10px] uppercase tracking-wider text-faint">
+                        {label}
+                      </div>
+                      {items.length === 0 ? (
+                        <div className="py-1 pl-3 text-[11px] text-faint">—</div>
+                      ) : (
+                        <div className="divide-y divide-hairline/40">
+                          {items.map((s) => (
+                            <Pick key={s.symbol + key} s={s} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </section>
-          )
-        })}
+          ))}
+        </div>
 
         {/* open plans — the tracked book */}
         <section className="mt-4 rounded-xl border border-hairline bg-card px-5 py-4">

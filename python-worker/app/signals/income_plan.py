@@ -74,11 +74,14 @@ def _swing() -> list[dict]:
     """Today's daily_calls picks — the engine's qualified swing names."""
     from app.database import db
     rows = db.execute_query(
-        "SELECT symbol, rank, score, entry_px, stop_px, target_px, rr,"
-        " state, dip_phase, evidence FROM daily_calls"
-        " WHERE call_date=(SELECT max(call_date) FROM daily_calls)"
-        " ORDER BY rank")
-    return [{"symbol": r["symbol"], "instrument": "shares",
+        "SELECT c.symbol, s.sector, c.rank, c.score, c.entry_px,"
+        " c.stop_px, c.target_px, c.rr, c.state, c.dip_phase,"
+        " c.evidence FROM daily_calls c"
+        " LEFT JOIN stocks s ON s.symbol=c.symbol"
+        " WHERE c.call_date=(SELECT max(call_date) FROM daily_calls)"
+        " ORDER BY c.rank")
+    return [{"symbol": r["symbol"], "sector": r["sector"],
+             "instrument": "shares",
              "use_case": "swing", "score": r["score"],
              "entry_px": _f(r["entry_px"]), "stop_px": _f(r["stop_px"]),
              "target_px": _f(r["target_px"]), "rr": _f(r["rr"]),
@@ -94,23 +97,28 @@ def _leaps(use_case: str, th: dict) -> list[dict]:
     deep-ITM long-dated candidates."""
     from app.database import db
     rows = db.execute_query(
-        "SELECT symbol, state, rank, mom, fund FROM readiness_evals"
-        " WHERE use_case=:u"
-        " AND as_of=(SELECT max(as_of) FROM readiness_evals"
+        "SELECT e.symbol, s.sector, e.state, e.rank, e.mom, e.fund"
+        " FROM readiness_evals e"
+        " LEFT JOIN stocks s ON s.symbol=e.symbol"
+        " WHERE e.use_case=:u"
+        " AND e.as_of=(SELECT max(as_of) FROM readiness_evals"
         "            WHERE use_case=:u)"
-        " AND state IN ('ready','close') ORDER BY rank DESC LIMIT :n",
-        {"u": use_case, "n": _TOP})
+        " AND e.state IN ('ready','close') ORDER BY e.rank DESC"
+        " LIMIT :n",
+        {"u": use_case, "n": 40})
     out = []
     for r in rows:
         d = _draft(r["symbol"], use_case)
         t = th.get(r["symbol"]) or {}
-        out.append({"symbol": r["symbol"], "instrument": "LEAP "
+        out.append({"symbol": r["symbol"], "sector": r["sector"],
+                    "instrument": "LEAP "
                     + ("call" if use_case == "leap_call" else "put"),
                     "use_case": use_case, "lane_state": r["state"],
                     "rank": _f(r["rank"]),
                     "mom": r["mom"], "fund": r["fund"],
                     "thesis": t.get("status"),
                     "thesis_dir": t.get("status_dir"),
+                    "entry_px": d.get("spot"),
                     "stop_px": d.get("stop_px"), "target_px":
                         d.get("target1_px"),
                     "spot": d.get("spot"), "plan": d})
@@ -125,7 +133,8 @@ def _csp(funds: Optional[float], th: dict, iv: dict) -> list[dict]:
     from app.database import db
     import json
     rows = db.execute_query(
-        "SELECT s.symbol, s.company_name, s.fundamental_state,"
+        "SELECT s.symbol, s.company_name, s.sector,"
+        " s.fundamental_state,"
         " s.momentum_state, s.momentum_detail, s.next_earnings_date,"
         " px.close, fw.fcf_margin, fw.rev_growth"
         " FROM stocks s"
@@ -169,10 +178,14 @@ def _csp(funds: Optional[float], th: dict, iv: dict) -> list[dict]:
         contracts = int(funds // collat) if funds else None
         cands.append({
             "symbol": sym, "name": r.get("company_name"),
+            "sector": r["sector"],
             "instrument": "cash-secured put", "use_case": "csp",
             "spot": px, "strike": strike, "collateral": collat,
             "contracts": contracts,
             "dte": "30-45d", "iv_hv": round(iv_hv, 2),
+            "entry_px": strike,
+            "exit_rule": ("close at 50% decay or roll if px < "
+                          f"{strike}"),
             "atm_iv": _f(v.get("atm_iv")),
             "fund": r["fundamental_state"], "mom": r["momentum_state"],
             "thesis": t.get("status"), "thesis_dir": t.get("status_dir"),
@@ -182,7 +195,7 @@ def _csp(funds: Optional[float], th: dict, iv: dict) -> list[dict]:
                       if ed is not None and 0 <= ed <= 35 else []),
             "plan": _draft(sym, "csp", strike)})
     cands.sort(key=lambda c: -(c["iv_hv"] or 0))
-    return cands[:_TOP + 2]
+    return cands
 
 
 def _covered_calls(th: dict, iv: dict) -> list[dict]:
@@ -194,6 +207,7 @@ def _covered_calls(th: dict, iv: dict) -> list[dict]:
     import json
     rows = db.execute_query(
         "SELECT DISTINCT ON (s.symbol) s.symbol, s.company_name,"
+        " s.sector,"
         " s.fundamental_state, s.momentum_state, s.momentum_detail,"
         " s.next_earnings_date, pp.quantity, pp.avg_price, px.close"
         " FROM portfolio_positions pp"
@@ -236,8 +250,12 @@ def _covered_calls(th: dict, iv: dict) -> list[dict]:
                          "pays for the cap")
         out.append({
             "symbol": sym, "name": r.get("company_name"),
+            "sector": r["sector"],
             "instrument": "covered call", "use_case": "covered_call",
             "spot": px, "strike": strike,
+            "entry_px": strike,
+            "exit_rule": ("hold shares under "
+                          f"{strike}; roll or let go above"),
             "shares": int(_f(r["quantity"]) or 0),
             "contracts": int((_f(r["quantity"]) or 0) // 100),
             "dte": "30-45d", "iv_hv": round(iv_hv, 2) if iv_hv else None,
@@ -247,6 +265,27 @@ def _covered_calls(th: dict, iv: dict) -> list[dict]:
             "plan": _draft(sym, "covered_call", px)})
     out.sort(key=lambda c: (
         bool(c["flags"]), -(c["iv_hv"] or 0)))
+    return out
+
+
+_LANE_KEYS = ("swing", "csp", "covered_call", "leap_call", "leap_put")
+
+
+def _by_sector(lanes: dict) -> list[dict]:
+    """Sector × lane matrix — top 3 candidates per sector per lane.
+    Sectors with no qualifying picks in any lane are omitted; lane
+    slots inside a present sector stay blank (frontend renders —)."""
+    sectors: dict[str, dict] = {}
+    for key in _LANE_KEYS:
+        for item in lanes.get(key) or []:
+            sec = item.get("sector") or "Other"
+            slot = sectors.setdefault(sec, {k: [] for k in _LANE_KEYS})
+            if len(slot[key]) < _TOP:
+                slot[key].append(item)
+    out = [{"sector": sec, "lanes": slot}
+           for sec, slot in sectors.items()
+           if any(slot.values())]
+    out.sort(key=lambda s: -(max(len(v) for v in s["lanes"].values())))
     return out
 
 
@@ -265,6 +304,7 @@ def today(funds: Optional[float] = None) -> dict[str, Any]:
     }
     return {"as_of": str(date.today()), "posture": pos,
             "funds": funds, "lanes": lanes,
+            "sectors": _by_sector(lanes),
             "note": ("advisory — levels are engine-suggested; premium "
                      "isn't modeled (no options chain feed). Verify "
                      "bid/ask at the broker before entering.")}
