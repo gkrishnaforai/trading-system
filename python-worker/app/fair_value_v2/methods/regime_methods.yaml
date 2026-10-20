@@ -31,9 +31,11 @@ selections:
       combine: weighted_average
       methods:
         - method_key: pe_technology_dynamic
-          weight: 0.85
+          weight: 0.75
         - method_key: ev_fcf
           weight: 0.15
+        - method_key: eps_trajectory
+          weight: 0.10
 
     cyclical:
       combine: weighted_average
@@ -73,14 +75,16 @@ selections:
       combine: weighted_average
       methods:
         - method_key: peg_40
-          weight: 0.25
+          weight: 0.20
         - method_key: peg_corrected
           weight: 0.15
         - method_key: pe_technology_dynamic
-          weight: 0.30
+          weight: 0.25
         - method_key: ev_fcf
           weight: 0.15
         - method_key: dcf_quality_fade
+          weight: 0.10
+        - method_key: eps_trajectory
           weight: 0.15
 
   fintech:
@@ -112,9 +116,11 @@ selections:
       combine: weighted_average
       methods:
         - method_key: pe_technology_dynamic
-          weight: 0.7
+          weight: 0.60
         - method_key: ev_fcf
           weight: 0.15
+        - method_key: eps_trajectory
+          weight: 0.10
     cyclical:
       combine: weighted_average
       methods:
@@ -152,14 +158,16 @@ selections:
       combine: weighted_average
       methods:
         - method_key: peg_40
-          weight: 0.25
+          weight: 0.20
         - method_key: peg_corrected
           weight: 0.15
         - method_key: pe_technology_dynamic
-          weight: 0.30
+          weight: 0.25
         - method_key: ev_fcf
           weight: 0.15
         - method_key: dcf_quality_fade
+          weight: 0.10
+        - method_key: eps_trajectory
           weight: 0.15
 
   value:
@@ -257,15 +265,17 @@ selections:
       combine: weighted_average
       methods:
         - method_key: peg_40
-          weight: 0.3
-        - method_key: peg
           weight: 0.25
+        - method_key: peg
+          weight: 0.20
         - method_key: pe_growth
-          weight: 0.2
+          weight: 0.20
         - method_key: ev_fcf
           weight: 0.15
         - method_key: dcf_quality_fade
-          weight: 0.15
+          weight: 0.10
+        - method_key: eps_trajectory
+          weight: 0.10
 
   # cyclicals are ALWAYS valued on normalized EPS — peak TTM earnings
   # at a compounder multiple is the classic value trap

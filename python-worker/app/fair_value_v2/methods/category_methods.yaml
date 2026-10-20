@@ -13,20 +13,24 @@ categories:
   ai_infra:
     methods:
       - method_key: pe_technology_dynamic
-        weight: 0.45
+        weight: 0.40
       - method_key: ev_sales_growth
-        weight: 0.35
+        weight: 0.30
+      - method_key: eps_trajectory
+        weight: 0.15
       - method_key: peg_r40_cagr
-        weight: 0.20
+        weight: 0.15
 
   growth:
     methods:
       - method_key: pe_growth
-        weight: 0.55
+        weight: 0.50
       - method_key: ev_sales_growth
-        weight: 0.25
-      - method_key: peg_r40_cagr
         weight: 0.20
+      - method_key: eps_trajectory
+        weight: 0.15
+      - method_key: peg_r40_cagr
+        weight: 0.15
 
   cyclical:
     methods:
@@ -41,11 +45,13 @@ categories:
   technology:
     methods:
       - method_key: pe_technology_dynamic
-        weight: 0.6
+        weight: 0.55
       - method_key: ev_sales_growth
-        weight: 0.25
-      - method_key: peg_r40_cagr
+        weight: 0.20
+      - method_key: eps_trajectory
         weight: 0.15
+      - method_key: peg_r40_cagr
+        weight: 0.10
 
   fintech:
     methods:

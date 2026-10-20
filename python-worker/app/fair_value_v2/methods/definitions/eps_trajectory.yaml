@@ -1,0 +1,207 @@
+method_key: eps_trajectory
+version: 1
+category: technology
+requires:
+  scalars:
+    - revenue_ttm
+    - shares_outstanding
+    - revenue_growth_ttm
+  optional_scalars:
+    - revenue_forward
+    - forward_growth
+    - net_profit_margin_midcycle
+    - net_profit_margin_ttm
+  series: []
+params:
+  horizon_years: 3
+  wacc: 0.10
+  dilution_annual: 0.02
+
+  # growth — anchored to the street's forward growth (point-in-time
+  # estimates), scenario spread multiplies the *trajectory* itself:
+  # a bear is a slower compounding future, not a multiple haircut.
+  growth_cap: 0.50
+  growth_cap_bull: 0.60
+  growth_cap_explosive: 0.75
+  bear_growth_mult: 0.50     # bear = consensus pace halves
+  bear_growth_floor: 0.02
+  bull_growth_mult: 1.15     # bull = modest beat on consensus
+  explosive_growth_mult: 1.35
+
+  # margins — anchored to TTM run-rate (the state the trajectory
+  # projects forward from); scenarios compress/expand it
+  margin_floor: 0.02
+  margin_cap: 0.45
+  bear_margin_sub: 0.05
+  bull_margin_add: 0.03
+  explosive_margin_add: 0.05
+
+  # exit P/E — the multiple paid for terminal-year earnings.
+  # Deliberately lower than the point-in-time methods: this model already
+  # carries 3 years of growth inside EPS_T, so the exit multiple must not
+  # re-price that same growth.
+  exit_pe_bear: 18.0
+  exit_pe_base: 26.0
+  exit_pe_bull: 34.0
+  exit_pe_explosive: 45.0
+
+formula:
+  bindings:
+    # the revenue base the street actually prices on — forward-year
+    # consensus when published, trailing as fallback (NBIS effect:
+    # TTM collapses ramping names)
+    rev_base:
+      coalesce:
+        - var: revenue_forward
+        - var: revenue_ttm
+
+    g_anchor:
+      coalesce:
+        - var: forward_growth
+        - var: revenue_growth_ttm
+    g_base:
+      clamp: {value: {var: g_anchor}, lo: 0.0, hi: {param: growth_cap}}
+    g_bear:
+      max:
+        - mul: [{var: g_base}, {param: bear_growth_mult}]
+        - param: bear_growth_floor
+    g_bull:
+      min:
+        - mul: [{var: g_base}, {param: bull_growth_mult}]
+        - param: growth_cap_bull
+    g_explosive:
+      min:
+        - mul: [{var: g_base}, {param: explosive_growth_mult}]
+        - param: growth_cap_explosive
+
+    # TTM is the point-in-time margin the model projects *from*;
+    # mid-cycle (multi-period avg) is the fallback — it lags badly on
+    # newly-profitable inflection names (CRDO's 12q avg sits under the
+    # floor because pre-profitability quarters dominate it)
+    m_anchor:
+      coalesce:
+        - var: net_profit_margin_ttm
+        - var: net_profit_margin_midcycle
+    m_base:
+      clamp: {value: {var: m_anchor}, lo: {param: margin_floor}, hi: {param: margin_cap}}
+    m_bear:
+      clamp:
+        value: {sub: [{var: m_base}, {param: bear_margin_sub}]}
+        lo: {param: margin_floor}
+        hi: {param: margin_cap}
+    m_bull:
+      clamp:
+        value: {add: [{var: m_base}, {param: bull_margin_add}]}
+        lo: {param: margin_floor}
+        hi: {param: margin_cap}
+    m_explosive:
+      clamp:
+        value: {add: [{var: m_base}, {param: explosive_margin_add}]}
+        lo: {param: margin_floor}
+        hi: {param: margin_cap}
+
+    # share count at the horizon — dilution is a claim on terminal EPS
+    shares_t:
+      mul:
+        - var: shares_outstanding
+        - pow:
+            - add: [1, {param: dilution_annual}]
+            - param: horizon_years
+
+    # per-scenario terminal revenue / EPS
+    rev_t_bear:  {mul: [{var: rev_base}, {pow: [{add: [1, {var: g_bear}]},  {param: horizon_years}]}]}
+    rev_t_base:  {mul: [{var: rev_base}, {pow: [{add: [1, {var: g_base}]},  {param: horizon_years}]}]}
+    rev_t_bull:  {mul: [{var: rev_base}, {pow: [{add: [1, {var: g_bull}]},  {param: horizon_years}]}]}
+    rev_t_explosive: {mul: [{var: rev_base}, {pow: [{add: [1, {var: g_explosive}]}, {param: horizon_years}]}]}
+
+    eps_t_bear:      {div: [{mul: [{var: rev_t_bear},      {var: m_bear}]},      {var: shares_t}]}
+    eps_t_base:      {div: [{mul: [{var: rev_t_base},      {var: m_base}]},      {var: shares_t}]}
+    eps_t_bull:      {div: [{mul: [{var: rev_t_bull},      {var: m_bull}]},      {var: shares_t}]}
+    eps_t_explosive: {div: [{mul: [{var: rev_t_explosive}, {var: m_explosive}]}, {var: shares_t}]}
+
+    disc:
+      pow:
+        - add: [1, {param: wacc}]
+        - param: horizon_years
+
+  fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{coalesce: [{var: rev_base}, -1]}, 0]
+          - lte: [{coalesce: [{var: shares_t}, -1]}, 0]
+      then: null
+      else:
+        div:
+          - mul: [{var: eps_t_base}, {param: exit_pe_base}]
+          - var: disc
+
+  bear_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{coalesce: [{var: rev_base}, -1]}, 0]
+          - lte: [{coalesce: [{var: shares_t}, -1]}, 0]
+      then: null
+      else:
+        div:
+          - mul: [{var: eps_t_bear}, {param: exit_pe_bear}]
+          - var: disc
+
+  bull_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{coalesce: [{var: rev_base}, -1]}, 0]
+          - lte: [{coalesce: [{var: shares_t}, -1]}, 0]
+      then: null
+      else:
+        div:
+          - mul: [{var: eps_t_bull}, {param: exit_pe_bull}]
+          - var: disc
+
+  explosive_fair_price:
+    if:
+      cond:
+        or:
+          - lte: [{coalesce: [{var: rev_base}, -1]}, 0]
+          - lte: [{coalesce: [{var: shares_t}, -1]}, 0]
+      then: null
+      else:
+        div:
+          - mul: [{var: eps_t_explosive}, {param: exit_pe_explosive}]
+          - var: disc
+
+  report:
+    g_base: {var: g_base}
+    g_bear: {var: g_bear}
+    g_bull: {var: g_bull}
+    g_explosive: {var: g_explosive}
+    m_base: {var: m_base}
+    m_bear: {var: m_bear}
+    m_bull: {var: m_bull}
+    rev_t_base: {var: rev_t_base}
+    eps_t_bear: {var: eps_t_bear}
+    eps_t_base: {var: eps_t_base}
+    eps_t_bull: {var: eps_t_bull}
+    eps_t_explosive: {var: eps_t_explosive}
+    shares_t: {var: shares_t}
+    terminal_price_base:
+      mul: [{var: eps_t_base}, {param: exit_pe_base}]
+
+validations:
+  - name: growth_units_suspicious
+    when: {gt: [{coalesce: [{var: forward_growth}, 0]}, 10]}
+    reason: forward_growth above 10x is a unit mistake or analyst garbage — decimals only
+  - name: margin_impossible
+    when: {gt: [{coalesce: [{var: m_anchor}, 0]}, 1.0]}
+    reason: net margin above 100% of revenue is a data error
+  - name: revenue_units_suspicious
+    when:
+      and:
+        - gt: [{coalesce: [{var: revenue_forward}, 0]}, 0]
+        - gt: [{var: revenue_ttm}, 0]
+        - or:
+            - gt: [{div: [{coalesce: [{var: revenue_forward}, 1]}, {var: revenue_ttm}]}, 5]
+            - gt: [{div: [{var: revenue_ttm}, {coalesce: [{var: revenue_forward}, 1]}]}, 5]
+    reason: forward vs trailing revenue diverge >5x — basis mismatch, not growth
