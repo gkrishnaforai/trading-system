@@ -280,6 +280,7 @@ export type CorrectionAlarms = {
   correction_character?: string
   severity?: string
   meaning?: string
+  action?: { bias?: string; note?: string }
   legs?: {
     revision_breadth?: { score?: number | null; pct_cutting_5?: number; sectors_negative?: string[]; note?: string }
     labor_credit?: { score?: number | null; hy_oas?: number | null; hy_oas_d20?: number | null; icsa_k?: number | null; note?: string }

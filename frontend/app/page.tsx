@@ -117,9 +117,9 @@ export default async function RegimePage() {
               alarms
             </span>
             <span className={`font-medium ${alarms.severity === 'alarm' ? 'text-defensive'
-                : alarms.severity === 'warning' ? 'text-caution'
-                  : alarms.severity === 'watch' ? 'text-muted'
-                    : 'text-faint'}`}>
+              : alarms.severity === 'warning' ? 'text-caution'
+                : alarms.severity === 'watch' ? 'text-muted'
+                  : 'text-faint'}`}>
               {alarms.correction_character.replace(/_/g, ' ')}
             </span>
             {alarms.legs?.labor_credit?.hy_oas != null && (
@@ -137,6 +137,26 @@ export default async function RegimePage() {
             {alarms.legs?.revision_breadth?.pct_cutting_5 != null && (
               <span className="font-mono text-muted" title={alarms.legs.revision_breadth.note}>
                 est cuts {alarms.legs.revision_breadth.pct_cutting_5}%
+              </span>
+            )}
+            {alarms.action?.bias && (
+              <span className={`font-medium ${{
+                sell: 'text-defensive',
+                slow_buys: 'text-caution',
+                hold: 'text-caution',
+                accumulate_selective: 'text-accent',
+                accumulate_staged: 'text-accent',
+                accumulate: 'text-aggressive',
+              }[alarms.action.bias] ?? 'text-muted'}`}
+                title={alarms.action.note}>
+                → {{
+                  sell: 'start selling — raise cash',
+                  slow_buys: 'slow the buys',
+                  hold: 'hold / pause new buys',
+                  accumulate_selective: 'accumulate selectively',
+                  accumulate_staged: 'staged accumulation',
+                  accumulate: 'accumulate',
+                }[alarms.action.bias] ?? alarms.action.bias}
               </span>
             )}
             <span className="text-faint" title={alarms.meaning}>

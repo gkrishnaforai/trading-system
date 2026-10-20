@@ -252,6 +252,42 @@ _CHAR_TONE = {
 }
 
 
+def _action(char: str, severity: str) -> dict[str, str]:
+    """Character × severity → an honest action bias. Advisory: this
+    biases HOW you act, never WHETHER — the human still decides."""
+    if char == "earnings_recession":
+        return ({"bias": "sell" if severity == "alarm"
+                 else "slow_buys",
+                 "note": "raise cash — trim into bounces; a falling E "
+                         "means dips keep dipping"}
+                if severity == "alarm" else
+                {"bias": "slow_buys",
+                 "note": "stop initiating until cuts stabilize — "
+                         "earnings-led declines don't bounce on cue"})
+    if char == "credit_stress":
+        return ({"bias": "sell" if severity == "alarm"
+                 else "hold",
+                 "note": "credit first — if HY keeps widening, "
+                         "rotate to defense"}
+                if severity == "alarm" else
+                {"bias": "hold",
+                 "note": "pause new buys; spreads widening is the "
+                         "early tell — re-check when HY stops "
+                         "worsening"})
+    if char == "growth_scare":
+        return {"bias": "accumulate_selective",
+                "note": "E intact — multiple compression creates "
+                        "mispricing; stage entries on the selloff "
+                        "engine's picks, not falling knives"}
+    if char == "liquidity_stress":
+        return {"bias": "accumulate_staged",
+                "note": "positioning flush — wait for the tape to "
+                        "stabilize, then add in stages"}
+    return {"bias": "accumulate",
+            "note": "no structural alarm — weakness is a dip; "
+                    "accumulate per plan"}
+
+
 def evaluate(persist: bool = True) -> dict[str, Any]:
     rb = _revision_breadth()
     lc = _labor_credit()
@@ -289,6 +325,7 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
            "correction_character": char,
            "severity": severity,
            "meaning": _CHAR_TONE[char],
+           "action": _action(char, severity),
            "legs": {"revision_breadth": rb, "labor_credit": lc,
                     "real_yields": ry, "valuation_decomp": vd}}
     if persist:
