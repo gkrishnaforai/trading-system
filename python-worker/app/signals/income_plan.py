@@ -424,6 +424,65 @@ def _covered_calls(th: dict, iv: dict) -> list[dict]:
 _LANE_KEYS = ("swing", "csp", "covered_call", "leap_call", "leap_put")
 
 
+def _pick_score(s: dict, lane: str, bias: str) -> float:
+    """Deterministic conviction score — what's most likely to pay.
+    Combines thesis direction, tape state, fundamental slope, premium
+    richness, engine rank, and flag penalties. Not a promise of
+    profit — the ranking of today's least-bad risk."""
+    sc = 0.0
+    sc += {"on_track": 3, "improving": 2, "mixed": 1,
+           "deteriorating": -2, "broken": -3}.get(
+        s.get("thesis") or "", 0)
+    if s.get("thesis_dir") == "up":
+        sc += 1
+    elif s.get("thesis_dir") == "down":
+        sc -= 1
+    sc += {"uptrend": 2, "recovery": 2, "basing": 1.5,
+           "stabilizing": 1, "pullback": 1, "range": 0.5,
+           "downtrend": -2, "breakdown": -2, "knife": -3}.get(
+        s.get("mom") or s.get("state") or "", 0)
+    sc += {"accelerating": 2, "growing": 1, "steady": 0.5,
+           "slowing": -0.5, "deteriorating": -2,
+           "declining": -2, "pressured": -1.5}.get(
+        s.get("fund") or "", 0)
+    iv = s.get("iv_hv") or 0
+    if lane in ("csp", "covered_call"):
+        sc += 2 if iv >= 1.3 else 1 if iv >= 1.0 else -1
+    if lane == "swing" and s.get("rr"):
+        sc += min(float(s["rr"]), 3)
+    if lane in ("leap_call", "leap_put"):
+        sc += 1.5 if s.get("lane_state") == "ready" else 0.5
+    for f in s.get("flags") or []:
+        sc -= 2 if "earnings" in f else 0.75
+    # contrarian bonus — the regime window the bias says is open
+    if bias == "fear" and lane in ("leap_call", "csp"):
+        sc += 1
+    if bias == "greed" and lane == "leap_put":
+        sc += 1
+    return sc
+
+
+def _rank_picks(lanes: dict, bias: str, n: int = 4) -> None:
+    """Mark the top-n suggestions across all lanes (one star per
+    symbol — acquire and premium intents on the same name don't
+    double-count). Only marks rows scoring above the bar so a thin
+    day shows fewer stars, not four weak ones."""
+    cands = []
+    for lane, items in lanes.items():
+        for s in items or []:
+            s["pick_score"] = round(_pick_score(s, lane, bias), 1)
+            cands.append(s)
+    cands.sort(key=lambda c: -c["pick_score"])
+    seen = set()
+    for s in cands:
+        if len(seen) >= n or s["pick_score"] < 4:
+            break
+        if s["symbol"] in seen:
+            continue
+        seen.add(s["symbol"])
+        s["top"] = True
+
+
 def _by_sector(lanes: dict) -> list[dict]:
     """Sector × lane matrix — top 3 candidates per sector per lane.
     Sectors with no qualifying picks in any lane are omitted; lane
@@ -475,6 +534,7 @@ def today(funds: Optional[float] = None) -> dict[str, Any]:
                     "held + qualifies as CSP — a wheel setup: shares "
                     "cap upside, assignment adds more; run both only "
                     "if you intend double exposure")
+    _rank_picks(lanes, bias)
     _journal(lanes, pos, bias)
     return {"as_of": str(date.today()), "posture": pos,
             "bias": bias,

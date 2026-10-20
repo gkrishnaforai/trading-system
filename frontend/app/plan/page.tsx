@@ -80,6 +80,10 @@ function Pick({ s }: { s: PlanSuggestion }) {
     <div className="py-1">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
+          {s.top && (
+            <span className="text-aggressive font-bold text-[13px]"
+              title={`top setup — conviction score ${s.pick_score}`}>★</span>
+          )}
           <StateDot v={s.state ?? s.mom} />
           <Link href={`/stock?sym=${s.symbol}`}
             className="font-semibold text-[13px] text-ink hover:text-accent">
@@ -87,8 +91,8 @@ function Pick({ s }: { s: PlanSuggestion }) {
           </Link>
           {s.intent && (
             <span className={`rounded-full border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider ${s.intent === 'acquire' || s.intent === 'exit'
-                ? 'border-caution/40 text-caution'
-                : 'border-accent/40 text-accent'}`}>
+              ? 'border-caution/40 text-caution'
+              : 'border-accent/40 text-accent'}`}>
               {s.intent}
             </span>
           )}
@@ -190,6 +194,11 @@ export default async function PlanPage({
         {plan?.bias_note && (
           <p className="pt-2 max-w-xl text-xs text-muted">{plan.bias_note}</p>
         )}
+        <p className="pt-1 max-w-xl text-xs text-faint">
+          <span className="text-aggressive font-bold">★</span> today's
+          top 3–4 setups — highest conviction across all lanes
+          (thesis + tape + fundamentals + premium, flags penalized)
+        </p>
         {plan?.note && (
           <p className="pt-1 max-w-xl text-xs text-faint">{plan.note}</p>
         )}
