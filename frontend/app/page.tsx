@@ -1,4 +1,4 @@
-import { api } from '@/lib/api'
+import { api, type HorizonScenario, type RegimeVerdict } from '@/lib/api'
 import { Chip, Kv, Section, Stat, fmtShort } from '@/components/regime'
 import { VolChips } from '@/components/vol-chips'
 import { TapeChips } from '@/components/tape-chips'
@@ -73,6 +73,27 @@ export default async function RegimePage() {
           'buckets', 'verdict', 'horizon_1m', 'horizon_3m'].includes(k),
     )
     : []
+
+  // horizons arrive as scenario objects ({base, bear, bull, stress,
+  // windows, key_catalyst}) — sometimes empty {} when the LLM leg
+  // didn't produce one; unwrap or drop
+  const asHorizon = (v: unknown): HorizonScenario | null => {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const o = v as HorizonScenario
+      return (o.base || o.bear || o.bull || o.stress ||
+        o.key_catalyst || (o.windows?.length ?? 0) > 0) ? o : null
+    }
+    return null
+  }
+  const h1 = asHorizon(today?.horizon_1m)
+  const h3 = asHorizon(today?.horizon_3m)
+
+  // verdict is an object {plain, rules, confirmation, ...} — plain is
+  // the human-readable call, rules are the action hints
+  const verdict: RegimeVerdict | null =
+    today?.verdict && typeof today.verdict === 'object'
+      ? today.verdict as RegimeVerdict
+      : null
 
   // which feeds actually answered — a null means the section below
   // renders blank; name it instead of failing silently
@@ -202,8 +223,88 @@ export default async function RegimePage() {
           />
           <Stat
             label="1M · 3M"
-            value={`${today.horizon_1m ?? '—'} · ${today.horizon_3m ?? '—'}`}
+            value={`${h1?.base?.replace(/_/g, ' ') ?? '—'} · ${h3?.base?.replace(/_/g, ' ') ?? '—'}`}
           />
+        </section>
+      )}
+
+      {/* verdict — the plain-English call + action rules */}
+      {(verdict?.plain || (verdict?.rules && Object.keys(verdict.rules).length > 0)) && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+            Today's call
+          </div>
+          {verdict?.plain && (
+            <p className="pt-3 text-sm leading-relaxed text-ink">
+              {verdict.plain}
+            </p>
+          )}
+          {verdict?.rules && Object.keys(verdict.rules).length > 0 && (
+            <div className="pt-3 flex flex-wrap gap-2">
+              {Object.entries(verdict.rules)
+                .filter(([k]) => k !== 'note')
+                .map(([k, v]) => (
+                  <span
+                    key={k}
+                    className="rounded-full border border-hairline px-3 py-1 text-xs text-muted"
+                  >
+                    {k.replace(/_/g, ' ')}{' '}
+                    <span className="font-medium text-ink">
+                      {String(v).replace(/_/g, ' ')}
+                    </span>
+                  </span>
+                ))}
+            </div>
+          )}
+          {verdict?.rules?.note && (
+            <p className="pt-2 text-[11px] text-faint">
+              {verdict.rules.note}
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* outlook — 1M/3M scenario windows with catalysts */}
+      {(h1 || h3) && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+            Outlook
+          </div>
+          <div className="pt-4 grid gap-5 sm:grid-cols-2">
+            {([['Next month', h1], ['Next quarter', h3]] as const).map(
+              ([label, h]) => h && (
+                <div key={label}>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-xs font-medium text-muted">{label}</span>
+                    {h.base && (
+                      <span className="text-sm font-semibold text-ink">
+                        {h.base.replace(/_/g, ' ')}
+                      </span>
+                    )}
+                  </div>
+                  {(h.bull || h.bear || h.stress) && (
+                    <div className="pt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted">
+                      {h.bull && <span>↑ {h.bull.replace(/_/g, ' ')}</span>}
+                      {h.bear && <span>↓ {h.bear.replace(/_/g, ' ')}</span>}
+                      {h.stress && (
+                        <span className="text-defensive">⚡ {h.stress.replace(/_/g, ' ')}</span>
+                      )}
+                    </div>
+                  )}
+                  {h.key_catalyst && (
+                    <p className="pt-1.5 text-[11px] leading-relaxed text-muted">
+                      catalyst · {h.key_catalyst}
+                    </p>
+                  )}
+                  {h.windows && h.windows.length > 0 && (
+                    <p className="pt-1 text-[11px] text-faint">
+                      {h.windows.join(' → ')}
+                    </p>
+                  )}
+                </div>
+              ),
+            )}
+          </div>
         </section>
       )}
 
@@ -339,7 +440,7 @@ export default async function RegimePage() {
       <footer className="mt-16 border-t border-hairline pt-6 flex justify-between text-[11px] text-faint">
         <span>advisory — deterministic posture, human decides</span>
         <span className="font-mono">
-          {today?.verdict ? String(today.verdict).slice(0, 40) : ''}
+          {verdict?.confirmation ? `x-asset ${String(verdict.confirmation)}` : ''}
         </span>
       </footer>
     </main>

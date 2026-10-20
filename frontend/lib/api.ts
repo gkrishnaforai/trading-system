@@ -17,6 +17,23 @@ export type Posture = {
   vol?: { vix?: number | null; vxn?: number | null; vxn_chg_5d?: number | null }
 }
 
+export type HorizonScenario = {
+  base?: string
+  bear?: string
+  bull?: string
+  stress?: string
+  windows?: string[]
+  key_catalyst?: string
+}
+
+export type RegimeVerdict = {
+  plain?: string
+  rules?: Record<string, string>
+  confirmation?: string
+  event_risk?: string
+  [k: string]: unknown
+}
+
 export type MorningRegime = {
   today?: {
     as_of?: string
@@ -26,9 +43,9 @@ export type MorningRegime = {
     confidence?: number
     buckets?: Record<string, unknown> | unknown[]
     llm?: unknown
-    verdict?: string
-    horizon_1m?: unknown
-    horizon_3m?: unknown
+    verdict?: RegimeVerdict | string | null
+    horizon_1m?: HorizonScenario | string | null
+    horizon_3m?: HorizonScenario | string | null
   } | null
   record?: Array<Record<string, unknown>>
 }
