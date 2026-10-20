@@ -26,9 +26,9 @@ function ThesisDot({ s }: { s: PlanSuggestion }) {
   if (!s.thesis) return null
   return (
     <span className={`text-[11px] ${{
-        ok: 'text-aggressive', warn: 'text-caution',
-        bad: 'text-defensive', off: 'text-muted'
-      }[toneOf(s.thesis)]
+      ok: 'text-aggressive', warn: 'text-caution',
+      bad: 'text-defensive', off: 'text-muted'
+    }[toneOf(s.thesis)]
       }`}>
       {String(s.thesis).replace(/_/g, ' ')}
       {s.thesis_dir === 'up' ? ' ▲' : s.thesis_dir === 'down' ? ' ▼' : ''}
@@ -157,9 +157,16 @@ export default async function PlanPage({
               <span className="text-faint">· {String(pos.regime_as_of).slice(0, 10)}</span>
             )}
           </span>
+          {plan?.bias && plan.bias !== 'neutral' && (
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${plan.bias === 'fear'
+              ? 'border-aggressive/40 text-aggressive'
+              : 'border-caution/40 text-caution'}`}>
+              {plan.bias === 'fear' ? '↯ be greedy' : '☂ be fearful'}
+            </span>
+          )}
           {noLongs && (
             <span className="text-defensive text-[11px]">
-              new longs blocked — income/defense lanes only
+              swings gated — contrarian lanes stay open
             </span>
           )}
           {funds != null ? (
@@ -173,8 +180,11 @@ export default async function PlanPage({
             </Link>
           )}
         </div>
+        {plan?.bias_note && (
+          <p className="pt-2 max-w-xl text-xs text-muted">{plan.bias_note}</p>
+        )}
         {plan?.note && (
-          <p className="pt-2 max-w-xl text-xs text-faint">{plan.note}</p>
+          <p className="pt-1 max-w-xl text-xs text-faint">{plan.note}</p>
         )}
       </header>
 

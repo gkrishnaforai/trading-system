@@ -278,6 +278,8 @@ export type IncomePlan = {
     regime_as_of?: string
   }
   funds?: number | null
+  bias?: string
+  bias_note?: string
   note?: string
   lanes?: {
     swing?: PlanSuggestion[]
