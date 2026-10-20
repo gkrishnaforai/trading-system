@@ -306,6 +306,7 @@ export type PlanSuggestion = {
   sector?: string
   instrument?: string
   use_case?: string
+  intent?: string
   exit_rule?: string
   score?: number
   rank?: number

@@ -85,6 +85,13 @@ function Pick({ s }: { s: PlanSuggestion }) {
             className="font-semibold text-[13px] text-ink hover:text-accent">
             {s.symbol}
           </Link>
+          {s.intent && (
+            <span className={`rounded-full border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider ${s.intent === 'acquire' || s.intent === 'exit'
+                ? 'border-caution/40 text-caution'
+                : 'border-accent/40 text-accent'}`}>
+              {s.intent}
+            </span>
+          )}
           <ThesisDot s={s} />
           {s.earn_days != null && s.earn_days >= 0 && s.earn_days <= 35 && (
             <span className="text-[10px] text-caution">⚠EPS{s.earn_days}d</span>

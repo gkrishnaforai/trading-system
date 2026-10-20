@@ -269,27 +269,49 @@ def _csp(funds: Optional[float], th: dict, iv: dict) -> list[dict]:
         if strike is None:
             strike = px * (1 - 1.5 * atr)
         strike = round(strike * 2) / 2        # quarter-dollar-ish grid
-        collat = strike * 100
-        contracts = int(funds // collat) if funds else None
-        cands.append({
+        earn_flag = ([f"earnings in {ed}d — IV event inside window"]
+                     if ed is not None and 0 <= ed <= 35 else [])
+        base = {
             "symbol": sym, "name": r.get("company_name"),
-            "sector": r["sector"],
-            "instrument": "cash-secured put", "use_case": "csp",
-            "spot": px, "strike": strike, "collateral": collat,
-            "contracts": contracts,
-            "dte": "30-45d", "iv_hv": round(iv_hv, 2),
-            "entry_px": strike,
-            "exit_rule": ("close at 50% decay or roll if px < "
-                          f"{strike}"),
+            "sector": r["sector"], "use_case": "csp",
+            "spot": px, "dte": "30-45d", "iv_hv": round(iv_hv, 2),
             "atm_iv": _f(v.get("atm_iv")),
             "fund": r["fundamental_state"], "mom": r["momentum_state"],
             "thesis": t.get("status"), "thesis_dir": t.get("status_dir"),
             "priced_status": r.get("priced_status"),
             "fcf_margin": _f(r.get("fcf_margin")),
             "earn_days": ed,
-            "flags": ([f"earnings in {ed}d — IV event inside window"]
-                      if ed is not None and 0 <= ed <= 35 else []),
+        }
+        # intent 1 — ACQUIRE: strike at support; you WANT assignment.
+        # premium is the discount on an entry you'd take anyway.
+        cands.append({
+            **base, "instrument": "CSP · acquire", "intent": "acquire",
+            "strike": strike, "collateral": strike * 100,
+            "contracts": int(funds // (strike * 100)) if funds else None,
+            "entry_px": strike,
+            "exit_rule": ("assignment is the goal — own at "
+                          f"{strike}; roll only if thesis breaks"),
+            "flags": ["acquire intent — engineered to be assigned at "
+                      "support; size as a stock buy, not a yield play"]
+            + earn_flag,
             "plan": _draft(sym, "csp", strike)})
+        # intent 2 — PREMIUM: strike ~4% deeper / ~2.2 ATR under spot;
+        # income is the goal, assignment is the accepted tail risk.
+        prem = round(min(strike * 0.96, px * (1 - 2.2 * atr)) * 2) / 2
+        if prem < px * 0.97:                  # must sit below spot
+            cands.append({
+                **base, "instrument": "CSP · premium",
+                "intent": "premium",
+                "strike": prem, "collateral": prem * 100,
+                "contracts": int(funds // (prem * 100)) if funds
+                else None,
+                "entry_px": prem,
+                "exit_rule": ("close at 50% decay; roll down/out if "
+                              f"px approaches {prem}"),
+                "flags": ["premium intent — assignment is the tail "
+                          "risk, not the plan; only sell at a strike "
+                          "you'd still want to own"] + earn_flag,
+                "plan": _draft(sym, "csp", prem)})
     cands.sort(key=lambda c: -(c["iv_hv"] or 0))
     return cands
 
@@ -329,13 +351,15 @@ def _covered_calls(th: dict, iv: dict) -> list[dict]:
         strike = round(strike * 2) / 2
         ed = _earnings_in(r)
         t = th.get(sym) or {}
+        fund_bad = r["fundamental_state"] in ("deteriorating",
+                                              "declining", "pressured")
+        thesis_bad = t.get("status") in ("broken", "deteriorating")
         flags = []
-        if r["fundamental_state"] in ("deteriorating", "declining",
-                                    "pressured"):
+        if fund_bad:
             flags.append("fundamentals deteriorating — a call cap on a "
                          "broken name isn't income, it's delay; "
                          "consider exit instead")
-        if t.get("status") in ("broken", "deteriorating"):
+        if thesis_bad:
             flags.append(f"thesis {t['status']} — selling premium "
                          "doesn't fix a broken thesis")
         # "mostly we shouldn't be selling the underlying" — don't cap
@@ -352,22 +376,46 @@ def _covered_calls(th: dict, iv: dict) -> list[dict]:
         if iv_hv is not None and iv_hv < 0.9:
             flags.append(f"iv/hv {iv_hv:.2f} — premium thin, barely "
                          "pays for the cap")
-        out.append({
+        base = {
             "symbol": sym, "name": r.get("company_name"),
-            "sector": r["sector"],
-            "instrument": "covered call", "use_case": "covered_call",
-            "spot": px, "strike": strike,
-            "entry_px": strike,
-            "exit_rule": ("hold shares under "
-                          f"{strike}; roll or let go above"),
-            "shares": int(_f(r["quantity"]) or 0),
-            "contracts": int((_f(r["quantity"]) or 0) // 100),
-            "dte": "30-45d", "iv_hv": round(iv_hv, 2) if iv_hv else None,
+            "sector": r["sector"], "use_case": "covered_call",
+            "spot": px, "dte": "30-45d",
+            "iv_hv": round(iv_hv, 2) if iv_hv else None,
             "fund": r["fundamental_state"], "mom": r["momentum_state"],
             "thesis": t.get("status"), "thesis_dir": t.get("status_dir"),
             "priced_status": r.get("priced_status"),
-            "earn_days": ed, "flags": flags,
+            "earn_days": ed,
+            "shares": int(_f(r["quantity"]) or 0),
+            "contracts": int((_f(r["quantity"]) or 0) // 100),
+        }
+        # intent 1 — INCOME: far-OTM strike; premium on shares you'd
+        # keep anyway. You mostly do NOT want to be called away.
+        out.append({
+            **base, "instrument": "CC · income", "intent": "income",
+            "strike": strike, "entry_px": strike,
+            "exit_rule": ("hold shares under "
+                          f"{strike}; roll up/out if approached"),
+            "flags": flags,
             "plan": _draft(sym, "covered_call", px)})
+        # intent 2 — EXIT: only where the engine already says the
+        # underlying should be sold. Tighter strike (~4% OTM) is
+        # engineered to be called away — premium + a tidy exit beats
+        # a market order when IV is rich. Never offered on working
+        # theses — selling a winner early is not an intent.
+        if fund_bad or thesis_bad:
+            ex_strike = round(max(px * 1.04,
+                                  _f(sw.get("confirm_level")) or 0)
+                              * 2) / 2
+            out.append({
+                **base, "instrument": "CC · exit", "intent": "exit",
+                "strike": ex_strike, "entry_px": ex_strike,
+                "exit_rule": ("engineered to be called away — let "
+                              "assignment take the shares; this is "
+                              "the exit"),
+                "flags": ["exit intent — tighter strike wants "
+                          "assignment; if you're not ready to sell "
+                          "the stock, don't sell this call"],
+                "plan": _draft(sym, "covered_call", px)})
     out.sort(key=lambda c: (
         bool(c["flags"]), -(c["iv_hv"] or 0)))
     return out
