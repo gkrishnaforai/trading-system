@@ -415,6 +415,18 @@ def today(funds: Optional[float] = None) -> dict[str, Any]:
         "csp": _csp(funds, th, iv),
         "covered_call": _covered_calls(th, iv),
     }
+    # wheel overlap — a held name that also qualifies as a CSP is a
+    # valid setup (the wheel strategy) but NOT two independent ideas:
+    # running both doubles the bullish exposure. Flag both sides.
+    overlap = ({s["symbol"] for s in lanes["csp"]}
+               & {s["symbol"] for s in lanes["covered_call"]})
+    for lane in ("csp", "covered_call"):
+        for s in lanes[lane]:
+            if s["symbol"] in overlap:
+                s.setdefault("flags", []).append(
+                    "held + qualifies as CSP — a wheel setup: shares "
+                    "cap upside, assignment adds more; run both only "
+                    "if you intend double exposure")
     _journal(lanes, pos, bias)
     return {"as_of": str(date.today()), "posture": pos,
             "bias": bias,
