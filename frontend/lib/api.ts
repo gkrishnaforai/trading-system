@@ -271,6 +271,27 @@ export const api = {
   selloff: () => get<SelloffScan>('/selloff'),
   shortSqueeze: (symbol: string) =>
     get<SqueezeEval>(`/short-squeeze/${encodeURIComponent(symbol)}`),
+  intraday: () => get<IntradayTape>('/intraday'),
+}
+
+export type IntradayTape = {
+  state?: string
+  ts?: string
+  eval?: {
+    qqq_chg_open?: number
+    above_vwap?: boolean
+    vwap_held?: boolean
+    vix?: number | null
+    vix_rising?: boolean
+    vix_falling?: boolean
+    leadership?: string | null
+    macro_pressure?: boolean
+    breadth_adv_pct?: number | null
+    breadth_n?: number | null
+    morning_recovery?: boolean
+    evidence?: string[]
+  }
+  timeline?: { ts: string; state: string }[]
 }
 
 export type SqueezeEval = {

@@ -609,6 +609,18 @@ async def _j_short_squeeze() -> dict:
                                    "squeeze_setup")}}
 
 
+async def _j_intraday() -> dict:
+    """Intraday tape eval — 15-min journaled state during RTH
+    (VWAP/breadth/VIX/leadership/macro). Off-hours it no-ops; the
+    /intraday endpoint lazy-evals too, so the tape stays fresh
+    whenever anyone is looking. Next-day grading of prior evals."""
+    from app.signals import intraday_pulse as ip
+    graded = await asyncio.to_thread(ip.grade)
+    if not ip.market_open_now():
+        return {"skipped": "market closed", **graded}
+    return await asyncio.to_thread(ip.evaluate)
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -683,6 +695,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "selloff":     ("Selloff opportunity engine", _j_selloff),
     "short-data":  ("Short interest/volume pull", _j_short_data),
     "short-squeeze": ("Squeeze + covering eval", _j_short_squeeze),
+    "intraday-tape": ("Intraday tape classifier", _j_intraday),
 }
 
 # order matters for 'all': posture first, then signals, then evals
@@ -720,6 +733,7 @@ _JOB_TIMEOUT = {
     "weekly-review": 15 * 60,
     "thesis-check": 5 * 60, "selloff": 5 * 60,
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
+    "intraday-tape": 3 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
     "theme-rotation": 5 * 60,
@@ -2418,6 +2432,34 @@ async def short_squeeze_symbol(symbol: str):
         " ORDER BY short_volume_date DESC LIMIT 15",
         {"s": symbol.upper()})
     return ev
+
+
+@router.get("/intraday")
+async def intraday_tape():
+    """Session tape — latest journaled state + today's timeline.
+    Lazy-evals during RTH when the last journal row is >14 min old,
+    so opening this page is what keeps the tape alive."""
+    from app.signals import intraday_pulse as ip
+    out = await asyncio.to_thread(ip.latest)
+    if ip.market_open_now() and out.get("eval"):
+        try:
+            from datetime import datetime, timezone, timedelta
+            last_ts = out.get("ts")
+            stale = True
+            if last_ts:
+                dt = datetime.fromisoformat(str(last_ts))
+                stale = (datetime.now(timezone.utc)
+                         - dt.astimezone(timezone.utc)
+                         ) > timedelta(minutes=14)
+            if stale:
+                await asyncio.to_thread(ip.evaluate)
+                out = await asyncio.to_thread(ip.latest)
+        except Exception:                                   # noqa: BLE001
+            pass
+    elif ip.market_open_now() and not out.get("eval"):
+        await asyncio.to_thread(ip.evaluate)
+        out = await asyncio.to_thread(ip.latest)
+    return out
 
 
 @router.get("/income-plan")

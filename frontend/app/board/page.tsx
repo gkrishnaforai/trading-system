@@ -102,8 +102,25 @@ function BoardRow({ it }: { it: BoardItem }) {
   )
 }
 
+const TAPE_TONE: Record<string, string> = {
+  buyers_in_control: 'text-aggressive',
+  sellers_regaining: 'text-defensive',
+  narrow_fragile: 'text-caution',
+  sellers_exhausting: 'text-accent',
+  chop_unconfirmed: 'text-faint',
+}
+const TAPE_LABEL: Record<string, string> = {
+  buyers_in_control: 'buyers in control',
+  sellers_regaining: 'sellers regaining',
+  narrow_fragile: 'narrow, fragile bounce',
+  sellers_exhausting: 'sellers exhausting',
+  chop_unconfirmed: 'chop — unconfirmed',
+}
+
 export default async function BoardPage() {
-  const [board, posture] = await Promise.all([api.daily(), api.posture()])
+  const [board, posture, tape] = await Promise.all([
+    api.daily(), api.posture(), api.intraday(),
+  ])
   const items = board?.items ?? []
   const counts = board?.counts ?? {}
   const stance = board?.posture?.stance ?? '—'
@@ -130,6 +147,51 @@ export default async function BoardPage() {
         <div className="pt-4">
           <VolChips vol={posture?.vol} bias={posture?.bias} />
         </div>
+        {tape?.state && tape.state !== 'no_evals_today' && tape.eval && (
+          <div className="pt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+              tape
+            </span>
+            <span className={`font-medium ${TAPE_TONE[tape.state] ?? 'text-muted'}`}>
+              {TAPE_LABEL[tape.state] ?? tape.state}
+            </span>
+            {tape.eval.qqq_chg_open != null && (
+              <span className="font-mono text-muted">
+                QQQ {(tape.eval.qqq_chg_open * 100).toFixed(1)}%
+              </span>
+            )}
+            {tape.eval.above_vwap != null && (
+              <span className={`font-mono ${tape.eval.above_vwap ? 'text-aggressive' : 'text-defensive'}`}>
+                {tape.eval.above_vwap ? '>VWAP' : '<VWAP'}
+                {tape.eval.vwap_held ? ' held' : ''}
+              </span>
+            )}
+            {tape.eval.breadth_adv_pct != null && (
+              <span className="font-mono text-muted">
+                {tape.eval.breadth_adv_pct}% adv
+              </span>
+            )}
+            {tape.eval.vix != null && (
+              <span className="font-mono text-muted">
+                VIX {tape.eval.vix}
+                {tape.eval.vix_falling ? '↓' : tape.eval.vix_rising ? '↑' : ''}
+              </span>
+            )}
+            {tape.eval.morning_recovery && (
+              <span className="text-muted">am↓→green</span>
+            )}
+            {tape.eval.macro_pressure && (
+              <span className="text-caution">⚠macro</span>
+            )}
+            {(tape.timeline ?? []).length > 2 && (
+              <span className="text-faint" title={
+                (tape.timeline ?? []).map((t) => `${t.ts.slice(11, 16)} ${t.state}`).join(' · ')
+              }>
+                {tape.timeline!.length} evals
+              </span>
+            )}
+          </div>
+        )}
       </header>
 
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-6 rounded-xl border border-hairline bg-card px-5 py-4">
