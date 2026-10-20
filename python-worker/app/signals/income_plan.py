@@ -505,7 +505,7 @@ def today(funds: Optional[float] = None) -> dict[str, Any]:
     """The full daily plan — posture gate + contrarian regime bias +
     per-lane suggestions journaled into the learning loop."""
     pos = _posture()
-    bias = _bias(pos)
+    bias = pos.get("bias") or _bias(pos)
     th, iv = _thesis_map(), _iv_map()
     lanes = {
         # swing is short-horizon — it doesn't get the contrarian pass;

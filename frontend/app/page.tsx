@@ -1,5 +1,6 @@
 import { api } from '@/lib/api'
 import { Chip, Kv, Section, Stat, fmtShort } from '@/components/regime'
+import { VolChips } from '@/components/vol-chips'
 
 const TONE: Record<string, string> = {
   aggressive: 'text-aggressive',
@@ -100,6 +101,9 @@ export default async function RegimePage() {
               {p.matched}
             </span>
           )}
+        </div>
+        <div className="pt-3">
+          <VolChips vol={p.vol} bias={p.bias} />
         </div>
       </section>
 

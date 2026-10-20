@@ -118,6 +118,14 @@ def _journal(res: dict, as_of) -> None:
          "rv": pulse_engine.rules_version()})
 
 
+def _vxn_from_payload(p: dict) -> Optional[float]:
+    """Snapshots journaled before the vxn field carry it only inside
+    evidence strings ('VXN 27.1 rising') — parse rather than drop."""
+    import re
+    m = re.search(r"VXN\s+(\d+(?:\.\d+)?)", json.dumps(p or {}))
+    return float(m.group(1)) if m else None
+
+
 def current() -> dict:
     """Latest regime snapshot → posture; journals today's eval
     (first write per day per rules_version wins)."""
@@ -135,6 +143,13 @@ def current() -> dict:
         p = json.loads(p)
     res = evaluate(row.get("stance"), p)
     res["regime_as_of"] = str(row["as_of"])
+    res["vol"] = {"vix": _n(p.get("vix")),
+                  "vxn": _n(p.get("vxn")) or _vxn_from_payload(p),
+                  "vxn_chg_5d": _n(p.get("vxn_chg_5d"))}
+    res["bias"] = ("fear" if res.get("posture") in ("defensive",
+                                                    "caution")
+                   else "greed" if res.get("posture") in
+                   ("constructive", "aggressive") else "neutral")
     try:
         _journal(res, row["as_of"])
     except Exception:

@@ -13,6 +13,8 @@ export type Posture = {
   note?: string
   instruments?: { short?: { etf?: string; note?: string } }
   stats?: Array<Record<string, unknown>>
+  bias?: string
+  vol?: { vix?: number | null; vxn?: number | null; vxn_chg_5d?: number | null }
 }
 
 export type MorningRegime = {

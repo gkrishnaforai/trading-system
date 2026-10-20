@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { api, type BoardItem } from '@/lib/api'
 import { Chip, Gate, Stat } from '@/components/regime'
+import { VolChips } from '@/components/vol-chips'
 
 const ACTION_TONE: Record<string, string> = {
   EXIT: 'border-defensive/40 text-defensive',
@@ -102,7 +103,7 @@ function BoardRow({ it }: { it: BoardItem }) {
 }
 
 export default async function BoardPage() {
-  const board = await api.daily()
+  const [board, posture] = await Promise.all([api.daily(), api.posture()])
   const items = board?.items ?? []
   const counts = board?.counts ?? {}
   const stance = board?.posture?.stance ?? '—'
@@ -126,6 +127,9 @@ export default async function BoardPage() {
             {board.posture.note}
           </p>
         )}
+        <div className="pt-4">
+          <VolChips vol={posture?.vol} bias={posture?.bias} />
+        </div>
       </header>
 
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-6 rounded-xl border border-hairline bg-card px-5 py-4">

@@ -41,10 +41,12 @@ _MOM_EXIT = {"climax": 30, "breakdown": 30, "knife": 25,
 
 
 def _tape() -> dict[str, Any]:
-    """SPY trend + VIX — the fear/greed posture. One small yf call."""
+    """SPY trend + VIX/VXN — the fear/greed posture. One yf call.
+    VXN is the Nasdaq-100 fear gauge — more relevant than VIX for a
+    tech-heavy book."""
     try:
         import yfinance as yf
-        d = yf.download("SPY ^VIX", period="1y", interval="1d",
+        d = yf.download("SPY ^VIX ^VXN", period="1y", interval="1d",
                         group_by="ticker", progress=False,
                         auto_adjust=True)
         spy = d["SPY"]["Close"].dropna()
@@ -53,11 +55,24 @@ def _tape() -> dict[str, Any]:
         sma200 = float(spy.iloc[-200:].mean())
         vix = float(vix_s.iloc[-1])
         vix_prev = float(vix_s.iloc[-6:-1].mean()) if len(vix_s) > 6 else vix
-        return {"spy": round(px, 2), "spy_vs_200": round(px / sma200 - 1, 4),
-                "spy_1d": round(px / float(spy.iloc[-2]) - 1, 4),
-                "spy_5d": round(px / float(spy.iloc[-6]) - 1, 4),
-                "vix": round(vix, 1),
-                "vix_rising": vix > vix_prev * 1.05}
+        out = {"spy": round(px, 2),
+               "spy_vs_200": round(px / sma200 - 1, 4),
+               "spy_1d": round(px / float(spy.iloc[-2]) - 1, 4),
+               "spy_5d": round(px / float(spy.iloc[-6]) - 1, 4),
+               "vix": round(vix, 1),
+               "vix_rising": vix > vix_prev * 1.05}
+        try:
+            vxn_s = d["^VXN"]["Close"].dropna()
+            if len(vxn_s):
+                vxn = float(vxn_s.iloc[-1])
+                vxn_prev = (float(vxn_s.iloc[-6:-1].mean())
+                            if len(vxn_s) > 6 else vxn)
+                out["vxn"] = round(vxn, 1)
+                out["vxn_chg_5d"] = round(vxn - vxn_prev, 1)
+                out["vxn_rising"] = vxn > vxn_prev * 1.05
+        except Exception:
+            pass                    # VXN best-effort — may be absent
+        return out
     except Exception as exc:
         logger.debug("tape fetch failed: %s", exc)
         return {}
@@ -185,6 +200,7 @@ def _posture(tape: dict, regime: Optional[dict]) -> dict[str, Any]:
     except Exception:
         morning = None
     return {"stance": stance, "note": note, "vix": vix,
+            "vxn": tape.get("vxn"), "vxn_chg_5d": tape.get("vxn_chg_5d"),
             "spy_vs_200": vs200, "spy_1d": s1d, "spy_5d": s5d,
             "permission": perm,
             "size_multiplier": mult,
