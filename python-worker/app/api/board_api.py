@@ -586,6 +586,29 @@ async def _j_selloff() -> dict:
     return await asyncio.to_thread(selloff.scan)
 
 
+async def _j_short_data() -> dict:
+    """Massive short-data pull → short_interest / short_volume /
+    share_float. Staleness-aware and rate-budgeted — the shared key
+    is ~5 req/min. Runs every night; a partial run is success."""
+    from app.signals import short_data
+    return await asyncio.to_thread(short_data.refresh)
+
+
+async def _j_short_squeeze() -> dict:
+    """Short-squeeze eval — squeeze_fuel + covering_probability per
+    symbol with short data, journaled for forward grading. Flags
+    covering rallies (fade risk), new shorts pressing, and
+    squeeze setups. Deterministic; advisory."""
+    from app.signals import short_squeeze
+    r = await asyncio.to_thread(short_squeeze.scan)
+    return {"count": r["count"],
+            "verdicts": {v: sum(1 for e in r["evals"]
+                              if e["verdict"] == v)
+                         for v in ("likely_covering",
+                                   "new_shorts_pressing",
+                                   "squeeze_setup")}}
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -658,6 +681,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
                       _j_weekly_review),
     "thesis-check": ("Archetype thesis tracker", _j_thesis_check),
     "selloff":     ("Selloff opportunity engine", _j_selloff),
+    "short-data":  ("Short interest/volume pull", _j_short_data),
+    "short-squeeze": ("Squeeze + covering eval", _j_short_squeeze),
 }
 
 # order matters for 'all': posture first, then signals, then evals
@@ -674,7 +699,8 @@ _ALL_ORDER = ["regime", "momentum", "morning-regime", "fred-macro",
               "theme-review", "daily-sheet", "outcomes",
               "leaps-mark", "priors", "pilot", "daily-calls",
               "daily-puts", "spec-incubator", "meta",
-              "sec-facts", "selloff", "custodian"]
+              "sec-facts", "short-data", "short-squeeze",
+              "selloff", "custodian"]
 
 
 _JOB_TIMEOUT = {
@@ -693,6 +719,7 @@ _JOB_TIMEOUT = {
     "sec-facts": 20 * 60, "sec-filings": 20 * 60,
     "weekly-review": 15 * 60,
     "thesis-check": 5 * 60, "selloff": 5 * 60,
+    "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
     "theme-rotation": 5 * 60,
@@ -2346,6 +2373,51 @@ async def selloff_scan():
     staged entry plans. Advisory only."""
     from app.signals import selloff
     return await asyncio.to_thread(selloff.scan)
+
+
+@router.get("/short-squeeze")
+async def short_squeeze_board():
+    """Short-squeeze board — latest journaled eval per symbol, ranked:
+    covering rallies first (fade risk), then shorts-pressing, then
+    squeeze setups. Includes SI%, days-to-cover and short-sale-ratio
+    trend evidence."""
+    from app.database import db
+    rows = db.execute_query(
+        "SELECT DISTINCT ON (e.symbol) e.symbol, e.as_of, e.fuel,"
+        " e.covering_probability, e.verdict, e.data_quality, e.rally,"
+        " e.ret_5d, e.rel_vol, e.si_pct, e.days_to_cover,"
+        " e.sv_ratio_latest, e.sv_trend, e.evidence,"
+        " s.company_name, s.momentum_state"
+        " FROM short_squeeze_evals e"
+        " LEFT JOIN stocks s ON s.symbol = e.symbol"
+        " ORDER BY e.symbol, e.as_of DESC")
+    rank = {"likely_covering": 0, "new_shorts_pressing": 1,
+            "squeeze_setup": 2, "no_clear_signal": 3,
+            "genuine_accumulation": 4, "insufficient_data": 5}
+    rows.sort(key=lambda r: (rank.get(r["verdict"], 6),
+                             -(r["fuel"] or 0)))
+    return {"count": len(rows), "evals": rows}
+
+
+@router.get("/short-squeeze/{symbol}")
+async def short_squeeze_symbol(symbol: str):
+    """Live squeeze eval for one symbol + recent SI/SV series — the
+    evidence behind the verdict."""
+    from app.signals import short_squeeze
+    from app.database import db
+    ev = await asyncio.to_thread(short_squeeze.evaluate, symbol.upper())
+    ev["si_series"] = db.execute_query(
+        "SELECT short_interest_date AS d, short_interest AS si,"
+        " short_percent AS pct, days_to_cover AS dtc"
+        " FROM short_interest WHERE symbol=:s"
+        " ORDER BY short_interest_date DESC LIMIT 8",
+        {"s": symbol.upper()})
+    ev["sv_series"] = db.execute_query(
+        "SELECT short_volume_date AS d, short_volume_percent AS ratio"
+        " FROM short_volume WHERE symbol=:s"
+        " ORDER BY short_volume_date DESC LIMIT 15",
+        {"s": symbol.upper()})
+    return ev
 
 
 @router.get("/income-plan")

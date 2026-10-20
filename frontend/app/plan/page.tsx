@@ -183,6 +183,15 @@ function SelloffRow({ c }: { c: SelloffCand }) {
         {c.dd_60d != null && <span>dd {(c.dd_60d * 100).toFixed(0)}%</span>}
         {c.rsi != null && <span>rsi {c.rsi}</span>}
         <span>{c.mom}</span>
+        {c.sq_verdict === 'likely_covering' && (
+          <span className="text-caution" title="bounce is short covering — fade risk, not durable stabilization">⚠covering</span>
+        )}
+        {c.sq_verdict === 'new_shorts_pressing' && (
+          <span className="text-defensive" title="short-sale ratio rising — shorts pressing into strength">⚠pressing</span>
+        )}
+        {c.sq_verdict === 'squeeze_setup' && (
+          <span className="text-accent" title={`heavily shorted + stabilizing — fuel ${c.sq_fuel ?? '?'}`}>⚡fuel</span>
+        )}
         {c.fv != null && c.close != null && (
           <span className="text-aggressive">
             fv {money(c.fv)} ({c.fv_upside != null ? `+${Number(c.fv_upside).toFixed(0)}%` : ''})
@@ -294,8 +303,8 @@ export default async function PlanPage({
               Selloff engine
             </span>
             <span className={`text-[11px] font-mono ${so?.market?.level === 'severe' ? 'text-defensive'
-                : so?.market?.level === 'mild' ? 'text-caution'
-                  : 'text-faint'}`}>
+              : so?.market?.level === 'mild' ? 'text-caution'
+                : 'text-faint'}`}>
               {so?.market?.level ?? '—'} dislocation
               {so?.market?.breadth_score != null &&
                 ` · breadth ${so.market.breadth_score.toFixed(0)}`}

@@ -269,6 +269,27 @@ export const api = {
   tradePlans: () =>
     get<{ open?: PlanRow[]; closed?: PlanRow[] }>('/trade-plans?all=1'),
   selloff: () => get<SelloffScan>('/selloff'),
+  shortSqueeze: (symbol: string) =>
+    get<SqueezeEval>(`/short-squeeze/${encodeURIComponent(symbol)}`),
+}
+
+export type SqueezeEval = {
+  symbol: string
+  verdict?: string
+  fuel?: number | null
+  covering_probability?: number | null
+  data_quality?: string
+  rally?: boolean
+  ret_5d?: number | null
+  rel_vol?: number | null
+  si_pct?: number | null
+  days_to_cover?: number | null
+  si_delta?: number | null
+  sv_ratio_latest?: number | null
+  sv_trend?: number | null
+  evidence?: string[]
+  si_series?: { d: string; si: number; pct: number | null; dtc: number | null }[]
+  sv_series?: { d: string; ratio: number | null }[]
 }
 
 export type SelloffScan = {
@@ -304,6 +325,9 @@ export type SelloffCand = {
   vol_ratio?: number | null
   rsi?: number | null
   mom?: string
+  sq_verdict?: string | null
+  sq_fuel?: number | null
+  sq_covering_prob?: number | null
   fund_state?: string
   thesis?: string | null
   fv?: number | null

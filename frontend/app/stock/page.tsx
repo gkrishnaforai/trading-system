@@ -85,9 +85,10 @@ export default async function StockPage({
     )
   }
 
-  const [card, alerts] = await Promise.all([
+  const [card, alerts, squeeze] = await Promise.all([
     api.stockHealth(sym),
     api.alerts({ symbol: sym, hours: 168 }),
+    api.shortSqueeze(sym).catch(() => null),
   ])
   if (!card) {
     return (
@@ -178,6 +179,49 @@ export default async function StockPage({
             </span>
           )}
         </div>
+        {/* short positioning — covering vs accumulation */}
+        {squeeze && squeeze.verdict !== 'insufficient_data' && (
+          <div className="pt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+              shorts
+            </span>
+            {squeeze.si_pct != null && (
+              <span className="font-mono text-muted">
+                SI {squeeze.si_pct}% · {squeeze.days_to_cover ?? '?'}d cover
+              </span>
+            )}
+            {squeeze.sv_ratio_latest != null && (
+              <span className="font-mono text-muted">
+                ratio {squeeze.sv_ratio_latest}%
+                {squeeze.sv_trend != null && (
+                  <span className={squeeze.sv_trend <= -1 ? 'text-aggressive'
+                    : squeeze.sv_trend >= 1 ? 'text-defensive' : 'text-faint'}>
+                    {' '}{squeeze.sv_trend <= -1 ? '↓' : squeeze.sv_trend >= 1 ? '↑' : '→'}
+                  </span>
+                )}
+              </span>
+            )}
+            <span className={`font-medium ${squeeze.verdict === 'likely_covering' ? 'text-caution'
+                : squeeze.verdict === 'new_shorts_pressing' ? 'text-defensive'
+                  : squeeze.verdict === 'squeeze_setup' ? 'text-accent'
+                    : squeeze.verdict === 'genuine_accumulation' ? 'text-aggressive'
+                      : 'text-faint'}`}>
+              {squeeze.verdict === 'likely_covering'
+                ? `⚠ covering rally${squeeze.covering_probability != null ? ` ${squeeze.covering_probability}%` : ''} — fade risk`
+                : squeeze.verdict === 'new_shorts_pressing'
+                  ? '⚠ shorts pressing into strength'
+                  : squeeze.verdict === 'squeeze_setup'
+                    ? `⚡ squeeze fuel ${squeeze.fuel ?? '?'} — a real bid could trigger covering`
+                    : squeeze.verdict === 'genuine_accumulation'
+                      ? 'rally looks like real buying'
+                      : 'no clear short signal'}
+            </span>
+            {squeeze.data_quality === 'partial' && (
+              <span className="text-faint">(partial data)</span>
+            )}
+          </div>
+        )}
+
         {/* glanceable flags — one chip per decision dimension */}
         <div className="pt-4">
           <SignalStrip

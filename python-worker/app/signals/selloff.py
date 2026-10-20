@@ -263,6 +263,16 @@ def _score(d: dict) -> dict:
         pts += 4 if 30 <= rsi <= 45 else 2 if rsi < 55 else 0
     if d.get("dip_phase") in ("basing", "turning_up", "reversal"):
         pts += 4
+    # short-covering overlay — a bounce driven by shorts buying to
+    # close is NOT durable stabilization; it exhausts when covering
+    # runs out. Shorts still pressing is additional downside fuel.
+    sq = d.get("sq_verdict")
+    if sq == "likely_covering":
+        pts -= 5
+    elif sq == "new_shorts_pressing":
+        pts -= 4
+    elif sq == "squeeze_setup":
+        pts += 2                            # fuel for a violent bounce
     legs["recovery"] = round(min(max(pts, 0), 15), 1)
 
     # 5) catalyst + risk/reward — /15. Payoff shape + a driver.
@@ -305,6 +315,9 @@ def _gates(d: dict) -> list[str]:
     if (d.get("net_debt_ebitda") or 0) > 6:
         g.append("net debt/EBITDA >6 — leverage makes a dip "
                  "potentially permanent")
+    if d.get("sq_verdict") == "new_shorts_pressing":
+        g.append("short-sale ratio rising — shorts are pressing "
+                 "into strength, not covering")
     return g
 
 
@@ -390,6 +403,15 @@ def scan(funds: Optional[float] = None,
             by_sec.setdefault(r["sector"] or "?", []).append(m["ret_5d"])
     sec_med = {k: sorted(v)[len(v) // 2] for k, v in by_sec.items()}
 
+    # short-squeeze overlay — journaled verdicts only; a missing flag
+    # means no data, not a clean bill
+    try:
+        from app.signals import short_squeeze
+        sq_flags = short_squeeze.flags(
+            [r["symbol"] for r in rows])
+    except Exception:                                       # noqa: BLE001
+        sq_flags = {}
+
     cands = []
     for r in rows:
         sym = r["symbol"]
@@ -461,6 +483,10 @@ def scan(funds: Optional[float] = None,
             "rr": ((fv_px - px) / (px - inv)
                    if fv_px and inv and px > inv else None),
         }
+        sq = sq_flags.get(sym) or {}
+        d["sq_verdict"] = sq.get("verdict")
+        d["sq_fuel"] = sq.get("fuel")
+        d["sq_covering_prob"] = sq.get("covering_probability")
         d["fund"] = _score({**d, "est_rev": d["est_rev"]})["legs"][
             "durability"]
         classification, action = _classify(d)
@@ -527,7 +553,8 @@ def _persist(market: dict, cands: list[dict]) -> None:
               "sl": json.dumps(c["legs"]),
               "tp": json.dumps({k: c[k] for k in
                                 ("close", "ret_5d", "rel_5d", "dd_60d",
-                                 "vol_ratio", "d_sma50", "rsi", "mom")},
+                                 "vol_ratio", "d_sma50", "rsi", "mom",
+                                 "sq_verdict", "sq_fuel")},
                                default=str),
               "fd": json.dumps({k: c[k] for k in
                                 ("fund_state", "thesis", "fv", "fv_upside",
