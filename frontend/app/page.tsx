@@ -34,10 +34,11 @@ function fmtDate(d?: string) {
 }
 
 export default async function RegimePage() {
-  const [posture, morning, tape] = await Promise.all([
+  const [posture, morning, tape, alarms] = await Promise.all([
     api.posture(),
     api.morningRegime(),
     api.intraday(),
+    api.correctionAlarms(),
   ])
 
   const p = posture ?? {}
@@ -110,6 +111,39 @@ export default async function RegimePage() {
         <div className="pt-2">
           <TapeChips tape={tape} />
         </div>
+        {alarms?.correction_character && (
+          <div className="pt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+              alarms
+            </span>
+            <span className={`font-medium ${alarms.severity === 'alarm' ? 'text-defensive'
+                : alarms.severity === 'warning' ? 'text-caution'
+                  : alarms.severity === 'watch' ? 'text-muted'
+                    : 'text-faint'}`}>
+              {alarms.correction_character.replace(/_/g, ' ')}
+            </span>
+            {alarms.legs?.labor_credit?.hy_oas != null && (
+              <span className="font-mono text-muted" title={alarms.legs.labor_credit.note}>
+                HY {alarms.legs.labor_credit.hy_oas}%
+                {alarms.legs.labor_credit.hy_oas_d20 != null && ` ${alarms.legs.labor_credit.hy_oas_d20 > 0 ? '+' : ''}${alarms.legs.labor_credit.hy_oas_d20}`}
+              </span>
+            )}
+            {alarms.legs?.real_yields?.dfii10 != null && (
+              <span className="font-mono text-muted" title={alarms.legs.real_yields.note}>
+                real10y {alarms.legs.real_yields.dfii10}%
+                {alarms.legs.real_yields.dfii10_d20 != null && ` ${alarms.legs.real_yields.dfii10_d20 > 0 ? '+' : ''}${alarms.legs.real_yields.dfii10_d20}`}
+              </span>
+            )}
+            {alarms.legs?.revision_breadth?.pct_cutting_5 != null && (
+              <span className="font-mono text-muted" title={alarms.legs.revision_breadth.note}>
+                est cuts {alarms.legs.revision_breadth.pct_cutting_5}%
+              </span>
+            )}
+            <span className="text-faint" title={alarms.meaning}>
+              {alarms.meaning?.split('—')[0].trim()}
+            </span>
+          </div>
+        )}
       </section>
 
       {/* thin score strip */}

@@ -272,6 +272,20 @@ export const api = {
   shortSqueeze: (symbol: string) =>
     get<SqueezeEval>(`/short-squeeze/${encodeURIComponent(symbol)}`),
   intraday: () => get<IntradayTape>('/intraday'),
+  correctionAlarms: () => get<CorrectionAlarms>('/correction-alarms'),
+}
+
+export type CorrectionAlarms = {
+  as_of?: string
+  correction_character?: string
+  severity?: string
+  meaning?: string
+  legs?: {
+    revision_breadth?: { score?: number | null; pct_cutting_5?: number; sectors_negative?: string[]; note?: string }
+    labor_credit?: { score?: number | null; hy_oas?: number | null; hy_oas_d20?: number | null; icsa_k?: number | null; note?: string }
+    real_yields?: { score?: number | null; dfii10?: number | null; dfii10_d20?: number | null; note?: string }
+    valuation_decomp?: { score?: number | null; kind?: string; note?: string }
+  }
 }
 
 export type IntradayTape = {

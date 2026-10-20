@@ -621,6 +621,17 @@ async def _j_intraday() -> dict:
     return await asyncio.to_thread(ip.evaluate)
 
 
+async def _j_correction_alarms() -> dict:
+    """Correction alarms — revision breadth (flywheel), labor/credit
+    + real yields (keyless FRED CSV), valuation decomposition.
+    Answers 'dip or regime break?' — informs, never overrides
+    posture."""
+    from app.signals import correction_alarms as ca
+    r = await asyncio.to_thread(ca.evaluate)
+    return {"character": r["correction_character"],
+            "severity": r["severity"]}
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -696,6 +707,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "short-data":  ("Short interest/volume pull", _j_short_data),
     "short-squeeze": ("Squeeze + covering eval", _j_short_squeeze),
     "intraday-tape": ("Intraday tape classifier", _j_intraday),
+    "correction-alarms": ("Correction-alarm engine",
+                          _j_correction_alarms),
 }
 
 # order matters for 'all': posture first, then signals, then evals
@@ -713,7 +726,7 @@ _ALL_ORDER = ["regime", "momentum", "morning-regime", "fred-macro",
               "leaps-mark", "priors", "pilot", "daily-calls",
               "daily-puts", "spec-incubator", "meta",
               "sec-facts", "short-data", "short-squeeze",
-              "selloff", "custodian"]
+              "correction-alarms", "selloff", "custodian"]
 
 
 _JOB_TIMEOUT = {
@@ -733,7 +746,7 @@ _JOB_TIMEOUT = {
     "weekly-review": 15 * 60,
     "thesis-check": 5 * 60, "selloff": 5 * 60,
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
-    "intraday-tape": 3 * 60,
+    "intraday-tape": 3 * 60, "correction-alarms": 3 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
     "theme-rotation": 5 * 60,
@@ -2459,6 +2472,17 @@ async def intraday_tape():
     elif ip.market_open_now() and not out.get("eval"):
         await asyncio.to_thread(ip.evaluate)
         out = await asyncio.to_thread(ip.latest)
+    return out
+
+
+@router.get("/correction-alarms")
+async def correction_alarms():
+    """Latest correction-alarm eval — the four legs + character.
+    Computes live if nothing is journaled today (self-healing)."""
+    from app.signals import correction_alarms as ca
+    out = await asyncio.to_thread(ca.latest)
+    if not out or out.get("as_of") != str(date.today()):
+        out = await asyncio.to_thread(ca.evaluate)
     return out
 
 
