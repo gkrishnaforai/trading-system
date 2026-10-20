@@ -177,6 +177,7 @@ export type PulseRow = {
   mom_state?: string
   mom_prev?: string
   dip_phase?: string
+  spring?: number
   fund_state?: string
   revision_grade?: string
   fv_upside?: number | null

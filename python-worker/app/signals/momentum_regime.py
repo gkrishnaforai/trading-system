@@ -215,6 +215,58 @@ def dip_health(tech: dict, hist_prev: Optional[float],
     return h
 
 
+def spring_score(state: str, tech: dict, dip: Optional[dict],
+                 fund_state: Optional[str] = None,
+                 revision_grade: Optional[str] = None,
+                 squeeze_fuel: Optional[float] = None) -> Optional[dict]:
+    """Bounce elasticity inside a washed name — 'when the tape turns,
+    does this rip +10% or stay dead?' Distinct from dip_phase
+    (direction right now): spring measures stored energy.
+
+    Only meaningful inside washed/broken states — an uptrend name has
+    no spring to release. Legs:
+
+      depth      the dislocation itself IS the energy (dd52w ≤ -30%)
+      elastic    hv20/atr — names with 70%+ vol move violently both ways
+      intact     fund_state growing/ok + revision A/B/C — the dip is
+                 positioning, not impairment; impairment doesn't bounce
+      coil       pullback volume < rally volume — sellers quieter
+      floor      near a swing/prior low — the bounce needs a launch pad
+      fuel       squeeze_fuel ≥ 50 — crowded shorts amplify green days
+
+    Score is NOT a bottom call — a spring can sit unreleased for weeks.
+    It answers 'who rips first when market turns green', not 'is the
+    turn here'."""
+    if state not in {"capitulation", "knife", "downtrend", "breakdown"}:
+        return None
+    det = detail(tech)
+    dd = det.get("dd52w")
+    hv = det.get("hv20") or 0
+    atr = det.get("atr_pct") or 0
+    sw = (dip or {}).get("swing") or {}
+    vpr = sw.get("vol_pullback_vs_rally")
+    near_floor = sw.get("near_support") or (
+        sw.get("swing_low") and tech.get("price") and
+        (tech["price"] - sw["swing_low"]) / sw["swing_low"] < 0.08)
+
+    legs = {
+        "depth": (dd or 0) <= -0.30,
+        "elastic": hv >= 0.50 or atr >= 0.05,
+        "intact": (fund_state or "") in {"growing", "strong", "stable",
+                                          "ok", "improving"}
+                  and (revision_grade or "")[:1] in {"A", "B", "C", ""},
+        "coil": vpr is not None and vpr < 1.0,
+        "floor": bool(near_floor),
+        "fuel": (squeeze_fuel or 0) >= 50,
+    }
+    # fuel is a bonus, not required — short data is sparse
+    score = (25 * legs["depth"] + 20 * legs["elastic"] +
+             20 * legs["intact"] + 15 * legs["coil"] +
+             10 * legs["floor"] + 10 * legs["fuel"])
+    return {"score": score, "legs": legs,
+            "flag": "spring" if score >= 60 else None}
+
+
 def detail(tech: dict) -> dict:
     """The evidence pack stored beside the flag — boards/UI show the
     numbers that produced it, never a bare label."""
@@ -267,6 +319,27 @@ def refresh_symbol(sym: str, tech: dict, hist_prev,
                                       sma50_prev=s50p)
                 if sw:
                     dip = {**(dip or {}), "swing": sw}
+            except Exception:
+                pass
+        # spring — bounce elasticity inside washed states; needs the
+        # fundamentals + squeeze legs, one indexed lookup each
+        if state in {"capitulation", "knife", "downtrend", "breakdown"}:
+            try:
+                from app.database import db as _db
+                fr = _db.execute_query(
+                    "SELECT fundamental_state, revision_grade"
+                    " FROM stocks WHERE symbol=:y", {"y": sym.upper()})
+                sq = _db.execute_query(
+                    "SELECT fuel FROM short_squeeze_evals"
+                    " WHERE symbol=:y ORDER BY as_of DESC LIMIT 1",
+                    {"y": sym.upper()})
+                sp = spring_score(
+                    state, tech, dip,
+                    fund_state=(fr[0] if fr else {}).get("fundamental_state"),
+                    revision_grade=(fr[0] if fr else {}).get("revision_grade"),
+                    squeeze_fuel=(sq[0] if sq else {}).get("fuel"))
+                if sp:
+                    dip = {**(dip or {}), "spring": sp}
             except Exception:
                 pass
         write_state(sym, state, tech, dip)

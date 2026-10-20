@@ -1431,6 +1431,8 @@ async def portfolio_pulse():
             "vs_sma50": det.get("vs_sma50"),
             "dd52w": det.get("dd52w"),
             "dip_phase": det.get("dip_phase"),
+            "spring": (det.get("spring") or {}).get("score")
+                      if isinstance(det.get("spring"), dict) else None,
             "fund_state": r.get("fundamental_state"),
             "revision_grade": r.get("revision_grade"),
             "priced_status": r.get("priced_status"),

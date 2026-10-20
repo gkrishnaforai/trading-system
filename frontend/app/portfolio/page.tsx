@@ -151,6 +151,12 @@ function HoldingRow({ r, bookValue }: { r: PulseRow; bookValue: number }) {
               ['knife', 'capitulation', 'downtrend', 'breakdown', 'pullback']
                 .includes(String(r.mom_state)) &&
               ` · ${String(r.dip_phase).replace(/_/g, ' ')}`}
+            {r.spring != null && r.spring >= 60 && (
+              <span className="text-accent" title="elastic — deep wash +
+intact thesis + high vol: rips when the tape turns">
+                {' '}⚡spring {r.spring}
+              </span>
+            )}
             {r.mom_prev && r.mom_prev !== r.mom_state &&
               ` ← ${r.mom_prev}`}
           </span>
