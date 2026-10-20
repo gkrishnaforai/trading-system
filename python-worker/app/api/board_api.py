@@ -577,6 +577,15 @@ async def _j_thesis_check() -> dict:
     return await asyncio.to_thread(thesis_health.run)
 
 
+async def _j_selloff() -> dict:
+    """Selloff Opportunity Engine — detects market dislocation, scores
+    fallen-but-sound names (price dislocation vs business integrity),
+    classifies the drop, journals candidates for forward grading.
+    Deterministic; advisory staged-entry plans only."""
+    from app.signals import selloff
+    return await asyncio.to_thread(selloff.scan)
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -648,6 +657,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "weekly-review": ("Weekly 5-question review",
                       _j_weekly_review),
     "thesis-check": ("Archetype thesis tracker", _j_thesis_check),
+    "selloff":     ("Selloff opportunity engine", _j_selloff),
 }
 
 # order matters for 'all': posture first, then signals, then evals
@@ -664,7 +674,7 @@ _ALL_ORDER = ["regime", "momentum", "morning-regime", "fred-macro",
               "theme-review", "daily-sheet", "outcomes",
               "leaps-mark", "priors", "pilot", "daily-calls",
               "daily-puts", "spec-incubator", "meta",
-              "sec-facts", "custodian"]
+              "sec-facts", "selloff", "custodian"]
 
 
 _JOB_TIMEOUT = {
@@ -682,7 +692,7 @@ _JOB_TIMEOUT = {
     "fund-journal": 60 * 60, "hedge-universe": 15 * 60,
     "sec-facts": 20 * 60, "sec-filings": 20 * 60,
     "weekly-review": 15 * 60,
-    "thesis-check": 5 * 60,
+    "thesis-check": 5 * 60, "selloff": 5 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
     "theme-rotation": 5 * 60,
@@ -2327,6 +2337,16 @@ async def learning_lab():
 
 
 # ---------------- trade plans ----------------------------------------------
+
+@router.get("/selloff")
+async def selloff_scan():
+    """Selloff Opportunity Engine — market dislocation status +
+    ranked candidates: fallen-but-sound names scored on price
+    dislocation vs business integrity, with classification, gates and
+    staged entry plans. Advisory only."""
+    from app.signals import selloff
+    return await asyncio.to_thread(selloff.scan)
+
 
 @router.get("/income-plan")
 async def income_plan(funds: float | None = None):

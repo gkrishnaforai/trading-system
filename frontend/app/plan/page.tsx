@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { api, type PlanSuggestion, type PlanRow } from '@/lib/api'
+import { api, type PlanSuggestion, type PlanRow, type SelloffCand } from '@/lib/api'
 import { Gate } from '@/components/regime'
 import { toneOf } from '@/components/signal-strip'
 import { OpenPlanButton, ClosePlanButton } from '@/components/plan-entry'
@@ -131,6 +131,87 @@ const LANE_DEFS: { key: string; label: string }[] = [
   { key: 'leap_put', label: 'LEAP put' },
 ]
 
+const DEC_TONE: Record<string, string> = {
+  priority: 'border-aggressive/50 text-aggressive',
+  starter: 'border-aggressive/40 text-aggressive',
+  watch: 'border-caution/40 text-caution',
+  pass: 'border-hairline text-faint',
+  reject: 'border-defensive/50 text-defensive',
+}
+
+const CLASS_LABEL: Record<string, string> = {
+  macro_panic: 'macro panic',
+  sector_contagion: 'sector contagion',
+  positioning_unwind: 'positioning unwind',
+  fundamental_repricing: 'repricing',
+  structural_impairment: 'impaired',
+  idiosyncratic_weakness: 'own-merits',
+}
+
+function SelloffRow({ c }: { c: SelloffCand }) {
+  const tone = DEC_TONE[c.decision ?? 'pass'] ?? DEC_TONE.pass
+  return (
+    <div className="border-t border-hairline/50 py-2 first:border-0">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
+          <span className={`rounded-full border px-2 py-px font-mono text-[11px] font-semibold ${tone}`}>
+            {c.score}
+          </span>
+          <Link href={`/stock?sym=${c.symbol}`}
+            className="font-semibold text-[13px] text-ink hover:text-accent">
+            {c.symbol}
+          </Link>
+          <span className={`text-[10px] uppercase tracking-wider ${c.classification === 'macro_panic' || c.classification === 'sector_contagion'
+            ? 'text-aggressive'
+            : c.classification === 'structural_impairment' || c.classification === 'fundamental_repricing'
+              ? 'text-defensive' : 'text-caution'}`}>
+            {CLASS_LABEL[c.classification ?? ''] ?? c.classification}
+          </span>
+          <span className="text-[10px] text-faint">{c.tier}</span>
+          {c.thesis && (
+            <span className="text-[10px] text-muted">
+              thesis {c.thesis}
+            </span>
+          )}
+        </div>
+        <span className={`text-[10px] uppercase tracking-wider ${tone.split(' ')[1]}`}>
+          {c.decision}
+        </span>
+      </div>
+      <div className="pl-1 pt-0.5 flex flex-wrap gap-x-3 font-mono text-[11px] text-muted">
+        {c.rel_5d != null && <span>rel5 {(c.rel_5d * 100).toFixed(1)}%</span>}
+        {c.dd_60d != null && <span>dd {(c.dd_60d * 100).toFixed(0)}%</span>}
+        {c.rsi != null && <span>rsi {c.rsi}</span>}
+        <span>{c.mom}</span>
+        {c.fv != null && c.close != null && (
+          <span className="text-aggressive">
+            fv {money(c.fv)} ({c.fv_upside != null ? `+${Number(c.fv_upside).toFixed(0)}%` : ''})
+          </span>
+        )}
+        {c.invalidation != null && (
+          <span className="text-defensive">invalid &lt;{money(c.invalidation)}</span>
+        )}
+        {c.earn_days != null && c.earn_days <= 35 && c.earn_days >= 0 && (
+          <span className="text-caution">⚠EPS{c.earn_days}d</span>
+        )}
+      </div>
+      {c.action && c.decision !== 'pass' && c.decision !== 'reject' && (
+        <div className="pl-1 pt-0.5 text-[10px] text-faint">
+          {c.action}
+          {c.entry_plan?.stages && (
+            <span className="text-faint">
+              {' '}· stages 25/25/25/25: {c.entry_plan.stages[0]?.trigger}
+            </span>
+          )}
+        </div>
+      )}
+      {(c.gates ?? []).map((g, i) => (
+        <div key={i} className="pl-1 pt-0.5 text-[10px] text-caution">⚠ {g}</div>
+      ))}
+    </div>
+  )
+}
+
 const PLAN_ICON: Record<string, string> = {
   stop_hit: '🔴', invalidated: '🔴', target2_hit: '🟢',
   extended: '🟡', stalled: '🟠', trail_up: '🔵',
@@ -143,9 +224,10 @@ export default async function PlanPage({
   searchParams: { funds?: string }
 }) {
   const funds = searchParams.funds ? Number(searchParams.funds) : undefined
-  const [plan, open] = await Promise.all([
+  const [plan, open, so] = await Promise.all([
     api.incomePlan(funds),
     api.tradePlans(),
+    api.selloff(),
   ])
   const sectors = plan?.sectors ?? []
   const pos = plan?.posture ?? {}
@@ -205,6 +287,35 @@ export default async function PlanPage({
       </header>
 
       <Gate feature="board">
+        {/* selloff engine — dip vs deterioration */}
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              Selloff engine
+            </span>
+            <span className={`text-[11px] font-mono ${so?.market?.level === 'severe' ? 'text-defensive'
+                : so?.market?.level === 'mild' ? 'text-caution'
+                  : 'text-faint'}`}>
+              {so?.market?.level ?? '—'} dislocation
+              {so?.market?.breadth_score != null &&
+                ` · breadth ${so.market.breadth_score.toFixed(0)}`}
+              {so?.market?.spy_5d != null &&
+                ` · spy5d ${(so.market.spy_5d * 100).toFixed(1)}%`}
+            </span>
+          </div>
+          <div className="pt-2">
+            {(so?.candidates ?? []).filter((c) => c.decision !== 'reject')
+              .slice(0, 10)
+              .map((c) => <SelloffRow key={c.symbol} c={c} />)}
+            {(so?.candidates ?? []).length === 0 && (
+              <p className="text-xs text-muted">
+                no fallen-but-sound names right now — a selloff isn't
+                automatically an opportunity
+              </p>
+            )}
+          </div>
+        </section>
+
         {sectors.length === 0 && (
           <div className="rounded-xl border border-hairline bg-card px-5 py-8 text-center">
             <p className="text-sm text-muted">

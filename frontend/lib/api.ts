@@ -268,6 +268,53 @@ export const api = {
     get<IncomePlan>(`/income-plan${funds ? `?funds=${funds}` : ''}`),
   tradePlans: () =>
     get<{ open?: PlanRow[]; closed?: PlanRow[] }>('/trade-plans?all=1'),
+  selloff: () => get<SelloffScan>('/selloff'),
+}
+
+export type SelloffScan = {
+  as_of?: string
+  note?: string
+  market?: {
+    active?: boolean
+    level?: string
+    breadth_score?: number | null
+    spy_5d?: number | null
+    vix?: number | null
+    vxn?: number | null
+    reason?: string
+  }
+  candidates?: SelloffCand[]
+}
+
+export type SelloffCand = {
+  symbol: string
+  name?: string
+  sector?: string
+  tier?: string
+  classification?: string
+  action?: string
+  score?: number
+  legs?: Record<string, number>
+  decision?: string
+  gates?: string[]
+  close?: number
+  ret_5d?: number | null
+  rel_5d?: number | null
+  dd_60d?: number | null
+  vol_ratio?: number | null
+  rsi?: number | null
+  mom?: string
+  fund_state?: string
+  thesis?: string | null
+  fv?: number | null
+  fv_upside?: number | null
+  invalidation?: number | null
+  earn_days?: number | null
+  entry_plan?: {
+    stages?: { pct: number; trigger: string }[]
+    invalidation?: number | null
+    invalidation_note?: string
+  }
 }
 
 export type IncomePlan = {
