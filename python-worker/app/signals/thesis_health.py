@@ -354,10 +354,50 @@ def _sync_watch(sym: str, arch: str, h: dict, checks: list[dict]) -> None:
              "vi": h.get("valuation_impact")})
 
 
-def run(symbols: Optional[list[str]] = None) -> dict:
-    """Pilot refresh — default the explicit checklist symbols."""
+def _universe() -> list[str]:
+    """The nightly refresh set — the 'rebuilt on earnings/news'
+    contract:
+
+      curated  every symbol in the config
+      existing every symbol that ever earned a thesis row — a lazy
+               card-open eval stays fresh instead of going stale
+      earnings book/watchlist names that reported since their last
+               thesis check (or have never been checked) — the
+               quarterly-rebuild trigger
+      news     handled implicitly: an event review lands after the
+               last thesis check → the row is stale by day, so the
+               nightly sweep re-reads it
+    """
+    from app.database import db
     cfg = _cfg()
-    syms = symbols or sorted((cfg.get("symbols") or {}).keys())
+    base = set((cfg.get("symbols") or {}).keys())
+    have = {r["symbol"] for r in db.execute_query(
+        "SELECT symbol FROM symbol_thesis")}
+    try:
+        tracked = ("SELECT symbol FROM rule_breaker_members"
+                   " UNION SELECT symbol FROM smallcap_members"
+                   " UNION SELECT s.symbol FROM stocks s"
+                   "   JOIN portfolio_positions pp"
+                   "   ON pp.stock_id=s.id AND pp.quantity>0"
+                   " UNION SELECT s.symbol FROM stocks s"
+                   "   JOIN watchlist_stocks ws ON ws.stock_id=s.id")
+        earn = {r["symbol"] for r in db.execute_query(
+            f"SELECT s.symbol FROM stocks s"
+            f" WHERE s.symbol IN ({tracked})"
+            " AND s.next_earnings_date <= CURRENT_DATE"
+            " AND s.next_earnings_date >= CURRENT_DATE - 5"
+            " AND NOT EXISTS (SELECT 1 FROM symbol_thesis t"
+            "   WHERE t.symbol=s.symbol"
+            "   AND t.checked_at::date > s.next_earnings_date)")}
+    except Exception:
+        earn = set()
+    return sorted(base | have | earn)
+
+
+def run(symbols: Optional[list[str]] = None) -> dict:
+    """Pilot refresh — curated ∪ existing rows ∪ post-earnings names."""
+    cfg = _cfg()
+    syms = symbols or _universe()
     out, errs = {}, []
     for s in syms:
         try:
