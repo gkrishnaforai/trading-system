@@ -30,6 +30,13 @@ function ago(ts?: string) {
 function AlertRow({ a }: { a: AlertItem }) {
   const dir = String(a.direction ?? 'neutral').toLowerCase()
   const mat = String(a.materiality ?? 'low').toLowerCase()
+  const isEarnings =
+    String(a.event_type ?? '').toLowerCase() === 'earnings'
+  const det =
+    typeof a.detail === 'object' && a.detail !== null
+      ? (a.detail as Record<string, unknown>)
+      : null
+  const verdict = det?.verdict ? String(det.verdict) : null
   return (
     <div className="py-3">
       <div className="flex items-start justify-between gap-3">
@@ -49,8 +56,26 @@ function AlertRow({ a }: { a: AlertItem }) {
               {a.materiality ?? 'low'}
             </span>
             {a.event_type && (
-              <span className="rounded-full bg-elevated px-2 py-0.5 text-[10px] text-muted">
+              <span
+                className={
+                  isEarnings
+                    ? 'rounded-full border border-accent/50 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent'
+                    : 'rounded-full bg-elevated px-2 py-0.5 text-[10px] text-muted'
+                }
+              >
                 {String(a.event_type).replace(/_/g, ' ')}
+              </span>
+            )}
+            {isEarnings && verdict && (
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${verdict === 'improving'
+                    ? 'border-aggressive/40 text-aggressive'
+                    : verdict === 'deteriorating'
+                      ? 'border-defensive/40 text-defensive'
+                      : 'border-caution/40 text-caution'
+                  }`}
+              >
+                {verdict}
               </span>
             )}
             {a.in_portfolio && (

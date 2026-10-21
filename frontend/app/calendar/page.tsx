@@ -63,7 +63,13 @@ function SevDot({ sev }: { sev?: string }) {
   return <span className={`inline-block h-1.5 w-1.5 rounded-full ${c}`} />
 }
 
-function EarningsLine({ r }: { r: EarningsRow }) {
+function EarningsLine({
+  r,
+  verdict,
+}: {
+  r: EarningsRow
+  verdict?: string | null
+}) {
   const sym = String(r.symbol ?? '—')
   const name = pick(r, ['company_name', 'name'])
   const chip = timeChip(
@@ -87,6 +93,18 @@ function EarningsLine({ r }: { r: EarningsRow }) {
         {chip && (
           <span className={`ml-2 rounded-full px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-wider ${chip === 'BMO' ? 'bg-caution/15 text-caution' : 'bg-accent/10 text-accent'}`}>
             {chip}
+          </span>
+        )}
+        {verdict && (
+          <span
+            className={`ml-2 rounded-full border px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-wider ${verdict === 'improving'
+              ? 'border-aggressive/40 text-aggressive'
+              : verdict === 'deteriorating'
+                ? 'border-defensive/40 text-defensive'
+                : 'border-caution/40 text-caution'
+              }`}
+          >
+            {verdict}
           </span>
         )}
       </span>
@@ -165,13 +183,22 @@ export default async function CalendarPage() {
   const todayStr = isoDay(now)
   const end = isoDay(new Date(now.getTime() + 14 * 86400000))
 
-  const [events, earnings] = await Promise.all([
+  const [events, earnings, watch] = await Promise.all([
     api.macroEvents(),
     api.earningsCalendar(todayStr, end),
+    api.earningsWatch(30),
   ])
 
   const evList = Array.isArray(events) ? events : (events?.events ?? [])
   const erList = earnings?.data ?? []
+  const verdicts = new Map<string, string>()
+  for (const c of watch?.captures ?? []) {
+    verdicts.set(`${c.symbol}|${String(c.earnings_date).slice(0, 10)}`, c.verdict)
+  }
+  const verdictFor = (r: EarningsRow) =>
+    verdicts.get(
+      `${r.symbol}|${String(r.earnings_date ?? '').slice(0, 10)}`,
+    ) ?? null
 
   const earnByDay = new Map<string, EarningsRow[]>()
   for (const r of erList) {
@@ -292,7 +319,9 @@ export default async function CalendarPage() {
         ) : (
           <div className="space-y-1 pt-4">
             {todayMacro.map((e, i) => <MacroLine key={i} e={e} detailed />)}
-            {todayEarn.map((r, i) => <EarningsLine key={i} r={r} />)}
+            {todayEarn.map((r, i) => (
+              <EarningsLine key={i} r={r} verdict={verdictFor(r)} />
+            ))}
           </div>
         )}
       </section>
@@ -322,7 +351,9 @@ export default async function CalendarPage() {
                   </div>
                   <div className={`space-y-1 ${extreme ? 'border-l-2 border-defensive/60 pl-3' : ''}`}>
                     {macros.map((e, i) => <MacroLine key={i} e={e} detailed />)}
-                    {earns.map((r, i) => <EarningsLine key={i} r={r} />)}
+                    {earns.map((r, i) => (
+                      <EarningsLine key={i} r={r} verdict={verdictFor(r)} />
+                    ))}
                   </div>
                 </div>
               )

@@ -135,6 +135,16 @@ export type EarningsRow = {
   [k: string]: unknown
 }
 
+export type EarningsCapture = {
+  symbol: string
+  earnings_date: string
+  verdict: string
+  surprise_pct?: number | null
+  thesis_before?: string | null
+  thesis_after?: string | null
+  detail?: Record<string, unknown>
+}
+
 export type Receipt = {
   id?: number
   as_of?: string
@@ -283,6 +293,10 @@ export const api = {
   earningsCalendar: (start: string, end: string) =>
     getRaw<{ success?: boolean; count?: number; data?: EarningsRow[] }>(
       `/admin/earnings-calendar?start_date=${start}&end_date=${end}`,
+    ),
+  earningsWatch: (days = 30) =>
+    get<{ reporters?: string[]; captures?: EarningsCapture[] }>(
+      `/earnings-watch?days=${days}`,
     ),
   posts: (opts: { kind?: string; limit?: number; sym?: string } = {}) =>
     get<{ posts?: PostRow[] }>(

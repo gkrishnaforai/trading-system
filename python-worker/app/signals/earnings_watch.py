@@ -167,7 +167,8 @@ def check_symbol(sym: str) -> dict:
        " materiality, title, detail, fingerprint, source,"
        " source_timestamp, in_portfolio, in_watchlist, status,"
        " priority_score)"
-       " VALUES (:s,'earnings',:di,:mat,:t,:de,:fp,'earnings_watch',"
+       " VALUES (:s,'earnings',:di,:mat,:t,CAST(:de AS jsonb),:fp,"
+       " 'earnings_watch',"
        " now(),:ib,:iw,'new',:pr)",
        {"s": sym, "di": direction,
         "mat": "HIGH" if abs(surp or 0) >= 5 else "MEDIUM",
