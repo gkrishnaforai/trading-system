@@ -107,6 +107,18 @@ export default async function StockPage({
   const fvScen = obj(fv?.scenarios)
   const fvAnalyst = obj(fv?.analyst)
   const fvMethods = Array.isArray(fv?.methods) ? (fv!.methods as Record<string, unknown>[]) : []
+  // blend-level implied basis — the explain strings already carry
+  // "fwd EPS 11.76 × 42.8x"; pull the EPS leg so the scenario header
+  // can state the blended implied multiple
+  const fvEpsBasis = (() => {
+    for (const m of fvMethods) {
+      const ex = obj(m.explain)
+      const s = String(ex?.base ?? ex?.bear ?? Object.values(ex ?? {})[0] ?? '')
+      const mm = /EPS ([\d.]+)/.exec(s)
+      if (mm) return { eps: Number(mm[1]), basis: s.startsWith('fwd') ? 'fwd EPS' : 'EPS' }
+    }
+    return null
+  })()
   const fundamental = obj(card.fundamental)
   const technical = obj(card.technical)
   const sectorFlow = obj(card.sector_flow)
@@ -202,10 +214,10 @@ export default async function StockPage({
               </span>
             )}
             <span className={`font-medium ${squeeze.verdict === 'likely_covering' ? 'text-caution'
-                : squeeze.verdict === 'new_shorts_pressing' ? 'text-defensive'
-                  : squeeze.verdict === 'squeeze_setup' ? 'text-accent'
-                    : squeeze.verdict === 'genuine_accumulation' ? 'text-aggressive'
-                      : 'text-faint'}`}>
+              : squeeze.verdict === 'new_shorts_pressing' ? 'text-defensive'
+                : squeeze.verdict === 'squeeze_setup' ? 'text-accent'
+                  : squeeze.verdict === 'genuine_accumulation' ? 'text-aggressive'
+                    : 'text-faint'}`}>
               {squeeze.verdict === 'likely_covering'
                 ? `⚠ covering rally${squeeze.covering_probability != null ? ` ${squeeze.covering_probability}%` : ''} — fade risk`
                 : squeeze.verdict === 'new_shorts_pressing'
@@ -350,6 +362,8 @@ export default async function StockPage({
             <div className="pt-3 text-xs text-muted font-mono">
               base {money(fvScen.base)}
               <span className="text-faint"> (central scenario)</span>
+              {fvEpsBasis &&
+                ` ≈ ${fvEpsBasis.basis} ${fvEpsBasis.eps} × ${(Number(fvScen.base) / fvEpsBasis.eps).toFixed(1)}x blended`}
               {fv.regime != null && ` · regime ${String(fv.regime)}`}
               {fv.spot_at_run != null &&
                 Number(fv.spot_at_run) !== Number(card.spot) &&
@@ -614,15 +628,44 @@ export default async function StockPage({
           {fvMethods.length > 0 && (
             <Section title="Valuation methods" subtitle={`${fvMethods.length} blended`}>
               <div className="divide-y divide-transparent">
-                {fvMethods.map((m, i) => (
-                  <Kv
-                    key={i}
-                    k={String(m.key ?? 'method') +
-                      (m.w != null ? ` (w ${Number(m.w).toFixed(2)})` : '') +
-                      (m.outlier ? ' ⚠ outlier' : '')}
-                    v={money(m.fv)}
-                  />
-                ))}
+                {fvMethods.map((m, i) => {
+                  const ex = obj(m.explain)
+                  const mScen = obj(m.scenarios)
+                  const legs = ['bear', 'base', 'bull', 'explosive']
+                    .filter((k) => ex?.[k] != null || mScen?.[k] != null)
+                  return (
+                    <div key={i} className="border-b border-hairline/60 py-2 last:border-0">
+                      <div className="flex justify-between gap-4 text-sm">
+                        <span className="text-muted">
+                          {String(m.key ?? 'method') +
+                            (m.w != null ? ` (w ${Number(m.w).toFixed(2)})` : '') +
+                            (m.outlier ? ' ⚠ outlier' : '')}
+                        </span>
+                        <span className="font-mono text-ink">{money(m.fv)}</span>
+                      </div>
+                      {legs.length > 0 && (
+                        <div className="pt-1 pl-4 space-y-0.5">
+                          {new Set(legs.map((k) => ex?.[k])).size === 1 ? (
+                            <div className="flex justify-between gap-4 text-[11px] font-mono text-faint">
+                              <span>{legs.map((k) => mScen?.[k] != null ? `${k} ${money(mScen[k])}` : k).join(' · ')}</span>
+                              <span className="text-right">{String(ex?.[legs[0]] ?? '')}</span>
+                            </div>
+                          ) : (
+                            legs.map((k) => (
+                              <div key={k} className="flex justify-between gap-4 text-[11px] font-mono text-faint">
+                                <span>
+                                  {k}
+                                  {mScen?.[k] != null ? ` ${money(mScen[k])}` : ''}
+                                </span>
+                                <span className="text-right">{ex?.[k] != null ? String(ex[k]) : ''}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </Section>
           )}
