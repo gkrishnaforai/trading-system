@@ -586,6 +586,20 @@ async def _j_selloff() -> dict:
     return await asyncio.to_thread(selloff.scan)
 
 
+async def _j_tier_sync() -> dict:
+    """Coverage-tier sync — recomputes symbol_tiers (active = books ∪
+    watchlist ∪ members ∪ futureStocks; monthly = data-covered or
+    post-earnings; registry = the rest). Then runs the discovery scan
+    over the monthly tier and promotes trigger hits into the
+    futureStocks book — which makes them active everywhere."""
+    from app.signals import symbol_tiers
+    def _go():
+        tiers = symbol_tiers.sync()
+        disc = symbol_tiers.discovery_scan()
+        return {"tiers": tiers, "discovery": disc}
+    return await asyncio.to_thread(_go)
+
+
 async def _j_short_data() -> dict:
     """Massive short-data pull → short_interest / short_volume /
     share_float. Staleness-aware and rate-budgeted — the shared key
@@ -703,6 +717,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "weekly-review": ("Weekly 5-question review",
                       _j_weekly_review),
     "thesis-check": ("Archetype thesis tracker", _j_thesis_check),
+    "tier-sync": ("Coverage tiers + discovery", _j_tier_sync),
     "selloff":     ("Selloff opportunity engine", _j_selloff),
     "short-data":  ("Short interest/volume pull", _j_short_data),
     "short-squeeze": ("Squeeze + covering eval", _j_short_squeeze),
@@ -713,7 +728,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
 
 # order matters for 'all': posture first, then signals, then evals
 # (evals already tail-refresh momentum+flywheel — harmless overlap)
-_ALL_ORDER = ["regime", "momentum", "morning-regime", "fred-macro",
+_ALL_ORDER = ["regime", "tier-sync", "momentum", "morning-regime",
+              "fred-macro",
               "econ-cal-verify",
               "etf-flows",
               "strategy", "event-day",
@@ -744,7 +760,8 @@ _JOB_TIMEOUT = {
     "fund-journal": 60 * 60, "hedge-universe": 15 * 60,
     "sec-facts": 20 * 60, "sec-filings": 20 * 60,
     "weekly-review": 15 * 60,
-    "thesis-check": 40 * 60, "selloff": 5 * 60,
+    "thesis-check": 40 * 60, "tier-sync": 5 * 60,
+    "selloff": 5 * 60,
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "intraday-tape": 3 * 60, "correction-alarms": 3 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,

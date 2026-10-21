@@ -407,6 +407,25 @@ def _universe() -> list[str]:
             "   AND t.checked_at::date > s.next_earnings_date)")}
     except Exception:
         covered, earn = set(), set()
+
+    # tier gate — if symbol_tiers exists, monthly-tier names refresh
+    # only when their thesis row is ≥30 days stale; the active tier
+    # stays nightly. Degrades to covered|earn when the table's absent.
+    try:
+        tiers = {r["symbol"]: r["tier"] for r in db.execute_query(
+            "SELECT symbol, tier FROM symbol_tiers")}
+        if tiers:
+            active = base | earn | {
+                s for s, t in tiers.items() if t == "active"
+            } | (have - set(tiers))          # untiered rows stay nightly
+            stale_monthly = {r["symbol"] for r in db.execute_query(
+                "SELECT s.symbol FROM symbol_tiers s"
+                " LEFT JOIN symbol_thesis t ON t.symbol=s.symbol"
+                " WHERE s.tier='monthly' AND (t.checked_at IS NULL"
+                " OR t.checked_at < now() - interval '30 days')")}
+            return sorted(active | stale_monthly)
+    except Exception:
+        pass
     return sorted(base | have | covered | earn)
 
 
