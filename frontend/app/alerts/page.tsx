@@ -30,8 +30,8 @@ function ago(ts?: string) {
 function AlertRow({ a }: { a: AlertItem }) {
   const dir = String(a.direction ?? 'neutral').toLowerCase()
   const mat = String(a.materiality ?? 'low').toLowerCase()
-  const isEarnings =
-    String(a.event_type ?? '').toLowerCase() === 'earnings'
+  const isEarnings = ['earnings', 'guidance'].includes(
+    String(a.event_type ?? '').toLowerCase())
   const det =
     typeof a.detail === 'object' && a.detail !== null
       ? (a.detail as Record<string, unknown>)
@@ -69,10 +69,10 @@ function AlertRow({ a }: { a: AlertItem }) {
             {isEarnings && verdict && (
               <span
                 className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${verdict === 'improving'
-                    ? 'border-aggressive/40 text-aggressive'
-                    : verdict === 'deteriorating'
-                      ? 'border-defensive/40 text-defensive'
-                      : 'border-caution/40 text-caution'
+                  ? 'border-aggressive/40 text-aggressive'
+                  : verdict === 'deteriorating'
+                    ? 'border-defensive/40 text-defensive'
+                    : 'border-caution/40 text-caution'
                   }`}
               >
                 {verdict}

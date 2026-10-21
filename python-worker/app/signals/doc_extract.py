@@ -333,9 +333,10 @@ def _journal_driver(sym: str, c: dict, src: str) -> Optional[dict]:
     red flag is exactly this."""
     from app.database import db
     metric = _norm(c.get("metric") or "")[:60]
-    period = str(c.get("period") or c.get("horizon") or "")[:30]
+    period = str(c.get("period") or c.get("horizon")
+                 or "standing")[:30]
     val = c.get("value")
-    if not metric or not period:
+    if not metric:
         return None
     try:
         val = float(val) if val is not None else None
@@ -349,11 +350,15 @@ def _journal_driver(sym: str, c: dict, src: str) -> Optional[dict]:
 
     # standing open commitment for the same metric+period → the
     # baseline this one is compared against (superseded after)
+    quote = str(c.get("quote") or "")[:400]
     standing = db.execute_query(
-        "SELECT id, value FROM driver_commitments WHERE symbol=:s"
-        " AND metric=:m AND period=:p AND status='open'"
-        " ORDER BY created_at DESC LIMIT 1",
+        "SELECT id, value, quote FROM driver_commitments"
+        " WHERE symbol=:s AND metric=:m AND period=:p"
+        " AND status='open' ORDER BY created_at DESC LIMIT 1",
         {"s": sym, "m": metric, "p": period})
+    # same commitment re-journaled (same quote) — not a revision
+    if standing and standing[0].get("quote") == quote:
+        standing = []
     base = prior_v if prior_v is not None else (
         float(standing[0]["value"]) if standing
         and standing[0]["value"] is not None else None)
@@ -364,7 +369,6 @@ def _journal_driver(sym: str, c: dict, src: str) -> Optional[dict]:
     else:
         d_pct, delta = None, "new"
 
-    quote = str(c.get("quote") or "")[:400]
     if standing and (standing[0]["value"] != val
                      or delta in ("raised", "cut")):
         db.execute_update(
@@ -394,6 +398,31 @@ def _journal_driver(sym: str, c: dict, src: str) -> Optional[dict]:
         " threshold=EXCLUDED.threshold, source=EXCLUDED.source",
         {"s": sym, "m": f"driver:{metric}:{period}"[:80],
          "t": thr[:80], "h": period[:30], "src": src[:200]})
+    # a material named-driver revision is itself the event — SMCI's
+    # +28% revenue guide raise came through a prelim update, not an
+    # earnings print, so check_symbol never saw it. Alert on the
+    # delta directly (fingerprint-deduped).
+    if delta in ("raised", "cut") and d_pct is not None \
+            and abs(d_pct) >= 0.10:
+        pv_s = (f"{base/1e9:.1f}B" if base and abs(base) >= 1e9
+                else f"{base}") if base is not None else "prior"
+        v_s = f"{val/1e9:.1f}B" if val and abs(val) >= 1e9 else f"{val}"
+        db.execute_update(
+            "INSERT INTO alert_items (symbol, event_type, direction,"
+            " materiality, title, detail, fingerprint, source,"
+            " source_timestamp, status, priority_score) VALUES"
+            " (:s,'guidance',:di,'HIGH',:t,CAST(:de AS jsonb),:fp,"
+            " 'driver_commitments', now(),'new',140)"
+            " ON CONFLICT (fingerprint) DO NOTHING",
+            {"s": sym,
+             "di": "UP" if delta == "raised" else "DOWN",
+             "t": (f"{sym} guidance {delta}: {metric} {period} "
+                   f"{d_pct:+.0%} ({pv_s}→{v_s})"),
+             "de": json.dumps({"metric": metric, "period": period,
+                               "value": val, "prior": base,
+                               "delta_pct": d_pct, "quote": quote,
+                               "source": src}, default=str),
+             "fp": f"driver:{sym}:{metric}:{period}:{quote[:60]}"})
     return {"metric": metric, "period": period, "value": val,
             "prior": base, "delta": delta, "delta_pct": d_pct}
 
