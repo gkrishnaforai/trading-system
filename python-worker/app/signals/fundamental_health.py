@@ -254,6 +254,24 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
     if m.get("muted_reaction"):
         pos.append("muted reaction")
 
+    # named-driver commitments — management's own forward numbers from
+    # filings ('expect FY26 ad revenue ~$2.7B'). A raise is a leading
+    # positive leg; a cut is a named-driver red flag (NFLX ad-rev
+    # 3.0→2.7). Forward claims — they join the evidence lists but
+    # never inflate n_pos/n_neg (those gate the trailing state).
+    drv = m.get("driver_deltas") or []
+    drv_rev_pat = ("revenue", "backlog", "members", "guidance",
+                   "orders", "si_revenue")
+    drv_raised = [d for d in drv if d.get("delta_dir") == "raised"]
+    drv_cut = [d for d in drv if d.get("delta_dir") == "cut"]
+    for d in drv:
+        if d.get("delta_dir") not in ("raised", "cut"):
+            continue                       # 'new'/'reaffirmed' are
+        dp = d.get("delta_pct")            # standing commitments —
+        line = f"{d['metric']} {d['period']} guide {d['delta_dir']}" \
+               + (f" {dp:+.0%}" if dp is not None else "")
+        (pos if d["delta_dir"] == "raised" else neg).append(line)
+
     # cash-generation + acquisition-quality legs — FCF is the receipts
     # check on reported growth; negative FCF with a buildout excuse
     # (capex_rev ≥30%) is already counted by the capex legs, so the
@@ -444,9 +462,9 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
         why.append(lean)
 
     # cause overlay — WHY growth is decelerating/margins compressing.
-    # demand_health runs on the legs we actually have (rev growth +
-    # revisions; RPO/customer-usage/guidance aren't deterministic
-    # inputs yet) — partial is flagged, never fabricated
+    # demand_health runs on the legs we actually have — rev growth +
+    # revisions + GUIDANCE (a raised revenue-type driver is
+    # management's own demand confirmation — SMCI +28%)
     cause = _decel_cause(m, n_neg)
     margin_recovery = (gmq is not None and gmq < -0.01
                        and gms is not None and gms > 0
@@ -457,6 +475,10 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
                                  and (er is None or er >= 0))
               else "weak" if (rg is not None and rg < 0.05)
               else "mixed")
+    if demand in ("weak", "mixed") and any(
+            any(p in str(d.get("metric")) for p in drv_rev_pat)
+            for d in drv_raised):
+        demand = "healthy"
     # degree annotation — accelerating is canonical; "strong" requires
     # hypergrowth-level revenue AND forward estimate support AND strong
     # demand. ALAB/NBIS qualify; AVGO doesn't (fwd_dn), CIEN doesn't
@@ -490,6 +512,12 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
               "decel_cause": cause,
               "accel_grade": accel_grade,
               "demand_health": demand,
+              "driver_deltas": [
+                  {"metric": d["metric"], "period": d["period"],
+                   "delta": d["delta_dir"], "value": d.get("value"),
+                   "pct": round(d["delta_pct"], 3)
+                         if d.get("delta_pct") is not None else None}
+                  for d in drv] or None,
               "demand_data_partial": True,
               "margin_compression_transient": margin_recovery or None,
               "monitor": monitor}
@@ -669,10 +697,24 @@ def refresh_all(symbols: list[str] = None) -> dict:
                      if x["er"] is not None)
     rb_dist = sorted(float(x["rb"]) for x in dist
                      if x["rb"] is not None)
+    # open driver commitments (raised/cut) — management's forward
+    # numbers join the classify evidence per symbol; table may not
+    # exist pre-migration so degrade to empty
+    drivers: dict[str, list] = {}
+    try:
+        for d in db.execute_query(
+                "SELECT symbol, metric, period, value, prior_value,"
+                " delta_dir, delta_pct FROM driver_commitments"
+                " WHERE status='open'"
+                " AND created_at > now() - interval '180 days'"):
+            drivers.setdefault(d["symbol"], []).append(dict(d))
+    except Exception:
+        pass
 
     counts: dict[str, int] = {}
     for r in rows:
         m = {k: r.get(k) for k in _METRICS}
+        m["driver_deltas"] = drivers.get(r["symbol"], [])
         state, risk, detail = classify(m, bool(r.get("cyclical")))
         detail["revision"] = _revision_grade(m, er_dist, rb_dist)
         p = prev.get(r["symbol"]) or {}
