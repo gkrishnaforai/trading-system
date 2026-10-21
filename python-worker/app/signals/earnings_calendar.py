@@ -43,10 +43,14 @@ def _sync_earnings_events(sym: str, tk,
         return
     if ed is None or ed.empty:
         return
+    today = date.today()
+    future_dates: list[date] = []
     for idx, row in ed.head(HISTORY_EVENTS + 2).iterrows():
         try:
             rep = idx.date() if hasattr(idx, "date") else idx
-            is_future = rep >= date.today()
+            is_future = rep >= today
+            if is_future:
+                future_dates.append(rep)
             db.execute_update(
                 "INSERT INTO earnings_data "
                 "(stock_symbol, earnings_date, eps_estimate, eps_actual, "
@@ -74,6 +78,25 @@ def _sync_earnings_events(sym: str, tk,
                           if pd.notna(row.get("Surprise(%)")) else None)})
         except Exception as exc:
             logger.debug("earnings_data upsert %s %s: %s", sym, idx, exc)
+    # moved prints: the provider's current view is authoritative for
+    # un-realized events — drop future rows it no longer reports so a
+    # shifted date can't linger as a same-quarter duplicate (the
+    # indexer picks MIN future date, so a stale row would hijack
+    # next_earnings_date). Guard on a non-empty feed so a flaky empty
+    # response never wipes the calendar, and bound to ~a quarter so a
+    # stored next-quarter listing the short feed doesn't currently
+    # report survives.
+    if future_dates:
+        try:
+            db.execute_update(
+                "DELETE FROM earnings_data WHERE stock_symbol=:s"
+                " AND eps_actual IS NULL"
+                " AND earnings_date >= :today"
+                " AND earnings_date <= :today + INTERVAL '75 days'"
+                " AND earnings_date <> ALL(:dates)",
+                {"s": sym, "today": today, "dates": future_dates})
+        except Exception as exc:
+            logger.debug("earnings_data cleanup %s: %s", sym, exc)
 
 
 def refresh_earnings_calendar(sym: str) -> dict:
