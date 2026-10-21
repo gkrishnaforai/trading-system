@@ -678,6 +678,16 @@ async def _j_posture_eval() -> dict:
             "today": cur.get("posture"), "rule": cur.get("matched")}
 
 
+async def _j_fv_sweep() -> dict:
+    """Weekly fair-value sweep over the tracked universe — refetches
+    the fundamentals bundle for any symbol whose last quarterly print
+    is newer than its stored fmp_fundamentals snapshot (eps_forward
+    stays post-print), then resolves FV. Unchanged inputs reuse."""
+    from app.signals import fv_sweep
+    symbols = await _tracked_symbols()
+    return await asyncio.to_thread(fv_sweep.run, symbols)
+
+
 JOBS: dict[str, tuple[str, Callable]] = {
     "momentum":      ("Momentum flags", _j_momentum),
     "swing-scan":    ("Swing screener", _j_swing_scan),
@@ -745,6 +755,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "intraday-tape": ("Intraday tape classifier", _j_intraday),
     "correction-alarms": ("Correction-alarm engine",
                           _j_correction_alarms),
+    "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
 }
 
 # order matters for 'all': posture first, then signals, then evals

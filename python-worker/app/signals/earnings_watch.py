@@ -238,9 +238,20 @@ def check_symbol(sym: str) -> dict:
         "fp": f"earnings_watch:{sym}:{today}",
         "ib": in_book, "iw": in_wl,
         "pr": 150 if in_book else 120})
+
+    # post-print input refresh — the print just landed, so the stored
+    # fundamentals snapshot is now pre-print. Refetch it (fresh
+    # eps_forward + estimates + TTM actuals) and re-resolve FV.
+    fv = {}
+    try:
+        from app.signals import fv_sweep
+        fv = fv_sweep.refresh_after_print(sym)
+    except Exception as exc:
+        logger.debug("earnings_watch fv refresh %s: %s", sym, exc)
     return {"symbol": sym, "status": "journaled",
             "verdict": verdict, "surprise_pct": _f(surp),
-            "thesis": {"before": before, "after": after}}
+            "thesis": {"before": before, "after": after},
+            "fv": {k: v for k, v in fv.items() if k != "symbol"}}
 
 
 def _f(x) -> Optional[float]:
