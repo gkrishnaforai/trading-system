@@ -261,14 +261,45 @@ class EarningsCalendarRepository:
     
     @staticmethod
     def fetch_earnings_by_date_range(start_date: date, end_date: date) -> List[Dict[str, Any]]:
-        """Fetch earnings within a date range."""
+        """Fetch earnings within a date range.
+
+        The legacy `earnings_calendar` table went stale (9 rows) — the
+        live sources are `earnings_data` (per-print est/actual synced by
+        the flywheel path) and `stocks.next_earnings_*` (the indexer's
+        upcoming-print view). Union them, earnings_data wins on a
+        (symbol, date) collision since it may carry actuals."""
         query = """
-        SELECT * FROM earnings_calendar
-        WHERE earnings_date BETWEEN :start_date AND :end_date
+        SELECT symbol, company_name, earnings_date,
+               eps_estimate, eps_actual, revenue_estimate,
+               surprise_percentage, session, source
+        FROM (
+            SELECT e.stock_symbol AS symbol,
+                   s.company_name,
+                   e.earnings_date,
+                   e.eps_estimate, e.eps_actual, e.revenue_estimate,
+                   e.surprise_percentage,
+                   s.next_earnings_session AS session,
+                   e.source, 1 AS pri
+            FROM earnings_data e
+            LEFT JOIN stocks s ON s.symbol = e.stock_symbol
+            WHERE e.earnings_date BETWEEN :start_date AND :end_date
+            UNION ALL
+            SELECT s.symbol, s.company_name, s.next_earnings_date,
+                   s.next_earnings_eps_est, NULL,
+                   s.next_earnings_rev_est, NULL,
+                   s.next_earnings_session, 'index', 2 AS pri
+            FROM stocks s
+            WHERE s.next_earnings_date BETWEEN :start_date
+                  AND :end_date
+        ) x
+        WHERE x.pri = 1 OR NOT EXISTS (
+            SELECT 1 FROM earnings_data e
+            WHERE e.stock_symbol = x.symbol
+              AND e.earnings_date = x.earnings_date)
         ORDER BY earnings_date, symbol
         """
-        
-        return db.execute_query(query, {"start_date": start_date, "end_date": end_date})
+        return db.execute_query(
+            query, {"start_date": start_date, "end_date": end_date})
     
     @staticmethod
     def fetch_earnings_by_symbol(symbol: str, start_date: date = None, end_date: date = None) -> List[Dict[str, Any]]:

@@ -609,6 +609,16 @@ async def _j_read_through() -> dict:
     return await asyncio.to_thread(read_through.scan)
 
 
+async def _j_earnings_watch() -> dict:
+    """Earnings-day watcher — active-tier names printing today. When
+    actuals land: captures the print, runs the 8-K through doc_extract,
+    re-scores the thesis (before→after = improving/deteriorating), and
+    fires an alert carrying the analysis. Idempotent per print; schedule
+    every 30 min 16:00-20:00 ET."""
+    from app.signals import earnings_watch
+    return await asyncio.to_thread(earnings_watch.poll)
+
+
 async def _j_short_data() -> dict:
     """Massive short-data pull → short_interest / short_volume /
     share_float. Staleness-aware and rate-budgeted — the shared key
@@ -728,6 +738,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "thesis-check": ("Archetype thesis tracker", _j_thesis_check),
     "tier-sync": ("Coverage tiers + discovery", _j_tier_sync),
     "read-through": ("Extended-hours repricing", _j_read_through),
+    "earnings-watch": ("Earnings-day watcher", _j_earnings_watch),
     "selloff":     ("Selloff opportunity engine", _j_selloff),
     "short-data":  ("Short interest/volume pull", _j_short_data),
     "short-squeeze": ("Squeeze + covering eval", _j_short_squeeze),
@@ -771,7 +782,7 @@ _JOB_TIMEOUT = {
     "sec-facts": 20 * 60, "sec-filings": 20 * 60,
     "weekly-review": 15 * 60,
     "thesis-check": 40 * 60, "tier-sync": 5 * 60,
-    "read-through": 8 * 60,
+    "read-through": 8 * 60, "earnings-watch": 8 * 60,
     "selloff": 5 * 60,
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "intraday-tape": 3 * 60, "correction-alarms": 3 * 60,
@@ -2523,6 +2534,17 @@ async def read_through_latest(days: int = 1):
     from app.signals import read_through
     return {"events": await asyncio.to_thread(read_through.latest,
                                               days)}
+
+
+@router.get("/earnings-watch")
+async def earnings_watch_latest(days: int = 7):
+    """Earnings-day captures — prints + improving/deteriorating
+    verdicts from the 30-min after-hours watcher."""
+    from app.signals import earnings_watch
+    return {"reporters": await asyncio.to_thread(
+        earnings_watch.todays_reporters),
+        "captures": await asyncio.to_thread(earnings_watch.latest,
+                                            days)}
 
 
 @router.get("/income-plan")
