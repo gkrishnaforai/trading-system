@@ -80,22 +80,50 @@ def _thesis_status(sym: str) -> Optional[str]:
     return r[0]["status"] if r else None
 
 
+def _driver_deltas(sym: str) -> list[dict]:
+    """Named-driver commitments captured from today's release — the
+    'is the growth engine delivering' compare. A CUT on a named
+    driver (NFLX ad revenue $3B→$2.7B) is a red flag the headline
+    surprise can't see."""
+    try:
+        return [dict(r) for r in _q(
+            "SELECT metric, period, value, prior_value, delta_dir,"
+            " delta_pct, value_text FROM driver_commitments"
+            " WHERE symbol=:s AND (created_at AT TIME ZONE"
+            " 'America/New_York')::date ="
+            " (now() AT TIME ZONE 'America/New_York')::date"
+            " AND status='open' ORDER BY ABS(delta_pct) DESC"
+            " NULLS LAST LIMIT 8", {"s": sym})]
+    except Exception:
+        return []
+
+
 def _verdict(before: Optional[str], after: Optional[str],
-             surprise: Optional[float]) -> str:
+             surprise: Optional[float],
+             drivers: Optional[list] = None) -> str:
     """improving/deteriorating from the thesis transition; surprise
-    breaks ties. 'pending' when there's no basis yet."""
+    breaks ties. A named-driver guide CUT overrides the headline —
+    the market repriced NFLX -6% on the ad-rev cut despite an EPS
+    beat. 'pending' when there's no basis yet."""
     rank = {"broken": 0, "deteriorating": 1, "unknown": 2,
             "improving": 3, "on_track": 4}
+    cuts = [d for d in (drivers or []) if d.get("delta_dir") == "cut"]
+    raises = [d for d in (drivers or []) if d.get("delta_dir") == "raised"]
     if before and after and before != after:
-        return ("improving" if rank.get(after, 2) > rank.get(before, 2)
-                else "deteriorating")
-    if surprise is not None:
-        if surprise >= 5:
-            return "improving"
-        if surprise <= -5:
-            return "deteriorating"
-        return "mixed"
-    return "pending"
+        v = ("improving" if rank.get(after, 2) > rank.get(before, 2)
+             else "deteriorating")
+    elif surprise is not None:
+        v = ("improving" if surprise >= 5 else
+             "deteriorating" if surprise <= -5 else "mixed")
+    else:
+        v = "pending"
+    if cuts and not raises:
+        return "deteriorating"
+    if cuts:
+        return {"improving": "mixed", "on_track": "mixed"}.get(v, v)
+    if raises and v in ("mixed", "pending"):
+        return "improving"
+    return v
 
 
 def check_symbol(sym: str) -> dict:
@@ -136,7 +164,8 @@ def check_symbol(sym: str) -> dict:
         logger.debug("earnings_watch thesis %s: %s", sym, exc)
 
     surp = pr.get("surprise_percentage")
-    verdict = _verdict(before, after, surp)
+    drivers = _driver_deltas(sym)
+    verdict = _verdict(before, after, surp, drivers)
     direction = ("UP" if verdict == "improving" else
                  "DOWN" if verdict == "deteriorating" else "NEUTRAL")
     detail = {
@@ -145,6 +174,7 @@ def check_symbol(sym: str) -> dict:
         "surprise_pct": _f(surp),
         "rev_est": _f(pr["revenue_estimate"]),
         "thesis": {"before": before, "after": after},
+        "drivers": drivers,
         "release": {"analyzed": ext.get("analyzed"),
                     "claims": ext.get("claims")},
         "verdict": verdict}
@@ -187,7 +217,12 @@ def check_symbol(sym: str) -> dict:
         "t": (f"{sym} earnings: EPS {beat} "
               f"{surp:+.1f}% — fundamentals {verdict}"
               + (f" (thesis {before or 'new'}→{after})"
-                 if before != after else "")),
+                 if before != after else "")
+              + "".join(
+                  f" — {d['metric']} {d['period']} guide "
+                  f"{d['delta_dir']}"
+                  for d in drivers
+                  if d.get("delta_dir") in ("cut", "raised"))[:120]),
         "de": json.dumps(detail, default=str),
         "fp": f"earnings_watch:{sym}:{today}",
         "ib": in_book, "iw": in_wl,
