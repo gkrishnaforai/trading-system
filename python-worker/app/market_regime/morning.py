@@ -607,8 +607,20 @@ def snapshot() -> Optional[dict[str, Any]]:
                    ai_regime=ai_regime, conf_label=conf_x["label"],
                    event_risk=event_risk, data_quality=data_quality,
                    rules=rules, struct=struct, divergent=divergent)
+    # overnight read-through — basket repricing detected in extended
+    # hours (peer guidance/commentary lifting a whole theme before
+    # the open). Evidence only; the deterministic score is unchanged.
+    try:
+        from app.signals import read_through
+        overnight = read_through.overnight_context()
+        if overnight:
+            ai["overnight"] = overnight
+            buckets["ai_growth"]["detail"] = ai
+    except Exception:
+        overnight = None
     ctx = {"buckets": buckets, "events": events,
-           "confirmation": conf_x, "event_risk": event_risk}
+           "confirmation": conf_x, "event_risk": event_risk,
+           "read_through": overnight}
     expl = _explain_llm(composite, regime, ctx)
     # the model's own regime read vs the deterministic one — dissent
     # is journaled, not obeyed

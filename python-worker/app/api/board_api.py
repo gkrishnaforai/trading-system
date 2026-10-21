@@ -600,6 +600,15 @@ async def _j_tier_sync() -> dict:
     return await asyncio.to_thread(_go)
 
 
+async def _j_read_through() -> dict:
+    """Extended-hours basket repricing — detects when a theme book
+    moves together post-close/pre-open (peer earnings, guidance,
+    sector commentary). Journals read_through_evals for the morning
+    regime. Run ~16:30 ET and ~08:30 ET."""
+    from app.signals import read_through
+    return await asyncio.to_thread(read_through.scan)
+
+
 async def _j_short_data() -> dict:
     """Massive short-data pull → short_interest / short_volume /
     share_float. Staleness-aware and rate-budgeted — the shared key
@@ -718,6 +727,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
                       _j_weekly_review),
     "thesis-check": ("Archetype thesis tracker", _j_thesis_check),
     "tier-sync": ("Coverage tiers + discovery", _j_tier_sync),
+    "read-through": ("Extended-hours repricing", _j_read_through),
     "selloff":     ("Selloff opportunity engine", _j_selloff),
     "short-data":  ("Short interest/volume pull", _j_short_data),
     "short-squeeze": ("Squeeze + covering eval", _j_short_squeeze),
@@ -761,6 +771,7 @@ _JOB_TIMEOUT = {
     "sec-facts": 20 * 60, "sec-filings": 20 * 60,
     "weekly-review": 15 * 60,
     "thesis-check": 40 * 60, "tier-sync": 5 * 60,
+    "read-through": 8 * 60,
     "selloff": 5 * 60,
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "intraday-tape": 3 * 60, "correction-alarms": 3 * 60,
@@ -2503,6 +2514,15 @@ async def correction_alarms():
     if not out or out.get("as_of") != str(date.today()):
         out = await asyncio.to_thread(ca.evaluate)
     return out
+
+
+@router.get("/read-through")
+async def read_through_latest(days: int = 1):
+    """Extended-hours basket repricing events — peers lifting whole
+    themes post-close/pre-open. Fed into the morning regime."""
+    from app.signals import read_through
+    return {"events": await asyncio.to_thread(read_through.latest,
+                                              days)}
 
 
 @router.get("/income-plan")
