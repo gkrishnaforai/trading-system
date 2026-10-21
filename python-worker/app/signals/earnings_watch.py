@@ -37,11 +37,21 @@ def _u(sql: str, p: Optional[dict] = None) -> Any:
     return db.execute_update(sql, p or {})
 
 
+def _et_today() -> date:
+    """Earnings dates are US-market dates — after 20:00 ET the UTC
+    date has already rolled to tomorrow, which is precisely when
+    post-close prints matter. Always compare in ET."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("America/New_York")).date()
+
+
 def todays_reporters() -> list[str]:
-    """Active-tier names printing today."""
+    """Active-tier names printing today (US market date)."""
     return [r["symbol"] for r in _q(
         "SELECT s.symbol FROM stocks s"
-        " WHERE s.next_earnings_date = CURRENT_DATE AND ("
+        " WHERE s.next_earnings_date ="
+        " (now() AT TIME ZONE 'America/New_York')::date AND ("
         "   EXISTS (SELECT 1 FROM portfolio_positions pp"
         "           WHERE pp.stock_id=s.id AND pp.quantity>0)"
         "   OR EXISTS (SELECT 1 FROM watchlist_stocks ws"
@@ -58,7 +68,9 @@ def _print(sym: str) -> Optional[dict]:
     rows = _q("SELECT stock_symbol, earnings_date, eps_estimate,"
               " eps_actual, revenue_estimate, surprise_percentage"
               " FROM earnings_data WHERE stock_symbol=:s"
-              " AND earnings_date = CURRENT_DATE", {"s": sym})
+              " AND earnings_date ="
+              " (now() AT TIME ZONE 'America/New_York')::date",
+              {"s": sym})
     return dict(rows[0]) if rows else None
 
 
@@ -91,7 +103,7 @@ def check_symbol(sym: str) -> dict:
     for today's print means the work already happened."""
     from app.signals import earnings_calendar, earnings_release
     sym = sym.upper()
-    today = date.today()
+    today = _et_today()
     if _q("SELECT 1 FROM earnings_watch WHERE symbol=:s"
           " AND earnings_date=:d", {"s": sym, "d": today}):
         return {"symbol": sym, "status": "already_journaled"}
@@ -174,7 +186,7 @@ def check_symbol(sym: str) -> dict:
         "mat": "HIGH" if abs(surp or 0) >= 5 else "MEDIUM",
         "t": (f"{sym} earnings: EPS {beat} "
               f"{surp:+.1f}% — fundamentals {verdict}"
-              + (f" (thesis {before}→{after})"
+              + (f" (thesis {before or 'new'}→{after})"
                  if before != after else "")),
         "de": json.dumps(detail, default=str),
         "fp": f"earnings_watch:{sym}:{today}",
