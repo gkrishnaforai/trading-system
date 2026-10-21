@@ -364,6 +364,12 @@ def _universe() -> list[str]:
       earnings book/watchlist names that reported since their last
                thesis check (or have never been checked) — the
                quarterly-rebuild trigger
+      tracked  every tracked name (books, watchlist, rule-breaker
+               and small-cap members) that has source data — the
+               same universe the other nightly scans cover; the
+               37k-row stocks table is NOT evaluated because the
+               upstream flywheel/sec/doc data only exists for ~530
+               names — an all-unknown row is noise, not signal
       news     handled implicitly: an event review lands after the
                last thesis check → the row is stale by day, so the
                nightly sweep re-reads it
@@ -381,6 +387,16 @@ def _universe() -> list[str]:
                    "   ON pp.stock_id=s.id AND pp.quantity>0"
                    " UNION SELECT s.symbol FROM stocks s"
                    "   JOIN watchlist_stocks ws ON ws.stock_id=s.id")
+        # tracked ∩ has-thesis-source-data — skip names with nothing
+        # to check against (every leg would read 'not populated')
+        covered = {r["symbol"] for r in db.execute_query(
+            f"SELECT t.symbol FROM ({tracked}) t WHERE EXISTS"
+            " (SELECT 1 FROM symbol_flywheel f"
+            "  WHERE f.symbol=t.symbol) OR EXISTS"
+            " (SELECT 1 FROM symbol_sec_facts f"
+            "  WHERE f.symbol=t.symbol) OR EXISTS"
+            " (SELECT 1 FROM doc_analyses d"
+            "  WHERE d.symbol=t.symbol)")}
         earn = {r["symbol"] for r in db.execute_query(
             f"SELECT s.symbol FROM stocks s"
             f" WHERE s.symbol IN ({tracked})"
@@ -390,8 +406,8 @@ def _universe() -> list[str]:
             "   WHERE t.symbol=s.symbol"
             "   AND t.checked_at::date > s.next_earnings_date)")}
     except Exception:
-        earn = set()
-    return sorted(base | have | earn)
+        covered, earn = set(), set()
+    return sorted(base | have | covered | earn)
 
 
 def run(symbols: Optional[list[str]] = None) -> dict:

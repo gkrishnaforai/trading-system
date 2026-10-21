@@ -744,7 +744,7 @@ _JOB_TIMEOUT = {
     "fund-journal": 60 * 60, "hedge-universe": 15 * 60,
     "sec-facts": 20 * 60, "sec-filings": 20 * 60,
     "weekly-review": 15 * 60,
-    "thesis-check": 5 * 60, "selloff": 5 * 60,
+    "thesis-check": 40 * 60, "selloff": 5 * 60,
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "intraday-tape": 3 * 60, "correction-alarms": 3 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
