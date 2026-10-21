@@ -258,6 +258,18 @@ def evaluate(sym: str) -> dict:
     detail = {"unresolved": unresolved[:6],
               "archetype_label": ((cfg.get("archetypes") or {})
                                   .get(primary) or {}).get("label")}
+    # standing driver commitments — management's forward numbers
+    # (SMCI raised FY27 Q1 revenue +28% while trailing legs show
+    # decel). Evidence, never a grade — surfaced so a deteriorating
+    # verdict sits beside the raise that management just printed.
+    try:
+        detail["drivers"] = [dict(d) for d in db.execute_query(
+            "SELECT metric, period, value, prior_value, delta_dir,"
+            " delta_pct FROM driver_commitments WHERE symbol=:s"
+            " AND status='open'"
+            " ORDER BY created_at DESC LIMIT 8", {"s": sym})]
+    except Exception:
+        detail["drivers"] = []
 
     # --- delta vs the prior nightly eval ----------------------------
     # status_dir flags the direction of the thesis itself (improving
@@ -567,6 +579,19 @@ def build_report(t: dict, fv_upside_pct: Optional[float] = None) -> dict:
             if fc:
                 line += f" (fails if: {fc})"
             confirm.append(line)
+    # driver commitments — forward evidence beside the legs: raises
+    # read as 'guide raised' likes, cuts as 'want confirmed' flags
+    for d in ((t.get("detail") or {}).get("drivers") or [])[:4]:
+        met = str(d.get("metric") or "").replace("_", " ")
+        per = d.get("period") or ""
+        dp = d.get("delta_pct")
+        if d.get("delta_dir") == "raised":
+            likes.append(f"Guide {met} {per} raised"
+                         + (f" {dp:+.0%}" if dp is not None else ""))
+        elif d.get("delta_dir") == "cut":
+            confirm.append(f"Guide {met} {per} cut"
+                           + (f" {dp:.0%}" if dp is not None else "")
+                           + " — management's own number, not ours")
     return {"stance": stance_for(str(t.get("status") or "unknown"),
                                  fv_upside_pct),
             "likes": likes[:6], "confirm": confirm[:6],
