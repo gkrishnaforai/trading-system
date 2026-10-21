@@ -321,6 +321,19 @@ def refresh_symbol(sym: str, tech: dict, hist_prev,
                     dip = {**(dip or {}), "swing": sw}
             except Exception:
                 pass
+            # multi-timeframe stochastic — daily k/d for timing,
+            # weekly k/d for the medium-term turn ('is the weekly
+            # stochastic up?' — rising %K / bull cross / hook out of
+            # oversold). Stored in momentum_detail with everything else.
+            try:
+                from app.market_data import indicators as _ind
+                sd = _ind.stochastic(bars)
+                sw_k = _ind.stochastic(_ind.weekly_bars(bars))
+                if sd or sw_k:
+                    dip = {**(dip or {}),
+                           "stoch": {"d": sd, "w": sw_k}}
+            except Exception:
+                pass
         # spring — bounce elasticity inside washed states; needs the
         # fundamentals + squeeze legs, one indexed lookup each
         if state in {"capitulation", "knife", "downtrend", "breakdown"}:

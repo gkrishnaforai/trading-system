@@ -151,6 +151,20 @@ function HoldingRow({ r, bookValue }: { r: PulseRow; bookValue: number }) {
               ['knife', 'capitulation', 'downtrend', 'breakdown', 'pullback']
                 .includes(String(r.mom_state)) &&
               ` · ${String(r.dip_phase).replace(/_/g, ' ')}`}
+            {r.stoch_w_up != null && (
+              <span
+                className={
+                  r.stoch_w_up ? 'text-aggressive' : 'text-defensive'
+                }
+                title={`weekly stochastic ${r.stoch_w_up ? 'rising' : 'falling'}` +
+                  (r.stoch_w_zone ? ` · ${r.stoch_w_zone}` : '') +
+                  (r.stoch_d_cross ? ` · daily ${r.stoch_d_cross} cross` : '')}
+              >
+                {' '}wk{r.stoch_w_zone === 'oversold' ? ' os' : ''}
+                {r.stoch_w_up ? '↑' : '↓'}
+                {r.stoch_d_cross === 'bull' ? '⇈' : ''}
+              </span>
+            )}
             {r.spring != null && r.spring >= 60 && (
               <span className="text-accent" title="elastic — deep wash +
 intact thesis + high vol: rips when the tape turns">

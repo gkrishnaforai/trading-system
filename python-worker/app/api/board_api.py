@@ -1472,6 +1472,12 @@ async def portfolio_pulse():
             "dip_phase": det.get("dip_phase"),
             "spring": (det.get("spring") or {}).get("score")
                       if isinstance(det.get("spring"), dict) else None,
+            "stoch_w_up": ((det.get("stoch") or {}).get("w") or {})
+                          .get("up"),
+            "stoch_w_zone": ((det.get("stoch") or {}).get("w") or {})
+                            .get("zone"),
+            "stoch_d_cross": ((det.get("stoch") or {}).get("d") or {})
+                             .get("cross"),
             "fund_state": r.get("fundamental_state"),
             "revision_grade": r.get("revision_grade"),
             "priced_status": r.get("priced_status"),

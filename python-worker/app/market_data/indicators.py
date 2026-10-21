@@ -197,3 +197,62 @@ def dist_from_extreme(bars: List[OHLCVBar], window: int = 20,
         return None
     ext = max(b.high for b in sub) if high else min(b.low for b in sub)
     return float(c.iloc[-1] / ext - 1) if ext else None
+
+
+def weekly_bars(bars: List[OHLCVBar]) -> List[OHLCVBar]:
+    """Daily bars → W-FRI weekly OHLCV. The medium-term timeframe —
+    filters daily noise for multi-week momentum reads."""
+    if not bars:
+        return []
+    df = pd.DataFrame({
+        "o": [b.open for b in bars],
+        "h": [b.high for b in bars],
+        "l": [b.low for b in bars],
+        "c": [b.close for b in bars],
+        "v": [b.volume for b in bars],
+    }, index=pd.to_datetime([b.timestamp for b in bars]))
+    w = df.resample("W-FRI").agg(
+        {"o": "first", "h": "max", "l": "min",
+         "c": "last", "v": "sum"}).dropna(subset=["c"])
+    from types import SimpleNamespace
+    return [SimpleNamespace(timestamp=i.to_pydatetime(),
+                            date=i.date(), open=r.o, high=r.h,
+                            low=r.l, close=r.c, volume=r.v,
+                            adj_close=r.c)
+            for i, r in w.iterrows()]
+
+
+def stochastic(bars: List[OHLCVBar], k_period: int = 14,
+               d_period: int = 3) -> Optional[dict]:
+    """Stochastic oscillator — %K = close's position in the
+    k_period high-low range, %D = its 3-bar mean. Returns k, d,
+    k_slope (this bar's Δ), the crossover just fired (if any), and
+    zone (oversold <20 / overbought >80 / mid). 'Up' = %K rising or
+    a fresh bullish cross — the medium-term turn signal."""
+    h, l, c = _ohlc_series(bars)
+    if len(c) < k_period + d_period:
+        return None
+    hh = h.rolling(k_period).max()
+    ll = l.rolling(k_period).min()
+    rng = (hh - ll).replace(0, float("nan"))
+    k = (c - ll) / rng * 100
+    d = k.rolling(d_period).mean()
+    kv, dv = _last(k), _last(d)
+    kp, dp = _last(k, 1), _last(d, 1)
+    if kv is None or dv is None:
+        return None
+    cross = None
+    if kp is not None and dp is not None:
+        if kp <= dp and kv > dv:
+            cross = "bull"
+        elif kp >= dp and kv < dv:
+            cross = "bear"
+    k_slope = kv - kp if kp is not None else None
+    return {
+        "k": round(kv, 1), "d": round(dv, 1),
+        "k_slope": round(k_slope, 1) if k_slope is not None else None,
+        "cross": cross,
+        "up": bool((k_slope or 0) > 0 or cross == "bull"),
+        "zone": ("oversold" if kv < 20 else
+                 "overbought" if kv > 80 else "mid"),
+    }

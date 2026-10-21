@@ -188,6 +188,9 @@ export type PulseRow = {
   mom_prev?: string
   dip_phase?: string
   spring?: number
+  stoch_w_up?: boolean | null
+  stoch_w_zone?: string | null
+  stoch_d_cross?: string | null
   fund_state?: string
   revision_grade?: string
   fv_upside?: number | null
