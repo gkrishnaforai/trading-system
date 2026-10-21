@@ -212,6 +212,29 @@ def dip_health(tech: dict, hist_prev: Optional[float],
     h["dip_health"] = pts
     h["dip_phase"] = ("turning_up" if pts >= 3 else
                       "stabilizing" if pts == 2 else "still_falling")
+
+    # multi-timeframe stochastic — daily k/d for timing, weekly for
+    # the medium-term turn. 'turn_conf' is the confluence flag: a
+    # daily turning_up confirmed by a rising weekly %K is a stronger
+    # entry than daily alone; a weekly bull cross while daily is only
+    # stabilizing = the weekly is leading the turn.
+    try:
+        from app.market_data import indicators as _ind
+        sd = _ind.stochastic(bars)
+        sw = _ind.stochastic(_ind.weekly_bars(bars))
+        if sd or sw:
+            h["stoch"] = {"d": sd, "w": sw}
+            ph, wk = h["dip_phase"], sw or {}
+            if ph == "turning_up":
+                h["turn_conf"] = ("weekly" if wk.get("up")
+                                  else "daily_only")
+            elif ph == "stabilizing" and wk.get("up"):
+                h["turn_conf"] = "weekly_leading"
+            elif ph == "still_falling" and wk.get("up") \
+                    and wk.get("zone") == "oversold":
+                h["turn_conf"] = "hook_forming"
+    except Exception:
+        pass
     return h
 
 
@@ -321,19 +344,9 @@ def refresh_symbol(sym: str, tech: dict, hist_prev,
                     dip = {**(dip or {}), "swing": sw}
             except Exception:
                 pass
-            # multi-timeframe stochastic — daily k/d for timing,
-            # weekly k/d for the medium-term turn ('is the weekly
-            # stochastic up?' — rising %K / bull cross / hook out of
-            # oversold). Stored in momentum_detail with everything else.
-            try:
-                from app.market_data import indicators as _ind
-                sd = _ind.stochastic(bars)
-                sw_k = _ind.stochastic(_ind.weekly_bars(bars))
-                if sd or sw_k:
-                    dip = {**(dip or {}),
-                           "stoch": {"d": sd, "w": sw_k}}
-            except Exception:
-                pass
+            # stoch + turn_conf now live inside dip_health (it has the
+            # bars) so stored detail and the live technicals endpoint
+            # get the same pack through `d.update(dip)`.
         # spring — bounce elasticity inside washed states; needs the
         # fundamentals + squeeze legs, one indexed lookup each
         if state in {"capitulation", "knife", "downtrend", "breakdown"}:

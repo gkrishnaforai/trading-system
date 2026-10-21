@@ -228,6 +228,9 @@ export function TapePanel({ d, spot }: { d: Record<string, unknown>; spot?: numb
   const swing = (d.swing && typeof d.swing === 'object' ? d.swing : {}) as Record<string, unknown>
   const rsi = n(d.rsi)
   const pb = n(d.pct_b)
+  const stoch = (d.stoch && typeof d.stoch === 'object' ? d.stoch : {}) as Record<string, Record<string, unknown>>
+  const stD = stoch.d ?? {}
+  const stW = stoch.w ?? {}
 
   // level ladder — every known level + spot on one ruler
   const levels = [
@@ -246,6 +249,9 @@ export function TapePanel({ d, spot }: { d: Record<string, unknown>; spot?: numb
       <div className="flex flex-wrap items-center gap-2">
         <Chip v={d.state} />
         {d.dip_phase != null && <Chip v={`dip ${d.dip_phase}`} />}
+        {d.turn_conf != null && d.turn_conf !== 'daily_only' && (
+          <Chip v={`turn ${d.turn_conf}`} />
+        )}
         {swing.phase != null && <Chip v={`swing ${swing.phase}`} />}
       </div>
 
@@ -270,6 +276,26 @@ export function TapePanel({ d, spot }: { d: Record<string, unknown>; spot?: numb
           <Arrow v={n(d.hist_dir)} />
           <span className={`font-mono ${dirTone(n(d.hist))}`}>
             {n(d.hist)?.toFixed(1) ?? '—'}
+          </span>
+        </Row>
+        <Row label="Stoch %K/%D">
+          <Meter v={n(stD.k)} lo={0} hi={100}
+            zones={[[0, 20, 'bg-aggressive/30'], [20, 80, 'bg-hairline'], [80, 100, 'bg-caution/30']]} />
+          <Arrow v={n(stD.k_slope)} />
+          <span className={`font-mono ${stD.zone === 'oversold' ? 'text-aggressive'
+              : stD.zone === 'overbought' ? 'text-caution' : 'text-muted'}`}>
+            {n(stD.k)?.toFixed(0) ?? '—'}/{n(stD.d)?.toFixed(0) ?? '—'}
+            {stD.cross === 'bull' ? ' ⇈' : stD.cross === 'bear' ? ' ⇊' : ''}
+          </span>
+        </Row>
+        <Row label="Stoch weekly">
+          <Meter v={n(stW.k)} lo={0} hi={100}
+            zones={[[0, 20, 'bg-aggressive/30'], [20, 80, 'bg-hairline'], [80, 100, 'bg-caution/30']]} />
+          <Arrow v={n(stW.k_slope)} />
+          <span className={`font-mono ${stW.zone === 'oversold' ? 'text-aggressive'
+              : stW.zone === 'overbought' ? 'text-caution' : 'text-muted'}`}>
+            {n(stW.k)?.toFixed(0) ?? '—'}/{n(stW.d)?.toFixed(0) ?? '—'}
+            {stW.up === true ? ' ↑' : stW.up === false ? ' ↓' : ''}
           </span>
         </Row>
       </div>

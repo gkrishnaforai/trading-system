@@ -75,6 +75,18 @@ export function callSignals(card: Dict): CallSignals | null {
     else if (/fall|knife|new_low/i.test(dip)) push(`dip ${dip}`, 'dn', -1)
     else push(`dip ${dip}`, 'mid')
   }
+  const stw = (det.stoch as Record<string, Record<string, unknown>> | undefined)?.w
+  const tc = String(det.turn_conf ?? '')
+  if (stw) {
+    const wk = Number(stw.k), wu = stw.up === true
+    if (wk < 20 && wu) push(`wk stoch ${wk.toFixed(0)} hook ↑`, 'up', 1)
+    else if (wu) push(`wk stoch ↑ ${wk.toFixed(0)}`, 'up', 0.5)
+    else if (wk > 80) push(`wk stoch ${wk.toFixed(0)} ob`, 'dn', -0.5)
+    else if (stw.up === false) push(`wk stoch ↓ ${wk.toFixed(0)}`, 'dn', -0.5)
+  }
+  if (tc === 'weekly') push('turn wk-confirmed', 'up', 1)
+  else if (tc === 'weekly_leading') push('wk leading turn', 'up', 0.5)
+  else if (tc === 'hook_forming') push('wk hook forming', 'mid')
   const ph = String(sw.phase ?? '')
   if (ph) {
     if (/confirm|uptrend|breakout/i.test(ph) && !/unconfirm/i.test(ph)) {
