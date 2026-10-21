@@ -265,12 +265,23 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
     drv_raised = [d for d in drv if d.get("delta_dir") == "raised"]
     drv_cut = [d for d in drv if d.get("delta_dir") == "cut"]
     for d in drv:
-        if d.get("delta_dir") not in ("raised", "cut"):
-            continue                       # 'new'/'reaffirmed' are
-        dp = d.get("delta_pct")            # standing commitments —
-        line = f"{d['metric']} {d['period']} guide {d['delta_dir']}" \
-               + (f" {dp:+.0%}" if dp is not None else "")
-        (pos if d["delta_dir"] == "raised" else neg).append(line)
+        if d.get("delta_dir") in ("raised", "cut"):
+            dp = d.get("delta_pct")
+            line = (f"{d['metric']} {d['period']} guide "
+                    f"{d['delta_dir']}"
+                    + (f" {dp:+.0%}" if dp is not None else ""))
+            (pos if d["delta_dir"] == "raised" else neg).append(line)
+            continue
+        # standing commitment materially off street — 'new' NFLX Q4
+        # EPS guide $0.67 vs $0.73 is below-consensus red flag, not a
+        # neutral sighting
+        cp = d.get("consensus_pct")
+        if cp is not None and cp <= -0.05:
+            neg.append(f"{d['metric']} {d['period']} guide "
+                       f"{cp:+.0%} vs street")
+        elif cp is not None and cp >= 0.05:
+            pos.append(f"{d['metric']} {d['period']} guide "
+                       f"{cp:+.0%} vs street")
 
     # cash-generation + acquisition-quality legs — FCF is the receipts
     # check on reported growth; negative FCF with a buildout excuse
@@ -516,7 +527,10 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
                   {"metric": d["metric"], "period": d["period"],
                    "delta": d["delta_dir"], "value": d.get("value"),
                    "pct": round(d["delta_pct"], 3)
-                         if d.get("delta_pct") is not None else None}
+                         if d.get("delta_pct") is not None else None,
+                   "vs_street": round(d["consensus_pct"], 3)
+                                if d.get("consensus_pct") is not None
+                                else None}
                   for d in drv] or None,
               "demand_data_partial": True,
               "margin_compression_transient": margin_recovery or None,
@@ -704,7 +718,8 @@ def refresh_all(symbols: list[str] = None) -> dict:
     try:
         for d in db.execute_query(
                 "SELECT symbol, metric, period, value, prior_value,"
-                " delta_dir, delta_pct FROM driver_commitments"
+                " delta_dir, delta_pct, consensus_pct"
+                " FROM driver_commitments"
                 " WHERE status='open'"
                 " AND created_at > now() - interval '180 days'"):
             drivers.setdefault(d["symbol"], []).append(dict(d))

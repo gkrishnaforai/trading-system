@@ -88,7 +88,8 @@ def _driver_deltas(sym: str) -> list[dict]:
     try:
         return [dict(r) for r in _q(
             "SELECT metric, period, value, prior_value, delta_dir,"
-            " delta_pct, value_text FROM driver_commitments"
+            " delta_pct, consensus_value, consensus_pct, value_text"
+            " FROM driver_commitments"
             " WHERE symbol=:s AND (created_at AT TIME ZONE"
             " 'America/New_York')::date ="
             " (now() AT TIME ZONE 'America/New_York')::date"
@@ -109,6 +110,16 @@ def _verdict(before: Optional[str], after: Optional[str],
             "improving": 3, "on_track": 4}
     cuts = [d for d in (drivers or []) if d.get("delta_dir") == "cut"]
     raises = [d for d in (drivers or []) if d.get("delta_dir") == "raised"]
+    # a NEW commitment ≥5% below street behaves like a cut — guide
+    # below consensus is the -6%-AH class of red flag (NFLX Q4 EPS)
+    below = [d for d in (drivers or [])
+             if d.get("delta_dir") not in ("cut", "raised")
+             and d.get("consensus_pct") is not None
+             and d["consensus_pct"] <= -0.05]
+    above = [d for d in (drivers or [])
+             if d.get("delta_dir") not in ("cut", "raised")
+             and d.get("consensus_pct") is not None
+             and d["consensus_pct"] >= 0.05]
     if before and after and before != after:
         v = ("improving" if rank.get(after, 2) > rank.get(before, 2)
              else "deteriorating")
@@ -117,11 +128,11 @@ def _verdict(before: Optional[str], after: Optional[str],
              "deteriorating" if surprise <= -5 else "mixed")
     else:
         v = "pending"
-    if cuts and not raises:
+    if cuts + below and not (raises or above):
         return "deteriorating"
-    if cuts:
+    if cuts + below:
         return {"improving": "mixed", "on_track": "mixed"}.get(v, v)
-    if raises and v in ("mixed", "pending"):
+    if (raises or above) and v in ("mixed", "pending"):
         return "improving"
     return v
 

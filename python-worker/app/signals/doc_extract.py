@@ -359,6 +359,30 @@ def _journal_driver(sym: str, c: dict, src: str) -> Optional[dict]:
     # same commitment re-journaled (same quote) — not a revision
     if standing and standing[0].get("quote") == quote:
         standing = []
+    # guide-vs-consensus — a NEW commitment below the street is the
+    # market-relevant red flag (NFLX Q4 EPS $0.67 vs $0.73 est, -6%
+    # AH) that delta-vs-prior can't see. earnings_data carries the
+    # street estimates already.
+    cons_v = cons_pct = None
+    if val is not None:
+        col = ("revenue_estimate" if re.search(
+                   r"revenue|sales", metric)
+               else "eps_estimate" if re.search(
+                   r"\beps\b|net income|earnings", metric) else None)
+        if col:
+            try:
+                est = db.execute_query(
+                    f"SELECT {col} v FROM earnings_data"
+                    " WHERE stock_symbol=:s AND earnings_date >"
+                    " (now() AT TIME ZONE 'America/New_York')::date"
+                    f" AND {col} IS NOT NULL"
+                    " ORDER BY earnings_date LIMIT 1", {"s": sym})
+                if est and est[0]["v"] is not None:
+                    cons_v = float(est[0]["v"])
+                    if abs(cons_v) > 0:
+                        cons_pct = (val - cons_v) / abs(cons_v)
+            except Exception:
+                pass
     base = prior_v if prior_v is not None else (
         float(standing[0]["value"]) if standing
         and standing[0]["value"] is not None else None)
@@ -379,13 +403,14 @@ def _journal_driver(sym: str, c: dict, src: str) -> Optional[dict]:
     db.execute_update(
         "INSERT INTO driver_commitments (symbol, metric, period,"
         " value, value_text, direction, prior_value, delta_dir,"
-        " delta_pct, quote, source) VALUES"
-        " (:s,:m,:p,:v,:vt,:di,:pv,:dd,:dp,:q,:src)"
+        " delta_pct, consensus_value, consensus_pct, quote, source)"
+        " VALUES (:s,:m,:p,:v,:vt,:di,:pv,:dd,:dp,:cv,:cp,:q,:src)"
         " ON CONFLICT (symbol, metric, period, quote) DO NOTHING",
         {"s": sym, "m": metric, "p": period, "v": val,
          "vt": str(c.get("text") or "")[:120],
          "di": str(c.get("guidance_dir") or "approx"),
-         "pv": base, "dd": delta, "dp": d_pct, "q": quote,
+         "pv": base, "dd": delta, "dp": d_pct,
+         "cv": cons_v, "cp": cons_pct, "q": quote,
          "src": src[:200]})
     # same journal as every other watch — never a parallel tracker
     thr = f">={val:g}" if val is not None else \
@@ -424,7 +449,8 @@ def _journal_driver(sym: str, c: dict, src: str) -> Optional[dict]:
                                "source": src}, default=str),
              "fp": f"driver:{sym}:{metric}:{period}:{quote[:60]}"})
     return {"metric": metric, "period": period, "value": val,
-            "prior": base, "delta": delta, "delta_pct": d_pct}
+            "prior": base, "delta": delta, "delta_pct": d_pct,
+            "consensus": cons_v, "consensus_pct": cons_pct}
 
 
 def check_watches() -> dict[str, int]:
