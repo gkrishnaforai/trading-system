@@ -48,7 +48,10 @@ export default async function RegimePage() {
 
   const tone = TONE[p.posture ?? 'neutral'] ?? 'text-neutral'
   const label = LABEL[p.posture ?? 'neutral'] ?? 'Unknown'
-  const asOf = p.regime_as_of || today?.as_of
+  // today's morning snapshot is what this card renders — the posture
+  // journal (regime_snapshots) refreshes overnight and can lag a day;
+  // let the fresher read own the header date
+  const asOf = today?.as_of || p.regime_as_of
 
   const buckets =
     today?.buckets && typeof today.buckets === 'object' && !Array.isArray(today.buckets)
