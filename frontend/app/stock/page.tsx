@@ -104,6 +104,27 @@ export default async function StockPage({
 
   const verdict = obj(card.verdict)
   const fv = obj(card.fv)
+  const lastPrint = obj(card.last_print)
+  // the quarterly-analysis verdict on the last realized print —
+  // earnings_watch verdict when journaled, else derived from the
+  // surprise (one-time-adjusted when the scan annotated the row)
+  const lpVerdict = (() => {
+    if (lastPrint?.verdict) return String(lastPrint.verdict)
+    const s = Number(lastPrint?.surprise_percentage)
+    if (!lastPrint || Number.isNaN(s)) return null
+    if (s >= 5) return 'beat'
+    if (s <= -5)
+      return lastPrint.adjusted_eps_actual != null
+        ? 'miss — one-time charges'
+        : 'miss'
+    return 'in-line'
+  })()
+  const lpTone =
+    lpVerdict == null ? 'text-muted'
+      : /improv|beat/.test(lpVerdict) ? 'text-aggressive'
+        : /deterior|miss/.test(lpVerdict) && !/one-time/.test(lpVerdict)
+          ? 'text-defensive'
+          : 'text-caution'
   const fvScen = obj(fv?.scenarios)
   const fvAnalyst = obj(fv?.analyst)
   const fvMethods = Array.isArray(fv?.methods) ? (fv!.methods as Record<string, unknown>[]) : []
@@ -412,6 +433,24 @@ export default async function StockPage({
               />
             </span>
           </div>
+          {lastPrint && lpVerdict && (
+            <div className="pt-2 text-[11px] font-mono text-muted">
+              last print {String(lastPrint.earnings_date).slice(0, 10)}
+              {lastPrint.eps_actual != null && (
+                <>
+                  {' · EPS '}{Number(lastPrint.eps_actual)}
+                  {lastPrint.eps_estimate != null &&
+                    ` vs ${Number(lastPrint.eps_estimate)}`}
+                  {lastPrint.surprise_percentage != null &&
+                    ` (${Number(lastPrint.surprise_percentage) > 0 ? '+' : ''}${Number(lastPrint.surprise_percentage).toFixed(0)}%)`}
+                </>
+              )}
+              {lastPrint.adjusted_eps_actual != null &&
+                ` · adj ${Number(lastPrint.adjusted_eps_actual).toFixed(2)} ex-1x`}
+              {' — '}
+              <span className={lpTone}>{lpVerdict}</span>
+            </div>
+          )}
           <div className="pt-3">
             {obj(fundamental?.detail) ? (
               <FundPanel d={{

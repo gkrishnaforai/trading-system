@@ -337,6 +337,31 @@ def card(sym: str) -> dict[str, Any]:
     except Exception:
         pass
 
+    # last realized print + the analysis verdict on it — 'the last
+    # quarterly analysis' the page can cite beside the report-date
+    # clock (which stays honest: the print date IS the data age)
+    last_print = None
+    try:
+        lp = db.execute_query(
+            "SELECT e.earnings_date, e.eps_estimate, e.eps_actual,"
+            " e.surprise_percentage, e.adjusted_eps_actual,"
+            " e.one_time_items, w.verdict"
+            " FROM earnings_data e"
+            " LEFT JOIN earnings_watch w"
+            "   ON w.symbol=e.stock_symbol"
+            "  AND w.earnings_date=e.earnings_date"
+            " WHERE e.stock_symbol=:s AND e.eps_actual IS NOT NULL"
+            " ORDER BY e.earnings_date DESC LIMIT 1", {"s": s})
+        if lp:
+            last_print = dict(lp[0])
+            last_print["earnings_date"] = str(
+                last_print["earnings_date"])
+            it = last_print.get("one_time_items")
+            last_print["one_time_items"] = (
+                it if isinstance(it, list) else None)
+    except Exception:
+        pass
+
     return {"symbol": s, "name": st.get("company_name"),
             "sector": st.get("sector"),
             "sector_flow": sector_flow,
@@ -344,6 +369,7 @@ def card(sym: str) -> dict[str, Any]:
             "spot": spot,
             "next_earnings": (str(st.get("next_earnings_date"))
                               if st.get("next_earnings_date") else None),
+            "last_print": last_print,
             "verdict": verdict,
             "fundamental": {"state": st.get("fundamental_state"),
                             "risk": st.get("fundamental_risk"),
