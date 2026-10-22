@@ -268,7 +268,13 @@ class EarningsCalendarRepository:
         the flywheel path) and `stocks.next_earnings_*` (the indexer's
         upcoming-print view). Union them, earnings_data wins on a
         (symbol, date) collision since it may carry actuals."""
-        query = """
+        # book scope — the calendar is a working surface, not a market
+        # almanac: only names we hold or explicitly watch
+        tier = ("(EXISTS (SELECT 1 FROM portfolio_positions pp"
+                " WHERE pp.stock_id = s.id AND pp.quantity > 0)"
+                " OR EXISTS (SELECT 1 FROM watchlist_stocks ws"
+                "            WHERE ws.stock_id = s.id))")
+        query = f"""
         SELECT symbol, company_name, earnings_date,
                eps_estimate, eps_actual, revenue_estimate,
                surprise_percentage, adjusted_eps_actual, session, source
@@ -281,8 +287,9 @@ class EarningsCalendarRepository:
                    s.next_earnings_session AS session,
                    e.source, 1 AS pri
             FROM earnings_data e
-            LEFT JOIN stocks s ON s.symbol = e.stock_symbol
+            JOIN stocks s ON s.symbol = e.stock_symbol
             WHERE e.earnings_date BETWEEN :start_date AND :end_date
+              AND {tier}
             UNION ALL
             SELECT s.symbol, s.company_name, s.next_earnings_date,
                    s.next_earnings_eps_est, NULL,
@@ -291,6 +298,7 @@ class EarningsCalendarRepository:
             FROM stocks s
             WHERE s.next_earnings_date BETWEEN :start_date
                   AND :end_date
+              AND {tier}
         ) x
         WHERE x.pri = 1 OR NOT EXISTS (
             SELECT 1 FROM earnings_data e

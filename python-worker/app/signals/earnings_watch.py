@@ -46,20 +46,21 @@ def _et_today() -> date:
     return datetime.now(ZoneInfo("America/New_York")).date()
 
 
+# the book — names we hold or explicitly watch. Screener/theme
+# memberships (rule_breaker, smallcap) are deliberately out: the
+# watcher exists to review *our* prints, not the universe.
+_TIER = ("(EXISTS (SELECT 1 FROM portfolio_positions pp"
+         " WHERE pp.stock_id=s.id AND pp.quantity>0)"
+         " OR EXISTS (SELECT 1 FROM watchlist_stocks ws"
+         "            WHERE ws.stock_id=s.id))")
+
+
 def todays_reporters() -> list[str]:
-    """Active-tier names printing today (US market date)."""
+    """Book names (portfolio or watchlist) printing today, ET."""
     return [r["symbol"] for r in _q(
         "SELECT s.symbol FROM stocks s"
         " WHERE s.next_earnings_date ="
-        " (now() AT TIME ZONE 'America/New_York')::date AND ("
-        "   EXISTS (SELECT 1 FROM portfolio_positions pp"
-        "           WHERE pp.stock_id=s.id AND pp.quantity>0)"
-        "   OR EXISTS (SELECT 1 FROM watchlist_stocks ws"
-        "              WHERE ws.stock_id=s.id)"
-        "   OR EXISTS (SELECT 1 FROM rule_breaker_members rb"
-        "              WHERE rb.symbol=s.symbol)"
-        "   OR EXISTS (SELECT 1 FROM smallcap_members sc"
-        "              WHERE sc.symbol=s.symbol))"
+        " (now() AT TIME ZONE 'America/New_York')::date AND " + _TIER +
         " ORDER BY s.symbol")]
 
 
@@ -80,15 +81,7 @@ def due_reporters() -> list[tuple[str, date]]:
             "   AND NOT EXISTS (SELECT 1 FROM earnings_watch ew"
             "                   WHERE ew.symbol = ed.stock_symbol"
             "                   AND ew.earnings_date = ed.earnings_date)"
-            "   AND ("
-            "     EXISTS (SELECT 1 FROM portfolio_positions pp"
-            "             WHERE pp.stock_id=s.id AND pp.quantity>0)"
-            "     OR EXISTS (SELECT 1 FROM watchlist_stocks ws"
-            "                WHERE ws.stock_id=s.id)"
-            "     OR EXISTS (SELECT 1 FROM rule_breaker_members rb"
-            "                WHERE rb.symbol=s.symbol)"
-            "     OR EXISTS (SELECT 1 FROM smallcap_members sc"
-            "                WHERE sc.symbol=s.symbol))",
+            "   AND " + _TIER,
             {"d0": today, "d2": today - timedelta(days=2)}):
         pairs.add((r["symbol"], r["day"]))
     return sorted(pairs, key=lambda p: (p[1], p[0]), reverse=True)
