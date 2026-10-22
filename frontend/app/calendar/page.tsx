@@ -68,9 +68,20 @@ function EarningsLine({
   cap,
 }: {
   r: EarningsRow
-  cap?: { verdict?: string | null; drivers?: any[] } | null
+  cap?: { verdict?: string | null; drivers?: any[]; detail?: any } | null
 }) {
   const verdict = cap?.verdict
+  // the scheduled job's review of this print — thesis transition,
+  // every material driver delta, one-time-adjusted read
+  const det = cap?.detail
+  const th = det?.thesis
+  const ot = det?.one_time
+  const otKinds = Array.isArray(ot?.items)
+    ? [...new Set(ot.items.map((i: any) => i.type))].join('+')
+    : ''
+  const extraDrvs = (cap?.drivers ?? []).filter(
+    (d) => d.delta_dir === 'cut' || d.delta_dir === 'raised',
+  )
   const drv = (cap?.drivers ?? []).find(
     (d) => d.delta_dir === 'cut' || d.delta_dir === 'raised',
   )
@@ -84,7 +95,7 @@ function EarningsLine({
   const epsAct = pick(r, ['eps_actual'])
   const epsAdj = pick(r, ['adjusted_eps_actual'])
   return (
-    <div className="flex items-baseline justify-between gap-4 text-sm">
+    <div className="flex flex-wrap items-baseline justify-between gap-4 text-sm">
       <span className="min-w-0 truncate">
         <Link
           href={`/stock?sym=${encodeURIComponent(sym)}`}
@@ -136,6 +147,19 @@ function EarningsLine({
           : epsEst != null && `EPS est ${String(epsEst)}`}
         {revEst != null && fmtMoney(revEst) && ` · rev est ${fmtMoney(revEst)}`}
       </span>
+      {(th || ot?.adjusted_surprise != null || extraDrvs.length > 1) && (
+        <div className="basis-full pt-0.5 text-[11px] font-mono text-faint">
+          {th?.before || th?.after
+            ? `thesis ${th?.before ?? 'new'}→${th?.after ?? '?'}`
+            : null}
+          {ot?.adjusted_surprise != null &&
+            ` · adj ${Number(ot.adjusted_surprise) > 0 ? '+' : ''}${Number(ot.adjusted_surprise).toFixed(1)}% ex-one-time${otKinds ? ` (${otKinds})` : ''}`}
+          {extraDrvs.length > 1 &&
+            ` · ${extraDrvs.slice(0, 3).map((d) =>
+              `${String(d.metric).replace(/_/g, ' ')} ${d.delta_dir === 'raised' ? '↑' : '↓'}${d.delta_pct != null ? `${Math.abs(Number(d.delta_pct) * 100).toFixed(0)}%` : ''}`,
+            ).join(' · ')}`}
+        </div>
+      )}
     </div>
   )
 }
@@ -214,11 +238,13 @@ export default async function CalendarPage() {
   const evList = Array.isArray(events) ? events : (events?.events ?? [])
   const erList = earnings?.data ?? []
   const verdicts = new Map<
-    string, { verdict?: string | null; drivers?: any[] }>()
+    string,
+    { verdict?: string | null; drivers?: any[]; detail?: any }>()
   for (const c of watch?.captures ?? []) {
     verdicts.set(`${c.symbol}|${String(c.earnings_date).slice(0, 10)}`, {
       verdict: c.verdict,
       drivers: (c as any)?.detail?.drivers,
+      detail: (c as any)?.detail,
     })
   }
   const verdictFor = (r: EarningsRow) =>

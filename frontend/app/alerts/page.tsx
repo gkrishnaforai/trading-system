@@ -27,6 +27,30 @@ function ago(ts?: string) {
   return `${Math.round(m / 1440)}d ago`
 }
 
+function earningsReviewBits(det: Record<string, unknown>): string[] {
+  // the earnings-watch capture's review — eps line, thesis
+  // transition, one-time adjustment, material driver deltas
+  const out: string[] = []
+  const eps = det.eps as Record<string, unknown> | undefined
+  if (eps?.act != null)
+    out.push(`EPS ${eps.act}${eps?.est != null ? ` vs ${eps.est}` : ''}`)
+  if (det.surprise_pct != null)
+    out.push(`${Number(det.surprise_pct) > 0 ? '+' : ''}${Number(det.surprise_pct).toFixed(1)}%`)
+  const th = det.thesis as Record<string, unknown> | undefined
+  if (th?.before || th?.after)
+    out.push(`thesis ${th?.before ?? 'new'}→${th?.after ?? '?'}`)
+  const ot = det.one_time as Record<string, unknown> | undefined
+  if (ot?.adjusted_surprise != null)
+    out.push(`adj ${Number(ot.adjusted_surprise) > 0 ? '+' : ''}${Number(ot.adjusted_surprise).toFixed(1)}% ex-one-time`)
+  for (const d of ((det.drivers as any[]) ?? [])
+    .filter((x) => x?.delta_dir === 'cut' || x?.delta_dir === 'raised')
+    .slice(0, 3))
+    out.push(
+      `${String(d.metric).replace(/_/g, ' ')} ${d.delta_dir === 'raised' ? '↑' : '↓'}${d.delta_pct != null ? `${Math.abs(Number(d.delta_pct) * 100).toFixed(0)}%` : ''}`,
+    )
+  return out
+}
+
 function AlertRow({ a }: { a: AlertItem }) {
   const dir = String(a.direction ?? 'neutral').toLowerCase()
   const mat = String(a.materiality ?? 'low').toLowerCase()
@@ -37,6 +61,7 @@ function AlertRow({ a }: { a: AlertItem }) {
       ? (a.detail as Record<string, unknown>)
       : null
   const verdict = det?.verdict ? String(det.verdict) : null
+  const review = isEarnings && det ? earningsReviewBits(det) : []
   return (
     <div className="py-3">
       <div className="flex items-start justify-between gap-3">
@@ -92,11 +117,15 @@ function AlertRow({ a }: { a: AlertItem }) {
           <div className={`pt-1 text-sm ${DIR_TONE[dir] ?? 'text-ink'}`}>
             {a.title ?? '—'}
           </div>
-          {a.detail != null && (
+          {review.length > 0 ? (
+            <div className="pt-0.5 text-xs font-mono text-muted">
+              {review.join(' · ')}
+            </div>
+          ) : a.detail != null ? (
             <div className="pt-0.5 text-xs text-muted">
               {fmtShort(a.detail).slice(0, 220)}
             </div>
-          )}
+          ) : null}
           {a.rating_action && (
             <div className="pt-0.5 text-[11px] text-faint">
               {a.rating_action}
