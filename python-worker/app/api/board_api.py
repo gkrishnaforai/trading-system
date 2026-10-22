@@ -1833,6 +1833,16 @@ async def symbol_refresh(sym: str):
     return await asyncio.to_thread(_go)
 
 
+@router.post("/symbol/{sym}/fv-refresh")
+async def symbol_fv_refresh(sym: str):
+    """Full one-symbol FV refresh: refetch the FMP fundamentals bundle
+    (eps_forward, estimates, TTM actuals) then re-resolve — the
+    post-print path on demand. The plain recompute only re-prices on
+    stored inputs; this fixes stale/missing inputs too."""
+    from app.signals import fv_sweep
+    return await asyncio.to_thread(fv_sweep.refresh_after_print, sym.upper())
+
+
 @router.post("/symbol/{sym}/fundamentals-refresh")
 async def symbol_fundamentals_refresh(sym: str):
     """On-demand: rebuild this symbol's flywheel from the provider

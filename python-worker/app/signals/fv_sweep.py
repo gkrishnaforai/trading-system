@@ -21,9 +21,14 @@ from app.database import db
 logger = logging.getLogger(__name__)
 
 
-def _needs_fundamentals_refresh(sym: str) -> bool:
-    """Last actual print landed after the latest fmp_fundamentals
-    snapshot → the stored eps_forward predates the report."""
+def _needs_fundamentals_refresh(sym: str,
+                                max_snapshot_age_days: int = 30) -> bool:
+    """Refresh when (a) the last actual print landed after the latest
+    fmp_fundamentals snapshot → the stored eps_forward predates the
+    report, or (b) the bundle itself is stale — estimates drift
+    between prints, and a month-old snapshot can be missing fields
+    entirely (AAPL/MA/PYPL resolved every FV method to missing_data
+    on Sep-26 payloads that never refreshed between prints)."""
     snap = db.execute_query(
         "SELECT MAX(generated_at)::date AS d"
         " FROM stock_insights_snapshots"
@@ -33,7 +38,12 @@ def _needs_fundamentals_refresh(sym: str) -> bool:
         "SELECT MAX(earnings_date) AS d FROM earnings_data"
         " WHERE stock_symbol=:s AND eps_actual IS NOT NULL",
         {"s": sym})[0]["d"]
-    return bool(rep and (not snap or rep > snap))
+    if rep and (not snap or rep > snap):
+        return True
+    if not snap:
+        return True
+    from datetime import date
+    return (date.today() - snap).days > max_snapshot_age_days
 
 
 def _resolve_fv(sym: str) -> Dict[str, Any]:
