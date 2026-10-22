@@ -303,9 +303,23 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
         fv = fv_sweep.refresh_after_print(sym)
     except Exception as exc:
         logger.debug("earnings_watch fv refresh %s: %s", sym, exc)
+
+    # post-print review — journal a fresh 5-question review so the
+    # stock-page watch section reflects the print (new thesis status,
+    # refreshed FV), not the last weekly/alert row. Calls review()
+    # directly: maybe_review's 20h dedupe would drop it whenever a
+    # same-day review already ran, but the quarterly print is always
+    # new material evidence worth journaling.
+    rev = {}
+    try:
+        from app.signals import event_review
+        rev = event_review.review(sym, trigger="earnings") or {}
+    except Exception as exc:
+        logger.debug("earnings_watch review %s: %s", sym, exc)
     return {"symbol": sym, "status": "journaled",
             "verdict": verdict, "surprise_pct": _f(surp),
             "thesis": {"before": before, "after": after},
+            "review_verdict": rev.get("verdict"),
             "fv": {k: v for k, v in fv.items() if k != "symbol"}}
 
 
