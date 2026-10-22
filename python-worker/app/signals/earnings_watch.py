@@ -63,14 +63,44 @@ def todays_reporters() -> list[str]:
         " ORDER BY s.symbol")]
 
 
-def _print(sym: str) -> Optional[dict]:
-    """Today's earnings_data row once actuals (or estimates) exist."""
+def due_reporters() -> list[tuple[str, date]]:
+    """(symbol, print_day) pairs still owed a review: today's reporters
+    plus any active-tier print from the last 2 days (ET) that was never
+    captured. Actuals can land after the watch window — yfinance
+    'Reported EPS' often arrives next morning — and by then
+    next_earnings_date has rolled to the following quarter, so a
+    today-only sweep would orphan the print permanently."""
+    today = _et_today()
+    pairs = {(s, today) for s in todays_reporters()}
+    for r in _q(
+            "SELECT ed.stock_symbol AS symbol, ed.earnings_date AS day"
+            " FROM earnings_data ed JOIN stocks s"
+            "   ON s.symbol = ed.stock_symbol"
+            " WHERE ed.earnings_date BETWEEN :d2 AND :d0"
+            "   AND NOT EXISTS (SELECT 1 FROM earnings_watch ew"
+            "                   WHERE ew.symbol = ed.stock_symbol"
+            "                   AND ew.earnings_date = ed.earnings_date)"
+            "   AND ("
+            "     EXISTS (SELECT 1 FROM portfolio_positions pp"
+            "             WHERE pp.stock_id=s.id AND pp.quantity>0)"
+            "     OR EXISTS (SELECT 1 FROM watchlist_stocks ws"
+            "                WHERE ws.stock_id=s.id)"
+            "     OR EXISTS (SELECT 1 FROM rule_breaker_members rb"
+            "                WHERE rb.symbol=s.symbol)"
+            "     OR EXISTS (SELECT 1 FROM smallcap_members sc"
+            "                WHERE sc.symbol=s.symbol))",
+            {"d0": today, "d2": today - timedelta(days=2)}):
+        pairs.add((r["symbol"], r["day"]))
+    return sorted(pairs, key=lambda p: (p[1], p[0]), reverse=True)
+
+
+def _print(sym: str, day: date) -> Optional[dict]:
+    """The day's earnings_data row once actuals (or estimates) exist."""
     rows = _q("SELECT stock_symbol, earnings_date, eps_estimate,"
               " eps_actual, revenue_estimate, surprise_percentage"
               " FROM earnings_data WHERE stock_symbol=:s"
-              " AND earnings_date ="
-              " (now() AT TIME ZONE 'America/New_York')::date",
-              {"s": sym})
+              " AND earnings_date = :d",
+              {"s": sym, "d": day})
     return dict(rows[0]) if rows else None
 
 
@@ -142,12 +172,14 @@ def _verdict(before: Optional[str], after: Optional[str],
     return v
 
 
-def check_symbol(sym: str) -> dict:
-    """One symbol's earnings-day check. Idempotent — a journaled row
-    for today's print means the work already happened."""
+def check_symbol(sym: str, day: Optional[date] = None) -> dict:
+    """One symbol's earnings-day check for `day` (defaults to ET today).
+    Idempotent — a journaled row for that print means the work already
+    happened. `day` lets the sweep revisit prints whose actuals landed
+    after the watch window closed."""
     from app.signals import earnings_calendar, earnings_release
     sym = sym.upper()
-    today = _et_today()
+    today = day or _et_today()
     if _q("SELECT 1 FROM earnings_watch WHERE symbol=:s"
           " AND earnings_date=:d", {"s": sym, "d": today}):
         return {"symbol": sym, "status": "already_journaled"}
@@ -159,7 +191,7 @@ def check_symbol(sym: str) -> dict:
         earnings_calendar.refresh_earnings_calendar(sym)
     except Exception as exc:
         logger.debug("earnings_watch refresh %s: %s", sym, exc)
-    pr = _print(sym)
+    pr = _print(sym, today)
     if not pr or pr.get("eps_actual") is None:
         # print not out yet (or no actuals feed) — leave for next poll
         return {"symbol": sym, "status": "awaiting_print",
@@ -288,11 +320,11 @@ def poll() -> dict:
     """The 30-min sweep — every active-tier name printing today that
     isn't journaled yet. Safe to run any time; symbols whose print
     hasn't landed return 'awaiting_print' and get retried next poll."""
-    reporters = todays_reporters()
+    reporters = due_reporters()
     out, errs = [], []
-    for sym in reporters:
+    for sym, day in reporters:
         try:
-            res = check_symbol(sym)
+            res = check_symbol(sym, day)
             if res["status"] == "journaled":
                 out.append(res)
         except Exception as exc:
