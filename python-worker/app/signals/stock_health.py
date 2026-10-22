@@ -271,7 +271,7 @@ def card(sym: str) -> dict[str, Any]:
             "SELECT symbol, fair_value, scenario_fair_values,"
             " expected_fair_value,"
             " quality_flags, regime, method_results, decision, as_of,"
-            " inputs_watermark, spot_at_run"
+            " inputs_watermark, spot_at_run, model_version"
             " FROM fair_value_v2_runs WHERE symbol=:s"
             " ORDER BY as_of DESC LIMIT 1", {"s": s})
         p = db.execute_query(
@@ -539,6 +539,36 @@ def _fv_detail(run_row: dict, spot, fund_as_of=None) -> dict:
             if fv and (fv < med * 0.35 or fv > med * 3):
                 m["outlier"] = True
                 issues.append(f"outlier_method:{m['key']}")
+    # run staleness — the card serves stored runs without resolving, so
+    # surface it: >24h old (the resolver's own reuse bound) or built by a
+    # different model version (a formula/routing change invalidates the
+    # run even when inputs are unchanged — the Oct-18 pre_earnings gate
+    # left 434 stale runs untouched for days). The health endpoint fires
+    # a background recompute when this is set.
+    stale = None
+    try:
+        from datetime import datetime, timezone
+        asof = run_row.get("as_of")
+        if isinstance(asof, str):
+            asof = datetime.fromisoformat(asof.replace("Z", "+00:00"))
+        if asof and asof.tzinfo is None:
+            asof = asof.replace(tzinfo=timezone.utc)
+        if asof:
+            age_h = (datetime.now(timezone.utc)
+                     - asof).total_seconds() / 3600
+            if age_h > 24:
+                stale = f"run_age:{age_h:.0f}h"
+    except Exception:
+        pass
+    if not stale:
+        try:
+            from app.fair_value_v2.service import FairValueV2Service
+            cur = FairValueV2Service().runner.model_version
+            if (run_row.get("model_version")
+                    and run_row["model_version"] != cur):
+                stale = "model_changed"
+        except Exception:
+            pass
     return {
         "as_of": str(run_row.get("as_of") or "")[:19],
         "inputs_as_of": str(run_row.get("inputs_watermark") or "")[:10]
@@ -553,6 +583,7 @@ def _fv_detail(run_row: dict, spot, fund_as_of=None) -> dict:
         "methods": methods,
         "analyst": analyst,
         "decision": run_row.get("decision"),
+        "stale": stale,
         "valuation_status": "ok" if not issues else "needs_validation",
         "valuation_issues": issues,
     }

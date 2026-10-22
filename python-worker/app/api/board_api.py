@@ -1732,7 +1732,20 @@ async def symbol_health(sym: str):
     synthesized into a verdict that names conflicts (strong
     fundamentals + broken tape = 'watch, don't catch the knife')."""
     from app.signals.stock_health import card
-    return await asyncio.to_thread(card, sym.upper())
+    out = await asyncio.to_thread(card, sym.upper())
+    # self-heal: the card serves stored runs, so when one is stale
+    # (age/model drift) kick a background recompute — the next view
+    # is fresh. The resolver's own reuse checks bound the work.
+    if (out.get("fv") or {}).get("stale"):
+        async def _fv_bg() -> None:
+            try:
+                from app.fair_value_v2.resolver import FairValueV2Resolver
+                await asyncio.to_thread(
+                    FairValueV2Resolver().resolve, sym.upper())
+            except Exception:
+                pass
+        asyncio.create_task(_fv_bg())
+    return out
 
 
 @router.get("/readiness")
