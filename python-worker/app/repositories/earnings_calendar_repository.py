@@ -271,13 +271,13 @@ class EarningsCalendarRepository:
         query = """
         SELECT symbol, company_name, earnings_date,
                eps_estimate, eps_actual, revenue_estimate,
-               surprise_percentage, session, source
+               surprise_percentage, adjusted_eps_actual, session, source
         FROM (
             SELECT e.stock_symbol AS symbol,
                    s.company_name,
                    e.earnings_date,
                    e.eps_estimate, e.eps_actual, e.revenue_estimate,
-                   e.surprise_percentage,
+                   e.surprise_percentage, e.adjusted_eps_actual,
                    s.next_earnings_session AS session,
                    e.source, 1 AS pri
             FROM earnings_data e
@@ -286,7 +286,7 @@ class EarningsCalendarRepository:
             UNION ALL
             SELECT s.symbol, s.company_name, s.next_earnings_date,
                    s.next_earnings_eps_est, NULL,
-                   s.next_earnings_rev_est, NULL,
+                   s.next_earnings_rev_est, NULL, NULL,
                    s.next_earnings_session, 'index', 2 AS pri
             FROM stocks s
             WHERE s.next_earnings_date BETWEEN :start_date

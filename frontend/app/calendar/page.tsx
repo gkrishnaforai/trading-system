@@ -82,6 +82,7 @@ function EarningsLine({
   const epsEst = pick(r, ['eps_estimate', 'eps_est', 'estimated_eps'])
   const revEst = pick(r, ['revenue_estimate', 'rev_est'])
   const epsAct = pick(r, ['eps_actual'])
+  const epsAdj = pick(r, ['adjusted_eps_actual'])
   return (
     <div className="flex items-baseline justify-between gap-4 text-sm">
       <span className="min-w-0 truncate">
@@ -128,7 +129,10 @@ function EarningsLine({
       </span>
       <span className="shrink-0 text-right font-mono text-xs text-muted">
         {epsAct != null
-          ? `EPS ${String(epsAct)}${epsEst != null ? ` vs ${String(epsEst)}` : ''}`
+          ? `EPS ${String(epsAct)}${epsEst != null ? ` vs ${String(epsEst)}` : ''}` +
+          (epsAdj != null && Number(epsAdj) !== Number(epsAct)
+            ? ` · adj ${Number(epsAdj).toFixed(2)} ex-1x`
+            : '')
           : epsEst != null && `EPS est ${String(epsEst)}`}
         {revEst != null && fmtMoney(revEst) && ` · rev est ${fmtMoney(revEst)}`}
       </span>

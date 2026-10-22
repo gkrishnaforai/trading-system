@@ -101,11 +101,14 @@ def _driver_deltas(sym: str) -> list[dict]:
 
 def _verdict(before: Optional[str], after: Optional[str],
              surprise: Optional[float],
-             drivers: Optional[list] = None) -> str:
+             drivers: Optional[list] = None,
+             adj_surprise: Optional[float] = None) -> str:
     """improving/deteriorating from the thesis transition; surprise
     breaks ties. A named-driver guide CUT overrides the headline —
     the market repriced NFLX -6% on the ad-rev cut despite an EPS
-    beat. 'pending' when there's no basis yet."""
+    beat. A one-time-adjusted surprise can only upgrade the tie-break
+    (a legal charge isn't business deterioration); the raw miss is
+    still journaled. 'pending' when there's no basis yet."""
     rank = {"broken": 0, "deteriorating": 1, "unknown": 2,
             "improving": 3, "on_track": 4}
     cuts = [d for d in (drivers or []) if d.get("delta_dir") == "cut"]
@@ -124,8 +127,10 @@ def _verdict(before: Optional[str], after: Optional[str],
         v = ("improving" if rank.get(after, 2) > rank.get(before, 2)
              else "deteriorating")
     elif surprise is not None:
-        v = ("improving" if surprise >= 5 else
-             "deteriorating" if surprise <= -5 else "mixed")
+        eff = (max(surprise, adj_surprise)
+               if adj_surprise is not None else surprise)
+        v = ("improving" if eff >= 5 else
+             "deteriorating" if eff <= -5 else "mixed")
     else:
         v = "pending"
     if cuts + below and not (raises or above):
@@ -175,8 +180,18 @@ def check_symbol(sym: str) -> dict:
         logger.debug("earnings_watch thesis %s: %s", sym, exc)
 
     surp = pr.get("surprise_percentage")
+    # one-time charge pass — legal/severance/impairment items buried
+    # in the release can turn an adjusted beat into a reported miss;
+    # annotate the row so the verdict isn't fooled (META Q2-26)
+    adj = {}
+    try:
+        from app.signals import one_time
+        adj = one_time.apply(sym, today)
+    except Exception as exc:
+        logger.debug("earnings_watch one_time %s: %s", sym, exc)
+    adj_surp = adj.get("adjusted_surprise")
     drivers = _driver_deltas(sym)
-    verdict = _verdict(before, after, surp, drivers)
+    verdict = _verdict(before, after, surp, drivers, adj_surp)
     direction = ("UP" if verdict == "improving" else
                  "DOWN" if verdict == "deteriorating" else "NEUTRAL")
     detail = {
@@ -185,6 +200,9 @@ def check_symbol(sym: str) -> dict:
         "surprise_pct": _f(surp),
         "rev_est": _f(pr["revenue_estimate"]),
         "thesis": {"before": before, "after": after},
+        "one_time": ({k: v for k, v in adj.items()
+                      if k in ("items", "charges", "adjusted_eps",
+                               "adjusted_surprise")} or None),
         "drivers": drivers,
         "release": {"analyzed": ext.get("analyzed"),
                     "claims": ext.get("claims")},
@@ -226,7 +244,12 @@ def check_symbol(sym: str) -> dict:
        {"s": sym, "di": direction,
         "mat": "HIGH" if abs(surp or 0) >= 5 else "MEDIUM",
         "t": (f"{sym} earnings: EPS {beat} "
-              f"{surp:+.1f}% — fundamentals {verdict}"
+              f"{surp:+.1f}%"
+              + (f" (adj {adj_surp:+.1f}% ex-one-time)"
+                 if adj_surp is not None
+                 and abs((adj_surp or 0) - (surp or 0)) >= 2
+                 else "")
+              + f" — fundamentals {verdict}"
               + (f" (thesis {before or 'new'}→{after})"
                  if before != after else "")
               + "".join(
