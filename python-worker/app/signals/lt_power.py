@@ -369,8 +369,9 @@ def refresh_priced_status(symbols: Optional[list] = None) -> dict:
     flywheel/board job; each symbol's full result also journals to
     lt_power_runs (deduped on inputs hash)."""
     from app.database import db
+    from app.signals import symbol_tiers
     syms = symbols or [r["symbol"] for r in db.execute_query(
-        "SELECT symbol FROM stocks WHERE momentum_state IS NOT NULL")]
+        f"SELECT symbol FROM ({symbol_tiers._active_sql()}) x")]
     done = {"lt_curve": 0, "fv": 0, "unknown": 0, "err": 0}
     for s in syms:
         try:

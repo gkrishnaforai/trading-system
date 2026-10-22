@@ -308,7 +308,8 @@ def fund_momentum(limit: int = 10) -> list[dict[str, Any]]:
         "SELECT symbol, gap_score, rev_accel, est_revision_pct,"
         " muted_reaction FROM symbol_flywheel")}
     mom = {r["symbol"]: r for r in db.execute_query(
-        "SELECT symbol, momentum_state, momentum_detail FROM stocks")}
+        "SELECT symbol, momentum_state, momentum_detail FROM stocks"
+        " WHERE momentum_state IS NOT NULL")}
     rank = {"accelerating": 4, "improving": 3, "stable": 2,
             "turnaround": 2, "pressured": 1,
             "watch": 1, "declining": 0, "deteriorating": -1}

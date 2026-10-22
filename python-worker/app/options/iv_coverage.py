@@ -27,10 +27,13 @@ INDEX_HEDGES = ("QQQ", "SPY")   # crash_alpha's hedge gate reads QQQ
 
 
 def _universe() -> list[str]:
-    """Same universe the put scanner iterates, plus the index hedges."""
+    """Active tier (portfolio ∪ watchlist ∪ book members) plus the
+    index hedges — option-chain pulls are per-symbol, so the registry
+    is out of reach."""
     from app.database import db
+    from app.signals import symbol_tiers
     rows = db.execute_query(
-        "SELECT symbol FROM stocks WHERE momentum_state IS NOT NULL")
+        f"SELECT symbol FROM ({symbol_tiers._active_sql()}) x")
     return sorted({r["symbol"] for r in rows} | set(INDEX_HEDGES))
 
 

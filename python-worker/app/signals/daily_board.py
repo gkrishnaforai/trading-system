@@ -41,37 +41,33 @@ _MOM_EXIT = {"climax": 30, "breakdown": 30, "knife": 25,
 
 
 def _tape() -> dict[str, Any]:
-    """SPY trend + VIX/VXN — the fear/greed posture. One yf call.
-    VXN is the Nasdaq-100 fear gauge — more relevant than VIX for a
-    tech-heavy book."""
+    """SPY trend + VIX/VXN — the fear/greed posture, from stored
+    daily_bars (the momentum job refreshes them daily; thin symbols
+    self-heal through one batched fetch in bars.load)."""
     try:
-        import yfinance as yf
-        d = yf.download("SPY ^VIX ^VXN", period="1y", interval="1d",
-                        group_by="ticker", progress=False,
-                        auto_adjust=True)
-        spy = d["SPY"]["Close"].dropna()
-        vix_s = d["^VIX"]["Close"].dropna()
-        px = float(spy.iloc[-1])
-        sma200 = float(spy.iloc[-200:].mean())
-        vix = float(vix_s.iloc[-1])
-        vix_prev = float(vix_s.iloc[-6:-1].mean()) if len(vix_s) > 6 else vix
+        from app.market_data import bars as bars_mod
+        books = bars_mod.load(["SPY", "^VIX", "^VXN"], days=300)
+        spy = [b.close for b in books.get("SPY") or []]
+        vix_s = [b.close for b in books.get("^VIX") or []]
+        if len(spy) < 200 or not vix_s:
+            return {}
+        px = float(spy[-1])
+        sma200 = sum(spy[-200:]) / 200
+        vix = float(vix_s[-1])
+        vix_prev = sum(vix_s[-6:-1]) / 5 if len(vix_s) > 6 else vix
         out = {"spy": round(px, 2),
                "spy_vs_200": round(px / sma200 - 1, 4),
-               "spy_1d": round(px / float(spy.iloc[-2]) - 1, 4),
-               "spy_5d": round(px / float(spy.iloc[-6]) - 1, 4),
+               "spy_1d": round(px / float(spy[-2]) - 1, 4),
+               "spy_5d": round(px / float(spy[-6]) - 1, 4),
                "vix": round(vix, 1),
                "vix_rising": vix > vix_prev * 1.05}
-        try:
-            vxn_s = d["^VXN"]["Close"].dropna()
-            if len(vxn_s):
-                vxn = float(vxn_s.iloc[-1])
-                vxn_prev = (float(vxn_s.iloc[-6:-1].mean())
-                            if len(vxn_s) > 6 else vxn)
-                out["vxn"] = round(vxn, 1)
-                out["vxn_chg_5d"] = round(vxn - vxn_prev, 1)
-                out["vxn_rising"] = vxn > vxn_prev * 1.05
-        except Exception:
-            pass                    # VXN best-effort — may be absent
+        vxn_s = [b.close for b in books.get("^VXN") or []]
+        if vxn_s:
+            vxn = float(vxn_s[-1])
+            vxn_prev = (sum(vxn_s[-6:-1]) / 5 if len(vxn_s) > 6 else vxn)
+            out["vxn"] = round(vxn, 1)
+            out["vxn_chg_5d"] = round(vxn - vxn_prev, 1)
+            out["vxn_rising"] = vxn > vxn_prev * 1.05
         return out
     except Exception as exc:
         logger.debug("tape fetch failed: %s", exc)

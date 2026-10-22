@@ -953,13 +953,10 @@ async def tracked_phase_scan(concurrency: int = 6) -> dict:
         pass
 
     def _bars_all():
-        import yfinance as yf
-        return yf.download(syms + ["SPY", "^VIX"], period="2y",
-                           interval="1d", group_by="ticker",
-                           threads=True, progress=False,
-                           auto_adjust=True)
+        from app.market_data import bars as bars_mod
+        return bars_mod.load(syms + ["SPY", "^VIX"], days=520)
 
-    df = await asyncio.to_thread(_bars_all)
+    books = await asyncio.to_thread(_bars_all)
 
     # market regime — the CANONICAL posture read (posture.py over the
     # journaled regime card): the same permission layer the daily calls,
@@ -969,16 +966,17 @@ async def tracked_phase_scan(concurrency: int = 6) -> dict:
     # new_longs; a leap put obeys shorts.
     market = {}
     try:
-        spy_c = df["SPY"]["Close"].dropna()
-        spy_s200 = spy_c.rolling(200).mean().iloc[-1]
-        spy_px = spy_c.iloc[-1]
-        vix = float(df["^VIX"]["Close"].dropna().iloc[-1])
+        spy_c = [b.close for b in books.get("SPY") or []]
+        spy_s200 = (sum(spy_c[-200:]) / 200
+                    if len(spy_c) >= 200 else None)
+        spy_px = spy_c[-1]
+        vix = float((books.get("^VIX") or [])[-1].close)
         from app.signals import posture as _pos
         pos = _pos.current()
         market = {"spy": round(float(spy_px), 1),
                   "spy_vs_sma200": round(
                       float(spy_px / spy_s200 - 1) * 100, 1)
-                  if spy_s200 == spy_s200 else None,
+                  if spy_s200 else None,
                   "vix": round(vix, 1),
                   "tape": pos.get("posture"),
                   "tape_rule": pos.get("matched"),
@@ -990,16 +988,7 @@ async def tracked_phase_scan(concurrency: int = 6) -> dict:
         market = {}
 
     def _bars_for(sym: str):
-        try:
-            sub = df[sym].dropna(subset=["Close"])
-        except (KeyError, TypeError):
-            return []
-        return [SimpleNamespace(
-            timestamp=i.to_pydatetime(), date=i.date(),
-            open=float(r.Open), high=float(r.High), low=float(r.Low),
-            close=float(r.Close), adj_close=None,
-            volume=float(r.Volume) if pd.notna(r.Volume) else 0)
-            for i, r in sub.iterrows()]
+        return books.get(sym) or []
 
     fmp = EnhancedFMPClient.from_settings()
     sem = asyncio.Semaphore(concurrency)

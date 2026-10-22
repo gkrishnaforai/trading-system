@@ -148,11 +148,16 @@ async def fear_greed() -> dict[str, Any]:
     except Exception as exc:
         logger.debug("fear/greed breadth failed: %s", exc)
 
-    # 4 — VIX inverted (low vol = complacency/greed)
+    # 4 — VIX inverted (low vol = complacency/greed) — stored bars,
+    # refreshed daily by the momentum job; no provider call here.
     try:
-        vix_bars = await svc.get_ohlcv("^VIX", period="3mo")
-        if vix_bars:
-            vix = ind.closes(vix_bars).iloc[-1]
+        import asyncio
+        from app.market_data import bars as bars_mod
+        vix_bars = await asyncio.to_thread(
+            bars_mod.load, ["^VIX"], 10)
+        vb = vix_bars.get("^VIX") or []
+        if vb:
+            vix = vb[-1].close
             components["vix"] = _clamp((35 - vix) * 4)
             detail["vix"] = round(float(vix), 1)
     except Exception as exc:

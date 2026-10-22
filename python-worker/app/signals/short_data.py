@@ -78,11 +78,12 @@ def _get(path: str, params: dict) -> Optional[dict]:
 # ------------------------------ universe ------------------------------
 
 def _universe() -> list[str]:
+    """Active-tier only — the shared Massive key is ~5 req/min, so
+    pulling short data for the full registry would never finish."""
     from app.database import db
-    return [r["symbol"] for r in db.execute_query(
-        "SELECT symbol FROM stocks"
-        " WHERE is_active AND momentum_state IS NOT NULL"
-        " ORDER BY symbol")]
+    from app.signals import symbol_tiers
+    return sorted(r["symbol"] for r in db.execute_query(
+        f"SELECT symbol FROM ({symbol_tiers._active_sql()}) x"))
 
 
 def _stale(table: str, date_col: str, symbols: list[str],

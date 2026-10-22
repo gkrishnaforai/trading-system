@@ -79,9 +79,13 @@ def _mark(job: str, **kw):
 
 
 async def _tracked_symbols() -> list[str]:
+    """The working set every per-symbol job runs on — the active
+    coverage tier (portfolio ∪ watchlist ∪ book members ∪
+    promoted futureStocks), NOT the whole stocks registry."""
     from app.database import db
-    rows = await asyncio.to_thread(db.execute_query,
-        "SELECT symbol FROM stocks WHERE momentum_state IS NOT NULL")
+    from app.signals import symbol_tiers
+    rows = await asyncio.to_thread(
+        db.execute_query, symbol_tiers._active_sql())
     return [r["symbol"] for r in rows]
 
 

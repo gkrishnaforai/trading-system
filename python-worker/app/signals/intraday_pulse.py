@@ -130,15 +130,17 @@ def _trend(bars: list[dict], lookback: int = 3) -> Optional[float]:
 # ------------------------------ breadth ---------------------------------
 
 def _book_breadth() -> dict[str, Any]:
-    """% of tracked names above today's open — ONE batched download,
-    not market-wide adv/dec (that needs a paid snapshot feed)."""
+    """% of active-tier names above today's open — ONE batched
+    download, not market-wide adv/dec (that needs a paid snapshot
+    feed)."""
     try:
         import yfinance as yf
         from app.database import db
+        from app.signals import symbol_tiers
         syms = [r["symbol"] for r in db.execute_query(
-            "SELECT symbol FROM stocks WHERE is_active"
-            " AND momentum_state IS NOT NULL ORDER BY market_cap"
-            " DESC NULLS LAST LIMIT 250")]
+            f"SELECT t.symbol FROM ({symbol_tiers._active_sql()}) t"
+            " JOIN stocks s ON s.symbol = t.symbol"
+            " ORDER BY s.market_cap DESC NULLS LAST LIMIT 250")]
         if not syms:
             return {"available": False}
         df = yf.download(" ".join(syms), period="1d",
