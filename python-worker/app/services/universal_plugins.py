@@ -44,7 +44,12 @@ class EarningsCalendarPlugin:
                     events.extend(await self._fetch_fmp_earnings(config))
                 elif source == 'alpha_vantage':
                     events.extend(await self._fetch_av_earnings(config))
-            
+
+            symbols = config.get('symbols')
+            if symbols is not None:
+                scope = {s.upper() for s in symbols}
+                events = [e for e in events if (e.get('entity_id') or '').upper() in scope]
+
             logger.info(f"📊 Collected {len(events)} earnings events from {len(sources)} sources")
             metrics.increment('earnings_events_collected_total', len(events))
             
@@ -213,7 +218,7 @@ class AnalystGradesPlugin:
             """
 
             params: Dict[str, Any] = {'days': days}
-            if symbols:
+            if symbols is not None:
                 query += " AND symbol = ANY(:symbols)"
                 params['symbols'] = [s.upper() for s in symbols]
 

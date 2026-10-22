@@ -259,6 +259,39 @@ class UniversalScheduler:
             
             return result
     
+    async def _alert_scope(self) -> Optional[List[str]]:
+        """Symbols the alert pipeline works on: portfolio ∪ watchlist ∪
+        symbols named in active universal-alert rules.
+
+        Returns None when an active rule has no symbol filter — that rule
+        deliberately wants market-wide events, so don't scope collection.
+        Returns [] when the book is empty (collect nothing)."""
+        from app.database import db
+        try:
+            wildcard = await asyncio.to_thread(
+                db.execute_query,
+                "SELECT 1 AS x FROM universal_alerts WHERE is_active"
+                " AND (entity_filters IS NULL"
+                "      OR NOT (entity_filters ? 'symbols')) LIMIT 1")
+            if wildcard:
+                return None
+            rows = await asyncio.to_thread(db.execute_query, """
+                SELECT s.symbol FROM stocks s
+                  JOIN portfolio_positions pp ON pp.stock_id = s.id
+                  AND pp.quantity > 0
+                UNION
+                SELECT s.symbol FROM stocks s
+                  JOIN watchlist_stocks w ON w.stock_id = s.id
+                UNION
+                SELECT DISTINCT sym AS symbol FROM universal_alerts ua,
+                  jsonb_array_elements_text(ua.entity_filters->'symbols') sym
+                WHERE ua.is_active
+                  AND jsonb_typeof(ua.entity_filters->'symbols') = 'array'""")
+            return sorted({r['symbol'].upper() for r in rows})
+        except Exception as e:
+            logger.error(f"❌ alert scope lookup failed, collecting unscoped: {e}")
+            return None
+
     async def _execute_earnings_collection(self, config: Dict[str, Any]) -> JobResult:
         """Execute earnings data collection job"""
         try:
@@ -266,12 +299,16 @@ class UniversalScheduler:
                 'sources': config.get('sources', ['fmp']),
                 'fmp_api_key': config.get('fmp_api_key')
             }
-            
+
+            scope = await self._alert_scope()
+            if scope is not None:
+                plugin_config['symbols'] = scope
+
             # Collect data using earnings plugin
             results = await universal_alert_service.collect_data_from_plugins({
                 'earnings_calendar': plugin_config
             })
-            
+
             events_collected = sum(len(events) for events in results.values())
             
             return JobResult(
@@ -295,7 +332,11 @@ class UniversalScheduler:
                 'sources': config.get('sources', ['fmp']),
                 'fmp_api_key': config.get('fmp_api_key')
             }
-            
+
+            scope = await self._alert_scope()
+            if scope is not None:
+                plugin_config['symbols'] = scope
+
             # Collect data using analyst grades plugin
             results = await universal_alert_service.collect_data_from_plugins({
                 'analyst_grades': plugin_config
@@ -320,8 +361,9 @@ class UniversalScheduler:
     async def _execute_price_movements_collection(self, config: Dict[str, Any]) -> JobResult:
         """Execute price movements collection job"""
         try:
+            scope = await self._alert_scope()
             plugin_config = {
-                'symbols': config.get('symbols', []),
+                'symbols': scope if scope is not None else config.get('symbols', []),
                 'threshold_percent': config.get('threshold_percent', 5.0)
             }
             
