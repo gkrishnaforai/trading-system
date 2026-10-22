@@ -818,12 +818,12 @@ async def _run_job(name: str):
             fn(), timeout=_JOB_TIMEOUT.get(name, 10 * 60))
         _mark(name, running=False, result=res)
     except asyncio.TimeoutError:
-        logger.error("board refresh %s timed out", name)
+        logger.error("job %s timed out", name)
         _mark(name, running=False,
               error=f"timed out after "
                     f"{_JOB_TIMEOUT.get(name, 600) // 60}m")
     except Exception as exc:
-        logger.error("board refresh %s failed: %s", name, exc)
+        logger.error("job %s failed: %s", name, exc, exc_info=True)
         _mark(name, running=False, error=str(exc))
 
 

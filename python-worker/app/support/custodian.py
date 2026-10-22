@@ -98,7 +98,9 @@ def _sense() -> list[dict[str, Any]]:
     from app.database import db
     findings = []
 
-    # job errors — the refresh panel's own ledger
+    # job errors — the refresh panel's own ledger. _jobs is volatile
+    # (a restart wipes it) so also read the durable job_runs table —
+    # same signature, either source can surface it.
     try:
         from app.api.board_api import _jobs
         for name, st in (_jobs or {}).items():
@@ -108,6 +110,25 @@ def _sense() -> list[dict[str, Any]]:
                     "severity": "medium",
                     "detail": {"error": str(st["error"])[:400],
                                "at": st.get("at")}})
+    except Exception:
+        pass
+    try:
+        seen_sigs = {f["signature"] for f in findings}
+        for r in db.execute_query(
+                "SELECT name, error, ran_at FROM ("
+                "  SELECT DISTINCT ON (name) name, error, ran_at"
+                "  FROM job_runs"
+                "  WHERE ran_at > now() - interval '24 hours'"
+                "    AND name <> 'all'"
+                "  ORDER BY name, ran_at DESC) t"
+                " WHERE error IS NOT NULL"):
+            sig = f"job:{r['name']}:error"
+            if sig in seen_sigs:
+                continue
+            findings.append({
+                "signature": sig, "source": "jobs", "severity": "medium",
+                "detail": {"error": str(r["error"])[:400],
+                           "at": str(r.get("ran_at"))}})
     except Exception:
         pass
 
