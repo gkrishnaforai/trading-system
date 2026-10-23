@@ -21,7 +21,7 @@
 # cut against you). risk_pct is a PLANNED-loss estimate, never a
 # guarantee. geometry_invalid fires when the implied loss is wider
 # than max_etf_stop_pct — an unpriceable stop is no signal.
-version: "1.2"
+version: "1.3"
 
 signal_src: SMH              # closest liquid proxy to the index
 signal_confirm: SOXX         # corroboration legs — validate before
@@ -131,6 +131,28 @@ etfs:
                 leaders_ratio_gte: 0.6},
          line: "no intact broad breakout ({leaders_ratio_pct} leaders constructive)"}
 
+    # sell-timing read for an EXISTING SOXS position — roles:
+    # exit (invalidated or healed), profit (the move matured — bank
+    # it), hold (the roll is still working). Verdict precedence:
+    # exit > profit > hold > watch. Not position-aware — it's 'if
+    # you own the thesis from a recent trigger, here's the tape'.
+    hold_legs:
+      - {id: stop,       role: exit,
+         when: {above_stop10: true},
+         line: "index closed above the 10d swing high — invalidation"}
+      - {id: healed,     role: exit,
+         when: {above_8ema: true},
+         line: "index reclaimed the 8EMA — the roll healed"}
+      - {id: norm,       role: profit,
+         when: {near_sma50: true},
+         line: "index back at the 50dma — the extension normalized"}
+      - {id: exhausted,  role: profit,
+         when: {rsi_lte: 35},
+         line: "index RSI washed to 35 — the fade played out"}
+      - {id: working,    role: hold,
+         when: {below_8ema: true},
+         line: "index still under the 8EMA — the roll is working"}
+
   SOXL:
     label: "confirmed rebound — bet semis recover"
     # index invalidation: loss of the rebound low.
@@ -173,5 +195,27 @@ etfs:
       - {id: thesis_ok,  role: veto,
          when: {bear_alerts_gte: 2},
          line: "fewer than {catalyst_veto_at} fresh bearish catalysts"}
+
+    # sell-timing read for an EXISTING SOXL position — same
+    # exit > profit > hold > watch precedence
+    hold_legs:
+      - {id: stop,       role: exit,
+         when: {below_stop10: true},
+         line: "index lost the rebound low — invalidation"}
+      - {id: failed_rec, role: exit,
+         when: {below_8ema: true},
+         line: "index lost the 8EMA again — the reclaim failed"}
+      - {id: matured,    role: profit,
+         when: {rsi_gte: 55},
+         line: "index RSI back above 55 — the rebound matured"}
+      - {id: at_50dma,   role: profit,
+         when: {near_sma50: true},
+         line: "index reached the 50dma — rebound into resistance"}
+      - {id: working,    role: hold,
+         when: {above_8ema: true},
+         line: "index still above the 8EMA — the reclaim holds"}
+      - {id: confirmed,  role: hold,
+         when: {higher_low: true},
+         line: "a higher low is in place"}
 
 caveat: "SMH/SOXX proxy the NYSE Semiconductor Index; SOXL/SOXS compound daily — multi-day returns diverge from 3x. Stops are modeled, not guaranteed; gap risk is real. Grading the journal is the proof, not the RSI."

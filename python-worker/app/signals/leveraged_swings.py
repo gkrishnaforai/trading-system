@@ -182,6 +182,28 @@ def _prev_state(etf: str, as_of: str) -> Optional[str]:
         return None
 
 
+def _days_in_state(etf: str, as_of: str, state: str) -> int:
+    """Consecutive journal days in the current state, ending today —
+    the time-stop input (a holder whose thesis hasn't resolved by
+    max_hold_bars is out of runway whether or not the tape broke)."""
+    if state in ("flat", ""):
+        return 0
+    from app.database import db
+    try:
+        rows = db.execute_query(
+            "SELECT state FROM lev_etf_evals WHERE etf = :e"
+            " AND as_of < :d ORDER BY as_of DESC LIMIT 15",
+            {"e": etf, "d": as_of})
+        n = 0
+        for r in rows:
+            if r["state"] != state:
+                break
+            n += 1
+        return n + 1                     # today counts too
+    except Exception:
+        return 0
+
+
 def _vol_dip(bars) -> Optional[float]:
     """Selling-pressure ratio: avg volume on down-close bars in the
     last 5 sessions vs the down-day average over the prior 15. <1 =
@@ -243,6 +265,9 @@ def _taped(bars, spec: dict) -> Optional[dict[str, Any]]:
         "higher_low": min(lows[-5:]) > swing_low,
         "vol_dip": _vol_dip(bars),
         "stop_hi10": max(highs[-10:]), "stop_lo10": min(lows[-10:]),
+        "above_stop10": closes[-1] > max(highs[-10:]),
+        "below_stop10": closes[-1] < min(lows[-10:]),
+        "near_sma50": abs(closes[-1] / sma50 - 1) <= 0.02,
     }
 
 
@@ -320,6 +345,41 @@ def _evaluate_etf(etf: str, espec: dict, ctx: dict) -> dict[str, Any]:
             "easing": easing_ok}
 
 
+def _hold_read(espec: dict, ctx: dict,
+               days_in_state: int) -> dict[str, Any]:
+    """Sell-timing read for a holder — evaluates the etf's hold_legs
+    through the same _cond machinery. Verdict precedence:
+    exit > profit > hold > watch. The bar-count time stop escalates a
+    stale hold: days_in_state >= max_hold_bars forces 'exit' with the
+    time-stop reason."""
+    fired, missing = [], set()
+    verdicts = {"exit": [], "profit": [], "hold": []}
+    for leg in espec.get("hold_legs", []):
+        ok, log = _eval_when(ctx, leg["when"])
+        missing.update(log["missing"])
+        if ok:
+            fired.append({"role": leg["role"],
+                          "line": _fmt(leg["line"], ctx)})
+            if leg["role"] in verdicts:
+                verdicts[leg["role"]].append(leg)
+    if verdicts["exit"]:
+        verdict = "exit"
+    elif verdicts["profit"]:
+        verdict = "take profits"
+    elif verdicts["hold"]:
+        verdict = "hold"
+    else:
+        verdict = "watch"
+    out = {"verdict": verdict, "why": fired,
+           "days": days_in_state}
+    if days_in_state and days_in_state >= ctx["max_hold_bars"]:
+        out["verdict"] = "exit"
+        out["time_stop"] = (f"{days_in_state} bars in-state ≥ "
+                            f"{ctx['max_hold_bars']} — the move "
+                            "didn't resolve, time's up")
+    return out
+
+
 def evaluate(funds: Optional[float] = None,
              risk_pct: Optional[float] = None) -> dict[str, Any]:
     """Both setups over today's stored tape; journal one row/etf/day.
@@ -373,6 +433,7 @@ def evaluate(funds: Optional[float] = None,
            "bear_alerts": (alerts["count"] if alerts is not None
                            else None),
            "catalyst_veto_at": spec["catalyst_veto_at"],
+           "max_hold_bars": spec["max_hold_bars"],
            "support_pct_disp": f"{spec['support_pct'] * 100:.0f}%",
            "support_window": spec["support_window"]}
     leverage = spec["leverage"]
@@ -392,6 +453,11 @@ def evaluate(funds: Optional[float] = None,
         prev = _prev_state(etf, out["as_of"])
         row["persisting"] = bool(prev and prev == row["state"]
                                  and row["state"] != "flat")
+        # sell-timing read — 'if you already own it': hold_legs over
+        # the same ctx, time-stop enforced via consecutive journal
+        # days in this state
+        days = _days_in_state(etf, out["as_of"], row["state"])
+        row["hold"] = _hold_read(espec, ctx, days)
         warns = []
         if alerts is None:
             warns.append("catalyst feed unreadable — "
@@ -515,6 +581,7 @@ def evaluate(funds: Optional[float] = None,
                  "rp": lv.get("implied_loss_pct"),
                  "ck": json.dumps({"spec": rules_version(),
                                    "persisting": row["persisting"],
+                                   "hold": row["hold"]["verdict"],
                                    "missing": row["missing"],
                                    "checklist": row["checklist"]}),
                  "v": row["veto"],

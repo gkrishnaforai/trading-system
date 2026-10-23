@@ -464,6 +464,12 @@ export type LevEtf = {
   data_missing?: string[]
   persisting?: boolean          // same state as prior journal day
   missing?: string[]
+  hold?: {                      // sell-timing read for a holder
+    verdict: string             // exit | take profits | hold | watch
+    why?: { role: string; line: string }[]
+    days?: number
+    time_stop?: string
+  }
   checklist?: { ok: boolean; line: string; soft?: boolean }[]
   index?: {
     close?: number; rsi?: number | null; vs50?: number

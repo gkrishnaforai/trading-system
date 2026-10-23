@@ -379,6 +379,13 @@ const LEV_DESC: Record<string, string> = {
   SOXL: 'confirmed rebound — index RSI washed out + reclaim',
 }
 
+const HOLD_TONE: Record<string, string> = {
+  exit: 'text-defensive',
+  'take profits': 'text-caution',
+  hold: 'text-aggressive',
+  watch: 'text-faint',
+}
+
 function LevCard({ etf, row }: { etf: string; row: LevEtf }) {
   const lv = row.levels ?? {}
   const idx = row.index ?? {}
@@ -443,6 +450,33 @@ function LevCard({ etf, row }: { etf: string; row: LevEtf }) {
       )}
       {row.actionable && row.state_note && (
         <p className="pt-0.5 text-[10px] text-faint">{row.state_note}</p>
+      )}
+      {row.hold && (
+        <div className="pt-1.5 mt-1 border-t border-hairline/40">
+          <div className="flex items-baseline gap-2 text-[11px]">
+            <span className="text-[9px] uppercase tracking-wider text-faint">
+              holding?
+            </span>
+            <span className={HOLD_TONE[row.hold.verdict] ?? 'text-faint'}>
+              {row.hold.verdict}
+            </span>
+            {row.hold.days != null && row.hold.days > 1 && (
+              <span className="text-[10px] text-faint">
+                day {row.hold.days} in-state
+              </span>
+            )}
+          </div>
+          {row.hold.time_stop && (
+            <p className="pt-0.5 text-[10px] text-defensive">
+              {row.hold.time_stop}
+            </p>
+          )}
+          {(row.hold.why ?? []).map((w, i) => (
+            <p key={i} className="pt-0.5 text-[10px] text-faint">
+              {w.line}
+            </p>
+          ))}
+        </div>
       )}
     </div>
   )
