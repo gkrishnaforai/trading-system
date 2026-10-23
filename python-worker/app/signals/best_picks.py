@@ -694,10 +694,16 @@ def run() -> dict:
 
 def latest() -> dict:
     """The most recent journaled pass → same payload shape as run().
-    The plan page reads the journal, never re-evaluates."""
+    The plan page reads the journal, never re-evaluates. Degrades to
+    an empty payload when the table hasn't been migrated yet — a
+    missing journal is 'no eval yet', not a 500."""
     from app.database import db
-    last = db.execute_query(
-        "SELECT max(as_of) AS d FROM best_picks_evals")
+    try:
+        last = db.execute_query(
+            "SELECT max(as_of) AS d FROM best_picks_evals")
+    except Exception as exc:
+        logger.warning("best_picks_evals unreadable: %s", exc)
+        return {"as_of": None, "sections": {}}
     if not last or not last[0]["d"]:
         return {"as_of": None, "sections": {}}
     as_of = last[0]["d"]
