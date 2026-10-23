@@ -10,6 +10,14 @@
 -- — that tree is NOT scanned at runtime (run_migrations prefers
 -- supabase/migrations); this copy is the one that auto-applies.
 
+-- python-worker AND go-api both apply this tree at boot and the
+-- filename is only recorded AFTER the transaction commits — a
+-- concurrent boot races this file (IF NOT EXISTS does not guard
+-- against an in-flight create). Serialize the two runners on a
+-- transaction-scoped advisory lock: loser waits, then its
+-- IF NOT EXISTS / ON CONFLICT statements no-op cleanly.
+SELECT pg_advisory_xact_lock(715150);
+
 CREATE TABLE IF NOT EXISTS best_picks_evals (
     id            BIGSERIAL PRIMARY KEY,
     as_of         DATE         NOT NULL,
