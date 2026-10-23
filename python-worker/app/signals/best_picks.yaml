@@ -30,18 +30,18 @@
 #   or every group reference silently degrades to a singleton set
 #   (verified: priced_room failed to fire under the wrong binding).
 #
-# MISSING / NULL / ZERO — three different things, tested separately:
-#   missing — the adapter produced no value (field absent or None
-#             because the source has no row). Conditions on missing
-#             evaluate FALSE and journal `missing:<field>` — never
-#             vacuous-true. Missing is NOT evidence either way.
-#   null    — a KNOWN-null the adapter deliberately wrote (e.g. peg
-#             when eps_growth ≤ 0 — "no meaningful value" is itself a
-#             fact). Only `_is: null` tests it.
+# MISSING / NULL / ZERO — the dict-based evaluator CANNOT distinguish
+# an absent key from a stored None; both are MISSING. The contract:
+#   missing — key absent OR value None → conditions FALSE, journals
+#             `missing:<field>` — never vacuous-true.
 #   zero    — a legitimate measured 0. Real value, never missing.
+#   known-null FACTS get a companion boolean, never a bare null —
+#   dilution_ok/leverage_ok already are that pattern; where the
+#   absent-vs-null distinction changes a decision, add a field.
 #   POLICY: no rule may award positive pts for `_is: null`. The
 #   soft-pass idiom `{any: [{x_is: null}, {x_lt: n}]}` means "can't
-#   verify → don't penalize" — it excuses, it never rewards.
+#   verify → don't penalize" — it excuses, it never rewards; over-use
+#   is caught by tape_fields_missing → thin_tape routing.
 #
 # fv_* conditions implicitly require fv_valid (|fv_upside| ≤ 75).
 #
@@ -73,7 +73,7 @@
 #     scored row (symbol, score, tier, pillar breakdown, gate rejects)
 #     so the outcome grader can learn which pillars actually pay.
 
-version: 1.3
+version: 1.4
 
 # ---------------------------------------------------------------------
 # ctx — data dictionary. Field → source. The adapter computes these
@@ -174,7 +174,15 @@ ctx:
   flywheel_age_days: derived — symbol_flywheel.updated_at age
   is_etf:          fmp_company_profiles.is_etf (tri-state — null means
                    # unknown instrument, not "probably equity")
-  new_longs:       posture.current().new_longs      # regime permission
+  new_longs:       posture.current().new_longs      # regime permission —
+                   # missing must fail LOUD (gate), not silent-pass
+  tape_fields_missing: evaluator-computed — count of {rsi, pct_b,
+                   # hist_dir, vs50} absent from momentum_detail. ≥2 means
+                   # the tape picture is thin: soft-passes excused several
+                   # fields and the name can't earn deploy confidence
+  fv_reliability:  derived — corroborated (methods≥2) | single | none.
+                   # Journaled per row; a single-method FV is usable
+                   # evidence for swing, not equivalent evidence
 
 groups:
   tape_broken:       [knife, capitulation, breakdown, downtrend]
@@ -201,12 +209,26 @@ groups:
 growth_swing:
   horizon: "5-20d"
   output: {top_n: 10, journal: best_picks_evals}
-  require: {new_longs: true}        # regime permission layer first
+  selection:                        # top_n draws from A+B only, ordered
+    order: [tier, score]            # tier-first then score; C goes to a
+    include_tiers: [A, B]           # separate `watch` lane in the payload;
+    side_lane: C                    # gated + X names are journaled only
+    exclude: [gated, X]
 
   gates:                            # any match → excluded (reason kept)
+    # single authoritative permission check — a missing new_longs is a
+    # permission failure, not a pass (was a parallel `require`, which
+    # diverged from this gate on exactly the missing case)
     - name: posture_closed
-      when: {new_longs: false}
-      why: "posture blocks new longs — no-trade is a valid call"
+      when: {any: [{new_longs: false}, {new_longs_is: null}]}
+      why: "posture blocks or can't verify new longs — no-trade is
+            a valid call"
+    - name: tape_freshness_unknown
+      # missing ≠ fresh — an absent age can't prove staleness by the
+      # gt-3d gate, so unknown freshness is its own hard gate for a
+      # 20d trade
+      when: {momentum_age_days_is: null}
+      why: "tape freshness unverifiable — reject, don't guess"
     - name: not_equity
       when: {is_etf: true}
       why: "ETF — swings trade structure, this list is single-name"
@@ -239,6 +261,18 @@ growth_swing:
     - name: risk_flags
       when: {any: [{hard_risk_active: true}, {risk_unverifiable: true}]}
       why: "quality flags block or can't be verified"
+
+  routing:
+    - when: {flywheel_age_days_is: null}
+      tier_cap: B
+      label: unverified_fundamentals
+      note: "no fundamentals snapshot — a tape-only swing can qualify,
+             never as deploy-tier"
+    - when: {tape_fields_missing_gte: 2}
+      tier_cap: B
+      label: thin_tape
+      note: "≥2 tape fields absent — soft-passes excused too much;
+             close/watch, not deploy"
 
   scoring:
     # --- pillar 1: tape setup (30) — trend template + entry quality
@@ -340,12 +374,19 @@ growth_swing:
       when: {member_in: [rule_breaker, smallcap, focus]}
       note: "engine-member — already promoted"
 
-    # --- pillar 4: valuation room (15) — exclusive bands
+    # --- pillar 4: valuation room (15) — exclusive bands, and a
+    #     corroborated FV outranks a single-method one (journaled via
+    #     fv_reliability; a lone method is evidence, not proof)
     - pts: 8
       pillar: valuation_room
       cap: 15
-      when: {fv_gte: 20}
-      note: "FV +{fv}% — headroom"
+      when: {all: [{fv_gte: 20}, {fv_methods_gte: 2}]}
+      note: "FV +{fv}% — headroom, corroborated ({fv_methods} methods)"
+    - pts: 5
+      pillar: valuation_room
+      cap: 15
+      when: {all: [{fv_gte: 20}, {fv_methods_lt: 2}]}
+      note: "FV +{fv}% — single-method estimate, flagged"
     - pts: 4
       pillar: valuation_room
       cap: 15
@@ -430,9 +471,11 @@ growth_swing:
 long_term:
   horizon: "6-24mo"
   output: {top_n: 10, journal: best_picks_evals}
-  require: {}                       # LT accumulates in any posture —
-                                    # regime sizes the tranche, not
-                                    # the permission (staged entries)
+  selection:                        # top_n draws from A+B only; C is a
+    order: [tier, score]            # separate watch/research lane; gated
+    include_tiers: [A, B]           # + X journaled only. LT accumulates
+    side_lane: C                    # in any posture — regime sizes the
+    exclude: [gated, X]             # tranche, not the permission
 
   gates:
     - name: not_equity
@@ -461,6 +504,12 @@ long_term:
     - name: stale_inputs
       when: {flywheel_age_days_gt: 90}
       why: "fundamentals snapshot >90d — verify before committing capital"
+    - name: fundamentals_unknown
+      # a missing age can't trip the >90d gate — absent fundamentals
+      # evidence is its own hard stop for a capital commitment
+      when: {flywheel_age_days_is: null}
+      why: "no fundamentals snapshot at all — an LT hold on zero
+            fundamental evidence is a guess"
     - name: risk_flags
       when: {hard_risk_active: true}
       why: "hard quality-risk flags active"
@@ -673,7 +722,11 @@ long_term:
 compounder_3_5y:
   horizon: "3-5y"
   output: {top_n: 10, journal: best_picks_evals}
-  require: {}
+  selection:
+    order: [tier, score]
+    include_tiers: [A, B]
+    side_lane: C                    # incl. cyclical_review + research
+    exclude: [gated, X]
 
   gates:
     - name: not_equity
@@ -701,6 +754,10 @@ compounder_3_5y:
     - name: stale_inputs
       when: {flywheel_age_days_gt: 90}
       why: "fundamentals snapshot >90d"
+    - name: fundamentals_unknown
+      when: {flywheel_age_days_is: null}
+      why: "no fundamentals snapshot — a 5y pick without one is a story,
+            not an investment"
     - name: risk_flags
       when: {any: [{hard_risk_active: true}, {risk_unverifiable: true}]}
       why: "quality risk active or unverifiable — a 5y commitment
@@ -793,10 +850,13 @@ compounder_3_5y:
       pillar: growth_runway
       cap: 25
       # exclusive band — the deploy-lane / score≥55 award above is the
-      # stronger signal; a 40-55 name IN deploy doesn't earn both
+      # stronger signal. The exclusion only applies when the lane is
+      # PRESENT: a missing lane has nothing to double-count, and
+      # not_in on missing fails — that would silently zero the band
       when: {all: [{future_score_gte: 40}, {future_score_lt: 55},
-                   {conv_lane_not_in: [deploy]}]}
-      note: "runway evidence {future_score} (deploy lane excluded)"
+                   {any: [{conv_lane_is: null},
+                          {conv_lane_not_in: [deploy]}]}]}
+      note: "runway evidence {future_score} (excluded only if IN deploy)"
     - pts: 2
       pillar: growth_runway
       cap: 25
@@ -985,6 +1045,20 @@ compounder_3_5y:
 #   risk_unverifiable, LT score 80       → tier C + 'research' label
 #   cyclical score 90                    → compounder caps at B +
 #                                          'cyclical_review' label
+#   momentum_age_days absent (swing)     → GATED tape_freshness_unknown
+#   flywheel_age_days absent (LT/comp)   → GATED fundamentals_unknown
+#   flywheel_age_days absent (swing)     → tier≤B + unverified_fundamentals
+#   new_longs absent                     → GATED posture_closed
+#   field absent vs zero                 → zero is a value, absent is
+#                                          missing; both journal correctly
+#   fv=20, methods=1 (swing)             → +5 flagged, not +8
+#   future_score 39/40/54/55 × lane deploy|missing → no double count
+#   score 90 + tier-require fail         → demoted, never promoted
+#   score 90 + gate fires                → excluded regardless of score
+#   tier X name                          → never occupies a top_n slot
+#   re-eval unchanged ctx                → identical score/tier/reasons
+#   score math                           → sum(capped pillars) + adjusts;
+#                                          raw journaled, display clamped
 #
 # - This file is policy only — wiring: a best-picks job (post-refresh
 #   cadence) + plan-page lanes per section + per-symbol eval reusing
