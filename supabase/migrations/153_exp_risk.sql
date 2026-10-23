@@ -13,8 +13,11 @@
 --                        fundamental_snapshots series) — 'expectations
 --                        too demanding' measured relative to the
 --                        stock's own tape, not an absolute threshold.
---   h2_growth_load       share of FY estimated EPS growth delivered in
---                        H2 quarters (back-half-loaded guidance).
+--   h2_growth_load       share of the in-progress FY's expected EPS
+--                        growth still unreported — the back-half-load
+--                        check. >1.0 means the year's modeled growth
+--                        exceeds everything printed so far. Only
+--                        stored once >=2 quarters have reported.
 --   px_rev_divergence    price up materially over the window while the
 --                        forward estimate went nowhere — the named
 --                        warning state.

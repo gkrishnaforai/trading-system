@@ -346,49 +346,77 @@ def _estimates(fmp, sym: str) -> dict:
             "rev_breadth_30d": breadth}
 
 
-def _h2_load(fmp, sym: str) -> Optional[float]:
-    """Share of the forward year's estimated EPS *growth* that sits in
-    H2 — the 'back-half-loaded' check. For each of the 4 future
-    quarters of the current forward year, YoY $growth = estimate −
-    same-quarter-prior-year actual. load = (Q3+Q4 growth$)/(FY growth$).
-    None when the year isn't a growth year (the dependence question is
-    moot) or any leg is missing — fail closed, never zero."""
-    est = fmp._make_request(
-        "/analyst-estimates",
-        {"symbol": sym, "period": "quarter", "limit": 12}) or []
-    today = date.today()
-    fut = sorted(
-        ({"d": str(e["date"])[:10], "eps": float(e["epsAvg"])}
-         for e in est
-         if e.get("date") and e.get("epsAvg") is not None
-         and str(e["date"])[:10] > str(today)),
-        key=lambda r: r["d"])[:4]
-    if len(fut) < 4:
+def _h2_load(fmp, sym: str) -> Optional[dict]:
+    """How much of the current fiscal year's expected EPS growth is
+    still unreported — the 'back-half-loaded' check.
+
+    Provider reality: FMP's quarterly analyst-estimates are not on
+    this plan, so the quarterly-curve version isn't computable. What
+    IS available, on an estimate-consistent basis:
+
+      0y avg / yearAgoEps     yfinance earnings_estimate — the in-
+                              progress FY consensus + prior FY, both
+                              on the adjusted basis analysts model
+      Reported EPS            yfinance earnings_dates — headline
+                              (adjusted) actuals per print
+      period/fiscalYear       FMP income-statement — which quarters
+                              belong to the current FY (for counting
+                              how many prints have landed)
+
+    load = (fy_est − reported_this_fy) / (fy_est − prior_fy)
+         = share of the year's expected EPS growth still ahead.
+    >1.0 means the street's growth target exceeds what's printed so
+    far entirely. Only meaningful mid-year — early in the FY it's
+    mechanically ~all-of-it — so the caller reads n_reported too.
+    None = fail closed."""
+    import yfinance as yf
+    tk = yf.Ticker(sym)
+    ee = tk.earnings_estimate
+    if ee is None or ee.empty or "0y" not in ee.index:
         return None
+    est_fy, prior_fy = (ee.loc["0y", "avg"], ee.loc["0y", "yearAgoEps"])
+    if not (pd.notna(est_fy) and pd.notna(prior_fy)) \
+            or prior_fy <= 0 or est_fy <= 0:
+        return None
+    fy_growth = float(est_fy) - float(prior_fy)
+    if fy_growth <= 0:
+        return None                     # not a growth year — moot
+
+    # quarters reported so far in the fiscal year the '0y' row covers:
+    # the count of income-statement rows in the latest fiscalYear
     inc = fmp._make_request(
         "/income-statement",
-        {"symbol": sym, "period": "quarter", "limit": 12}) or []
-    actual = {}
-    for q in inc:
-        v = q.get("eps") or q.get("epsDiluted")
-        if q.get("date") and v is not None:
-            actual[str(q["date"])[:10]] = float(v)
-    growth = []
-    for r in fut:
-        d0 = date.fromisoformat(r["d"])
-        prior = None
-        for delta in range(340, 400):
-            cand = str(d0 - timedelta(days=delta))
-            if cand in actual:
-                prior = actual[cand]
-                break
-        growth.append(None if prior is None else r["eps"] - prior)
-    if any(g is None for g in growth):
+        {"symbol": sym, "period": "quarter", "limit": 8}) or []
+    # staleness guard — if the latest reported quarter is >110d old,
+    # the income feed's fiscalYear counter is a year behind the '0y'
+    # row's fiscal year and the count maps to the wrong year
+    try:
+        if date.today() - date.fromisoformat(str(inc[0]["date"])[:10]) \
+                > timedelta(days=110):
+            return None
+    except (KeyError, IndexError, ValueError):
         return None
-    total = sum(growth)
-    if total <= 0:
-        return None                     # not a growth year
-    return (growth[2] + growth[3]) / total
+    fys = [q.get("fiscalYear") for q in inc if q.get("fiscalYear")]
+    n_reported = len([q for q in inc if q.get("fiscalYear")
+                      == (fys[0] if fys else None)]) if fys else 0
+    if n_reported == 0 or n_reported >= 4:
+        return None                     # year not started / finished —
+                                        # the load question is moot
+
+    ed = tk.earnings_dates
+    if ed is None or ed.empty or "Reported EPS" not in ed.columns:
+        return None
+    rep = [float(v) for v in
+           ed.sort_index(ascending=False)["Reported EPS"].tolist()
+           if pd.notna(v)]
+    if len(rep) < n_reported:
+        return None
+    ytd = sum(rep[:n_reported])         # adjusted basis — matches est
+    if ytd >= est_fy:
+        return 0.0                      # year already delivered
+    return {"load": (float(est_fy) - ytd) / fy_growth,
+            "n_reported": n_reported,
+            "unearned_share": (float(est_fy) - ytd) / float(est_fy)}
 
 
 def _exp_risk(fmp, sym: str, m: dict) -> dict:
@@ -478,8 +506,11 @@ def _exp_risk(fmp, sym: str, m: dict) -> dict:
 
     try:
         h2 = _h2_load(fmp, sym)
-        if h2 is not None:
-            out["h2_growth_load"] = round(h2, 3)
+        # only persist once the year is underway — with <2 quarters
+        # reported the load is mechanically ~all-of-it and the caveat
+        # can't distinguish 'back-half-loaded' from 'year just started'
+        if h2 is not None and h2["n_reported"] >= 2:
+            out["h2_growth_load"] = round(h2["load"], 3)
     except Exception as exc:
         logger.debug("exp risk h2 %s: %s", sym, exc)
     return out

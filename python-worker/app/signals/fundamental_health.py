@@ -331,6 +331,15 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
             f"price outrunning estimates — fwd P/E "
             f"+{(me or 0) * 100:.0f}% on a ~90d flat revision; a cut "
             "reprates abruptly")
+    elif me is not None and me <= -0.15 and (
+            er is not None and er > 0.02):
+        # the constructive mirror — price de-rated while estimates
+        # rose. Compression, not deterioration: the multiple has
+        # already bled, so an estimate cut lands on a lower base
+        cav.append(
+            f"de-rating into improving estimates — fwd P/E "
+            f"{me * 100:+.0f}% while estimates {er * 100:+.0f}% — "
+            "compression, not deterioration")
     pctile = m.get("fwd_pe_pctile")
     if pctile is not None and pctile >= 0.90:
         cav.append(
