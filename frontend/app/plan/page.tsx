@@ -379,11 +379,34 @@ const LEV_DESC: Record<string, string> = {
   SOXL: 'confirmed rebound — index RSI washed out + reclaim',
 }
 
+const LEV_STATE_DESC: Record<string, string> = {
+  flat: "premise doesn't exist → do nothing (the default)",
+  armed: 'premise exists, entry unconfirmed → watch, don\u2019t buy yet',
+  vetoed: 'setup killed by counter-evidence → do nothing',
+  error: 'index data missing or stale → no signal',
+}
+
+function levStateDesc(row: LevEtf): string {
+  if (row.state === 'triggered') {
+    return row.actionable
+      ? 'confirmed + priceable → candidate entry — review the levels'
+      : 'confirmed, but unplannable (missing data or bad stop) → do nothing'
+  }
+  return LEV_STATE_DESC[row.state] ?? LEV_STATE_DESC.flat
+}
+
 const HOLD_TONE: Record<string, string> = {
   exit: 'text-defensive',
   'take profits': 'text-caution',
   hold: 'text-aggressive',
   watch: 'text-faint',
+}
+
+const HOLD_DESC: Record<string, string> = {
+  exit: 'sell — thesis invalidated or the tape healed',
+  'take profits': 'sell into the move — it matured, bank it',
+  hold: 'thesis still working — sit',
+  watch: 'no clear verdict — neither working nor broken',
 }
 
 function LevCard({ etf, row }: { etf: string; row: LevEtf }) {
@@ -403,6 +426,10 @@ function LevCard({ etf, row }: { etf: string; row: LevEtf }) {
           {row.state}{row.persisting ? ' ↺' : ''}
         </span>
       </div>
+      <p className="pt-0.5 text-[10px] text-faint">
+        {levStateDesc(row)}
+        {row.persisting && ' · same setup as yesterday — not a fresh signal'}
+      </p>
       <div className="pt-1 text-[10px] font-mono text-muted">
         {idx.rsi != null && `idx rsi ${idx.rsi} `}
         {idx.vs50 != null && `· ${(idx.vs50 * 100).toFixed(0)}% vs 50d `}
@@ -490,6 +517,9 @@ function LevCard({ etf, row }: { etf: string; row: LevEtf }) {
             <span className={HOLD_TONE[row.hold.verdict] ?? 'text-faint'}>
               {row.hold.verdict}
             </span>
+            <span className="text-[10px] text-faint">
+              {HOLD_DESC[row.hold.verdict] ?? ''}
+            </span>
             {row.hold.days != null && row.hold.days > 1 && (
               <span className="text-[10px] text-faint">
                 day {row.hold.days} in-state
@@ -524,6 +554,12 @@ function LevSwingsSection({ ls }: { ls: LevSwings | null }) {
           {ls?.risk_pct != null && ` · risk ${(ls.risk_pct * 100).toFixed(2)}%`}
         </span>
       </div>
+      <p className="pt-1 text-[10px] text-faint">
+        a card is a candidate only when it reads <b className="text-muted">triggered</b> and
+        shows entry/stop levels — <b className="text-muted">armed</b>,{' '}
+        <b className="text-muted">flat</b> and <b className="text-muted">vetoed</b> all mean
+        do nothing
+      </p>
       {ls?.error ? (
         <p className="pt-2 text-xs text-muted">{ls.error}</p>
       ) : (
