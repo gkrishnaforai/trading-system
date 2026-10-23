@@ -186,6 +186,45 @@ export function FundPanel({ d }: { d: Record<string, unknown> }) {
         </Row>
       </div>
 
+      {/* expectations risk — price vs estimates divergence & fragility */}
+      {(cur.px_rev_divergence != null || cur.mult_expansion_pct != null ||
+        cur.fwd_pe_pctile != null || cur.h2_growth_load != null ||
+        cur.cust_top1_pct != null) && (
+          <div className="pt-2">
+            <div className="text-[10px] uppercase tracking-wider text-faint">
+              expectations risk <span className="normal-case">(price vs estimates)</span>
+            </div>
+            <Row label="px/est divergence">
+              {cur.px_rev_divergence === true
+                ? <Chip v="diverging" />
+                : cur.mult_expansion_pct != null && n(cur.mult_expansion_pct)! <= -0.15
+                  ? <Chip v="de-rating" />
+                  : <span className="font-mono text-muted">—</span>}
+              <Arrow v={n(cur.mult_expansion_pct)} />
+              <span className={`font-mono ${dirTone(n(cur.mult_expansion_pct), true)}`}>
+                {pctStr(cur.mult_expansion_pct, 0)}
+              </span>
+            </Row>
+            <Row label="fwd P/E vs history">
+              <Meter v={n(cur.fwd_pe_pctile)} lo={0} hi={1}
+                zones={[[0, 0.7, 'bg-aggressive/30'], [0.7, 0.9, 'bg-caution/30'], [0.9, 1, 'bg-defensive/30']]} />
+              <span className={`font-mono ${n(cur.fwd_pe_pctile) !== null && n(cur.fwd_pe_pctile)! >= 0.9 ? 'text-defensive' : 'text-muted'}`}>
+                {n(cur.fwd_pe_pctile) !== null ? `${Math.round(n(cur.fwd_pe_pctile)! * 100)}th` : '—'}
+              </span>
+            </Row>
+            <Row label="growth still ahead">
+              <span className={`font-mono ${n(cur.h2_growth_load) !== null && n(cur.h2_growth_load)! >= 0.6 ? 'text-caution' : 'text-muted'}`}>
+                {pctStr(cur.h2_growth_load, 0, false)}
+              </span>
+            </Row>
+            <Row label="top customer">
+              <span className={`font-mono ${n(cur.cust_top1_pct) !== null && n(cur.cust_top1_pct)! >= 0.15 ? 'text-caution' : 'text-muted'}`}>
+                {pctStr(cur.cust_top1_pct, 0, false)}
+              </span>
+            </Row>
+          </div>
+        )}
+
       {/* evidence balance */}
       {total > 0 && (
         <div className="pt-3">
@@ -217,6 +256,20 @@ export function FundPanel({ d }: { d: Record<string, unknown> }) {
         <p className="pt-2 text-[11px] text-faint">
           cause: {String(d.decel_cause).replace(/_/g, ' ')}
         </p>
+      )}
+
+      {/* fragility caveats — expectations risk & data warnings */}
+      {Array.isArray(d.caveats) && (d.caveats as unknown[]).length > 0 && (
+        <div className="pt-2">
+          <div className="text-[10px] uppercase tracking-wider text-faint">
+            risk notes
+          </div>
+          <div className="pt-1 space-y-0.5">
+            {(d.caveats as unknown[]).map((x, i) => (
+              <div key={i} className="text-[12px] text-caution">⚠ {String(x)}</div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   )
@@ -283,7 +336,7 @@ export function TapePanel({ d, spot }: { d: Record<string, unknown>; spot?: numb
             zones={[[0, 20, 'bg-aggressive/30'], [20, 80, 'bg-hairline'], [80, 100, 'bg-caution/30']]} />
           <Arrow v={n(stD.k_slope)} />
           <span className={`font-mono ${stD.zone === 'oversold' ? 'text-aggressive'
-              : stD.zone === 'overbought' ? 'text-caution' : 'text-muted'}`}>
+            : stD.zone === 'overbought' ? 'text-caution' : 'text-muted'}`}>
             {n(stD.k)?.toFixed(0) ?? '—'}/{n(stD.d)?.toFixed(0) ?? '—'}
             {stD.cross === 'bull' ? ' ⇈' : stD.cross === 'bear' ? ' ⇊' : ''}
           </span>
@@ -293,7 +346,7 @@ export function TapePanel({ d, spot }: { d: Record<string, unknown>; spot?: numb
             zones={[[0, 20, 'bg-aggressive/30'], [20, 80, 'bg-hairline'], [80, 100, 'bg-caution/30']]} />
           <Arrow v={n(stW.k_slope)} />
           <span className={`font-mono ${stW.zone === 'oversold' ? 'text-aggressive'
-              : stW.zone === 'overbought' ? 'text-caution' : 'text-muted'}`}>
+            : stW.zone === 'overbought' ? 'text-caution' : 'text-muted'}`}>
             {n(stW.k)?.toFixed(0) ?? '—'}/{n(stW.d)?.toFixed(0) ?? '—'}
             {stW.up === true ? ' ↑' : stW.up === false ? ' ↓' : ''}
           </span>
