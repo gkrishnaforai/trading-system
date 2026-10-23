@@ -346,6 +346,145 @@ def _estimates(fmp, sym: str) -> dict:
             "rev_breadth_30d": breadth}
 
 
+def _h2_load(fmp, sym: str) -> Optional[float]:
+    """Share of the forward year's estimated EPS *growth* that sits in
+    H2 — the 'back-half-loaded' check. For each of the 4 future
+    quarters of the current forward year, YoY $growth = estimate −
+    same-quarter-prior-year actual. load = (Q3+Q4 growth$)/(FY growth$).
+    None when the year isn't a growth year (the dependence question is
+    moot) or any leg is missing — fail closed, never zero."""
+    est = fmp._make_request(
+        "/analyst-estimates",
+        {"symbol": sym, "period": "quarter", "limit": 12}) or []
+    today = date.today()
+    fut = sorted(
+        ({"d": str(e["date"])[:10], "eps": float(e["epsAvg"])}
+         for e in est
+         if e.get("date") and e.get("epsAvg") is not None
+         and str(e["date"])[:10] > str(today)),
+        key=lambda r: r["d"])[:4]
+    if len(fut) < 4:
+        return None
+    inc = fmp._make_request(
+        "/income-statement",
+        {"symbol": sym, "period": "quarter", "limit": 12}) or []
+    actual = {}
+    for q in inc:
+        v = q.get("eps") or q.get("epsDiluted")
+        if q.get("date") and v is not None:
+            actual[str(q["date"])[:10]] = float(v)
+    growth = []
+    for r in fut:
+        d0 = date.fromisoformat(r["d"])
+        prior = None
+        for delta in range(340, 400):
+            cand = str(d0 - timedelta(days=delta))
+            if cand in actual:
+                prior = actual[cand]
+                break
+        growth.append(None if prior is None else r["eps"] - prior)
+    if any(g is None for g in growth):
+        return None
+    total = sum(growth)
+    if total <= 0:
+        return None                     # not a growth year
+    return (growth[2] + growth[3]) / total
+
+
+def _exp_risk(fmp, sym: str, m: dict) -> dict:
+    """Growth-expectations risk — is the price outrunning the estimate?
+
+    The named warning: price rising while forward estimates stop
+    improving means returns are coming from multiple expansion —
+    fragile to the first estimate cut. mult_expansion_pct decomposes
+    the ~90d move: (1+dP)/(1+dE)-1 on the same clock as
+    est_revision_pct. None = unknown; px_rev_divergence clears to
+    NULL when uncomputable rather than persisting a stale flag.
+    """
+    from app.database import db
+    out = {"mult_expansion_pct": None, "fwd_pe_pctile": None,
+           "h2_growth_load": None, "px_rev_divergence": None,
+           "cust_top1_pct": None, "cust_note": None}
+
+    try:
+        row = db.execute_query(
+            "SELECT top1_pct, top5_note FROM symbol_customer_conc "
+            "WHERE symbol=:s", {"s": sym})
+        if row:
+            out["cust_top1_pct"] = row[0]["top1_pct"]
+            out["cust_note"] = row[0]["top5_note"]
+    except Exception as exc:
+        logger.debug("cust conc %s: %s", sym, exc)
+
+    d_e = m.get("est_revision_pct")
+    if d_e is not None and abs(d_e) > 5:
+        d_e = None                       # sign-flip arithmetic junk
+    d_p = None
+    try:
+        # canonical daily_bars — a READ, not bars.load(): this runs
+        # per-symbol inside the flywheel job loop, and load()'s
+        # thin-tape top-up would hide a provider fetch in a DB loop.
+        # Thin tape just yields d_p=None — fail closed.
+        closes = [float(r["close"]) for r in db.execute_query(
+            "SELECT close FROM (SELECT date, close FROM daily_bars "
+            "WHERE symbol=:s ORDER BY date DESC LIMIT 66) t "
+            "ORDER BY date", {"s": sym})]
+        if len(closes) >= 45:
+            back = closes[-64] if len(closes) >= 64 else closes[0]
+            if back and closes[-1]:
+                d_p = closes[-1] / back - 1
+    except Exception as exc:
+        logger.debug("exp risk tape %s: %s", sym, exc)
+
+    me = None
+    if d_p is not None and d_e is not None and d_e > -0.95:
+        me = (1 + d_p) / (1 + d_e) - 1
+    else:
+        # fallback: direct fwd-P/E change from journaled snapshots —
+        # same decomposition without needing estimate history
+        try:
+            hist = db.execute_query(
+                "SELECT (metrics->>'fwd_pe')::float AS pe "
+                "FROM fundamental_snapshots WHERE symbol=:s "
+                "AND metrics->>'fwd_pe' IS NOT NULL "
+                "AND as_of <= :cut ORDER BY as_of DESC LIMIT 1",
+                {"s": sym, "cut": date.today()
+                  - timedelta(days=REVISION_LOOKBACK_DAYS)})
+            if hist and hist[0]["pe"] and m.get("fwd_pe"):
+                me = m["fwd_pe"] / hist[0]["pe"] - 1
+        except Exception as exc:
+            logger.debug("exp risk pe-hist %s: %s", sym, exc)
+    if me is not None and abs(me) <= 3:
+        out["mult_expansion_pct"] = round(me, 3)
+    out["px_rev_divergence"] = (
+        None if me is None else
+        bool(me >= 0.15
+             and d_p is not None and d_p >= 0.10
+             and (d_e is None or d_e <= 0.03)))
+
+    try:
+        pes = [r["pe"] for r in db.execute_query(
+            "SELECT (metrics->>'fwd_pe')::float AS pe "
+            "FROM fundamental_snapshots WHERE symbol=:s "
+            "AND metrics->>'fwd_pe' IS NOT NULL "
+            "AND as_of > :cut",
+            {"s": sym, "cut": date.today() - timedelta(days=365)})
+            if r["pe"]]
+        if m.get("fwd_pe") and len(pes) >= 20:
+            out["fwd_pe_pctile"] = round(
+                sum(1 for p in pes if p <= m["fwd_pe"]) / len(pes), 2)
+    except Exception as exc:
+        logger.debug("exp risk pctile %s: %s", sym, exc)
+
+    try:
+        h2 = _h2_load(fmp, sym)
+        if h2 is not None:
+            out["h2_growth_load"] = round(h2, 3)
+    except Exception as exc:
+        logger.debug("exp risk h2 %s: %s", sym, exc)
+    return out
+
+
 def _muted_reaction(sym: str, last_report: Optional[str],
                     last_surprise: Optional[float],
                     bars=None) -> Optional[bool]:
@@ -479,6 +618,10 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             bars)
     except Exception as exc:
         logger.debug("flywheel reaction %s: %s", sym, exc)
+    try:
+        m.update(_exp_risk(fmp, sym, m))
+    except Exception as exc:
+        logger.debug("flywheel exp-risk %s: %s", sym, exc)
 
     score, det = _score(m)
     # provider outage guard — a total miss must not wipe last-known-good
@@ -500,12 +643,15 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             " eps_growth_ttm, fcf_ttm, fcf_margin, fcf_growth,"
             " acq_spend_ttm, acq_rev_pct, rd_rev, rd_slope,"
             " om_now, om_qoq, om_slope, sbc_rev, eps_rep,"
-            " eps_rep_growth) "
+            " eps_rep_growth, mult_expansion_pct, fwd_pe_pctile,"
+            " h2_growth_load, px_rev_divergence, cust_top1_pct,"
+            " cust_note) "
             "VALUES (:s,:rg,:ra,:gm,:gms,:gmq,:eg,:ea,:bs,:asp,:lsp,:lrd,"
             ":fe,:fr,:na,:er,:fpe,:mr,:gs,CAST(:gd AS jsonb),"
             ":nde,:dte,:rb,:str,:roic,:roe,:ceff,:crev,:egt,"
             ":ft,:fm,:fg,:aspd,:arp,:rdr,:rds,"
-            ":omn,:omq,:oms,:sbcr,:erp,:erpg) "
+            ":omn,:omq,:oms,:sbcr,:erp,:erpg,"
+            ":mexp,:ppe,:h2l,:prd,:ct1,:cn) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "rev_growth=COALESCE(EXCLUDED.rev_growth,"
             " symbol_flywheel.rev_growth),"
@@ -604,6 +750,21 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             " symbol_flywheel.eps_rep),"
             " eps_rep_growth=COALESCE(EXCLUDED.eps_rep_growth,"
             " symbol_flywheel.eps_rep_growth),"
+            " mult_expansion_pct=COALESCE(EXCLUDED.mult_expansion_pct,"
+            " symbol_flywheel.mult_expansion_pct),"
+            " fwd_pe_pctile=COALESCE(EXCLUDED.fwd_pe_pctile,"
+            " symbol_flywheel.fwd_pe_pctile),"
+            " h2_growth_load=COALESCE(EXCLUDED.h2_growth_load,"
+            " symbol_flywheel.h2_growth_load),"
+            # divergence is a CURRENT-state flag, not a metric: when
+            # the inputs can't compute this run, NULL it — a stale
+            # 'diverging' persisted under COALESCE would keep warning
+            # after the tape healed
+            " px_rev_divergence=EXCLUDED.px_rev_divergence,"
+            " cust_top1_pct=COALESCE(EXCLUDED.cust_top1_pct,"
+            " symbol_flywheel.cust_top1_pct),"
+            " cust_note=COALESCE(EXCLUDED.cust_note,"
+            " symbol_flywheel.cust_note),"
             " updated_at=now(), as_of=now()",
             {"s": sym, "rg": m.get("rev_growth"),
              "ra": m.get("rev_accel"), "gm": m.get("gm_now"),
@@ -632,6 +793,12 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
              "omn": m.get("om_now"), "omq": m.get("om_qoq"),
              "oms": m.get("om_slope"), "sbcr": m.get("sbc_rev"),
              "erp": m.get("eps_rep"), "erpg": m.get("eps_rep_growth"),
+             "mexp": m.get("mult_expansion_pct"),
+             "ppe": m.get("fwd_pe_pctile"),
+             "h2l": m.get("h2_growth_load"),
+             "prd": m.get("px_rev_divergence"),
+             "ct1": m.get("cust_top1_pct"),
+             "cn": m.get("cust_note"),
              "gd": __import__("json").dumps(det)})
     except Exception as exc:
         logger.debug("flywheel persist %s: %s", sym, exc)

@@ -37,6 +37,11 @@ _METRICS = ("rev_growth", "rev_accel", "eps_growth", "eps_accel",
             "est_revision_pct", "rev_breadth_30d", "surprise_trend",
             "capex_eff", "capex_rev",
             "fwd_pe", "num_analysts", "muted_reaction",
+            # growth-expectations risk (expectation_gap._exp_risk) —
+            # price-vs-estimate divergence, own-history P/E stretch,
+            # back-half-loaded growth, customer concentration
+            "mult_expansion_pct", "fwd_pe_pctile", "h2_growth_load",
+            "px_rev_divergence", "cust_top1_pct",
             # SEC-derived backlog/billings evidence (symbol_sec_facts) —
             # the demand-vs-timing discriminators: backlog still building
             # while revenue decelerates = conversion delay, not demand loss
@@ -316,6 +321,32 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
             f"GAAP vs reported EPS diverging ({egt_ev * 100:+.0f}% vs "
             f"{erpg_ev * 100:+.0f}%) — amortization/SBC in the gap")
 
+    # growth-expectations risk — the price↔estimate divergence. Price
+    # rising on a flat estimate is multiple expansion, not earnings
+    # power: the first cut reprates abruptly. These are FRAGILITY
+    # caveats, not deterioration legs — the business can be fine.
+    me = m.get("mult_expansion_pct")
+    if m.get("px_rev_divergence"):
+        cav.append(
+            f"price outrunning estimates — fwd P/E "
+            f"+{(me or 0) * 100:.0f}% on a ~90d flat revision; a cut "
+            "reprates abruptly")
+    pctile = m.get("fwd_pe_pctile")
+    if pctile is not None and pctile >= 0.90:
+        cav.append(
+            f"fwd P/E at {pctile * 100:.0f}th pct of its own history — "
+            "expectations demanding")
+    h2 = m.get("h2_growth_load")
+    if h2 is not None and h2 >= 0.60:
+        cav.append(
+            f"{h2 * 100:.0f}% of the year's estimated EPS growth sits "
+            "in H2 — a delayed ramp breaks the year")
+    cc = m.get("cust_top1_pct")
+    if cc is not None and cc >= 0.15:
+        cav.append(
+            f"top customer ~{cc * 100:.0f}% of revenue — one spending "
+            "pause moves estimates")
+
     # backlog & billings — the demand-vs-timing discriminators. RPO
     # growing while reported revenue decelerates means demand is
     # contracted but not yet recognized (conversion_delay); backlog
@@ -450,14 +481,26 @@ def classify(m: dict, cyclical: bool = False) -> tuple[str, str, dict]:
     else:
         state = "watch"
 
-    # --- risk is its own axis (valuation/coverage), per the design ---
+    # --- risk is its own axis (valuation/coverage/expectations) ---
+    # pctile/div/me/h2/cc were read in the caveats block above
     if pe is not None and pe > 60 and n_neg >= 2:
         risk = "very_high"
+    elif (pctile is not None and pctile >= 0.95
+          and (m.get("px_rev_divergence") or n_neg >= 2)):
+        risk = "very_high"          # extreme own-history stretch AND
+                                    # the estimate is already turning
     elif (pe is not None and pe > 60) or (
             m.get("num_analysts") is not None
             and m["num_analysts"] < 4 and (pe or 0) > 30):
         risk = "high"
-    elif (pe is not None and pe > 25) or n_neg >= 2:
+    elif m.get("px_rev_divergence") and (
+            (pctile is not None and pctile >= 0.80) or n_neg >= 1):
+        risk = "high"               # multiple-expansion rally on a
+                                    # stretched or deteriorating base
+    elif (pe is not None and pe > 25) or n_neg >= 2 \
+            or m.get("px_rev_divergence") \
+            or (pctile is not None and pctile >= 0.90) \
+            or (cc is not None and cc >= 0.30):
         risk = "medium"
     else:
         risk = "low"
@@ -688,14 +731,17 @@ def refresh_all(symbols: list[str] = None) -> dict:
         rows = db.execute_query(
             base_sql.format(
                 extra=", sf.rpo, sf.rpo_yoy, sf.crpo_share,"
-                      " sf.def_rev_yoy, sf.gw_impair_fy",
+                      " sf.def_rev_yoy, sf.gw_impair_fy,"
+                      " f.mult_expansion_pct, f.fwd_pe_pctile,"
+                      " f.h2_growth_load, f.px_rev_divergence,"
+                      " f.cust_top1_pct",
                 join=" LEFT JOIN symbol_sec_facts sf"
                      " ON sf.symbol = f.symbol"),
             params)
     except Exception:
-        # sec_facts columns not provisioned yet (deploy ran ahead of
-        # the migration / first sec-facts run) — classify on flywheel
-        # alone rather than fail the whole refresh
+        # sec_facts / exp-risk columns not provisioned yet (deploy ran
+        # ahead of the migration) — classify on flywheel alone rather
+        # than fail the whole refresh; missing keys read as None
         rows = db.execute_query(
             base_sql.format(extra="", join=""), params)
     prev = {r["symbol"]: r for r in db.execute_query(
