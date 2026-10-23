@@ -419,12 +419,12 @@ function LevCard({ etf, row }: { etf: string; row: LevEtf }) {
       {row.warn && (
         <p className="pt-1 text-[11px] text-caution">⚠ {row.warn}</p>
       )}
-      {lv.geometry_invalid && (
+      {row.state === 'triggered' && row.actionable === false && (
         <p className="pt-1 text-[11px] text-defensive">
-          {row.state_note ?? 'unpriceable stop — trade not plannable'}
+          not actionable — {row.state_note ?? 'required data or priceable stop missing'}
         </p>
       )}
-      {row.state === 'triggered' && lv.entry != null && !lv.geometry_invalid && (
+      {row.actionable && lv.entry != null && (
         <div className="pt-1.5 text-[10px] font-mono text-muted">
           {money(lv.entry)} → stop {money(lv.stop)}
           {' '}(idx {money(lv.idx_stop, 1)}
@@ -436,9 +436,13 @@ function LevCard({ etf, row }: { etf: string; row: LevEtf }) {
           {lv.shares != null && (
             <span className="text-faint">
               {' '}· {lv.shares}sh risks {money(lv.risk_usd, 0)}
+              {lv.notional_capped ? ' · capped' : ''}
             </span>
           )}
         </div>
+      )}
+      {row.actionable && row.state_note && (
+        <p className="pt-0.5 text-[10px] text-faint">{row.state_note}</p>
       )}
     </div>
   )

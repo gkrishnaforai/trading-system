@@ -199,6 +199,7 @@ def _taped(bars, spec: dict) -> Optional[dict[str, Any]]:
         "near_support": closes[-1] <= swing_low * (1 + sp),
         "hi20": highs[hi_i],
         "hi20_age": len(highs) - 1 - hi_i,
+        "pct_off_hi20": closes[-1] / highs[hi_i] - 1,
         "close_lt_hi20": closes[-1] < highs[hi_i],
         "new_20d_high": closes[-1] >= max(highs[-hw - 1:-1]),
         "higher_low": min(lows[-5:]) > swing_low,
@@ -368,8 +369,11 @@ def evaluate(funds: Optional[float] = None,
                          "overnight-gap risk")
         row["warn"] = " · ".join(warns) or None
 
-        # index invalidation → ETF stop via the stressed 3x map;
-        # side=high: index rising kills SOXS; side=low: falling kills SOXL
+        # index invalidation → ETF stop via the stressed 3x map.
+        # idx_move is the ADVERSE move magnitude, computed per side —
+        # SOXS dies on an index RISE (stop_hi/close - 1), SOXL on an
+        # index DROP (close/stop_lo - 1); always a positive fraction
+        # or the geometry is invalid.
         eb = books.get(etf) or []
         etf_px = float(eb[-1].close) if eb else None
         side, win = espec["stop"]["side"], espec["stop"]["window"]
@@ -377,41 +381,71 @@ def evaluate(funds: Optional[float] = None,
         idx_move = (idx_stop / t["close"] - 1 if side == "high"
                     else t["close"] / idx_stop - 1)
         implied_loss = idx_move * leverage * buffer
-        if idx_move <= 0 or implied_loss > spec["max_etf_stop_pct"]:
+        geo_ok = (idx_move > 0
+                  and implied_loss <= spec["max_etf_stop_pct"]
+                  and etf_px is not None)
+        if not geo_ok:
             row["levels"] = {"geometry_invalid": True,
                              "idx_move": round(idx_move, 4),
                              "implied_loss_pct":
                                  round(implied_loss, 4)}
-            row["state_note"] = (
-                "unpriceable stop — implied ETF loss "
-                f"{implied_loss:.0%} exceeds "
-                f"{spec['max_etf_stop_pct']:.0%} cap"
-                if implied_loss > spec["max_etf_stop_pct"]
-                else "invalid index stop geometry")
+            geo_note = ("no ETF price stored"
+                        if etf_px is None else
+                        "unpriceable stop — implied ETF loss "
+                        f"{implied_loss:.0%} exceeds "
+                        f"{spec['max_etf_stop_pct']:.0%} cap"
+                        if implied_loss > spec["max_etf_stop_pct"]
+                        else "invalid index stop geometry")
         else:
-            etf_stop = (round(etf_px * (1 - implied_loss), 2)
-                        if etf_px else None)
-            risk_px = (etf_px - etf_stop
-                       if etf_px and etf_stop is not None else None)
-            t1 = (round(etf_px + spec["targets"][0]["r"] * risk_px, 2)
-                  if risk_px and risk_px > 0 else None)
-            t2 = (round(etf_px + spec["targets"][1]["r"] * risk_px, 2)
-                  if risk_px and risk_px > 0 else None)
-            shares = (int(funds * risk_pct / risk_px)
-                      if funds and risk_px and risk_px > 0 else None)
+            etf_stop = round(etf_px * (1 - implied_loss), 2)
+            risk_px = etf_px - etf_stop
+            t1 = round(etf_px + spec["targets"][0]["r"] * risk_px, 2)
+            t2 = round(etf_px + spec["targets"][1]["r"] * risk_px, 2)
+            # risk-based size AND the notional cap — a tight stop
+            # must not inflate the position past max_notional_pct
+            risk_sh = (int(funds * risk_pct / risk_px)
+                       if funds and risk_px > 0 else None)
+            cap_sh = (int(funds * spec["max_notional_pct"] / etf_px)
+                      if funds and etf_px else None)
+            shares = (min(risk_sh, cap_sh)
+                      if risk_sh is not None and cap_sh is not None
+                      else risk_sh or cap_sh)
+            capped = (shares is not None and cap_sh is not None
+                      and shares == cap_sh and risk_sh is not None
+                      and risk_sh > cap_sh)
+            geo_note = (f"size notional-capped at "
+                        f"{spec['max_notional_pct']:.0%} of portfolio"
+                        if capped else None)
             row["levels"] = {"entry": etf_px, "stop": etf_stop,
                              "t1": t1, "t2": t2,
                              "t1_frac": spec["targets"][0]["close"],
                              "t2_frac": spec["targets"][1]["close"],
-                             "risk_px": (round(risk_px, 2)
-                                         if risk_px else None),
+                             "risk_px": round(risk_px, 2),
                              "shares": shares,
+                             "notional_capped": capped,
                              "risk_usd": (round(shares * risk_px, 0)
                                           if shares else None),
                              "idx_stop": round(idx_stop, 2),
                              "idx_move": round(idx_move, 4),
                              "implied_loss_pct":
                                  round(implied_loss, 4)}
+
+        # actionable contract: triggered + required ctx present +
+        # priceable geometry. A trigger with a data gap or an
+        # unpriceable stop is a journaled hypothesis, nothing more.
+        data_missing = [f for f in espec.get("required_ctx", [])
+                        if ctx.get(f) is None]
+        row["actionable"] = bool(row["state"] == "triggered"
+                                 and geo_ok and not data_missing)
+        if data_missing:
+            row["data_missing"] = data_missing
+        notes = [n for n in (geo_note, ) if n]
+        if data_missing:
+            notes.append(f"required data missing: "
+                         f"{', '.join(data_missing)}")
+        if not geo_ok:
+            row["levels"]["geometry_invalid"] = True
+        row["state_note"] = " · ".join(notes) or row.get("state_note")
         out["etfs"][etf] = row
         try:
             lv = row["levels"]

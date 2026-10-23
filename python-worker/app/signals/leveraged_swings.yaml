@@ -21,7 +21,7 @@
 # cut against you). risk_pct is a PLANNED-loss estimate, never a
 # guarantee. geometry_invalid fires when the implied loss is wider
 # than max_etf_stop_pct — an unpriceable stop is no signal.
-version: "1.1"
+version: "1.2"
 
 signal_src: SMH              # closest liquid proxy to the index
 signal_confirm: SOXX         # corroboration legs — validate before
@@ -29,8 +29,12 @@ signal_confirm: SOXX         # corroboration legs — validate before
 leverage: 3.0                # daily-reset multiple for the stop map
 stop_buffer: 1.15            # stress factor on the 3x map — modeled
                              # fills are always better than real ones
-max_etf_stop_pct: 0.25       # implied ETF stop wider than this →
-                             # geometry_invalid, trade not plannable
+max_etf_stop_pct: 0.15       # implied ETF stop wider than this →
+                             # not actionable (an unpriceable stop is
+                             # no signal; backtest sweeps this bound)
+max_notional_pct: 0.10       # notional cap — risk-based sizing alone
+                             # lets a tight stop inflate the position
+                             # far past sane exposure
 extreme_window: 7            # bars of recent-peak lookback
 support_window: 60           # bars for the prior-swing support level
 support_pct: 0.05            # 'near' = within 5% above the swing low
@@ -79,6 +83,14 @@ earnings_window_days: 3
 #   armed     all armed legs pass
 #   flat      otherwise
 # 'soft' legs never gate — they're shown as preferred evidence.
+#
+# actionable — a SEPARATE contract from state. state describes the
+# setup's technical shape; actionable = triggered AND every
+# required_ctx field is present AND the stop geometry prices
+# (idx_move > 0, implied loss <= max_etf_stop_pct). A triggered
+# state with missing catalyst data or an unpriceable stop is a
+# journaled hypothesis, never an actionable one.
+#
 # 'persisting' on a row = same state as the prior journal entry —
 # the dedupe contract: a fresh trigger informs, a persisted one
 # does not re-alert.
@@ -87,9 +99,13 @@ etfs:
 
   SOXS:
     label: "fade the extension — bet semis pull back"
-    # index invalidation: reclaim of the recent swing high →
-    # stop ≈ etf * (1 - idx_move * leverage * stop_buffer)
+    # index invalidation: reclaim of the recent swing high.
+    # adverse idx_move = idx_stop/close - 1 (a RISE hurts the
+    # inverse product) → etf_stop = entry*(1 - idx_move*lev*buffer)
     stop: {side: high, window: 10}
+    # leaders unreadable → the breadth veto can't be verified →
+    # not actionable (unknown breadth is not healthy breadth)
+    required_ctx: [leaders_ratio]
     veto_reason: "sector breaking out on broad participation"
     legs:
       - {id: rsi_hot,    role: armed,
@@ -107,17 +123,23 @@ etfs:
       - {id: soxx_conf,  role: soft,
          when: {soxx_below_8ema: true},
          line: "SOXX confirms the roll (corroboration — unvalidated)"}
-      # a FRESH 20d high (within 5 bars) + broad strict leadership =
-      # the breakout regime persists into today's pullback — veto
+      # a FRESH 20d high + price still near it (breakout intact, not
+      # failed) + broad strict leadership = the breakout regime
+      # persists into today's pullback — veto
       - {id: no_broad,   role: veto,
-         when: {hi20_age_lte: 5, leaders_ratio_gte: 0.6},
-         line: "no fresh broad breakout ({leaders_ratio_pct} leaders constructive)"}
+         when: {hi20_age_lte: 5, pct_off_hi20_gte: -0.03,
+                leaders_ratio_gte: 0.6},
+         line: "no intact broad breakout ({leaders_ratio_pct} leaders constructive)"}
 
   SOXL:
     label: "confirmed rebound — bet semis recover"
-    # index invalidation: loss of the rebound low →
-    # stop ≈ etf * (1 - idx_move * leverage * stop_buffer)
+    # index invalidation: loss of the rebound low.
+    # adverse idx_move = close/idx_stop - 1 (a DROP hurts the long
+    # product) → etf_stop = entry*(1 - idx_move*lev*buffer)
     stop: {side: low, window: 10}
+    # catalyst feed unreadable → 'no alerts' can't be verified →
+    # not actionable (a broken feed is not a clean feed)
+    required_ctx: [bear_alerts]
     veto_reason: "multiple fresh bearish catalysts — thesis deteriorating"
     easing_min: 2
     legs:

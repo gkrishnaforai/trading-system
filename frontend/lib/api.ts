@@ -457,9 +457,11 @@ export type LevSwings = {
 export type LevEtf = {
   state: string                 // flat | armed | triggered | vetoed
   armed?: boolean
+  actionable?: boolean          // triggered + data + priceable stop
   veto?: string | null
   warn?: string | null
-  state_note?: string | null    // e.g. unpriceable-stop rejection
+  state_note?: string | null    // rejection/cap notes
+  data_missing?: string[]
   persisting?: boolean          // same state as prior journal day
   missing?: string[]
   checklist?: { ok: boolean; line: string; soft?: boolean }[]
@@ -472,6 +474,7 @@ export type LevEtf = {
     t1?: number | null; t2?: number | null
     t1_frac?: number; t2_frac?: number
     risk_px?: number | null; shares?: number | null
+    notional_capped?: boolean
     risk_usd?: number | null; idx_stop?: number
     idx_move?: number; implied_loss_pct?: number
     geometry_invalid?: boolean
