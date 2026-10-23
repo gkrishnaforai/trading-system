@@ -692,6 +692,19 @@ async def _j_fv_sweep() -> dict:
     return await asyncio.to_thread(fv_sweep.run, symbols)
 
 
+async def _j_best_picks() -> dict:
+    """Best-picks eval — the three-lane declarative selection
+    (best_picks.yaml): growth_swing / long_term / compounder_3_5y
+    over the active tier. Bulk-loads ctx once, pure-dict eval, every
+    candidate journaled to best_picks_evals (gated names too).
+    Advisory — ranked shortlists, never orders."""
+    from app.signals import best_picks
+    r = await asyncio.to_thread(best_picks.run)
+    return {"evaluated": r["evaluated"],
+            "sections": {k: v["counts"]
+                         for k, v in r["sections"].items()}}
+
+
 JOBS: dict[str, tuple[str, Callable]] = {
     "momentum":      ("Momentum flags", _j_momentum),
     "swing-scan":    ("Swing screener", _j_swing_scan),
@@ -760,6 +773,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "correction-alarms": ("Correction-alarm engine",
                           _j_correction_alarms),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
+    "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
 }
 
 # order matters for 'all': posture first, then signals, then evals
@@ -778,7 +792,8 @@ _ALL_ORDER = ["regime", "tier-sync", "momentum", "morning-regime",
               "leaps-mark", "priors", "pilot", "daily-calls",
               "daily-puts", "spec-incubator", "meta",
               "sec-facts", "short-data", "short-squeeze",
-              "correction-alarms", "selloff", "custodian"]
+              "correction-alarms", "selloff", "best-picks",
+              "custodian"]
 
 
 _JOB_TIMEOUT = {
@@ -801,6 +816,7 @@ _JOB_TIMEOUT = {
     "selloff": 5 * 60,
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "intraday-tape": 3 * 60, "correction-alarms": 3 * 60,
+    "best-picks": 5 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
     "theme-rotation": 5 * 60,
@@ -2598,6 +2614,15 @@ async def income_plan(funds: float | None = None):
     each bound to a trade-plans draft for one-click entry."""
     from app.signals import income_plan as ip
     return await asyncio.to_thread(ip.today, funds)
+
+
+@router.get("/best-picks")
+async def best_picks():
+    """The three-lane best-picks read — growth_swing / long_term /
+    compounder_3_5y picks + watch lanes from the latest journaled
+    eval pass. Reads the journal; never re-evaluates."""
+    from app.signals import best_picks as bp
+    return await asyncio.to_thread(bp.latest)
 
 
 @router.get("/trade-plans/suggest")

@@ -314,6 +314,7 @@ export const api = {
   tradePlans: () =>
     get<{ open?: PlanRow[]; closed?: PlanRow[] }>('/trade-plans?all=1'),
   selloff: () => get<SelloffScan>('/selloff'),
+  bestPicks: () => get<BestPicks>('/best-picks'),
   shortSqueeze: (symbol: string) =>
     get<SqueezeEval>(`/short-squeeze/${encodeURIComponent(symbol)}`),
   intraday: () => get<IntradayTape>('/intraday'),
@@ -420,6 +421,41 @@ export type SelloffCand = {
     invalidation?: number | null
     invalidation_note?: string
   }
+}
+
+export type BestPicks = {
+  as_of?: string
+  rules_version?: string
+  evaluated?: number
+  sections?: Record<string, BestPickSection>
+}
+
+export type BestPickSection = {
+  horizon?: string
+  picks?: BestPick[]
+  watch?: BestPick[]
+  counts?: { picks?: number; watch?: number; excluded?: number }
+}
+
+export type BestPick = {
+  symbol: string
+  name?: string
+  sector?: string
+  px?: number | null
+  mcap_b?: number | null
+  score?: number | null
+  tier?: string
+  label?: string
+  routing?: string[]
+  reason?: string
+  pillars?: Record<string, number>
+  fv?: number | null
+  fv_reliability?: string
+  mom?: string
+  fund?: string
+  thesis?: string | null
+  selloff?: string | null
+  missing?: string[]
 }
 
 export type IncomePlan = {

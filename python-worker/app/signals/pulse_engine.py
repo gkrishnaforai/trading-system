@@ -198,16 +198,20 @@ def _resolve_set(v, groups) -> set:
     return {v}
 
 
-def _cond(c: dict, cond: dict, missing: list) -> bool:
+def _cond(c: dict, cond: dict, missing: list, groups=None) -> bool:
     """One {k: v} condition dict → bool; missing inputs record into
-    `missing` and evaluate False."""
-    groups = _load().get("groups") or {}
+    `missing` and evaluate False. `groups` is the set `x_in`/`x_not_in`
+    resolve against — defaults to this spec's groups; other specs
+    (best_picks.yaml) pass their own so group references bind to the
+    file the rules came from, never silently degrade to singletons."""
+    if groups is None:
+        groups = _load().get("groups") or {}
     for k, v in cond.items():
         if k == "any":
             # sub-conditions share the same missing log
-            return any(_cond(c, s, missing) for s in v)
+            return any(_cond(c, s, missing, groups) for s in v)
         if k == "all":
-            return all(_cond(c, s, missing) for s in v)
+            return all(_cond(c, s, missing, groups) for s in v)
         # multi-word suffixes first — rpartition alone would split
         # `priced_not_in` into field `priced_not` + suffix `in`
         if k.endswith("_not_in"):
@@ -294,12 +298,12 @@ def _cond(c: dict, cond: dict, missing: list) -> bool:
     return True
 
 
-def _eval_when(c: dict, when: dict) -> tuple[bool, dict]:
+def _eval_when(c: dict, when: dict, groups=None) -> tuple[bool, dict]:
     """Whole `when` block ANDed; returns (matched, per-cond log)."""
     log, miss = {}, []
     ok = True
     for k, v in (when or {}).items():
-        r = _cond(c, {k: v}, miss)
+        r = _cond(c, {k: v}, miss, groups)
         log[k] = ("missing" if any(m.startswith(k.rsplit("_", 1)[0])
                                    for m in miss) else
                   "pass" if r else "fail")

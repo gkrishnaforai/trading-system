@@ -1,5 +1,8 @@
 import Link from 'next/link'
-import { api, type PlanSuggestion, type PlanRow, type SelloffCand } from '@/lib/api'
+import {
+  api, type PlanSuggestion, type PlanRow, type SelloffCand,
+  type BestPicks, type BestPick
+} from '@/lib/api'
 import { Gate } from '@/components/regime'
 import { toneOf } from '@/components/signal-strip'
 import { OpenPlanButton, ClosePlanButton } from '@/components/plan-entry'
@@ -221,6 +224,149 @@ function SelloffRow({ c }: { c: SelloffCand }) {
   )
 }
 
+/* ---- best picks — the three-lane ranked research shortlist ---- */
+
+const TIER_TONE: Record<string, string> = {
+  A: 'border-aggressive/50 text-aggressive',
+  B: 'border-accent/40 text-accent',
+  C: 'border-caution/40 text-caution',
+  X: 'border-hairline text-faint',
+}
+
+const BP_LANES: { key: string; label: string }[] = [
+  { key: 'growth_swing', label: 'growth swing' },
+  { key: 'long_term', label: 'long term' },
+  { key: 'compounder_3_5y', label: 'compounder 3–5y' },
+]
+
+function BpRow({ p }: { p: BestPick }) {
+  const tone = TIER_TONE[p.tier ?? 'X'] ?? TIER_TONE.X
+  return (
+    <div className="py-1.5">
+      <div className="flex items-baseline gap-2 min-w-0">
+        <span className={`rounded-full border px-1.5 py-px font-mono text-[10px] font-bold ${tone}`}>
+          {p.tier}
+        </span>
+        <Link href={`/stock?sym=${p.symbol}`}
+          className="font-semibold text-[13px] text-ink hover:text-accent">
+          {p.symbol}
+        </Link>
+        <span className="font-mono text-[11px] text-muted">
+          {p.score != null ? Math.min(100, Math.max(0, Number(p.score))).toFixed(0) : '—'}
+        </span>
+        <span className="text-[10px] uppercase tracking-wider text-faint">
+          {p.label}
+        </span>
+        {(p.routing ?? []).map((r) => (
+          <span key={r}
+            className="rounded-full border border-caution/40 px-1.5 py-px text-[9px] text-caution">
+            {r.replace(/_/g, ' ')}
+          </span>
+        ))}
+      </div>
+      <div className="pl-1 pt-0.5 flex flex-wrap gap-x-3 font-mono text-[10px] text-muted">
+        {p.px != null && <span>px {money(p.px)}</span>}
+        <span>{p.mom}</span>
+        <span>{p.fund}</span>
+        {p.fv != null && (
+          <span className="text-aggressive">
+            fv {Number(p.fv) >= 0 ? '+' : ''}{Number(p.fv).toFixed(0)}%
+            {p.fv_reliability === 'single' && (
+              <span className="text-caution" title="single-method FV — not corroborated">¹</span>
+            )}
+          </span>
+        )}
+        {p.selloff && (
+          <span className="text-accent">
+            {CLASS_LABEL[p.selloff] ?? p.selloff}
+          </span>
+        )}
+      </div>
+      {p.reason && (
+        <div className="pl-1 pt-0.5 text-[10px] text-faint">{p.reason}</div>
+      )}
+    </div>
+  )
+}
+
+function BestPicksSection({ bp }: { bp: BestPicks | null }) {
+  const secs = bp?.sections ?? {}
+  return (
+    <section className="rounded-xl border border-hairline bg-card px-5 py-4">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+          Best picks
+        </span>
+        <span className="text-[11px] text-faint">
+          {bp?.as_of ? `as of ${bp.as_of}` : 'no eval yet — runs post-refresh'}
+          {bp?.evaluated != null && ` · ${bp.evaluated} names`}
+        </span>
+      </div>
+      {!bp?.as_of ? (
+        <p className="pt-2 text-xs text-muted">
+          no best-picks eval journaled yet — the daily job scores the
+          active tier across all three horizons.
+        </p>
+      ) : (
+        <div className="grid gap-4 pt-2 lg:grid-cols-3">
+          {BP_LANES.map(({ key, label }) => {
+            const sec = secs[key]
+            const picks = sec?.picks ?? []
+            const watch = sec?.watch ?? []
+            return (
+              <div key={key}>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[10px] uppercase tracking-wider text-faint">
+                    {label}
+                  </span>
+                  <span className="text-[10px] text-faint">
+                    {sec?.horizon}
+                  </span>
+                </div>
+                <div className="divide-y divide-hairline/40">
+                  {picks.map((p) => <BpRow key={p.symbol} p={p} />)}
+                  {picks.length === 0 && (
+                    <p className="py-1 pl-1 text-[11px] text-faint">
+                      nothing qualified — fine
+                    </p>
+                  )}
+                </div>
+                {watch.length > 0 && (
+                  <div className="pt-1 border-t border-hairline/40">
+                    <div className="text-[9px] uppercase tracking-wider text-faint">
+                      watch
+                    </div>
+                    <div className="pt-0.5 flex flex-wrap gap-x-2 text-[11px]">
+                      {watch.map((w) => (
+                        <Link key={w.symbol}
+                          href={`/stock?sym=${w.symbol}`}
+                          className="text-muted hover:text-accent"
+                          title={w.reason ?? ''}>
+                          {w.symbol}
+                          <span className="text-faint">
+                            {w.routing?.length
+                              ? ` (${w.routing.join('+').replace(/_/g, ' ')})`
+                              : ''}
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <p className="pt-2 text-[10px] text-faint">
+        ranked research shortlist — A/B are pick-eligible, watch is the
+        research lane; gated names never occupy a slot. Advisory until
+        out-of-sample grading proves the tiers separate.
+      </p>
+    </section>
+  )
+}
+
 const PLAN_ICON: Record<string, string> = {
   stop_hit: '🔴', invalidated: '🔴', target2_hit: '🟢',
   extended: '🟡', stalled: '🟠', trail_up: '🔵',
@@ -233,10 +379,11 @@ export default async function PlanPage({
   searchParams: { funds?: string }
 }) {
   const funds = searchParams.funds ? Number(searchParams.funds) : undefined
-  const [plan, open, so] = await Promise.all([
+  const [plan, open, so, bp] = await Promise.all([
     api.incomePlan(funds),
     api.tradePlans(),
     api.selloff(),
+    api.bestPicks(),
   ])
   const sectors = plan?.sectors ?? []
   const pos = plan?.posture ?? {}
@@ -324,6 +471,8 @@ export default async function PlanPage({
             )}
           </div>
         </section>
+
+        <BestPicksSection bp={bp} />
 
         {sectors.length === 0 && (
           <div className="rounded-xl border border-hairline bg-card px-5 py-8 text-center">
