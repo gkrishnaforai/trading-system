@@ -1,0 +1,993 @@
+# Best-picks selection — declarative scoring policy for the plan page
+# ===================================================================
+# Three ranked lists over the ACTIVE-TIER universe
+# (symbol_tiers._active_sql(): portfolio ∪ watchlist ∪ rule_breaker ∪
+# smallcap members) — never the 37k registry, never unscoped
+# per-symbol fetches.
+#
+#   growth_swing   — 5-20 day horizon: momentum + earnings-fuel names
+#                    whose tape is constructive and not stretched.
+#                    (Minervini trend template + CANSLIM C/L legs)
+#   long_term      — 6-24 month holds: durable quality-growth bought
+#                    with a margin of safety; weakness on intact
+#                    fundamentals is an ENTRY, not a warning.
+#   compounder_3_5y — 3-5 year holds: the strongest combination of
+#                    durable growth, moat, financial strength and
+#                    expected return. Future earnings power priced
+#                    from TODAY'S price — not "is it growing".
+#
+# Rule language: same `_cond` vocabulary as pulse_engine —
+#   {field_gt: n} {field_gte: n} {field_lt: n} {field_lte: n}
+#   {field_in: [..]} {field_not_in: [..]}
+#   {field_is: null} {field_is_not: null} — is/is_not compare
+#     PRESENCE only (None-ness); a non-null operand is never value-
+#     matched — {x_is: 'up'} fires for ANY present x. Scalar
+#     equality is the bare form: {field: value}.
+#   {flag: x} {not_flag: x} {any: [..]} {all: [..]} {default: true}
+#   group names resolve inside in/not_in — FROM THIS FILE'S groups:
+#   section. pulse_engine._cond binds pulse_action_rules.yaml's
+#   groups; the evaluator for this spec MUST pass this file's groups
+#   or every group reference silently degrades to a singleton set
+#   (verified: priced_room failed to fire under the wrong binding).
+#
+# MISSING / NULL / ZERO — three different things, tested separately:
+#   missing — the adapter produced no value (field absent or None
+#             because the source has no row). Conditions on missing
+#             evaluate FALSE and journal `missing:<field>` — never
+#             vacuous-true. Missing is NOT evidence either way.
+#   null    — a KNOWN-null the adapter deliberately wrote (e.g. peg
+#             when eps_growth ≤ 0 — "no meaningful value" is itself a
+#             fact). Only `_is: null` tests it.
+#   zero    — a legitimate measured 0. Real value, never missing.
+#   POLICY: no rule may award positive pts for `_is: null`. The
+#   soft-pass idiom `{any: [{x_is: null}, {x_lt: n}]}` means "can't
+#   verify → don't penalize" — it excuses, it never rewards.
+#
+# fv_* conditions implicitly require fv_valid (|fv_upside| ≤ 75).
+#
+# Stages per section:
+#   gates    — first-match-wins VETOES. Any match → excluded, reason
+#              journaled. A name that survives every gate is scored.
+#   scoring  — weighted pillars. Entries in one pillar are
+#              MUTUALLY-EXCLUSIVE BANDS on the same metric (the cap
+#              exists for safety, not to absorb double-counting — a
+#              30%-FV name earns the ≥30 award, not ≥30+≥15+≥0). Sum
+#              per pillar is capped at `cap`; pillars sum to 100.
+#   adjust   — additive modifiers after pillars (can push negative).
+#   routing  — classification, not rejection: `tier_cap` demotes the
+#              matched name to at most that tier and `label` tags it
+#              (e.g. cyclical → never core; unverifiable-risk →
+#              research list). Applied before tier assignment.
+#   tiers    — score → action tier, evaluated top-down. A tier's
+#              optional `require` must ALL pass; a failed require
+#              demotes to the next tier whose require passes —
+#              e.g. an fv-invalid name can never be buy-ready, only
+#              researched.
+#
+# Execution contract:
+#   - ctx is BULK-LOADED (one query per source table, the
+#     stock_health.board() pattern) — the per-symbol eval is pure dict
+#     math and embarrassingly parallel; use a thread pool only if the
+#     ctx assembly ever needs per-symbol calls. No provider fetches.
+#   - run AFTER the momentum + fundamental refreshes; journal every
+#     scored row (symbol, score, tier, pillar breakdown, gate rejects)
+#     so the outcome grader can learn which pillars actually pay.
+
+version: 1.3
+
+# ---------------------------------------------------------------------
+# ctx — data dictionary. Field → source. The adapter computes these
+# once per symbol from stored tables; nothing hits a provider. Every
+# field a rule references MUST be declared here — a rule referencing
+# an undeclared field is a spec error, not a silent miss.
+# ---------------------------------------------------------------------
+ctx:
+  # tape — stocks.momentum_state + momentum_detail (momentum job writes)
+  tape:            stocks.momentum_state            # knife..breakout
+  tape_dir:        derived (prev vs cur state rank)
+  dip_phase:       momentum_detail.dip_phase        # still_falling|stabilizing|turning_up|confirmed
+  rsi:             momentum_detail.rsi
+  vs50:            momentum_detail.vs_sma50         # fraction, 0.08 = 8% above 50dma
+  pct_b:           momentum_detail.pct_b
+  hist_dir:        momentum_detail.hist_dir         # MACD-hist slope
+  atr_pct:         momentum_detail.atr_pct
+  rs_pct:          momentum_detail.rs_pct           # relative-strength rank 0-100
+  off_high:        derived — close/52wk-high − 1 (≤0; −0.10 = 10% below high)
+  off_low:         derived — close/52wk-low − 1 (≥0.30 ≈ Minervini +30%)
+  dd_60d:          selloff_evals.dd_60d             # drawdown over 60d (negative)
+  swing_struct:    momentum_detail.swing has hl_seq|phase|confirm_level
+  swing_phase:     momentum_detail.swing.phase
+  confirm_level:   momentum_detail.swing.confirm_level
+  swing_low:       momentum_detail.swing.swing_low
+  prior_low:       momentum_detail.swing.prior_low
+  risk_atr:        derived — stop distance in ATRs (same math as pulse stage0)
+  rr:              derived — reward:risk to structure target (≥1.5 required for A-tier)
+  hit_rate:        pattern_priors hit_rate_10d for state|dip bucket
+  sector_score:    derived — sector-ETF flow score, same math as
+                   board_api._sector_flow_map (group tailwind leg)
+  # fundamentals — stocks + symbol_flywheel
+  fund:            stocks.fundamental_state         # accelerating|growing|steady|slowing|pressured|declining|deteriorating|turnaround|cyclical
+  fund_risk:       stocks.fundamental_risk          # low|moderate|high
+  cyclical:        stocks.cyclical                  # adapter: also true when
+                   # FV regime resolved cyclical:* — peak-cycle earnings
+                   # masquerade as quality growth
+  rev:             stocks.revision_grade            # A+..F → rev_class
+  rev_class:       computed — A|B|C|D|missing
+  priced:          stocks.priced_status             # not_priced|partial|substantial|full|beyond_lt_avg
+  emerging:        stocks.emerging_growth
+  rev_growth:      symbol_flywheel.rev_growth       # fraction, 0.15 = 15%
+  eps_growth:      symbol_flywheel.eps_growth
+  rev_accel:       symbol_flywheel.rev_accel        # >0 growth speeding up
+  eps_accel:       symbol_flywheel.eps_accel
+  est_rev:         symbol_flywheel.est_revision_pct # street revising ±%
+  beat_streak:     symbol_flywheel.beat_streak
+  fwd_pe:          symbol_flywheel.fwd_pe           # null when no fwd EPS
+  peg:             derived — fwd_pe / (eps_growth×100). NULL — never a
+                   # negative number — when eps_growth ≤ 0 or either
+                   # input missing (negative PEG is not 'cheap')
+  fcf_margin:      symbol_flywheel.fcf_margin
+  num_analysts:    symbol_flywheel.num_analysts
+  muted_reaction:  symbol_flywheel.muted_reaction   # improvement unpriced
+  leverage_ok:     derived — no leverage/debt flag in gq_flags or
+                   # fmp_fundamentals balance-sheet risk (adapter maps
+                   # canonical flag names)
+  dilution_ok:     derived — share-count growth within tolerance
+                   # (gq components / fmp share count history)
+  tailwind:        tailwinds strongest ACTIVE tier —
+                   # revenue|shipping|announced|null
+  # valuation — latest fair_value_v2_runs row
+  fv:              derived — expected_fair_value/spot − 1 ×100
+  fv_valid:        computed — finite and |fv| ≤ 75 (pulse contract)
+  fv_methods:      derived — count of methods that produced values in
+                   # the latest run; ≥2 = corroborated estimate, 1 or 0
+                   # = single-leg (the silent-failure class we audited)
+  fv_asym:         derived — (bull_fv−spot)/(spot−bear_fv); ≥1.5 = payoff
+                   # asymmetry; null when bear ≥ spot or scenarios missing
+  # quality / thesis / events
+  gq_score:        growth_quality_runs.score (latest)
+  gq_pct:          growth_quality_runs.percentile
+  structural_proof: growth_quality_runs.components.structural_proof
+  margin_trend:    derived — GM/OM slope from growth_quality components
+  gq_flags:        growth_quality_runs.flags
+  hard_risk_active: annotation — gq hard-risk flags present
+  risk_unverifiable: annotation — critical gq inputs missing (missing
+                   # evidence of risk is NOT evidence of safety)
+  thesis:          symbol_thesis.status             # on_track|improving|mixed|deteriorating|broken
+  thesis_dir:      symbol_thesis.status_dir         # up|down|flat
+  last_print:      earnings_watch.latest verdict    # improving|mixed|deteriorating|—
+  future_score:    conviction_snapshots.future_score (latest)
+  conv_lane:       conviction_snapshots.lane        # deploy|watch|…
+  selloff_class:   latest selloff eval classification
+                   # macro_panic|sector_contagion|positioning_unwind =
+                   #   down WITHOUT fundamental change (the edge)
+                   # fundamental_repricing|structural_impairment =
+                   #   down WITH cause (the trap)
+  sq_verdict:      latest short_squeeze_evals.verdict —
+                   # squeeze_setup|likely_covering|new_shorts_pressing|—
+  earn_days:       derived — stocks.next_earnings_date − today.
+                   # NEGATIVE = the print already passed (not an
+                   # upcoming event — future-dated gates must bound
+                   # BOTH sides or the print-yesterday case leaks in)
+  alert_neg_72h:   alert_items NEGATIVE/HIGH within 72h (adapter)
+  member:          rule_breaker|smallcap|focus|none (adapter)
+  momentum_age_days: derived — stocks.momentum_updated_at age
+  flywheel_age_days: derived — symbol_flywheel.updated_at age
+  is_etf:          fmp_company_profiles.is_etf (tri-state — null means
+                   # unknown instrument, not "probably equity")
+  new_longs:       posture.current().new_longs      # regime permission
+
+groups:
+  tape_broken:       [knife, capitulation, breakdown, downtrend]
+  tape_hostile:      [knife, capitulation, breakdown, downtrend, rolling_over]
+  tape_extended:     [climax]
+  tape_constructive: [pullback, basing, recovery, uptrend, breakout]
+  dip_resolving:     [stabilizing, turning_up, confirmed]
+  fund_good:         [accelerating, growing]
+  fund_fail:         [declining, deteriorating]
+  fund_soft:         [slowing, pressured]
+  selloff_edge:      [macro_panic, sector_contagion, positioning_unwind]
+  selloff_trap:      [fundamental_repricing, structural_impairment]
+  priced_room:       [not_priced, partial]
+  priced_full:       [substantial, full, beyond_lt_avg]
+  thesis_alive:      [on_track, improving, mixed]
+  rev_strong:        [A, B]
+
+# =====================================================================
+# SECTION 1 — GROWTH SWING  (5-20d holds)
+# Momentum + earnings fuel. Minervini: trend up, near highs, leadership,
+# risk defined BEFORE reward. CANSLIM: current EPS/sales accelerating,
+# street revising, leader in a strong group, market direction ok.
+# =====================================================================
+growth_swing:
+  horizon: "5-20d"
+  output: {top_n: 10, journal: best_picks_evals}
+  require: {new_longs: true}        # regime permission layer first
+
+  gates:                            # any match → excluded (reason kept)
+    - name: posture_closed
+      when: {new_longs: false}
+      why: "posture blocks new longs — no-trade is a valid call"
+    - name: not_equity
+      when: {is_etf: true}
+      why: "ETF — swings trade structure, this list is single-name"
+    - name: tape_broken
+      when: {tape_in: tape_broken}
+      why: "tape {tape} — Minervini never buys a downtrend"
+    - name: climax_chase
+      when: {tape_in: tape_extended}
+      why: "climax — extension is for trimming, not entry"
+    - name: fund_failing
+      when: {fund_in: fund_fail}
+      why: "fundamentals {fund} — CANSLIM needs earnings fuel"
+    - name: binary_event
+      # BOTH bounds — earn_days < 0 means the print already passed;
+      # a bare lte:3 would gate on history, not risk
+      when: {all: [{earn_days_gte: 0}, {earn_days_lte: 3}]}
+      why: "earnings in {earn_days}d — a swing into the print is a coin flip"
+    - name: priced_out
+      when: {priced_in: priced_full, any: [{fv_lte: 0}, {fv_valid: false}]}
+      why: "priced {priced} with no corroborated FV room — paying for perfection"
+    - name: selloff_trap
+      when: {selloff_class_in: selloff_trap}
+      why: "down WITH cause ({selloff_class}) — repricing, not opportunity"
+    - name: alert_veto
+      when: {alert_neg_72h: true}
+      why: "negative high-materiality alert <72h"
+    - name: stale_inputs
+      when: {any: [{momentum_age_days_gt: 3}, {flywheel_age_days_gt: 60}]}
+      why: "stale tape/fundamentals — score on current facts only"
+    - name: risk_flags
+      when: {any: [{hard_risk_active: true}, {risk_unverifiable: true}]}
+      why: "quality flags block or can't be verified"
+
+  scoring:
+    # --- pillar 1: tape setup (30) — trend template + entry quality
+    - pts: 10
+      pillar: tape_setup
+      cap: 30
+      when: {tape_in: tape_constructive}
+      note: "constructive tape {tape}"
+    - pts: 8
+      pillar: tape_setup
+      cap: 30
+      when: {dip_phase_in: [turning_up, confirmed]}
+      note: "dip resolving {dip_phase} — buy the resolved wash"
+    - pts: 4
+      pillar: tape_setup
+      cap: 30
+      when: {dip_phase_in: [stabilizing], hit_rate_gte: 0.55}
+      note: "stabilizing with a learned-prior ≥55%"
+    - pts: 4
+      pillar: tape_setup
+      cap: 30
+      when: {vs50_gt: 0}
+      note: "above 50dma {vs50} — Minervini trend filter"
+    - pts: 4
+      pillar: tape_setup
+      cap: 30
+      when: {all: [{any: [{pct_b_is: null}, {pct_b_lt: 0.7}]},
+                   {any: [{rsi_is: null}, {rsi_lt: 65}]}]}
+      note: "not stretched — %B {pct_b}, RSI {rsi} (null = unverifiable,
+             excused not rewarded)"
+    - pts: 4
+      pillar: tape_setup
+      cap: 30
+      when: {swing_struct: true}
+      note: "swing structure mapped — risk definable"
+    - pts: 2
+      pillar: tape_setup
+      cap: 30
+      when: {any: [{hist_dir_is: null}, {hist_dir_gt: -0.5}]}
+      note: "momentum not fading"
+
+    # --- pillar 2: earnings momentum (30) — CANSLIM C+A, street leg
+    - pts: 8
+      pillar: earnings_momentum
+      cap: 30
+      when: {fund_in: [accelerating]}
+      note: "fundamentals accelerating"
+    - pts: 4
+      pillar: earnings_momentum
+      cap: 30
+      when: {fund_in: [growing]}
+      note: "fundamentals growing"
+    - pts: 6
+      pillar: earnings_momentum
+      cap: 30
+      when: {rev_growth_gte: 0.15}
+      note: "rev growth {rev_growth} ≥15% (CANSLIM C)"
+    - pts: 6
+      pillar: earnings_momentum
+      cap: 30
+      when: {eps_growth_gte: 0.20}
+      note: "EPS growth {eps_growth} ≥20% (CANSLIM C)"
+    - pts: 5
+      pillar: earnings_momentum
+      cap: 30
+      when: {est_rev_gt: 0}
+      note: "street revising UP {est_rev}% — the fuel"
+    - pts: 3
+      pillar: earnings_momentum
+      cap: 30
+      when: {beat_streak_gte: 2}
+      note: "beat streak {beat_streak}"
+    - pts: 2
+      pillar: earnings_momentum
+      cap: 30
+      when: {rev_class_in: rev_strong}
+      note: "revision grade {rev}"
+
+    # --- pillar 3: leadership (15) — CANSLIM L, group tailwind.
+    #     Bands are mutually exclusive — RS 80 earns the ≥70 award, not both.
+    - pts: 8
+      pillar: leadership
+      cap: 15
+      when: {rs_pct_gte: 70}
+      note: "RS {rs_pct} ≥70 — leader"
+    - pts: 4
+      pillar: leadership
+      cap: 15
+      when: {all: [{rs_pct_gte: 50}, {rs_pct_lt: 70}]}
+      note: "RS {rs_pct} top half"
+    - pts: 4
+      pillar: leadership
+      cap: 15
+      when: {sector_score_gt: 0}
+      note: "sector flow positive — right group"
+    - pts: 3
+      pillar: leadership
+      cap: 15
+      when: {member_in: [rule_breaker, smallcap, focus]}
+      note: "engine-member — already promoted"
+
+    # --- pillar 4: valuation room (15) — exclusive bands
+    - pts: 8
+      pillar: valuation_room
+      cap: 15
+      when: {fv_gte: 20}
+      note: "FV +{fv}% — headroom"
+    - pts: 4
+      pillar: valuation_room
+      cap: 15
+      when: {all: [{fv_gte: 10}, {fv_lt: 20}]}
+      note: "FV +{fv}%"
+    - pts: 5
+      pillar: valuation_room
+      cap: 15
+      when: {priced_in: priced_room}
+      note: "priced {priced} — improvement not yet paid for"
+    - pts: 2
+      pillar: valuation_room
+      cap: 15
+      when: {muted_reaction: true}
+      note: "muted reaction — stealth repricing ahead"
+
+    # --- pillar 5: risk shape (10) — Minervini: risk before reward.
+    #     Exclusive bands — R:R 2.5 earns the ≥2 award, not both.
+    - pts: 5
+      pillar: risk_shape
+      cap: 10
+      when: {rr_gte: 2.0}
+      note: "R:R {rr} ≥2"
+    - pts: 3
+      pillar: risk_shape
+      cap: 10
+      when: {all: [{rr_gte: 1.5}, {rr_lt: 2.0}]}
+      note: "R:R {rr} ≥1.5"
+    - pts: 3
+      pillar: risk_shape
+      cap: 10
+      when: {risk_atr_lte: 2.0}
+      note: "entry within {risk_atr} ATRs of invalidation"
+    - pts: 2
+      pillar: risk_shape
+      cap: 10
+      when: {hit_rate_gte: 0.55}
+      note: "pattern prior {hit_rate}"
+
+  adjust:
+    - pts: 8
+      when: {selloff_class_in: selloff_edge, fund_not_in: fund_fail,
+             dip_phase_in: dip_resolving}
+      note: "DOWN WITHOUT FUNDAMENTAL CHANGE ({selloff_class}) and
+             stabilizing — the panic-discount entry"
+    - pts: 4
+      when: {sq_verdict_in: [squeeze_setup]}
+      note: "squeeze fuel — shorts trapped under a constructive tape"
+    - pts: -12
+      when: {all: [{earn_days_gte: 4}, {earn_days_lte: 10}]}
+      note: "earnings in {earn_days}d — event inside hold window"
+    - pts: -10
+      when: {any: [{vs50_gt: 0.25}, {pct_b_gt: 1.0}, {rsi_gte: 72}]}
+      note: "extended — chasing, not entering"
+    - pts: -6
+      when: {thesis_dir: down}
+      note: "thesis direction down"
+
+  tiers:
+    # the A-tier contract the ctx promises: definable risk — a mapped
+    # structure AND R:R ≥1.5. Failing either demotes to B.
+    - {tier: A, min: 70, require: {rr_gte: 1.5, swing_struct: true},
+       label: deploy,  note: "full checklist — entry + stop + target
+       from structure; journal the plan"}
+    - {tier: B, min: 55, label: close,   note: "one leg short —
+       name the trigger it waits on"}
+    - {tier: C, min: 40, label: watch,   note: "idea, not entry"}
+    - {tier: X, min: 0,  label: reject,  note: "below bar"}
+
+# =====================================================================
+# SECTION 2 — LONG TERM  (6-24mo holds)
+# Quality-growth compounders bought with a margin of safety. The frame
+# inverts swing logic: TAPE WEAKNESS ON INTACT FUNDAMENTALS IS THE
+# ENTRY — a macro_panic/sector_contagion selloff on an on_track thesis
+# is the best LT entry the system can flag. What we refuse: broken
+# thesis, deteriorating fundamentals, corroborated premium pricing.
+#
+# A- and B-tier require a VALID fair value — a name that scores on
+# growth+quality alone but can't be valued is a RESEARCH candidate
+# (tier C), never buy-ready. Missing evidence of value is not value.
+# =====================================================================
+long_term:
+  horizon: "6-24mo"
+  output: {top_n: 10, journal: best_picks_evals}
+  require: {}                       # LT accumulates in any posture —
+                                    # regime sizes the tranche, not
+                                    # the permission (staged entries)
+
+  gates:
+    - name: not_equity
+      when: {any: [{is_etf: true}, {is_etf_is: null}]}
+      why: "not a confirmed equity — ETFs and unknown instruments
+            don't get a stock pick"
+    - name: thesis_broken
+      when: {thesis_in: [broken]}
+      why: "thesis broken — permanent-impairment risk, not a dip"
+    - name: fund_failing
+      when: {fund_in: fund_fail}
+      why: "fundamentals {fund} — a dip WITH cause is a trap"
+    - name: priced_beyond_runway
+      when: {priced_in: [beyond_lt_avg]}
+      why: "priced beyond the long-run anchor — paying tomorrow's growth"
+    - name: corroborated_premium
+      when: {fv_lte: -20, priced_in: priced_full}
+      why: "FV gap {fv}% corroborated by priced={priced} —
+            buying 25%+ above model value"
+    - name: selloff_trap
+      when: {selloff_class_in: selloff_trap}
+      why: "down WITH cause ({selloff_class})"
+    - name: alert_veto
+      when: {alert_neg_72h: true}
+      why: "negative high-materiality alert <72h"
+    - name: stale_inputs
+      when: {flywheel_age_days_gt: 90}
+      why: "fundamentals snapshot >90d — verify before committing capital"
+    - name: risk_flags
+      when: {hard_risk_active: true}
+      why: "hard quality-risk flags active"
+
+  routing:
+    - when: {risk_unverifiable: true}
+      tier_cap: C
+      label: research
+      note: "critical quality inputs missing — the research list, not
+             buy-ready. Missing evidence of risk is not evidence of
+             safety"
+
+  scoring:
+    # --- pillar 1: business quality (30) — Munger's moat leg. Bands.
+    - pts: 8
+      pillar: business_quality
+      cap: 30
+      when: {gq_score_gte: 60}
+      note: "growth quality {gq_score}/100"
+    - pts: 4
+      pillar: business_quality
+      cap: 30
+      when: {all: [{gq_score_gte: 45}, {gq_score_lt: 60}]}
+      note: "growth quality {gq_score}/100"
+    - pts: 6
+      pillar: business_quality
+      cap: 30
+      when: {structural_proof_gte: 60}
+      note: "structural proof {structural_proof} — the economics are real"
+    - pts: 6
+      pillar: business_quality
+      cap: 30
+      when: {fcf_margin_gte: 0.10}
+      note: "FCF margin {fcf_margin} — cash confirms the earnings"
+    - pts: 3
+      pillar: business_quality
+      cap: 30
+      when: {all: [{fcf_margin_gte: 0}, {fcf_margin_lt: 0.10}]}
+      note: "FCF positive — self-funding"
+    - pts: 4
+      pillar: business_quality
+      cap: 30
+      when: {margin_trend_gte: 0}
+      note: "margins stable/rising — pricing power intact"
+    - pts: 2
+      pillar: business_quality
+      cap: 30
+      when: {num_analysts_gte: 3}
+      note: "{num_analysts} analysts — coverage = verifiable"
+
+    # --- pillar 2: growth durability (25) — level AND slope. Bands.
+    - pts: 7
+      pillar: growth_durability
+      cap: 25
+      when: {rev_growth_gte: 0.15}
+      note: "rev growth {rev_growth} ≥15%"
+    - pts: 4
+      pillar: growth_durability
+      cap: 25
+      when: {all: [{rev_growth_gte: 0.08}, {rev_growth_lt: 0.15}]}
+      note: "rev growth {rev_growth} ≥8%"
+    - pts: 7
+      pillar: growth_durability
+      cap: 25
+      when: {eps_growth_gte: 0.15}
+      note: "EPS growth {eps_growth} ≥15%"
+    - pts: 5
+      pillar: growth_durability
+      cap: 25
+      when: {any: [{rev_accel_gte: 0}, {eps_accel_gte: 0}]}
+      note: "growth not decaying — accel {rev_accel}/{eps_accel}"
+    - pts: 4
+      pillar: growth_durability
+      cap: 25
+      when: {any: [{future_score_gte: 45}, {conv_lane_in: [deploy, watch]}]}
+      note: "runway — future score {future_score}, lane {conv_lane}"
+    - pts: 2
+      pillar: growth_durability
+      cap: 25
+      when: {beat_streak_gte: 3}
+      note: "beat streak {beat_streak} — execution record"
+
+    # --- pillar 3: valuation asymmetry (20) — margin of safety. Bands.
+    - pts: 10
+      pillar: valuation_asymmetry
+      cap: 20
+      when: {fv_gte: 30}
+      note: "FV +{fv}% — real margin of safety"
+    - pts: 6
+      pillar: valuation_asymmetry
+      cap: 20
+      when: {all: [{fv_gte: 15}, {fv_lt: 30}]}
+      note: "FV +{fv}%"
+    - pts: 3
+      pillar: valuation_asymmetry
+      cap: 20
+      when: {all: [{fv_gte: 0}, {fv_lt: 15}]}
+      note: "at/under FV"
+    - pts: 5
+      pillar: valuation_asymmetry
+      cap: 20
+      when: {priced_in: priced_room}
+      note: "priced {priced} — market hasn't paid for it yet"
+    - pts: 3
+      pillar: valuation_asymmetry
+      cap: 20
+      when: {fv_asym_gte: 1.5}
+      note: "bull/bear asymmetry {fv_asym} ≥1.5 — payoff skews up"
+    - pts: 2
+      pillar: valuation_asymmetry
+      cap: 20
+      # no null soft-pass — a missing fwd_pe is missing data, not a
+      # cheap multiple; pre-profit names score on FV/asymmetry only
+      when: {any: [{fwd_pe_lte: 40}, {peg_lte: 2.0}]}
+      note: "multiple sane for the growth — fwd_pe {fwd_pe}, PEG {peg}"
+
+    # --- pillar 4: thesis evidence (15) — the story is working. Bands:
+    #     on_track/improving+up (6) is a distinct state from merely
+    #     alive (4) — not additive.
+    - pts: 6
+      pillar: thesis_evidence
+      cap: 15
+      when: {thesis_in: [on_track, improving], thesis_dir_is: up}
+      note: "thesis {thesis} ▲ — checks confirming"
+    - pts: 4
+      pillar: thesis_evidence
+      cap: 15
+      when: {any: [{thesis_in: [mixed]},
+                   {all: [{thesis_in: [on_track, improving]},
+                          {thesis_dir_not_in: [up]}]}]}
+      note: "thesis {thesis} alive, direction not confirming"
+    - pts: 3
+      pillar: thesis_evidence
+      cap: 15
+      when: {last_print_in: [improving]}
+      note: "last print verdict improving"
+    - pts: 3
+      pillar: thesis_evidence
+      cap: 15
+      when: {est_rev_gt: 0}
+      note: "street revising up {est_rev}%"
+    - pts: 3
+      pillar: thesis_evidence
+      cap: 15
+      when: {muted_reaction: true}
+      note: "improvement not repriced — still early"
+
+    # --- pillar 5: entry context (10) — weakness welcome, freefall not
+    - pts: 5
+      pillar: entry_context
+      cap: 10
+      when: {tape_not_in: tape_hostile}
+      note: "tape {tape} — not a falling knife; LT buys weakness,
+             not freefall"
+    - pts: 5
+      pillar: entry_context
+      cap: 10
+      when: {selloff_class_in: selloff_edge, thesis_in: thesis_alive}
+      note: "DOWN WITHOUT FUNDAMENTAL CHANGE ({selloff_class}) on an
+             alive thesis — the staged-accumulation entry"
+    - pts: 3
+      pillar: entry_context
+      cap: 10
+      when: {dip_phase_in: dip_resolving}
+      note: "wash resolving {dip_phase}"
+
+  adjust:
+    - pts: 8
+      when: {selloff_class_in: selloff_edge, thesis_in: [on_track, improving],
+             dd_60d_lte: -0.15}
+      note: "panic discount {dd_60d} on an on-track thesis —
+             the highest-conviction LT setup"
+    - pts: -8
+      when: {thesis_dir: down}
+      note: "thesis direction down"
+    - pts: -6
+      when: {tape_in: tape_hostile, fund_not_in: fund_good}
+      note: "weak tape on merely-neutral fundamentals — early, not entry"
+    - pts: -5
+      when: {all: [{earn_days_gte: 0}, {earn_days_lte: 7}]}
+      note: "print in {earn_days}d — let the print land or tranche smaller"
+
+  tiers:
+    # fv_valid required to BUY at any size — a growth+quality score
+    # with unusable valuation is a research item, not a position
+    - {tier: A, min: 70, require: {fv_valid: true},
+       label: core,    note: "build toward target weight — staged
+       tranches if tape is weak"}
+    - {tier: B, min: 55, require: {fv_valid: true},
+       label: starter, note: "partial position — scale on
+       confirmation or deeper discount"}
+    - {tier: C, min: 40, label: watch,   note: "right name, waiting
+       for price or facts — or FV can't be validated (research)"}
+    - {tier: X, min: 0,  label: reject,  note: "below bar"}
+
+# =====================================================================
+# SECTION 3 — COMPOUNDER  (3-5y holds)
+# The strongest combination of durable growth, moat, financial strength
+# and expected return. The question is NOT "is it growing" — a 50%
+# grower with dilution and no moat loses to a 20% grower with durable
+# margins and a real discount. Estimate future earnings power and the
+# return FROM TODAY'S PRICE.
+#
+# CYCLICALS route to a distinct risk class: memory, storage and
+# capital-intensive AI infra print their best growth near cycle tops,
+# right before estimates roll. cyclical=true caps at B regardless of
+# score — a cyclical can be a starter tranche on normalized-EPS
+# evidence, never a core compounder on TTM numbers.
+# =====================================================================
+compounder_3_5y:
+  horizon: "3-5y"
+  output: {top_n: 10, journal: best_picks_evals}
+  require: {}
+
+  gates:
+    - name: not_equity
+      when: {any: [{is_etf: true}, {is_etf_is: null}]}
+      why: "not a confirmed equity"
+    - name: thesis_broken
+      when: {thesis_in: [broken]}
+      why: "thesis broken — a 5y hold needs a live thesis"
+    - name: fund_failing
+      when: {fund_in: fund_fail}
+      why: "fundamentals {fund}"
+    - name: priced_beyond_runway
+      when: {priced_in: [beyond_lt_avg]}
+      why: "priced beyond the long-run anchor"
+    - name: corroborated_premium
+      when: {fv_lte: -20, priced_in: priced_full}
+      why: "FV gap {fv}% corroborated — paying >25% above model value
+            for a multi-year hold"
+    - name: selloff_trap
+      when: {selloff_class_in: selloff_trap}
+      why: "down WITH cause ({selloff_class})"
+    - name: alert_veto
+      when: {alert_neg_72h: true}
+      why: "negative high-materiality alert <72h"
+    - name: stale_inputs
+      when: {flywheel_age_days_gt: 90}
+      why: "fundamentals snapshot >90d"
+    - name: risk_flags
+      when: {any: [{hard_risk_active: true}, {risk_unverifiable: true}]}
+      why: "quality risk active or unverifiable — a 5y commitment
+            needs verified safety"
+
+  routing:
+    - when: {cyclical: true}
+      tier_cap: B
+      label: cyclical_review
+      note: "cyclical — peak-cycle earnings look like quality growth;
+             verify NORMALIZED mid-cycle EPS before treating any score
+             as core. Memory/storage/capex-heavy infra belong here"
+
+  scoring:
+    # --- pillar 1: moat & business quality (25) — durability of the
+    #     economics, not the growth rate. Bands.
+    - pts: 8
+      pillar: moat_quality
+      cap: 25
+      when: {gq_score_gte: 70}
+      note: "growth quality {gq_score}/100 — top decile economics"
+    - pts: 5
+      pillar: moat_quality
+      cap: 25
+      when: {all: [{gq_score_gte: 55}, {gq_score_lt: 70}]}
+      note: "growth quality {gq_score}/100"
+    - pts: 6
+      pillar: moat_quality
+      cap: 25
+      when: {structural_proof_gte: 70}
+      note: "structural proof {structural_proof} — switching costs /
+             pricing power evidenced, not asserted"
+    - pts: 4
+      pillar: moat_quality
+      cap: 25
+      when: {all: [{structural_proof_gte: 55}, {structural_proof_lt: 70}]}
+      note: "structural proof {structural_proof}"
+    - pts: 5
+      pillar: moat_quality
+      cap: 25
+      when: {margin_trend_gt: 0}
+      note: "margins RISING — pricing power compounding"
+    - pts: 2
+      pillar: moat_quality
+      cap: 25
+      # bounded band, not `is: 0` — `is` tests None-ness in this
+      # engine, and exact float equality is wrong for a slope anyway
+      when: {all: [{margin_trend_lte: 0}, {margin_trend_gte: -0.02}]}
+      note: "margins flat (±2pp band) — declining slopes get nothing"
+    - pts: 2
+      pillar: moat_quality
+      cap: 25
+      when: {tailwind_in: [revenue, shipping]}
+      note: "tailwind is revenue/shipping-tier — adoption visible in
+             numbers, not announcements"
+
+    # --- pillar 2: 3-5y growth runway (25) — forward power, not TTM.
+    #     Bands on every metric.
+    - pts: 8
+      pillar: growth_runway
+      cap: 25
+      when: {rev_growth_gte: 0.20}
+      note: "rev growth {rev_growth} ≥20%"
+    - pts: 5
+      pillar: growth_runway
+      cap: 25
+      when: {all: [{rev_growth_gte: 0.12}, {rev_growth_lt: 0.20}]}
+      note: "rev growth {rev_growth}"
+    - pts: 3
+      pillar: growth_runway
+      cap: 25
+      when: {all: [{rev_growth_gte: 0.08}, {rev_growth_lt: 0.12}]}
+      note: "rev growth {rev_growth} — modest but durable counts"
+    - pts: 6
+      pillar: growth_runway
+      cap: 25
+      when: {eps_growth_gte: 0.20}
+      note: "EPS growth {eps_growth} ≥20%"
+    - pts: 4
+      pillar: growth_runway
+      cap: 25
+      when: {all: [{eps_growth_gte: 0.10}, {eps_growth_lt: 0.20}]}
+      note: "EPS growth {eps_growth}"
+    - pts: 5
+      pillar: growth_runway
+      cap: 25
+      when: {any: [{future_score_gte: 55}, {conv_lane_in: [deploy]}]}
+      note: "runway — future score {future_score}, lane {conv_lane}"
+    - pts: 3
+      pillar: growth_runway
+      cap: 25
+      # exclusive band — the deploy-lane / score≥55 award above is the
+      # stronger signal; a 40-55 name IN deploy doesn't earn both
+      when: {all: [{future_score_gte: 40}, {future_score_lt: 55},
+                   {conv_lane_not_in: [deploy]}]}
+      note: "runway evidence {future_score} (deploy lane excluded)"
+    - pts: 2
+      pillar: growth_runway
+      cap: 25
+      when: {emerging: true}
+      note: "emerging-growth flag — runway ahead of estimates"
+
+    # --- pillar 3: financial strength (15) — funds the runway itself
+    - pts: 5
+      pillar: financial_strength
+      cap: 15
+      when: {fcf_margin_gte: 0.15}
+      note: "FCF margin {fcf_margin} — growth is self-funding"
+    - pts: 3
+      pillar: financial_strength
+      cap: 15
+      when: {all: [{fcf_margin_gte: 0.05}, {fcf_margin_lt: 0.15}]}
+      note: "FCF margin {fcf_margin}"
+    - pts: 4
+      pillar: financial_strength
+      cap: 15
+      when: {leverage_ok: true}
+      note: "balance sheet funds the runway — no leverage flag"
+    - pts: 4
+      pillar: financial_strength
+      cap: 15
+      when: {dilution_ok: true}
+      note: "share count controlled — growth reaches PER-SHARE value"
+    - pts: 2
+      pillar: financial_strength
+      cap: 15
+      when: {fund_risk_not_in: [high]}
+      note: "fundamental risk {fund_risk}"
+
+    # --- pillar 4: valuation & expected return (25) — return from
+    #     TODAY'S price, corroborated across methods. Bands.
+    - pts: 10
+      pillar: valuation_return
+      cap: 25
+      when: {fv_gte: 40}
+      note: "FV +{fv}% — deep discount to estimated power"
+    - pts: 7
+      pillar: valuation_return
+      cap: 25
+      when: {all: [{fv_gte: 25}, {fv_lt: 40}]}
+      note: "FV +{fv}%"
+    - pts: 4
+      pillar: valuation_return
+      cap: 25
+      when: {all: [{fv_gte: 10}, {fv_lt: 25}]}
+      note: "FV +{fv}%"
+    - pts: 5
+      pillar: valuation_return
+      cap: 25
+      when: {fv_asym_gte: 2.0}
+      note: "bull/bear asymmetry {fv_asym} — payoff skews hard up"
+    - pts: 3
+      pillar: valuation_return
+      cap: 25
+      when: {all: [{fv_asym_gte: 1.5}, {fv_asym_lt: 2.0}]}
+      note: "asymmetry {fv_asym}"
+    - pts: 5
+      pillar: valuation_return
+      cap: 25
+      when: {priced_in: priced_room}
+      note: "priced {priced} — market hasn't paid for the runway"
+    - pts: 3
+      pillar: valuation_return
+      cap: 25
+      when: {fv_methods_gte: 3}
+      note: "{fv_methods} FV methods agree — estimate is corroborated"
+    - pts: 1
+      pillar: valuation_return
+      cap: 25
+      when: {all: [{fv_methods_gte: 2}, {fv_methods_lt: 3}]}
+      note: "{fv_methods} FV methods"
+
+    # --- pillar 5: catalysts & execution (10) — reasons the market
+    #     keeps revising
+    - pts: 3
+      pillar: catalysts_execution
+      cap: 10
+      when: {beat_streak_gte: 3}
+      note: "beat streak {beat_streak} — management executes"
+    - pts: 3
+      pillar: catalysts_execution
+      cap: 10
+      when: {est_rev_gt: 0}
+      note: "street revising up {est_rev}% — the repricing engine"
+    - pts: 2
+      pillar: catalysts_execution
+      cap: 10
+      when: {last_print_in: [improving]}
+      note: "last print verdict improving"
+    - pts: 2
+      pillar: catalysts_execution
+      cap: 10
+      when: {thesis_dir: up}
+      note: "thesis checks confirming"
+
+  adjust:
+    - pts: 8
+      when: {selloff_class_in: selloff_edge, thesis_in: [on_track, improving],
+             dd_60d_lte: -0.20}
+      note: "panic discount {dd_60d} on a working thesis — the
+             multi-year accumulation setup"
+    - pts: -10
+      when: {dilution_ok: false}
+      note: "dilution — growth isn't reaching per-share value"
+    - pts: -8
+      when: {thesis_dir: down}
+      note: "thesis direction down"
+    - pts: -6
+      when: {all: [{cyclical: true}, {est_rev_lt: 0}]}
+      note: "cyclical with estimates rolling — the cycle-top signature"
+    - pts: -4
+      when: {tape_in: tape_hostile}
+      note: "hostile tape — multi-year holds stage in, don't lump"
+
+  tiers:
+    # core/starter need a CORROBORATED valuation — a 5y commitment on
+    # a single-method (or absent) FV is faith, not analysis. This is
+    # the direct answer to the single-survivor audit failure mode.
+    - {tier: A, min: 75, require: {fv_valid: true, fv_methods_gte: 2},
+       label: core,     note: "multi-year core — staged entry, thesis
+       watches define the sell discipline"}
+    - {tier: B, min: 60, require: {fv_valid: true},
+       label: starter,  note: "starter tranche — scale on
+       confirmation; cyclicals cap here"}
+    - {tier: C, min: 45, label: watch,   note: "right business, wrong
+       evidence — waiting on price, FV corroboration, or facts"}
+    - {tier: X, min: 0,  label: reject,  note: "below bar"}
+
+# ---------------------------------------------------------------------
+# Notes for the implementer
+# ---------------------------------------------------------------------
+# - Three lists, three different questions: swing REQUIRES constructive
+#   tape (the trade needs the trend to pay inside 20d); long_term only
+#   excludes hostile tape (the dip IS the entry on intact fundamentals);
+#   compounder prices future earnings power and demotes cycle exposure.
+# - selloff_class is the "down without fundamental change" detector:
+#   edge classes score UP in all three sections, trap classes gate out.
+# - Bands are mutually exclusive on the same metric within a pillar —
+#   implement as first-match-wins per metric or explicit lt bounds as
+#   written; the cap is a safety net, not the discrimination mechanism.
+# - Tier demotion order: gates (reject) → score → routing caps → tier
+#   requires. A name can only ever move DOWN, never up.
+# - Parallelism: bulk-load every ctx source once (≤15 queries for the
+#   whole ~563-name universe — the stock_health.board() pattern), then
+#   eval is pure math. No provider fetches in the eval path.
+# - Journaling: every scored name writes (symbol, section, score, tier,
+#   pillar detail, routing labels, gate rejects, missing[] fields) →
+#   best_picks_evals. The outcome grader then answers "which pillars
+#   predict 5/10/20d vs 6/12/24mo returns" per section.
+# - Validation discipline: walk-forward on point-in-time data —
+#   historical universe membership, delisted names, fundamentals
+#   as-of-filing-date, estimates as-of-date. Do NOT tune weights on the
+#   same window used to report performance (the model learns the past,
+#   not the edge). A-tier must beat B beat C out-of-sample before the
+#   rankings carry any weight.
+# - Missing-field lint: a build-time check asserts every field used in
+#   any `when` appears in `ctx` — a rule on an undeclared field is a
+#   spec error, not a silent miss.
+# - fv_* prefix note: the shared interpreter gates EVERY fv* field on
+#   fv_valid — including fv_methods and fv_asym. That is intended: a
+#   method count or bull/bear ratio on an invalid estimate is
+#   meaningless. fv_valid ITSELF is exempt from the guard
+#   (k != "fv_valid" in _cond) — verified: {fv_valid: false} inside
+#   priced_out correctly fires on invalid FV.
+# - `is`/`is_not` are presence tests only — verified: a non-null
+#   operand never value-matches ({thesis_dir_is: down} fired on ANY
+#   non-null direction and was replaced with bare-equality
+#   {thesis_dir: down}). Numeric equality uses bounded bands; scalar
+#   equality uses the bare form; exclusion uses field_not_in.
+# - score is unbounded — adjust modifiers can push past 100 (the
+#   panic-discount LT case scores 104). Clamp 0-100 for display;
+#   the raw value is journaled.
+#
+# Acceptance tests (run against the real evaluator before trusting
+# any ranking):
+#   earn_days = -1 (print passed)        → binary_event must NOT fire
+#   fv missing/invalid, LT score 80      → tier C, never A/B
+#   fv_methods = 3                       → +3, not +3+1
+#   margin_trend = 0                     → stable pts only, not rising+stable
+#   swing score 75, rr 1.2               → tier B max (A requires rr≥1.5
+#                                          AND swing_struct)
+#   risk_unverifiable, LT score 80       → tier C + 'research' label
+#   cyclical score 90                    → compounder caps at B +
+#                                          'cyclical_review' label
+#
+# - This file is policy only — wiring: a best-picks job (post-refresh
+#   cadence) + plan-page lanes per section + per-symbol eval reusing
+#   pulse_engine._cond so condition semantics stay single-source.
+#   Rankings carry no authority until the walk-forward backtest shows
+#   A > B > C out-of-sample — the journal exists to answer that.
