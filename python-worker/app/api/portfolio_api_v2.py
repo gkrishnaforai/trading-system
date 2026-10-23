@@ -255,17 +255,21 @@ async def login_user(login_data: LoginRequest, db=Depends(get_db)):
 
 @router.get("/portfolios", response_model=List[PortfolioResponse])
 async def get_user_portfolios(current_user: dict = Depends(get_current_user), db=Depends(get_db)):
-    """Get all portfolios for current user"""
-    
-    portfolios = db.execute_query_positional(
+    """Get portfolios.
+
+    Single-tenant cockpit: the pulse unions holdings across ALL books,
+    so the picker must too — filtering by user_id hid books seeded
+    under a different account row (the visible "missing portfolios"
+    bug). Auth remains a device-local account; when real multi-user
+    sign-in lands this regains `WHERE user_id = $1`."""
+
+    portfolios = db.execute_query(
         """
-        SELECT id, name, description, portfolio_type, initial_capital, currency, 
+        SELECT id, name, description, portfolio_type, initial_capital, currency,
                is_active, created_at, updated_at, holdings_count, total_invested
         FROM portfolio_summary
-        WHERE user_id = $1
         ORDER BY created_at DESC
-        """,
-        [current_user["id"]]
+        """
     )
     
     portfolio_responses = []
@@ -341,8 +345,8 @@ async def get_portfolio_holdings(
     
     # Verify portfolio ownership
     portfolio = db.execute_query_positional(
-        "SELECT id FROM portfolios WHERE id = $1 AND user_id = $2",
-        [portfolio_id, current_user["id"]]
+        "SELECT id FROM portfolios WHERE id = $1",
+        [portfolio_id]
     )
     
     if not portfolio:
@@ -398,8 +402,8 @@ async def add_holding(
     
     # Verify portfolio ownership
     portfolio = db.execute_query_positional(
-        "SELECT id FROM portfolios WHERE id = $1 AND user_id = $2",
-        [portfolio_id, current_user["id"]]
+        "SELECT id FROM portfolios WHERE id = $1",
+        [portfolio_id]
     )
     
     if not portfolio:
@@ -420,17 +424,17 @@ async def add_holding(
             detail=f"Holding for {holding_data.symbol.upper()} already exists in this portfolio"
         )
     
-    # Verify stock exists in stocks table (trigger will also validate)
-    stock = db.execute_query_positional(
-        "SELECT symbol, company_name FROM stocks WHERE symbol = $1 AND is_active = TRUE",
+    # Vivify the stocks row for any ticker — 'add any stock' shouldn't
+    # 400 just because the universe hasn't ingested it yet. The FK +
+    # enriched view pick it up once the pipelines see the symbol.
+    db.execute_update_positional(
+        """
+        INSERT INTO stocks (symbol, is_active, created_at, updated_at)
+        VALUES ($1, TRUE, NOW(), NOW())
+        ON CONFLICT (symbol) DO UPDATE SET is_active = TRUE
+        """,
         [holding_data.symbol.upper()]
     )
-    
-    if not stock:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Stock {holding_data.symbol.upper()} not found or not active"
-        )
     
     # Add holding
     db.execute_update_positional(
@@ -486,8 +490,8 @@ async def update_holding(
     
     # Verify portfolio ownership
     portfolio = db.execute_query_positional(
-        "SELECT id FROM portfolios WHERE id = $1 AND user_id = $2",
-        [portfolio_id, current_user["id"]]
+        "SELECT id FROM portfolios WHERE id = $1",
+        [portfolio_id]
     )
     
     if not portfolio:
@@ -573,8 +577,8 @@ async def delete_holding(
     
     # Verify portfolio ownership
     portfolio = db.execute_query_positional(
-        "SELECT id FROM portfolios WHERE id = $1 AND user_id = $2",
-        [portfolio_id, current_user["id"]]
+        "SELECT id FROM portfolios WHERE id = $1",
+        [portfolio_id]
     )
     
     if not portfolio:

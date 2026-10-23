@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
+import { SymbolSearch } from '@/components/symbol-search'
 
 const KEY = 'mp_watchlist_v1'
 
@@ -48,11 +49,10 @@ export function WatchToggle({ sym }: { sym: string }) {
   return (
     <button
       onClick={() => toggleWatch(sym)}
-      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-        on
-          ? 'border-accent/50 bg-accent/10 text-accent'
-          : 'border-hairline text-muted hover:border-accent/40 hover:text-accent'
-      }`}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${on
+        ? 'border-accent/50 bg-accent/10 text-accent'
+        : 'border-hairline text-muted hover:border-accent/40 hover:text-accent'
+        }`}
     >
       {on ? '★ watching' : '☆ watch'}
     </button>
@@ -72,10 +72,13 @@ export function WatchlistCard() {
           {list.length} names · saved on this device
         </span>
       </div>
+      <div className="pt-3">
+        <SymbolSearch onPick={(sym) => toggleWatch(sym)} placeholder="add any ticker to watchlist…" />
+      </div>
       {list.length === 0 ? (
         <p className="pt-3 text-sm text-muted">
-          Empty — open any stock page and tap{' '}
-          <span className="text-accent">☆ watch</span> to add it here.
+          Empty — search above or open any stock page and tap{' '}
+          <span className="text-accent">☆ watch</span>.
         </p>
       ) : (
         <div className="pt-3 flex flex-wrap gap-2">

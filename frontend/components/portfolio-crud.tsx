@@ -3,9 +3,10 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
+import { SymbolSearch } from '@/components/symbol-search'
 
 const input =
-  'rounded-md border border-hairline bg-canvas px-2.5 py-1.5 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none'
+  'rounded-lg border border-hairline bg-canvas px-2.5 py-1.5 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none transition-colors'
 const btn =
   'rounded-full bg-ink px-3.5 py-1.5 text-xs font-medium text-canvas hover:bg-accent transition-colors disabled:opacity-40'
 
@@ -20,29 +21,42 @@ async function call(
   return res.ok
 }
 
-export function BookPicker({ options, selected }: {
-  options: { id: string; name: string; holdings_count?: number }[]
+/** Book rail — every book as a card chip; the system book first. */
+export function BookRail({ options, selected }: {
+  options: {
+    id: string; name: string; portfolio_type?: string
+    holdings_count?: number; total_invested?: number
+  }[]
   selected?: string | null
 }) {
-  const router = useRouter()
+  const card = (active: boolean) =>
+    `group flex min-w-[9rem] flex-col gap-0.5 rounded-xl border px-3.5 py-2.5 transition-all ${active
+      ? 'border-accent/60 bg-accent/[0.06] shadow-[0_0_0_1px_rgba(234,88,12,0.25),0_4px_18px_-6px_rgba(234,88,12,0.35)]'
+      : 'border-hairline bg-card hover:border-faint/60 hover:shadow-sm'
+    }`
   return (
-    <select
-      aria-label="choose portfolio"
-      value={selected ?? 'book'}
-      onChange={(e) => {
-        const v = e.target.value
-        router.push(v === 'book' ? '/portfolio' : `/portfolio?p=${v}`)
-      }}
-      className="rounded-full border border-hairline bg-canvas px-3.5 py-1.5 text-xs font-medium text-ink focus:border-accent focus:outline-none"
-    >
-      <option value="book">The book</option>
+    <div className="flex gap-2 overflow-x-auto pb-1">
+      <Link href="/portfolio" className={card(!selected)}>
+        <span className="text-sm font-medium text-ink">The book</span>
+        <span className="font-mono text-[10px] uppercase tracking-wider text-faint">
+          system · all books
+        </span>
+      </Link>
       {options.map((p) => (
-        <option key={p.id} value={p.id}>
-          {p.name}
-          {p.holdings_count ? ` · ${p.holdings_count}` : ''}
-        </option>
+        <Link
+          key={p.id}
+          href={`/portfolio?p=${p.id}`}
+          className={card(selected === p.id)}
+        >
+          <span className="truncate text-sm font-medium text-ink">
+            {p.name}
+          </span>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-faint">
+            {p.portfolio_type ?? 'book'} · {p.holdings_count ?? 0} pos
+          </span>
+        </Link>
       ))}
-    </select>
+    </div>
   )
 }
 
@@ -62,18 +76,19 @@ export function NewPortfolioForm({ used, limit }: {
         onClick={() => !full && setOpen(true)}
         disabled={full}
         title={full ? `${limit} portfolios on this plan` : 'new book'}
-        className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${full
+        className={`flex min-w-[9rem] flex-col items-center justify-center gap-0.5 rounded-xl border border-dashed px-3.5 py-2.5 text-xs font-medium transition-colors ${full
           ? 'border-hairline text-faint'
-          : 'border-dashed border-accent/50 text-accent hover:bg-accent/10'
+          : 'border-accent/50 text-accent hover:bg-accent/[0.06]'
           }`}
       >
-        ＋ new book
+        <span className="text-base leading-none">＋</span>
+        <span>new book</span>
       </button>
     )
   }
   return (
     <form
-      className="flex items-center gap-2"
+      className="flex items-center gap-2 rounded-xl border border-accent/40 bg-accent/[0.04] px-3.5 py-2.5"
       onSubmit={async (e) => {
         e.preventDefault()
         if (!name.trim() || busy) return
@@ -107,46 +122,73 @@ export function NewPortfolioForm({ used, limit }: {
   )
 }
 
+/** Add any stock to this book — search the universe or type a raw ticker. */
 export function AddHoldingForm({ portfolioId }: { portfolioId: string }) {
   const [sym, setSym] = useState('')
   const [shares, setShares] = useState('')
   const [cost, setCost] = useState('')
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
   const router = useRouter()
+
+  const submit = async () => {
+    if (!sym.trim() || busy) return
+    setBusy(true)
+    setErr(null)
+    const res = await fetch(
+      `/api/portfolio/portfolios/${portfolioId}/holdings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: sym.trim().toUpperCase(),
+        asset_type: 'stock',
+        shares_held: Number(shares) || 0,
+        average_cost: Number(cost) || 0,
+      }),
+    })
+    setBusy(false)
+    if (res.ok) {
+      setSym(''); setShares(''); setCost('')
+      router.refresh()
+    } else {
+      setErr(`add failed (${res.status})`)
+    }
+  }
+
   return (
-    <form
-      className="flex flex-wrap items-center gap-2"
-      onSubmit={async (e) => {
-        e.preventDefault()
-        if (!sym.trim() || busy) return
-        setBusy(true)
-        const ok = await call(
-          `portfolios/${portfolioId}/holdings`, 'POST', {
-          symbol: sym.trim().toUpperCase(),
-          asset_type: 'stock',
-          shares_held: Number(shares) || 0,
-          average_cost: Number(cost) || 0,
-        })
-        setBusy(false)
-        if (ok) { setSym(''); setShares(''); setCost(''); router.refresh() }
-      }}
-    >
-      <input
-        className={`${input} w-20 font-mono uppercase`} placeholder="SYM"
-        value={sym} onChange={(e) => setSym(e.target.value)}
-      />
-      <input
-        className={`${input} w-24`} placeholder="shares"
-        value={shares} onChange={(e) => setShares(e.target.value)}
-      />
-      <input
-        className={`${input} w-24`} placeholder="avg cost"
-        value={cost} onChange={(e) => setCost(e.target.value)}
-      />
-      <button className={btn} disabled={busy || !sym.trim()}>
-        {busy ? '…' : '＋ add'}
-      </button>
-    </form>
+    <div className="rounded-xl border border-hairline bg-card px-4 py-3.5">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+          Add a position
+        </span>
+        {sym && (
+          <span className="font-mono text-[11px] text-accent">{sym}</span>
+        )}
+      </div>
+      <div className="pt-2.5">
+        <SymbolSearch
+          onPick={(s) => setSym(s)}
+          placeholder={sym || 'search ticker or company…'}
+        />
+      </div>
+      <form
+        className="flex flex-wrap items-center gap-2 pt-2.5"
+        onSubmit={(e) => { e.preventDefault(); submit() }}
+      >
+        <input
+          className={`${input} w-24`} placeholder="shares"
+          value={shares} onChange={(e) => setShares(e.target.value)}
+        />
+        <input
+          className={`${input} w-28`} placeholder="avg cost $"
+          value={cost} onChange={(e) => setCost(e.target.value)}
+        />
+        <button className={btn} disabled={busy || !sym.trim()}>
+          {busy ? '…' : `＋ add ${sym || ''}`}
+        </button>
+        {err && <span className="text-xs text-defensive">{err}</span>}
+      </form>
+    </div>
   )
 }
 
@@ -177,7 +219,7 @@ export function HoldingRow({ p, h }: {
       <div className="flex items-center gap-3 min-w-0">
         <Link
           href={`/stock?sym=${encodeURIComponent(sym)}`}
-          className="font-semibold text-ink hover:text-accent"
+          className="font-mono text-sm font-semibold text-ink hover:text-accent"
         >
           {sym}
         </Link>

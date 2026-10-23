@@ -9,6 +9,7 @@ export type Portfolio = {
   currency?: string
   holdings_count?: number
   total_invested?: number
+  created_at?: string
 }
 
 export type Holding = {
@@ -26,7 +27,12 @@ export type Holding = {
 
 export async function listPortfolios(): Promise<Portfolio[]> {
   const res = await authedFetch('/portfolios')
-  if (!res?.ok) return []
+  if (!res?.ok) {
+    console.warn(
+      `[portfolio] list failed: ${res ? res.status : 'no response (auth?)'}`,
+    )
+    return []
+  }
   try {
     const j = await res.json()
     return Array.isArray(j) ? j : []
@@ -37,7 +43,10 @@ export async function listPortfolios(): Promise<Portfolio[]> {
 
 export async function listHoldings(id: string): Promise<Holding[]> {
   const res = await authedFetch(`/portfolios/${id}/holdings`)
-  if (!res?.ok) return []
+  if (!res?.ok) {
+    console.warn(`[portfolio] holdings ${id} failed: ${res?.status}`)
+    return []
+  }
   try {
     const j = await res.json()
     return Array.isArray(j) ? j : []
