@@ -1767,13 +1767,32 @@ async def symbol_health(sym: str):
     out = await asyncio.to_thread(card, sym.upper())
     # self-heal: the card serves stored runs, so when one is stale
     # (age/model drift) kick a background recompute — the next view
-    # is fresh. The resolver's own reuse checks bound the work.
-    if (out.get("fv") or {}).get("stale"):
+    # is fresh. Stale INPUTS or an extreme_gap flag need the deeper
+    # heal (refetch the provider bundle, then re-resolve) — a plain
+    # recompute reproduces the same broken blend with a fresh stamp.
+    fv = out.get("fv") or {}
+    needs_input_refresh = False
+    try:
+        from datetime import date as _d
+        wm = str(fv.get("inputs_as_of") or "")[:10]
+        if wm and (_d.today() - _d.fromisoformat(wm)).days > 45:
+            needs_input_refresh = True
+    except Exception:
+        pass
+    if "extreme_gap" in (fv.get("flags") or []):
+        needs_input_refresh = True
+    if fv.get("stale") or needs_input_refresh:
         async def _fv_bg() -> None:
             try:
-                from app.fair_value_v2.resolver import FairValueV2Resolver
-                await asyncio.to_thread(
-                    FairValueV2Resolver().resolve, sym.upper())
+                if needs_input_refresh:
+                    from app.signals import fv_sweep
+                    await asyncio.to_thread(
+                        fv_sweep.refresh_after_print, sym.upper())
+                else:
+                    from app.fair_value_v2.resolver import (
+                        FairValueV2Resolver)
+                    await asyncio.to_thread(
+                        FairValueV2Resolver().resolve, sym.upper())
             except Exception:
                 pass
         asyncio.create_task(_fv_bg())

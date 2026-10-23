@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react'
 
-/** Admin-only FV recompute — forces a fresh engine run (ignores the
-    stored-run watermark), persists it, then reloads so every panel
-    reads the new row. Renders nothing for non-admins. */
+/** Admin-only FV recompute — refetches the fundamentals bundle then
+    forces a fresh engine run (stale inputs are why recomputing alone
+    reproduced broken blends), persists it, then reloads so every
+    panel reads the new row. Renders nothing for non-admins. */
 export default function FvRecompute({ sym }: { sym: string }) {
   const [admin, setAdmin] = useState(false)
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
@@ -14,7 +15,7 @@ export default function FvRecompute({ sym }: { sym: string }) {
     fetch('/api/me', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => { if (j?.role === 'admin') setAdmin(true) })
-      .catch(() => {})
+      .catch(() => { })
   }, [])
 
   if (!admin) return null
@@ -26,7 +27,9 @@ export default function FvRecompute({ sym }: { sym: string }) {
       const res = await fetch('/api/admin-fv', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: sym, force_refresh: true }),
+        body: JSON.stringify({
+          symbol: sym, force_refresh: true, refresh_inputs: true,
+        }),
       })
       const j = await res.json().catch(() => ({}))
       const fv = j?.result?.expected_fair_value ?? j?.result?.fair_value

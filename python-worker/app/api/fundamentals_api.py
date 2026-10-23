@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 from datetime import datetime
+import asyncio
 import logging
 import os
 
@@ -29,6 +30,11 @@ class FairValueRequest(BaseModel):
     symbol: str
     date: Optional[str] = None  # For historical analysis
     force_refresh: bool = False  # bypass stored v2 run reuse
+    # recompute can't heal stale fundamentals — this refetches the
+    # provider bundle first, then re-resolves (fv_sweep's post-print
+    # path). Without it a 70d-old input snapshot reproduces the same
+    # broken blend with a fresh timestamp.
+    refresh_inputs: bool = False
 
 class FundamentalScreenRequest(BaseModel):
     symbols: list[str]
@@ -124,12 +130,18 @@ async def run_fair_value_v2(request: FairValueRequest):
     """Full v2 result for the test page — scenarios, per-method 'why',
     decision layer (buy_below/MoS/confidence/risk flags), classification,
     and macro-scenario stress. force_refresh recomputes ignoring the
-    stored-run reuse watermark."""
+    stored-run reuse watermark. refresh_inputs additionally refetches
+    the fundamentals bundle first — the heal path for stale inputs."""
     if not ENABLE_FAIR_VALUE_V2:
         raise HTTPException(status_code=400, detail="fair_value_v2 is disabled")
     try:
+        sym = request.symbol.strip().upper()
+        if request.refresh_inputs:
+            from app.signals import fv_sweep
+            await asyncio.to_thread(
+                fv_sweep.refresh_after_print, sym)
         v2, run_meta = fair_value_v2_resolver.resolve(
-            request.symbol.strip().upper(), force=request.force_refresh)
+            sym, force=request.force_refresh or request.refresh_inputs)
         return {"success": True, "run_meta": run_meta,
                 "result": v2.model_dump(mode="json")}
     except Exception as e:
