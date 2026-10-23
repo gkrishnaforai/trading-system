@@ -108,12 +108,14 @@ etfs:
     required_ctx: [leaders_ratio]
     veto_reason: "sector breaking out on broad participation"
     legs:
+      # peaked AND still extended — a peak that already normalized
+      # back through the mean is a completed move, not a fade setup
       - {id: rsi_hot,    role: armed,
-         when: {rsi_hi7_gte: 75},
-         line: "index RSI {rsi} now / {rsi_hi7} 7-bar peak >= 75 (75-80 zone)"}
+         when: {rsi_hi7_gte: 75, rsi_gte: 50},
+         line: "index RSI {rsi} now / {rsi_hi7} 7-bar peak >= 75 (still warm)"}
       - {id: stretched,  role: armed,
-         when: {vs50_hi7_gte: 0.08},
-         line: "{vs50_pct}% vs 50dma now / {vs50_hi7_pct}% 7-bar peak (>=+8% stretch)"}
+         when: {vs50_hi7_gte: 0.08, vs50_gte: 0.02},
+         line: "{vs50_pct}% vs 50dma now / {vs50_hi7_pct}% 7-bar peak (still extended)"}
       - {id: roll,       role: trigger,
          when: {below_8ema: true},
          line: "close below 8EMA (the roll-over trigger)"}
