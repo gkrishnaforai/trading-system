@@ -21,7 +21,7 @@
 # cut against you). risk_pct is a PLANNED-loss estimate, never a
 # guarantee. geometry_invalid fires when the implied loss is wider
 # than max_etf_stop_pct — an unpriceable stop is no signal.
-version: "1.3"
+version: "1.4"
 
 signal_src: SMH              # closest liquid proxy to the index
 signal_confirm: SOXX         # corroboration legs — validate before

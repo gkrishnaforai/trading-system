@@ -470,6 +470,18 @@ export type LevEtf = {
     days?: number
     time_stop?: string
   }
+  position?: {                  // open system/paper position
+    entry?: number | null
+    px?: number | null
+    unrealized_r?: number | null
+    stop?: number | null
+    partials?: number
+    bars_held?: number
+    banked_r?: number
+    realized_r?: number | null
+    exit_reason?: string | null
+    state?: string              // open | closed
+  }
   checklist?: { ok: boolean; line: string; soft?: boolean }[]
   index?: {
     close?: number; rsi?: number | null; vs50?: number

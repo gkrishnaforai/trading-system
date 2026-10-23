@@ -451,6 +451,36 @@ function LevCard({ etf, row }: { etf: string; row: LevEtf }) {
       {row.actionable && row.state_note && (
         <p className="pt-0.5 text-[10px] text-faint">{row.state_note}</p>
       )}
+      {row.position && (
+        <div className="pt-1.5 mt-1 border-t border-hairline/40">
+          <div className="flex items-baseline gap-2 text-[11px]">
+            <span className="text-[9px] uppercase tracking-wider text-faint">
+              position
+            </span>
+            <span className="font-mono text-muted">
+              {money(row.position.entry)} → {money(row.position.px)}
+            </span>
+            {row.position.unrealized_r != null && (
+              <span className={`font-mono ${row.position.unrealized_r >= 0 ? 'text-aggressive' : 'text-defensive'}`}>
+                {row.position.unrealized_r >= 0 ? '+' : ''}
+                {row.position.unrealized_r}R
+              </span>
+            )}
+            {row.position.state === 'closed' && row.position.realized_r != null && (
+              <span className={`font-mono ${row.position.realized_r >= 0 ? 'text-aggressive' : 'text-defensive'}`}>
+                closed {row.position.realized_r >= 0 ? '+' : ''}
+                {row.position.realized_r}R · {row.position.exit_reason}
+              </span>
+            )}
+          </div>
+          <div className="pt-0.5 text-[10px] text-faint">
+            trail {money(row.position.stop)}
+            {row.position.partials ? ` · ${row.position.partials}/2 partials` : ''}
+            {row.position.banked_r ? ` · banked +${row.position.banked_r}R` : ''}
+            {row.position.bars_held != null && ` · day ${row.position.bars_held}`}
+          </div>
+        </div>
+      )}
       {row.hold && (
         <div className="pt-1.5 mt-1 border-t border-hairline/40">
           <div className="flex items-baseline gap-2 text-[11px]">

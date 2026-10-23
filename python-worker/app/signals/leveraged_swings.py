@@ -182,6 +182,163 @@ def _prev_state(etf: str, as_of: str) -> Optional[str]:
         return None
 
 
+def _register_spec(spec: dict):
+    """Upsert the running spec version — the learning-lab registry.
+    Journal rows and positions carry rules_version; join them here
+    to grade which POLICY ITERATION produced which outcomes."""
+    from app.database import db
+    try:
+        db.execute_update(
+            "INSERT INTO lev_spec_versions (version, spec)"
+            " VALUES (:v, :s::jsonb) ON CONFLICT (version) DO NOTHING",
+            {"v": rules_version(), "s": json.dumps(spec)})
+    except Exception as exc:
+        logger.debug("spec registry: %s", exc)
+
+
+def _open_position(etf: str, row: dict, as_of: str) -> Optional[dict]:
+    """Open a system paper position on an actionable trigger — one
+    open per ETF at a time. entry_basis: close (the lazy-eval fill
+    approximation; the grader can re-score next-open later)."""
+    from app.database import db
+    lv = row["levels"]
+    if not (lv.get("entry") and lv.get("stop")):
+        return None
+    try:
+        db.execute_update(
+            "INSERT INTO lev_etf_positions (etf, opened_as_of,"
+            " entry_px, stop_px, trail_stop, t1_px, t2_px, risk_px,"
+            " shares, risk_usd, idx_entry, idx_stop, high_water,"
+            " spec, notes)"
+            " VALUES (:e,:d,:en,:st,:tr,:t1,:t2,:rp,:sh,:ru,:ie,:is,"
+            " :hw,:sp,:n::jsonb)",
+            {"e": etf, "d": as_of, "en": lv["entry"],
+             "st": lv["stop"], "tr": lv["stop"],
+             "t1": lv.get("t1"), "t2": lv.get("t2"),
+             "rp": lv["risk_px"], "sh": lv.get("shares"),
+             "ru": lv.get("risk_usd"),
+             "ie": row["index"]["close"], "is": lv.get("idx_stop"),
+             "hw": lv["entry"], "sp": rules_version(),
+             "n": json.dumps({"entry_basis": "close"})})
+        return {"etf": etf, "entry": lv["entry"], "stop": lv["stop"],
+                "trail": lv["stop"], "t1": lv.get("t1"),
+                "t2": lv.get("t2"), "risk_px": lv["risk_px"],
+                "shares": lv.get("shares"), "partials": 0,
+                "bars_held": 0, "banked_r": 0.0, "state": "open",
+                "opened": as_of}
+    except Exception as exc:
+        logger.debug("open position %s: %s", etf, exc)
+        return None
+
+
+def _open_position_row(etf: str) -> Optional[dict]:
+    from app.database import db
+    r = db.execute_query(
+        "SELECT * FROM lev_etf_positions WHERE etf = :e"
+        " AND state = 'open' ORDER BY opened_as_of DESC LIMIT 1",
+        {"e": etf})
+    return r[0] if r else None
+
+
+def _r_at(pos: dict, px: float) -> float:
+    """R multiple of a price vs the position's initial risk."""
+    return (px - float(pos["entry_px"])) / float(pos["risk_px"])
+
+
+def _manage_position(etf: str, pos: dict, espec: dict, ctx: dict,
+                     etf_bars, etf_px: Optional[float], as_of: str,
+                     hold: dict, idx_bars) -> dict:
+    """Daily management for an open position — the exit contract,
+    enforced deterministically:
+
+      1. index closes past idx_stop  -> invalidation; fill at the
+         operative (ratcheted) stop or worse on a gap
+      2. ETF prints below the operative stop -> stop exit, fill the
+         worse of stop vs market (gap honesty)
+      3. t2/t1 levels               -> bank the spec's fractions,
+                                     ratchet trail (breakeven then t1)
+      4. hold verdict 'exit'         -> close remainder, 'thesis'
+      5. bars_held >= max_hold_bars  -> close remainder, 'time_stop'
+
+    Stop checks run before targets — on an ambiguous bar the worst
+    fill wins."""
+    from app.database import db
+
+    entry = float(pos["entry_px"])
+    stop = max(float(pos["trail_stop"] or pos["stop_px"]),
+               float(pos["stop_px"]))
+    risk_px, side = float(pos["risk_px"]), espec["stop"]["side"]
+    high_water = max(float(pos["high_water"] or entry), etf_px or 0)
+    partials, banked = pos["partials"], float(pos["banked_r"] or 0)
+    opened = pos["opened_as_of"]
+    bars_held = sum(1 for b in idx_bars if b.date > opened)
+    fracs = ctx["targets_frac"]
+    t1, t2 = pos["t1_px"], pos["t2_px"]
+
+    exit_px, reason = None, None
+    idx_breach = (ctx["close"] > float(pos["idx_stop"]) if side == "high"
+                  else ctx["close"] < float(pos["idx_stop"]))
+    if etf_px is None:
+        pass                                    # no market read today
+    elif idx_breach or etf_px <= stop:
+        exit_px, reason = min(stop, etf_px), (
+            "invalidation" if idx_breach else "stop")
+    elif t2 and etf_px >= t2 and partials < 2:
+        # a gap can cross both targets in one bar — bank each level
+        # the tape touched, not just the furthest
+        if partials < 1:
+            banked += fracs[0] * _r_at(pos, t1)
+            partials = 1
+        banked += fracs[1] * _r_at(pos, t2)
+        partials = 2
+        stop = max(stop, float(t1 or entry))
+    elif t1 and etf_px >= t1 and partials < 1:
+        partials, banked = 1, banked + fracs[0] * _r_at(pos, t1)
+        stop = max(stop, entry)                 # trail to breakeven
+    if exit_px is None and etf_px is not None:
+        if hold["verdict"] == "exit":
+            exit_px, reason = etf_px, "thesis"
+        elif bars_held >= ctx["max_hold_bars"]:
+            exit_px, reason = etf_px, "time_stop"
+
+    upd = {"partials": partials, "banked": banked,
+           "stop": stop, "high_water": high_water,
+           "bars_held": bars_held}
+    if exit_px is not None:
+        realized = banked + (1 - sum(fracs[:partials])) \
+            * _r_at(pos, exit_px)
+        upd.update({"state": "closed", "exit_px": round(exit_px, 2),
+                    "reason": reason,
+                    "realized": round(realized, 3)})
+        try:
+            db.execute_update(
+                "UPDATE lev_etf_positions SET partials=:p,"
+                " banked_r=:br, trail_stop=:ts, high_water=:hw,"
+                " bars_held=:bh, state='closed', closed_as_of=:d,"
+                " exit_px=:ex, exit_reason=:rs, realized_r=:rr,"
+                " pnl=:pn WHERE id=:i",
+                {"p": partials, "br": round(banked, 3),
+                 "ts": stop, "hw": high_water, "bh": bars_held,
+                 "d": as_of, "ex": round(exit_px, 2), "rs": reason,
+                 "rr": round(realized, 3),
+                 "pn": round(realized * float(pos["risk_usd"] or 0), 2),
+                 "i": pos["id"]})
+        except Exception as exc:
+            logger.debug("close position %s: %s", pos["id"], exc)
+    else:
+        try:
+            db.execute_update(
+                "UPDATE lev_etf_positions SET partials=:p,"
+                " banked_r=:br, trail_stop=:ts, high_water=:hw,"
+                " bars_held=:bh WHERE id=:i",
+                {"p": partials, "br": round(banked, 3),
+                 "ts": stop, "hw": high_water, "bh": bars_held,
+                 "i": pos["id"]})
+        except Exception as exc:
+            logger.debug("manage position %s: %s", pos["id"], exc)
+    return upd
+
+
 def _days_in_state(etf: str, as_of: str, state: str) -> int:
     """Consecutive journal days in the current state, ending today —
     the time-stop input (a holder whose thesis hasn't resolved by
@@ -391,6 +548,7 @@ def evaluate(funds: Optional[float] = None,
     from app.market_data import bars as bars_mod
 
     spec = _load()
+    _register_spec(spec)
     etfs = list(spec["etfs"])
     books = bars_mod.load(
         [spec["signal_src"], spec["signal_confirm"], *etfs], days=400)
@@ -434,6 +592,7 @@ def evaluate(funds: Optional[float] = None,
                            else None),
            "catalyst_veto_at": spec["catalyst_veto_at"],
            "max_hold_bars": spec["max_hold_bars"],
+           "targets_frac": [t["close"] for t in spec["targets"]],
            "support_pct_disp": f"{spec['support_pct'] * 100:.0f}%",
            "support_window": spec["support_window"]}
     leverage = spec["leverage"]
@@ -551,6 +710,36 @@ def evaluate(funds: Optional[float] = None,
         if not geo_ok:
             row["levels"]["geometry_invalid"] = True
         row["state_note"] = " · ".join(notes) or row.get("state_note")
+
+        # position lifecycle — manage an open position first (the
+        # thesis exit consults the hold verdict), then open on an
+        # actionable trigger when flat. The snapshot rides the row
+        # so the hold read is position-aware.
+        pos = _open_position_row(etf)
+        closed_today = False
+        if pos:
+            upd = _manage_position(etf, pos, espec, ctx, eb, etf_px,
+                                   out["as_of"], row["hold"], idx)
+            closed_today = upd.get("state") == "closed"
+            row["position"] = {
+                "entry": float(pos["entry_px"]),
+                "px": upd.get("exit_px", etf_px),
+                "unrealized_r": (round(_r_at(pos, etf_px), 2)
+                                 if etf_px and not closed_today
+                                 else None),
+                "stop": round(upd["stop"], 2),
+                "partials": upd["partials"],
+                "bars_held": upd["bars_held"],
+                "banked_r": round(upd["banked"], 3),
+                "realized_r": upd.get("realized"),
+                "exit_reason": upd.get("reason"),
+                "state": "closed" if closed_today else "open"}
+            if closed_today:
+                pos = None
+        if pos is None and row["actionable"] and not closed_today:
+            opened = _open_position(etf, row, out["as_of"])
+            if opened:
+                row["position"] = opened
         out["etfs"][etf] = row
         try:
             lv = row["levels"]
