@@ -4,7 +4,7 @@ import { WatchlistCard } from '@/components/watchlist'
 import { TIER_LIMITS, currentTier } from '@/lib/tier'
 import { listPortfolios, listHoldings } from '@/lib/portfolio'
 import {
-  AddHoldingForm, BookRail,
+  AddHoldingForm, AddPositionDock, BookRail,
   HoldingRow as UserHoldingRow, NewPortfolioForm,
 } from '@/components/portfolio-crud'
 
@@ -391,8 +391,8 @@ export default async function PortfolioPage({
                 </h1>
                 <span
                   className={`font-mono text-xl ${Number(book?.pnl_pct) >= 0
-                      ? 'text-emerald-400'
-                      : 'text-red-400'
+                    ? 'text-emerald-400'
+                    : 'text-red-400'
                     }`}
                 >
                   {pct(book?.pnl_pct)}
@@ -490,11 +490,12 @@ export default async function PortfolioPage({
               )}
             </section>
             <div className="space-y-4">
+              <AddPositionDock books={portfolios} />
               <WatchlistCard />
               <div className="rounded-xl border border-hairline bg-elevated/50 px-5 py-4 text-[11px] leading-relaxed text-faint">
                 Advisory — the action hints are deterministic evals;
-                the trade is yours. Per-user books (1 member · 5 pro ·
-                20 elite) turn on with sign-in.
+                the trade is yours. This view is read-only: open a
+                book above to add, edit or remove positions.
               </div>
             </div>
           </div>

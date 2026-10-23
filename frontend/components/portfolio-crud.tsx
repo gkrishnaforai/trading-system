@@ -10,15 +10,27 @@ const input =
 const btn =
   'rounded-full bg-ink px-3.5 py-1.5 text-xs font-medium text-canvas hover:bg-accent transition-colors disabled:opacity-40'
 
+type CallResult = { ok: boolean; error?: string }
+
 async function call(
   path: string, method: string, body?: unknown,
-): Promise<boolean> {
-  const res = await fetch(`/api/portfolio/${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
-  return res.ok
+): Promise<CallResult> {
+  try {
+    const res = await fetch(`/api/portfolio/${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+    if (res.ok) return { ok: true }
+    let detail = ''
+    try {
+      const j = await res.json()
+      detail = j?.detail ?? j?.error ?? ''
+    } catch { /* non-json body */ }
+    return { ok: false, error: detail || `request failed (${res.status})` }
+  } catch {
+    return { ok: false, error: 'network error — is the cockpit up?' }
+  }
 }
 
 /** Book rail — every book as a card chip; the system book first. */
@@ -67,6 +79,7 @@ export function NewPortfolioForm({ used, limit }: {
   const [name, setName] = useState('')
   const [capital, setCapital] = useState('100000')
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
   const router = useRouter()
   const full = used >= limit
 
@@ -93,14 +106,20 @@ export function NewPortfolioForm({ used, limit }: {
         e.preventDefault()
         if (!name.trim() || busy) return
         setBusy(true)
-        const ok = await call('portfolios', 'POST', {
+        setErr(null)
+        const res = await call('portfolios', 'POST', {
           name: name.trim(),
           portfolio_type: 'custom',
           initial_capital: Number(capital) || 100000,
           currency: 'USD',
         })
         setBusy(false)
-        if (ok) { setOpen(false); setName(''); router.refresh() }
+        if (res.ok) {
+          setOpen(false); setName('')
+          router.refresh()
+        } else {
+          setErr(res.error ?? 'create failed')
+        }
       }}
     >
       <input
@@ -118,6 +137,11 @@ export function NewPortfolioForm({ used, limit }: {
         type="button" onClick={() => setOpen(false)}
         className="text-faint hover:text-ink text-sm"
       >✕</button>
+      {err && (
+        <span className="max-w-[16rem] truncate text-xs text-defensive" title={err}>
+          {err}
+        </span>
+      )}
     </form>
   )
 }
@@ -192,6 +216,42 @@ export function AddHoldingForm({ portfolioId }: { portfolioId: string }) {
   )
 }
 
+/** System-book entry point to holdings CRUD — pick a target book,
+    then the same add-position form. The union "book" view stays
+    read-only; positions live inside a book. */
+export function AddPositionDock({ books }: {
+  books: { id: string; name: string }[]
+}) {
+  const [target, setTarget] = useState(books[0]?.id ?? '')
+  if (books.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-hairline px-5 py-4 text-xs text-muted">
+        No books yet — hit <span className="text-accent">＋ new book</span>{' '}
+        above, then add positions to it here.
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 px-1">
+        <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+          Add to
+        </span>
+        <select
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          className="rounded-md border border-hairline bg-canvas px-2 py-1 text-xs text-ink focus:border-accent focus:outline-none"
+        >
+          {books.map((b) => (
+            <option key={b.id} value={b.id}>{b.name}</option>
+          ))}
+        </select>
+      </div>
+      <AddHoldingForm key={target} portfolioId={target} />
+    </div>
+  )
+}
+
 export function HoldingRow({ p, h }: {
   p: string
   h: {
@@ -204,6 +264,7 @@ export function HoldingRow({ p, h }: {
   const [shares, setShares] = useState(String(h.shares_held ?? ''))
   const [cost, setCost] = useState(String(h.average_cost ?? ''))
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
   const router = useRouter()
   const sym = h.symbol.toUpperCase()
 
@@ -236,13 +297,19 @@ export function HoldingRow({ p, h }: {
             e.preventDefault()
             if (busy) return
             setBusy(true)
-            const ok = await call(
+            setErr(null)
+            const res = await call(
               `portfolios/${p}/holdings/${sym}`, 'PUT', {
               shares_held: Number(shares) || 0,
               average_cost: Number(cost) || 0,
             })
             setBusy(false)
-            if (ok) { setEdit(false); router.refresh() }
+            if (res.ok) {
+              setEdit(false)
+              router.refresh()
+            } else {
+              setErr(res.error ?? 'save failed')
+            }
           }}
         >
           <input className={`${input} w-24`} value={shares}
@@ -254,6 +321,11 @@ export function HoldingRow({ p, h }: {
           </button>
           <button type="button" onClick={() => setEdit(false)}
             className="text-faint hover:text-ink">✕</button>
+          {err && (
+            <span className="max-w-[14rem] truncate text-xs text-defensive" title={err}>
+              {err}
+            </span>
+          )}
         </form>
       ) : arm ? (
         <div className="flex items-center gap-2.5">
@@ -264,10 +336,16 @@ export function HoldingRow({ p, h }: {
             disabled={busy}
             onClick={async () => {
               setBusy(true)
-              const ok = await call(
+              setErr(null)
+              const res = await call(
                 `portfolios/${p}/holdings/${sym}`, 'DELETE')
               setBusy(false)
-              if (ok) { setArm(false); router.refresh() }
+              if (res.ok) {
+                setArm(false)
+                router.refresh()
+              } else {
+                setErr(res.error ?? 'delete failed')
+              }
             }}
             className="rounded-full bg-defensive px-2.5 py-0.5 text-[11px] font-semibold text-canvas transition-opacity disabled:opacity-40"
           >
@@ -280,6 +358,11 @@ export function HoldingRow({ p, h }: {
           >
             no
           </button>
+          {err && (
+            <span className="max-w-[12rem] truncate text-xs text-defensive" title={err}>
+              {err}
+            </span>
+          )}
         </div>
       ) : (
         <div className="flex items-center gap-3 font-mono text-xs text-muted">
