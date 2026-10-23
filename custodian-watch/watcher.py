@@ -354,6 +354,12 @@ rules:
     needs_provider: false
     pattern: 'unhandledrejection|digest: \d+|prerender.error|export encountered errors|⨯|error occurred prerendering|server-side exception'
     diagnosis: 'Next.js server render failure — the browser sees "Application error"; the named digest/page in the tail points at the SSR code path (common cause: calling a non-component export from a use-client module)'
+  - kind: auth-token-expired
+    severity: medium
+    needs_provider: false
+    keep_firing_s: 900
+    pattern: 'auth: token expired'
+    diagnosis: 'JWT expiry rejections — client session rot: the frontend should re-login on exp; a sustained burst means every authed write (portfolio CRUD) is 401ing'
   - kind: api-5xx
     severity: medium
     needs_provider: false

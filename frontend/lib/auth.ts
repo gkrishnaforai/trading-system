@@ -51,10 +51,20 @@ function setCookie(token: string) {
 
 export async function getToken(): Promise<string | null> {
   const t = cookies().get('mp_token')?.value
-  if (t) return t
+  // the cookie outlives the JWT (30d vs 30m) — a cached-but-dead token
+  // must fall through to a fresh login, or every call 401s with
+  // "Token expired" until the cookie ages out
+  if (t && !expired(t)) return t
   const fresh = await login()
   if (fresh) setCookie(fresh)
   return fresh
+}
+
+function expired(token: string, skewS = 60): boolean {
+  const claims = decodeClaims(token)
+  const exp = claims?.exp
+  if (typeof exp !== 'number') return true
+  return exp * 1000 <= Date.now() + skewS * 1000
 }
 
 function decodeClaims(token: string | null): Record<string, unknown> | null {
