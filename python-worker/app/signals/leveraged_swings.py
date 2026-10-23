@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -128,6 +128,44 @@ def _portfolio_mv() -> Optional[float]:
         " FROM portfolio_positions")[0]
     mv = float(r["mv"] or 0)
     return mv if mv > 0 else None
+
+
+_fresh_at: Optional[datetime] = None
+
+
+def _ensure_fresh(books: dict, spec: dict) -> dict:
+    """Technical freshness contract: 'if it already ran, we are fine
+    — otherwise we run.' Bounded at one batched fetch per hour.
+
+    - signal tape already carries today's bar → fresh, no fetch
+    - weekend (latest bar ≤3d) → the last session's close IS the
+      freshest possible tape
+    - fetched within the last hour → no re-fetch (bounds provider
+      calls while still picking up the closing bar an hour later)
+    - otherwise → one bars.refresh over the signal set (4 symbols,
+      batched — the sanctioned writer path) + reload"""
+    global _fresh_at
+    now = datetime.now()
+    today = now.date()
+    idx = books.get(spec["signal_src"]) or []
+    latest = idx[-1].date if idx else None
+    if latest and latest >= today:
+        return books
+    if today.weekday() >= 5 and latest \
+            and (today - latest).days <= 3:
+        return books
+    if _fresh_at and (now - _fresh_at).total_seconds() < 3600:
+        return books
+    try:
+        from app.market_data import bars as bars_mod
+        syms = [spec["signal_src"], spec["signal_confirm"],
+                *spec["etfs"]]
+        bars_mod.refresh(syms, period="1y")
+        books = bars_mod.load(syms, days=400)
+    except Exception as exc:
+        logger.debug("lev freshness top-up: %s", exc)
+    _fresh_at = now
+    return books
 
 
 def _prev_state(etf: str, as_of: str) -> Optional[str]:
@@ -296,6 +334,7 @@ def evaluate(funds: Optional[float] = None,
     etfs = list(spec["etfs"])
     books = bars_mod.load(
         [spec["signal_src"], spec["signal_confirm"], *etfs], days=400)
+    books = _ensure_fresh(books, spec)     # today's tape or bust
     idx = books.get(spec["signal_src"])
     idx2 = books.get(spec["signal_confirm"])
 
