@@ -315,6 +315,8 @@ export const api = {
     get<{ open?: PlanRow[]; closed?: PlanRow[] }>('/trade-plans?all=1'),
   selloff: () => get<SelloffScan>('/selloff'),
   bestPicks: () => get<BestPicks>('/best-picks'),
+  levSwings: (funds?: number) =>
+    get<LevSwings>(`/leveraged-swings${funds ? `?funds=${funds}` : ''}`),
   shortSqueeze: (symbol: string) =>
     get<SqueezeEval>(`/short-squeeze/${encodeURIComponent(symbol)}`),
   intraday: () => get<IntradayTape>('/intraday'),
@@ -435,6 +437,38 @@ export type BestPickSection = {
   picks?: BestPick[]
   watch?: BestPick[]
   counts?: { picks?: number; watch?: number; excluded?: number }
+}
+
+export type LevSwings = {
+  as_of?: string
+  signal_src?: string
+  funds?: number | null
+  risk_pct?: number
+  caveat?: string
+  error?: string
+  etfs?: Record<string, LevEtf>
+}
+
+export type LevEtf = {
+  state: string                 // flat | armed | triggered | vetoed
+  armed?: boolean
+  veto?: string | null
+  warn?: string | null
+  checklist?: { ok: boolean; line: string; soft?: boolean }[]
+  index?: {
+    close?: number; rsi?: number | null; vs50?: number
+    ema8?: number; soxx_close?: number | null
+  }
+  levels?: {
+    entry?: number | null; stop?: number | null
+    t1?: number | null; t2?: number | null
+    risk_px?: number | null; shares?: number | null
+    risk_usd?: number | null; idx_stop?: number
+  }
+  leaders?: {
+    tracked?: number; constructive?: string[]
+    hostile?: string[]; ratio?: number | null
+  }
 }
 
 export type BestPick = {

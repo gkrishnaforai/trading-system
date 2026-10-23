@@ -401,7 +401,11 @@ def refresh_momentum_all() -> dict:
     # stay stored-data (they're not 'stocks', so skip classification).
     from app.market_data import bars as bars_mod
     from app.market_regime.rotation import SECTOR_NAMES, THEME_ETFS
-    etf_syms = [s for s in (*SECTOR_NAMES, *THEME_ETFS, "^VIX")
+    # SOXX corroborates SMH as the semis-index proxy; SOXL/SOXS bars
+    # feed the 3x-swing detector's entry/stop levels
+    lev_syms = ("SOXX", "SOXL", "SOXS")
+    etf_syms = [s for s in (*SECTOR_NAMES, *THEME_ETFS, "^VIX",
+                            *lev_syms)
                 if s not in syms]
     books = bars_mod.refresh(syms + etf_syms, period="2y")
     counts: dict[str, int] = {}

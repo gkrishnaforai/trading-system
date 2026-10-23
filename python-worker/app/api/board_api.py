@@ -705,6 +705,16 @@ async def _j_best_picks() -> dict:
                          for k, v in r["sections"].items()}}
 
 
+async def _j_lev_swings() -> dict:
+    """3x semis swing detector — SOXS fade-the-extension and SOXL
+    confirmed-rebound over the stored index tape (SMH proxy). Runs
+    after momentum so today's bars are in; journals both verdicts to
+    lev_etf_evals for grading. Advisory levels only — never orders."""
+    from app.signals import leveraged_swings
+    r = await asyncio.to_thread(leveraged_swings.evaluate)
+    return {etf: row["state"] for etf, row in r["etfs"].items()}
+
+
 JOBS: dict[str, tuple[str, Callable]] = {
     "momentum":      ("Momentum flags", _j_momentum),
     "swing-scan":    ("Swing screener", _j_swing_scan),
@@ -774,6 +784,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
                           _j_correction_alarms),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
     "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
+    "lev-etf-swings": ("3x semis swing detector", _j_lev_swings),
 }
 
 # order matters for 'all': posture first, then signals, then evals
@@ -793,7 +804,7 @@ _ALL_ORDER = ["regime", "tier-sync", "momentum", "morning-regime",
               "daily-puts", "spec-incubator", "meta",
               "sec-facts", "short-data", "short-squeeze",
               "correction-alarms", "selloff", "best-picks",
-              "custodian"]
+              "lev-etf-swings", "custodian"]
 
 
 _JOB_TIMEOUT = {
@@ -817,6 +828,7 @@ _JOB_TIMEOUT = {
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "intraday-tape": 3 * 60, "correction-alarms": 3 * 60,
     "best-picks": 5 * 60,
+    "lev-etf-swings": 2 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
     "theme-rotation": 5 * 60,
@@ -2623,6 +2635,17 @@ async def best_picks():
     eval pass. Reads the journal; never re-evaluates."""
     from app.signals import best_picks as bp
     return await asyncio.to_thread(bp.latest)
+
+
+@router.get("/leveraged-swings")
+async def leveraged_swings(funds: float | None = None):
+    """3x semis swing setups — SOXS fade-the-extension / SOXL
+    confirmed-rebound over today's stored index tape (SMH proxy).
+    Lazy-evals so the page reflects the freshest close and journals
+    the day's verdict; levels are advisory with index-anchored
+    invalidation — never orders."""
+    from app.signals import leveraged_swings as ls
+    return await asyncio.to_thread(ls.evaluate, funds)
 
 
 @router.get("/trade-plans/suggest")

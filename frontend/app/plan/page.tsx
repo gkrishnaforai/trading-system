@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import {
   api, type PlanSuggestion, type PlanRow, type SelloffCand,
-  type BestPicks, type BestPick
+  type BestPicks, type BestPick, type LevSwings, type LevEtf
 } from '@/lib/api'
 import { Gate } from '@/components/regime'
 import { toneOf } from '@/components/signal-strip'
@@ -367,6 +367,104 @@ function BestPicksSection({ bp }: { bp: BestPicks | null }) {
   )
 }
 
+const LEV_STATE: Record<string, string> = {
+  triggered: 'text-aggressive border-aggressive/40',
+  armed: 'text-caution border-caution/40',
+  vetoed: 'text-defensive border-defensive/40',
+  flat: 'text-faint border-hairline',
+}
+
+const LEV_DESC: Record<string, string> = {
+  SOXS: 'fade the extension — index RSI hot + 8EMA break',
+  SOXL: 'confirmed rebound — index RSI washed out + reclaim',
+}
+
+function LevCard({ etf, row }: { etf: string; row: LevEtf }) {
+  const lv = row.levels ?? {}
+  const idx = row.index ?? {}
+  const hard = row.checklist?.filter((c) => !c.soft) ?? []
+  const soft = row.checklist?.filter((c) => c.soft) ?? []
+  const passed = hard.filter((c) => c.ok).length
+  return (
+    <div className="rounded-lg border border-hairline/60 px-4 py-3">
+      <div className="flex items-baseline justify-between">
+        <div>
+          <span className="font-semibold text-ink">{etf}</span>
+          <span className="pl-2 text-[10px] text-faint">{LEV_DESC[etf]}</span>
+        </div>
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ${LEV_STATE[row.state] ?? LEV_STATE.flat}`}>
+          {row.state}
+        </span>
+      </div>
+      <div className="pt-1 text-[10px] font-mono text-muted">
+        {idx.rsi != null && `idx rsi ${idx.rsi} `}
+        {idx.vs50 != null && `· ${(idx.vs50 * 100).toFixed(0)}% vs 50d `}
+        {idx.soxx_close != null && `· soxx ${idx.soxx_close} `}
+        {hard.length > 0 && `· ${passed}/${hard.length} legs`}
+      </div>
+      {row.state !== 'flat' && (
+        <div className="pt-1.5 divide-y divide-hairline/30">
+          {[...hard, ...soft].map((c, i) => (
+            <div key={i}
+              className={`flex gap-1.5 py-0.5 text-[11px] ${c.soft ? 'text-faint' : c.ok ? 'text-muted' : 'text-defensive/80'}`}>
+              <span className="w-3 shrink-0">{c.ok ? '✓' : '✗'}</span>
+              <span>{c.line}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {row.veto && (
+        <p className="pt-1 text-[11px] text-defensive">veto — {row.veto}</p>
+      )}
+      {row.warn && (
+        <p className="pt-1 text-[11px] text-caution">⚠ {row.warn}</p>
+      )}
+      {row.state === 'triggered' && lv.entry != null && (
+        <div className="pt-1.5 text-[10px] font-mono text-muted">
+          {money(lv.entry)} → stop {money(lv.stop)}
+          {' '}(idx {money(lv.idx_stop, 1)})
+          {lv.t1 != null && ` · t1 ${money(lv.t1)} · t2 ${money(lv.t2)}`}
+          {lv.shares != null && (
+            <span className="text-faint">
+              {' '}· {lv.shares}sh risks {money(lv.risk_usd, 0)}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LevSwingsSection({ ls }: { ls: LevSwings | null }) {
+  return (
+    <section className="rounded-xl border border-hairline bg-card px-5 py-4">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+          3× semis swing — candidates
+        </span>
+        <span className="text-[11px] text-faint">
+          {ls?.as_of ? `${ls.signal_src} tape ${ls.as_of}` : 'no eval yet'}
+          {ls?.risk_pct != null && ` · risk ${(ls.risk_pct * 100).toFixed(2)}%`}
+        </span>
+      </div>
+      {ls?.error ? (
+        <p className="pt-2 text-xs text-muted">{ls.error}</p>
+      ) : (
+        <div className="grid gap-3 pt-2 lg:grid-cols-2">
+          {(['SOXS', 'SOXL'] as const).map((e) =>
+            ls?.etfs?.[e]
+              ? <LevCard key={e} etf={e} row={ls.etfs[e]} />
+              : <div key={e} className="text-xs text-faint">{e} — no data</div>)}
+        </div>
+      )}
+      <p className="pt-2 text-[10px] text-faint">
+        {ls?.caveat ??
+          'hypothesis under test — journaled for grading before any size'}
+      </p>
+    </section>
+  )
+}
+
 const PLAN_ICON: Record<string, string> = {
   stop_hit: '🔴', invalidated: '🔴', target2_hit: '🟢',
   extended: '🟡', stalled: '🟠', trail_up: '🔵',
@@ -379,11 +477,12 @@ export default async function PlanPage({
   searchParams: { funds?: string }
 }) {
   const funds = searchParams.funds ? Number(searchParams.funds) : undefined
-  const [plan, open, so, bp] = await Promise.all([
+  const [plan, open, so, bp, ls] = await Promise.all([
     api.incomePlan(funds),
     api.tradePlans(),
     api.selloff(),
     api.bestPicks(),
+    api.levSwings(funds),
   ])
   const sectors = plan?.sectors ?? []
   const pos = plan?.posture ?? {}
@@ -473,6 +572,8 @@ export default async function PlanPage({
         </section>
 
         <BestPicksSection bp={bp} />
+
+        <LevSwingsSection ls={ls} />
 
         {sectors.length === 0 && (
           <div className="rounded-xl border border-hairline bg-card px-5 py-8 text-center">
