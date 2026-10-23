@@ -1,0 +1,107 @@
+# leveraged_swings.yaml — declarative spec for the 3x-semiconductor
+# swing detector (leveraged_swings.py). v1.0
+#
+# The engine builds a ctx of index-tape features + leadership +
+# catalyst context, then evaluates each ETF's legs through
+# pulse_engine._cond — the SAME condition semantics as the pulse and
+# best-picks engines (field_gte / field_lt / bare bool / any / all).
+# Thresholds, leg roles, veto and geometry are POLICY — they live
+# here, not in the code. Mechanics (EMA/RSI math, index→ETF stop
+# translation, journaling) stay in Python.
+#
+# Sequence semantics: RSI and vs50 extremes are 7-bar RECENT peaks
+# (rsi_hi7 / rsi_lo7 / vs50_hi7), not same-bar values — 'RSI reaches
+# 75-80, then closes below the 8EMA' is a sequence; by the trigger
+# bar the current RSI has moved off the extreme.
+version: "1.0"
+
+signal_src: SMH              # closest liquid proxy to the index
+signal_confirm: SOXX         # corroboration read when stored
+leverage: 3.0                # daily-reset multiple for the stop map
+extreme_window: 7            # bars of recent-peak lookback
+support_window: 60           # bars for the prior-swing support level
+support_pct: 0.08            # 'near support' = within 8% of that low
+swing_hi_window: 20          # bars for the failed-high / breakout read
+
+# 0.25-0.5% planned-loss band while the strategy is validated;
+# default sits mid-band, callers may pass funds + risk_pct
+risk_pct: 0.0035
+targets: [1.5, 2.0]          # R multiples for partial exits
+
+# semis leadership tape — whichever exist in stocks.momentum_state
+# count toward the "leaders weakening / broad participation" legs
+leaders: [NVDA, AVGO, TSM, AMD, QCOM, MU, INTC, ASML, TXN, ARM, ANET]
+constructive_states: [uptrend, breakout, climax, pullback, basing, recovery]
+hostile_states: [rolling_over, downtrend, breakdown, knife, capitulation]
+
+# recent HIGH-materiality NEGATIVE alerts on semis — the
+# thesis-deterioration caution for the SOXL rebound leg
+catalyst_window_days: 5
+catalyst_symbols_extra: [SMH, SOXX, SOXL, SOXS]
+
+# state derivation — fixed contract, declared so it can't drift:
+#   vetoed    all armed legs pass AND any veto leg fires
+#   triggered all armed legs pass AND all trigger legs pass AND
+#             easing legs meet easing_min (when declared)
+#   armed     all armed legs pass
+#   flat      otherwise
+# 'soft' legs never gate — they're shown as preferred evidence.
+
+etfs:
+
+  SOXS:
+    label: "fade the extension — bet semis pull back"
+    # index invalidation: reclaim of the recent swing high →
+    # stop = etf * (1 - idx_stop_pct * leverage)
+    stop: {side: high, window: 10}
+    veto_reason: "sector breaking out on broad participation"
+    legs:
+      - {id: rsi_hot,    role: armed,
+         when: {rsi_hi7_gte: 75},
+         line: "index RSI {rsi} now / {rsi_hi7} 7-bar peak >= 75 (75-80 zone)"}
+      - {id: stretched,  role: armed,
+         when: {vs50_hi7_gte: 0.08},
+         line: "{vs50_pct}% vs 50dma now / {vs50_hi7_pct}% 7-bar peak (>=+8% stretch)"}
+      - {id: roll,       role: trigger,
+         when: {below_8ema: true},
+         line: "close below 8EMA (the roll-over trigger)"}
+      - {id: failed_hi,  role: soft,
+         when: {hi20_age_lte: 5, close_lt_hi20: true},
+         line: "failed 20d high within 5 bars (preferred)"}
+      - {id: no_broad,   role: veto,
+         when: {new_20d_high: true, leaders_ratio_gte: 0.6},
+         line: "no broad breakout today ({leaders_ratio_pct} leaders constructive)"}
+
+  SOXL:
+    label: "confirmed rebound — bet semis recover"
+    # index invalidation: loss of the rebound low →
+    # stop = etf * (1 - idx_stop_pct * leverage)
+    stop: {side: low, window: 10}
+    easing_min: 2
+    legs:
+      - {id: washed,     role: armed,
+         when: {rsi_lo7_lt: 30},
+         line: "index RSI {rsi} now / {rsi_lo7} 7-bar low < 30"}
+      - {id: support,    role: armed,
+         when: {near_support: true},
+         line: "within {support_pct_disp} of {support_window}d swing low ({swing_low})"}
+      - {id: reclaim,    role: trigger,
+         when: {above_8ema: true},
+         line: "close back above 8EMA (the reclaim trigger)"}
+      - {id: rsi_turn,   role: easing,
+         when: {rsi_dir_gt: 0},
+         line: "RSI hooking up"}
+      - {id: low_seq,    role: easing,
+         when: {higher_low: true},
+         line: "higher lows forming"}
+      - {id: dry_vol,    role: easing,
+         when: {vol_dip_lt: 1.0},
+         line: "down-day volume drying vs 20d avg"}
+      - {id: higher_low, role: soft,
+         when: {higher_low: true},
+         line: "higher low vs prior swing (preferred over a lone hammer)"}
+      - {id: catalyst,   role: soft,
+         when: {bear_alerts: 0},
+         line: "no fresh bearish catalyst alerts on semis"}
+
+caveat: "SMH/SOXX proxy the NYSE Semiconductor Index; SOXL/SOXS compound daily — multi-day returns diverge from 3x. Grading the journal is the proof, not the RSI."
