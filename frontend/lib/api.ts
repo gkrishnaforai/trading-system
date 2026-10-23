@@ -446,6 +446,11 @@ export type LevSwings = {
   risk_pct?: number
   caveat?: string
   error?: string
+  rules_version?: string
+  exit?: {
+    max_hold_bars?: number; time_stop?: string
+    targets?: { r: number; close: number }[]
+  }
   etfs?: Record<string, LevEtf>
 }
 
@@ -454,6 +459,9 @@ export type LevEtf = {
   armed?: boolean
   veto?: string | null
   warn?: string | null
+  state_note?: string | null    // e.g. unpriceable-stop rejection
+  persisting?: boolean          // same state as prior journal day
+  missing?: string[]
   checklist?: { ok: boolean; line: string; soft?: boolean }[]
   index?: {
     close?: number; rsi?: number | null; vs50?: number
@@ -462,11 +470,14 @@ export type LevEtf = {
   levels?: {
     entry?: number | null; stop?: number | null
     t1?: number | null; t2?: number | null
+    t1_frac?: number; t2_frac?: number
     risk_px?: number | null; shares?: number | null
     risk_usd?: number | null; idx_stop?: number
+    idx_move?: number; implied_loss_pct?: number
+    geometry_invalid?: boolean
   }
   leaders?: {
-    tracked?: number; constructive?: string[]
+    tracked?: number; coverage?: number; constructive?: string[]
     hostile?: string[]; ratio?: number | null
   }
 }

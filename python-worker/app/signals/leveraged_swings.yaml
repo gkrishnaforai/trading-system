@@ -1,5 +1,5 @@
 # leveraged_swings.yaml — declarative spec for the 3x-semiconductor
-# swing detector (leveraged_swings.py). v1.0
+# swing detector (leveraged_swings.py). v1.1
 #
 # The engine builds a ctx of index-tape features + leadership +
 # catalyst context, then evaluates each ETF's legs through
@@ -13,31 +13,64 @@
 # (rsi_hi7 / rsi_lo7 / vs50_hi7), not same-bar values — 'RSI reaches
 # 75-80, then closes below the 8EMA' is a sequence; by the trigger
 # bar the current RSI has moved off the extreme.
-version: "1.0"
+#
+# Risk contract (the stop math is approximate by design): the index
+# level is the technical invalidation; the ETF stop is estimated via
+# idx_move × leverage × stop_buffer — a CONSERVATIVE linear map, not
+# an exact multi-day path (daily resets, tracking error and gaps all
+# cut against you). risk_pct is a PLANNED-loss estimate, never a
+# guarantee. geometry_invalid fires when the implied loss is wider
+# than max_etf_stop_pct — an unpriceable stop is no signal.
+version: "1.1"
 
 signal_src: SMH              # closest liquid proxy to the index
-signal_confirm: SOXX         # corroboration read when stored
+signal_confirm: SOXX         # corroboration legs — validate before
+                             # promoting any to armed
 leverage: 3.0                # daily-reset multiple for the stop map
+stop_buffer: 1.15            # stress factor on the 3x map — modeled
+                             # fills are always better than real ones
+max_etf_stop_pct: 0.25       # implied ETF stop wider than this →
+                             # geometry_invalid, trade not plannable
 extreme_window: 7            # bars of recent-peak lookback
 support_window: 60           # bars for the prior-swing support level
-support_pct: 0.08            # 'near support' = within 8% of that low
+support_pct: 0.05            # 'near' = within 5% above the swing low
 swing_hi_window: 20          # bars for the failed-high / breakout read
+min_bars: 60                 # required index history
+max_stale_days: 3            # index tape older than this → no signal
 
 # 0.25-0.5% planned-loss band while the strategy is validated;
 # default sits mid-band, callers may pass funds + risk_pct
 risk_pct: 0.0035
-targets: [1.5, 2.0]          # R multiples for partial exits
+
+# exit contract — declared, not yet engine-enforced (positions are
+# not tracked; daily review does the enforcing). Grading target for
+# the backtest: does a 5-8 bar time stop help expectancy?
+max_hold_bars: 8
+time_stop: "exit if the move hasn't resolved by max_hold_bars"
+targets:
+  - {r: 1.5, close: 0.50}    # first partial — bank half at 1.5R
+  - {r: 2.0, close: 0.25}    # second partial at 2R; remainder trails
 
 # semis leadership tape — whichever exist in stocks.momentum_state
-# count toward the "leaders weakening / broad participation" legs
+# count toward the "leaders weakening / broad participation" legs.
+# STRICT constructive set: only genuine trend states; climax is
+# exhaustion, pullback/basing/recovery are neutral.
 leaders: [NVDA, AVGO, TSM, AMD, QCOM, MU, INTC, ASML, TXN, ARM, ANET]
-constructive_states: [uptrend, breakout, climax, pullback, basing, recovery]
+constructive_states: [uptrend, breakout]
 hostile_states: [rolling_over, downtrend, breakdown, knife, capitulation]
+min_leader_coverage: 0.7     # thinner tape → leaders_ratio missing,
+                             # legs fail closed (unknown ≠ healthy)
 
-# recent HIGH-materiality NEGATIVE alerts on semis — the
-# thesis-deterioration caution for the SOXL rebound leg
+# recent HIGH-materiality NEGATIVE alerts on semis — a single alert
+# is soft evidence; >=2 inside the window is treated as a thesis-
+# deterioration veto for SOXL. A FAILED query → bear_alerts missing
+# → legs fail closed, never silently zero.
 catalyst_window_days: 5
+catalyst_veto_at: 2
 catalyst_symbols_extra: [SMH, SOXX, SOXL, SOXS]
+
+# leaders reporting within this window = overnight-gap risk note
+earnings_window_days: 3
 
 # state derivation — fixed contract, declared so it can't drift:
 #   vetoed    all armed legs pass AND any veto leg fires
@@ -46,13 +79,16 @@ catalyst_symbols_extra: [SMH, SOXX, SOXL, SOXS]
 #   armed     all armed legs pass
 #   flat      otherwise
 # 'soft' legs never gate — they're shown as preferred evidence.
+# 'persisting' on a row = same state as the prior journal entry —
+# the dedupe contract: a fresh trigger informs, a persisted one
+# does not re-alert.
 
 etfs:
 
   SOXS:
     label: "fade the extension — bet semis pull back"
     # index invalidation: reclaim of the recent swing high →
-    # stop = etf * (1 - idx_stop_pct * leverage)
+    # stop ≈ etf * (1 - idx_move * leverage * stop_buffer)
     stop: {side: high, window: 10}
     veto_reason: "sector breaking out on broad participation"
     legs:
@@ -68,15 +104,21 @@ etfs:
       - {id: failed_hi,  role: soft,
          when: {hi20_age_lte: 5, close_lt_hi20: true},
          line: "failed 20d high within 5 bars (preferred)"}
+      - {id: soxx_conf,  role: soft,
+         when: {soxx_below_8ema: true},
+         line: "SOXX confirms the roll (corroboration — unvalidated)"}
+      # a FRESH 20d high (within 5 bars) + broad strict leadership =
+      # the breakout regime persists into today's pullback — veto
       - {id: no_broad,   role: veto,
-         when: {new_20d_high: true, leaders_ratio_gte: 0.6},
-         line: "no broad breakout today ({leaders_ratio_pct} leaders constructive)"}
+         when: {hi20_age_lte: 5, leaders_ratio_gte: 0.6},
+         line: "no fresh broad breakout ({leaders_ratio_pct} leaders constructive)"}
 
   SOXL:
     label: "confirmed rebound — bet semis recover"
     # index invalidation: loss of the rebound low →
-    # stop = etf * (1 - idx_stop_pct * leverage)
+    # stop ≈ etf * (1 - idx_move * leverage * stop_buffer)
     stop: {side: low, window: 10}
+    veto_reason: "multiple fresh bearish catalysts — thesis deteriorating"
     easing_min: 2
     legs:
       - {id: washed,     role: armed,
@@ -96,12 +138,18 @@ etfs:
          line: "higher lows forming"}
       - {id: dry_vol,    role: easing,
          when: {vol_dip_lt: 1.0},
-         line: "down-day volume drying vs 20d avg"}
+         line: "recent down-day volume below the selloff's pace"}
       - {id: higher_low, role: soft,
          when: {higher_low: true},
          line: "higher low vs prior swing (preferred over a lone hammer)"}
       - {id: catalyst,   role: soft,
          when: {bear_alerts: 0},
          line: "no fresh bearish catalyst alerts on semis"}
+      - {id: soxx_conf,  role: soft,
+         when: {soxx_above_8ema: true},
+         line: "SOXX confirms the reclaim (corroboration — unvalidated)"}
+      - {id: thesis_ok,  role: veto,
+         when: {bear_alerts_gte: 2},
+         line: "fewer than {catalyst_veto_at} fresh bearish catalysts"}
 
-caveat: "SMH/SOXX proxy the NYSE Semiconductor Index; SOXL/SOXS compound daily — multi-day returns diverge from 3x. Grading the journal is the proof, not the RSI."
+caveat: "SMH/SOXX proxy the NYSE Semiconductor Index; SOXL/SOXS compound daily — multi-day returns diverge from 3x. Stops are modeled, not guaranteed; gap risk is real. Grading the journal is the proof, not the RSI."

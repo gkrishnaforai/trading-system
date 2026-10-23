@@ -393,7 +393,7 @@ function LevCard({ etf, row }: { etf: string; row: LevEtf }) {
           <span className="pl-2 text-[10px] text-faint">{LEV_DESC[etf]}</span>
         </div>
         <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ${LEV_STATE[row.state] ?? LEV_STATE.flat}`}>
-          {row.state}
+          {row.state}{row.persisting ? ' ↺' : ''}
         </span>
       </div>
       <div className="pt-1 text-[10px] font-mono text-muted">
@@ -419,11 +419,20 @@ function LevCard({ etf, row }: { etf: string; row: LevEtf }) {
       {row.warn && (
         <p className="pt-1 text-[11px] text-caution">⚠ {row.warn}</p>
       )}
-      {row.state === 'triggered' && lv.entry != null && (
+      {lv.geometry_invalid && (
+        <p className="pt-1 text-[11px] text-defensive">
+          {row.state_note ?? 'unpriceable stop — trade not plannable'}
+        </p>
+      )}
+      {row.state === 'triggered' && lv.entry != null && !lv.geometry_invalid && (
         <div className="pt-1.5 text-[10px] font-mono text-muted">
           {money(lv.entry)} → stop {money(lv.stop)}
-          {' '}(idx {money(lv.idx_stop, 1)})
-          {lv.t1 != null && ` · t1 ${money(lv.t1)} · t2 ${money(lv.t2)}`}
+          {' '}(idx {money(lv.idx_stop, 1)}
+          {lv.implied_loss_pct != null &&
+            ` / −${(lv.implied_loss_pct * 100).toFixed(0)}%`})
+          {lv.t1 != null && ` · t1 ${money(lv.t1)}`}
+          {lv.t1_frac != null && `(${Math.round(lv.t1_frac * 100)}%)`}
+          {lv.t2 != null && ` · t2 ${money(lv.t2)}`}
           {lv.shares != null && (
             <span className="text-faint">
               {' '}· {lv.shares}sh risks {money(lv.risk_usd, 0)}

@@ -5,9 +5,11 @@ roles, veto, stop anchor, targets, risk budget — is declarative and
 evaluated through pulse_engine._eval_when, the same condition
 semantics as the pulse and best-picks engines. This module owns only
 the MECHANICS: tape-feature ctx construction, the flat→armed→
-triggered→vetoed state derivation, index→ETF stop translation via
-the 3x daily-move map, R-multiple targets, sizing, and the daily
-journal. Output is advisory — hypotheses to grade, never orders.
+triggered→vetoed state derivation, the index→ETF stop translation
+(conservative linear map — idx_move × leverage × stop_buffer), the
+geometry-invalid rejection when the implied stop is unpriceable, the
+persisting-state dedupe flag, and the daily journal. Output is
+advisory — hypotheses to grade, never orders.
 """
 from __future__ import annotations
 
@@ -50,38 +52,71 @@ def _ema(closes: list[float], n: int) -> list[float]:
 
 
 def _leader_tape(spec: dict) -> dict[str, Any]:
-    """Bulk momentum_state read for the semis leadership list."""
+    """Bulk momentum_state read for the semis leadership list. When
+    coverage is thinner than min_leader_coverage the ratio is None —
+    an unreadable leadership tape is missing evidence, not health."""
     from app.database import db
     rows = db.execute_query(
         "SELECT symbol, momentum_state FROM stocks"
         " WHERE symbol = ANY(:s)", {"s": list(spec["leaders"])})
     tape = {r["symbol"]: r["momentum_state"] for r in rows}
+    coverage = (len(tape) / len(spec["leaders"])
+                if spec["leaders"] else 0)
     constr = {s for s, st in tape.items()
               if st in set(spec["constructive_states"])}
     hostile = {s for s, st in tape.items()
                if st in set(spec["hostile_states"])}
-    return {"tracked": len(tape),
+    return {"tracked": len(tape), "coverage": round(coverage, 2),
             "constructive": sorted(constr), "hostile": sorted(hostile),
             "ratio": (round(len(constr) / len(tape), 2)
-                      if tape else None)}
+                      if tape
+                      and coverage >= spec["min_leader_coverage"]
+                      else None)}
 
 
-def _semi_alerts(spec: dict) -> dict[str, Any]:
-    """Recent HIGH-materiality NEGATIVE alerts on semis — the
-    'catalyst that breaks support' caution for SOXL."""
+def _semi_alerts(spec: dict) -> Optional[dict[str, Any]]:
+    """Recent HIGH-materiality NEGATIVE alerts on semis. A failed
+    query returns None — ctx bear_alerts goes missing and every leg
+    that reads it fails closed; a broken feed must not look like
+    'no catalysts'."""
     from app.database import db
-    days = spec["catalyst_window_days"]
-    syms = list(spec["leaders"]) + list(spec["catalyst_symbols_extra"])
-    rows = db.execute_query(
-        "SELECT symbol, title, created_at FROM alert_items"
-        " WHERE direction = 'NEGATIVE' AND materiality = 'HIGH'"
-        " AND symbol = ANY(:s)"
-        " AND created_at >= now() - interval :days"
-        " ORDER BY created_at DESC LIMIT 5",
-        {"s": syms, "days": f"{days} days"})
-    return {"count": len(rows),
-            "items": [{"symbol": r["symbol"],
-                       "title": (r["title"] or "")[:80]} for r in rows]}
+    try:
+        days = spec["catalyst_window_days"]
+        syms = list(spec["leaders"]) + list(spec["catalyst_symbols_extra"])
+        rows = db.execute_query(
+            "SELECT symbol, title, created_at FROM alert_items"
+            " WHERE direction = 'NEGATIVE' AND materiality = 'HIGH'"
+            " AND symbol = ANY(:s)"
+            " AND created_at >= now() - interval :days"
+            " ORDER BY created_at DESC LIMIT 10",
+            {"s": syms, "days": f"{days} days"})
+        return {"count": len(rows),
+                "items": [{"symbol": r["symbol"],
+                           "title": (r["title"] or "")[:80]}
+                          for r in rows]}
+    except Exception as exc:
+        logger.debug("semi alerts read: %s", exc)
+        return None
+
+
+def _leaders_earning(spec: dict) -> dict[str, Any]:
+    """Leadership earnings inside the gap-risk window — a note, not
+    a gate. Derived from next_earnings_date, same as best_picks."""
+    from app.database import db
+    try:
+        w = spec["earnings_window_days"]
+        rows = db.execute_query(
+            "SELECT symbol, next_earnings_date ne FROM stocks"
+            " WHERE symbol = ANY(:s)"
+            " AND next_earnings_date IS NOT NULL"
+            " AND next_earnings_date >= CURRENT_DATE"
+            " AND next_earnings_date <= CURRENT_DATE + :w",
+            {"s": list(spec["leaders"]), "w": w})
+        return {"count": len(rows),
+                "symbols": [r["symbol"] for r in rows]}
+    except Exception as exc:
+        logger.debug("leaders earning read: %s", exc)
+        return {"count": 0, "symbols": []}
 
 
 def _portfolio_mv() -> Optional[float]:
@@ -95,13 +130,34 @@ def _portfolio_mv() -> Optional[float]:
     return mv if mv > 0 else None
 
 
-def _vol_dip(bars) -> Optional[float]:
-    """Down-day volume vs 20d average — <1 = sellers exhausting."""
-    dn = [b.volume for b in bars[-10:] if b.close < b.open]
-    al = [b.volume for b in bars[-20:]]
-    if not dn or not al or not sum(al):
+def _prev_state(etf: str, as_of: str) -> Optional[str]:
+    """The prior journal day's verdict — dedupe contract: a setup
+    that persisted overnight is 'persisting', not a fresh signal."""
+    from app.database import db
+    try:
+        r = db.execute_query(
+            "SELECT state FROM lev_etf_evals WHERE etf = :e"
+            " AND as_of < :d ORDER BY as_of DESC LIMIT 1",
+            {"e": etf, "d": as_of})
+        return r[0]["state"] if r else None
+    except Exception:
         return None
-    return (sum(dn) / len(dn)) / (sum(al) / len(al))
+
+
+def _vol_dip(bars) -> Optional[float]:
+    """Selling-pressure ratio: avg volume on down-close bars in the
+    last 5 sessions vs the down-day average over the prior 15. <1 =
+    the sellers who did the damage are drying up. Needs down bars in
+    both windows; absent or missing volume → None → leg fails closed.
+    """
+    recent = [b.volume for b in bars[-5:] if b.close < b.open]
+    prior = [b.volume for b in bars[-20:-5] if b.close < b.open]
+    if not recent or not prior:
+        return None
+    pa = sum(prior) / len(prior)
+    if not pa:
+        return None
+    return (sum(recent) / len(recent)) / pa
 
 
 def _taped(bars, spec: dict) -> Optional[dict[str, Any]]:
@@ -110,8 +166,9 @@ def _taped(bars, spec: dict) -> Optional[dict[str, Any]]:
     RSI/stretch extremes are `extreme_window`-bar RECENT peaks, not
     same-bar values: 'RSI reaches 75-80, then closes below the 8EMA'
     is a sequence; by the trigger bar the current RSI has moved off
-    the extreme."""
-    if not bars or len(bars) < 60:
+    the extreme. The swing low excludes the last 5 bars — support is
+    a PRIOR confirmed swing, not the bar doing the testing."""
+    if not bars or len(bars) < spec["min_bars"]:
         return None
     win = spec["extreme_window"]
     sw, sp = spec["support_window"], spec["support_pct"]
@@ -150,10 +207,23 @@ def _taped(bars, spec: dict) -> Optional[dict[str, Any]]:
     }
 
 
+def _mini_taped(bars) -> dict[str, Any]:
+    """Lightweight ctx for the corroboration proxy (SOXX) — just the
+    8EMA position legs the spec reads."""
+    if not bars or len(bars) < 20:
+        return {"soxx_above_8ema": None, "soxx_below_8ema": None,
+                "soxx_close": None}
+    closes = [b.close for b in bars]
+    e = _ema(closes, 8)
+    return {"soxx_above_8ema": closes[-1] > e[-1],
+            "soxx_below_8ema": closes[-1] < e[-1],
+            "soxx_close": closes[-1]}
+
+
 def _fmt(line: str, ctx: dict) -> str:
     """Render a leg's display line — {rsi}, {vs50_pct} etc. A missing
     key leaves the placeholder visible rather than lying."""
-    vals = {k: v for k, v in ctx.items()}
+    vals = dict(ctx)
     vals.update({
         "vs50_pct": f"{(ctx.get('vs50') or 0) * 100:+.0f}",
         "vs50_hi7_pct": f"{(ctx.get('vs50_hi7') or 0) * 100:+.0f}",
@@ -165,7 +235,7 @@ def _fmt(line: str, ctx: dict) -> str:
                     if ctx.get("rsi_lo7") else "—"),
         "leaders_ratio_pct": (f"{ctx['leaders_ratio']:.0%}"
                               if ctx.get("leaders_ratio") is not None
-                              else "—"),
+                              else "tape thin"),
     })
     try:
         return line.format_map(vals)
@@ -184,7 +254,7 @@ def _evaluate_etf(etf: str, espec: dict, ctx: dict) -> dict[str, Any]:
         legs.append({"id": leg["id"], "role": leg["role"], "ok": ok,
                      "line": _fmt(leg["line"], ctx)})
     by = lambda role: [l for l in legs if l["role"] == role]
-    armed = all(l["ok"] for l in by("armed")) and by("armed") != []
+    armed = bool(by("armed")) and all(l["ok"] for l in by("armed"))
     trig = all(l["ok"] for l in by("trigger"))
     easing = [l for l in legs if l["role"] == "easing"]
     easing_ok = (sum(l["ok"] for l in easing)
@@ -200,10 +270,11 @@ def _evaluate_etf(etf: str, espec: dict, ctx: dict) -> dict[str, Any]:
                   "line": l["line"], "soft": l["role"] == "soft"}
                  for l in legs]
     if easing:
+        n = sum(l["ok"] for l in easing)
         checklist.insert(3, {"ok": easing_ok, "line":
                              f"selling pressure easing "
-                             f"({sum(l['ok'] for l in easing)}/"
-                             f"{len(easing)} >= {espec.get('easing_min', len(easing))})"})
+                             f"({n}/{len(easing)} >= "
+                             f"{espec.get('easing_min', len(easing))})"})
     return {"state": state, "armed": armed,
             "veto": espec.get("veto_reason") if vetoed else None,
             "checklist": checklist, "missing": sorted(missing),
@@ -226,29 +297,46 @@ def evaluate(funds: Optional[float] = None,
         [spec["signal_src"], spec["signal_confirm"], *etfs], days=400)
     idx = books.get(spec["signal_src"])
     idx2 = books.get(spec["signal_confirm"])
-    t = _taped(idx, spec)
 
     out = {"as_of": (idx[-1].date.isoformat() if idx else
                      date.today().isoformat()),
            "signal_src": spec["signal_src"], "funds": funds,
            "risk_pct": risk_pct or spec["risk_pct"], "etfs": {},
            "rules_version": rules_version(),
+           "exit": {"max_hold_bars": spec["max_hold_bars"],
+                    "time_stop": spec["time_stop"],
+                    "targets": spec["targets"]},
            "caveat": spec["caveat"]}
+    t = _taped(idx, spec)
     if t is None:
-        out["error"] = "no index tape stored"
+        out["error"] = ("no index tape stored" if not idx else
+                        f"insufficient history "
+                        f"({len(idx)} < {spec['min_bars']} bars)")
+        return out
+    # stale tape → no actionable signal, period
+    tape_age = (date.today() - idx[-1].date).days
+    if tape_age > spec["max_stale_days"]:
+        out["error"] = (f"index tape stale — last bar "
+                        f"{idx[-1].date} ({tape_age}d old)")
         return out
 
     leaders = _leader_tape(spec)
-    alerts = _semi_alerts(spec)
+    alerts = _semi_alerts(spec)          # None when the feed broke
+    earning = _leaders_earning(spec)
+    soxx = _mini_taped(idx2)
     if funds is None:
         funds = _portfolio_mv()
     risk_pct = risk_pct or spec["risk_pct"]
 
-    ctx = {**t, "leaders_ratio": leaders["ratio"],
-           "bear_alerts": alerts["count"],
+    ctx = {**t, **soxx,
+           "leaders_ratio": leaders["ratio"],
+           "bear_alerts": (alerts["count"] if alerts is not None
+                           else None),
+           "catalyst_veto_at": spec["catalyst_veto_at"],
            "support_pct_disp": f"{spec['support_pct'] * 100:.0f}%",
            "support_window": spec["support_window"]}
-    leverage, targets = spec["leverage"], spec["targets"]
+    leverage = spec["leverage"]
+    buffer = spec["stop_buffer"]
 
     for etf in etfs:
         espec = spec["etfs"][etf]
@@ -258,14 +346,29 @@ def evaluate(funds: Optional[float] = None,
                         "rsi": round(t["rsi"], 1) if t["rsi"] else None,
                         "vs50": round(t["vs50"], 4),
                         "ema8": round(t["ema8"], 2),
-                        "soxx_close": (round(idx2[-1].close, 2)
-                                       if idx2 else None)}
-        if alerts["count"] and etf == "SOXL":
-            row["warn"] = (f"{alerts['count']} high-materiality bearish"
-                           " alerts on semis in "
-                           f"{spec['catalyst_window_days']}d — support "
-                           "can fail on thesis deterioration")
-        # index invalidation → ETF stop via the 3x daily-move map;
+                        "soxx_close": (round(soxx["soxx_close"], 2)
+                                       if soxx["soxx_close"] else None)}
+        # the persisting flag — dedupe contract for consumers
+        prev = _prev_state(etf, out["as_of"])
+        row["persisting"] = bool(prev and prev == row["state"]
+                                 and row["state"] != "flat")
+        warns = []
+        if alerts is None:
+            warns.append("catalyst feed unreadable — "
+                         "catalyst legs are missing, not clean")
+        elif alerts["count"] and etf == "SOXL":
+            warns.append(f"{alerts['count']} high-materiality bearish "
+                         "alerts on semis in "
+                         f"{spec['catalyst_window_days']}d — support "
+                         "can fail on thesis deterioration")
+        if earning["count"]:
+            warns.append(f"{earning['count']} semis leaders report "
+                         f"≤{spec['earnings_window_days']}d "
+                         f"({', '.join(earning['symbols'])}) — "
+                         "overnight-gap risk")
+        row["warn"] = " · ".join(warns) or None
+
+        # index invalidation → ETF stop via the stressed 3x map;
         # side=high: index rising kills SOXS; side=low: falling kills SOXL
         eb = books.get(etf) or []
         etf_px = float(eb[-1].close) if eb else None
@@ -273,27 +376,45 @@ def evaluate(funds: Optional[float] = None,
         idx_stop = t[f"stop_{'hi' if side == 'high' else 'lo'}{win}"]
         idx_move = (idx_stop / t["close"] - 1 if side == "high"
                     else t["close"] / idx_stop - 1)
-        etf_stop = (round(etf_px * (1 - idx_move * leverage), 2)
-                    if etf_px else None)
-        risk_px = (etf_px - etf_stop
-                   if etf_px and etf_stop is not None else None)
-        t1 = (round(etf_px + targets[0] * risk_px, 2)
-              if risk_px and risk_px > 0 else None)
-        t2 = (round(etf_px + targets[1] * risk_px, 2)
-              if risk_px and risk_px > 0 else None)
-        shares = (int(funds * risk_pct / risk_px)
-                  if funds and risk_px and risk_px > 0 else None)
-        row["levels"] = {"entry": etf_px, "stop": etf_stop,
-                         "t1": t1, "t2": t2,
-                         "risk_px": (round(risk_px, 2)
-                                     if risk_px else None),
-                         "shares": shares,
-                         "risk_usd": (round(shares * risk_px, 0)
-                                      if shares else None),
-                         "idx_stop": round(idx_stop, 2),
-                         "idx_move": round(idx_move, 4)}
+        implied_loss = idx_move * leverage * buffer
+        if idx_move <= 0 or implied_loss > spec["max_etf_stop_pct"]:
+            row["levels"] = {"geometry_invalid": True,
+                             "idx_move": round(idx_move, 4),
+                             "implied_loss_pct":
+                                 round(implied_loss, 4)}
+            row["state_note"] = (
+                "unpriceable stop — implied ETF loss "
+                f"{implied_loss:.0%} exceeds "
+                f"{spec['max_etf_stop_pct']:.0%} cap"
+                if implied_loss > spec["max_etf_stop_pct"]
+                else "invalid index stop geometry")
+        else:
+            etf_stop = (round(etf_px * (1 - implied_loss), 2)
+                        if etf_px else None)
+            risk_px = (etf_px - etf_stop
+                       if etf_px and etf_stop is not None else None)
+            t1 = (round(etf_px + spec["targets"][0]["r"] * risk_px, 2)
+                  if risk_px and risk_px > 0 else None)
+            t2 = (round(etf_px + spec["targets"][1]["r"] * risk_px, 2)
+                  if risk_px and risk_px > 0 else None)
+            shares = (int(funds * risk_pct / risk_px)
+                      if funds and risk_px and risk_px > 0 else None)
+            row["levels"] = {"entry": etf_px, "stop": etf_stop,
+                             "t1": t1, "t2": t2,
+                             "t1_frac": spec["targets"][0]["close"],
+                             "t2_frac": spec["targets"][1]["close"],
+                             "risk_px": (round(risk_px, 2)
+                                         if risk_px else None),
+                             "shares": shares,
+                             "risk_usd": (round(shares * risk_px, 0)
+                                          if shares else None),
+                             "idx_stop": round(idx_stop, 2),
+                             "idx_move": round(idx_move, 4),
+                             "implied_loss_pct":
+                                 round(implied_loss, 4)}
         out["etfs"][etf] = row
         try:
+            lv = row["levels"]
             db.execute_update(
                 "INSERT INTO lev_etf_evals (as_of, etf, signal_src,"
                 " state, rsi, vs50, ema8_rel, idx_close, etf_px,"
@@ -315,11 +436,13 @@ def evaluate(funds: Optional[float] = None,
                  "rsi": row["index"]["rsi"],
                  "v50": row["index"]["vs50"],
                  "e8": (t["close"] / t["ema8"] - 1),
-                 "ic": row["index"]["close"], "ep": etf_px,
-                 "sp": etf_stop, "t1": t1, "t2": t2,
-                 "rp": (risk_px / etf_px
-                        if risk_px and etf_px else None),
+                 "ic": row["index"]["close"],
+                 "ep": lv.get("entry"), "sp": lv.get("stop"),
+                 "t1": lv.get("t1"), "t2": lv.get("t2"),
+                 "rp": lv.get("implied_loss_pct"),
                  "ck": json.dumps({"spec": rules_version(),
+                                   "persisting": row["persisting"],
+                                   "missing": row["missing"],
                                    "checklist": row["checklist"]}),
                  "v": row["veto"],
                  "ld": json.dumps(leaders)})
