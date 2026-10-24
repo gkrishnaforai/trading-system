@@ -51,7 +51,8 @@ function tone(v?: number | null) {
   return n >= 0 ? 'text-aggressive' : 'text-defensive'
 }
 
-/** Dark command-deck hero — the cockpit readout. */
+/** Light command-deck hero — the cockpit readout. Soft-paper gradient,
+    hairline grid, accent glow edge. */
 function Deck({
   kicker, right, children,
 }: {
@@ -60,17 +61,17 @@ function Deck({
   children: React.ReactNode
 }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-[#0D0C0A] text-white">
+    <div className="relative overflow-hidden rounded-2xl border border-hairline bg-[#FAF9F7] text-ink shadow-[0_1px_2px_rgba(13,12,10,0.04),0_12px_32px_-16px_rgba(13,12,10,0.12)]">
       {/* glow + grid texture */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            'radial-gradient(ellipse 60% 80% at 15% 0%, rgba(234,88,12,0.22), transparent 60%),' +
-            'radial-gradient(ellipse 50% 70% at 90% 110%, rgba(15,118,110,0.15), transparent 60%),' +
-            'repeating-linear-gradient(0deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 28px),' +
-            'repeating-linear-gradient(90deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 28px)',
+            'radial-gradient(ellipse 60% 80% at 15% 0%, rgba(234,88,12,0.08), transparent 60%),' +
+            'radial-gradient(ellipse 50% 70% at 90% 110%, rgba(15,118,110,0.07), transparent 60%),' +
+            'repeating-linear-gradient(0deg, rgba(13,12,10,0.028) 0 1px, transparent 1px 28px),' +
+            'repeating-linear-gradient(90deg, rgba(13,12,10,0.028) 0 1px, transparent 1px 28px)',
         }}
       />
       <div
@@ -78,15 +79,15 @@ function Deck({
         className="pointer-events-none absolute inset-x-0 top-0 h-px"
         style={{
           background:
-            'linear-gradient(90deg, transparent, rgba(234,88,12,0.7), transparent)',
+            'linear-gradient(90deg, transparent, rgba(234,88,12,0.55), transparent)',
         }}
       />
       <div className="relative px-6 py-5">
         <div className="flex items-baseline justify-between gap-4">
-          <span className="text-[11px] uppercase tracking-[0.25em] text-white/50">
+          <span className="text-[11px] uppercase tracking-[0.25em] text-faint">
             {kicker}
           </span>
-          <span className="font-mono text-[11px] text-white/40">{right}</span>
+          <span className="font-mono text-[11px] text-faint">{right}</span>
         </div>
         {children}
       </div>
@@ -98,11 +99,11 @@ function DeckStat({ label, value, toneCls }: {
   label: string; value: string; toneCls?: string
 }) {
   return (
-    <div className="rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wider text-white/40">
+    <div className="rounded-lg border border-hairline bg-white/70 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wider text-faint">
         {label}
       </div>
-      <div className={`mt-0.5 font-mono text-sm ${toneCls ?? 'text-white/90'}`}>
+      <div className={`mt-0.5 font-mono text-sm ${toneCls ?? 'text-ink'}`}>
         {value}
       </div>
     </div>
@@ -125,7 +126,7 @@ function SectorBar({ rows }: { rows: PulseRow[] }) {
     '#F87171', '#A3E635', '#94A3B8']
   return (
     <div className="pt-4">
-      <div className="flex h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
+      <div className="flex h-1.5 overflow-hidden rounded-full bg-elevated">
         {segs.map(([s, v], i) => (
           <div
             key={s}
@@ -139,7 +140,7 @@ function SectorBar({ rows }: { rows: PulseRow[] }) {
       </div>
       <div className="pt-2 flex flex-wrap gap-x-4 gap-y-1">
         {segs.slice(0, 6).map(([s, v], i) => (
-          <span key={s} className="text-[11px] text-white/55">
+          <span key={s} className="text-[11px] text-muted">
             <span
               className="inline-block h-1.5 w-1.5 rounded-full mr-1.5"
               style={{ background: hues[i % hues.length] }}
@@ -309,10 +310,10 @@ export default async function PortfolioPage({
               right={`${pulse?.as_of ?? ''} · ${portfolios.length}/${limit} books`}
             >
               <div className="pt-4 flex items-baseline gap-4">
-                <h1 className="font-semibold text-[clamp(1.4rem,3vw,2rem)] tracking-tight text-white">
+                <h1 className="font-semibold text-[clamp(1.4rem,3vw,2rem)] tracking-tight text-ink">
                   {selected.name}
                 </h1>
-                <span className="font-mono text-sm text-white/50">
+                <span className="font-mono text-sm text-muted">
                   {selected.holdings_count ?? holdings?.length ?? 0} positions
                 </span>
               </div>
@@ -389,13 +390,13 @@ export default async function PortfolioPage({
               right={`${pulse?.as_of ?? ''} · ${portfolios.length}/${limit} books`}
             >
               <div className="pt-4 flex flex-wrap items-baseline gap-x-5 gap-y-2">
-                <h1 className="font-mono text-[clamp(1.9rem,4.5vw,2.9rem)] font-semibold tracking-tight text-white">
+                <h1 className="font-mono text-[clamp(1.9rem,4.5vw,2.9rem)] font-semibold tracking-tight text-ink">
                   {money(book?.value)}
                 </h1>
                 <span
                   className={`font-mono text-xl ${Number(book?.pnl_pct) >= 0
-                    ? 'text-emerald-400'
-                    : 'text-red-400'
+                    ? 'text-aggressive'
+                    : 'text-defensive'
                     }`}
                 >
                   {pct(book?.pnl_pct)}
@@ -403,8 +404,8 @@ export default async function PortfolioPage({
                 {book?.on_pace != null && (
                   <span
                     className={`rounded-full px-2.5 py-1 text-xs font-medium ${book.on_pace
-                      ? 'bg-emerald-400/15 text-emerald-300'
-                      : 'bg-accent/20 text-orange-300'
+                      ? 'bg-aggressive/10 text-aggressive'
+                      : 'bg-accent/10 text-accent'
                       }`}
                   >
                     {book.on_pace ? 'on pace' : 'behind pace'} vs{' '}
@@ -412,14 +413,14 @@ export default async function PortfolioPage({
                   </span>
                 )}
                 {book?.track_ret_pct != null && (
-                  <span className="text-xs text-white/50">
+                  <span className="text-xs text-muted">
                     {pct(book.track_ret_pct)} over {book.track_days}d
                     {book.excess_pct != null && (
                       <span
                         className={
                           Number(book.excess_pct) >= 0
-                            ? 'text-emerald-400'
-                            : 'text-red-400'
+                            ? 'text-aggressive'
+                            : 'text-defensive'
                         }
                       >
                         {' '}({pct(book.excess_pct)} vs SPY)
@@ -437,8 +438,8 @@ export default async function PortfolioPage({
                   value={money(book?.pnl)}
                   toneCls={
                     Number(book?.pnl) >= 0
-                      ? 'text-emerald-400'
-                      : 'text-red-400'
+                      ? 'text-aggressive'
+                      : 'text-defensive'
                   }
                 />
                 <DeckStat label="Goal /mo" value={money(book?.goal_month)} />
