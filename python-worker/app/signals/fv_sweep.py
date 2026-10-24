@@ -53,16 +53,41 @@ def _resolve_fv(sym: str) -> Dict[str, Any]:
             "reused": bool(meta.get("reused"))}
 
 
+def _fundamentals_snap_stamp(sym: str):
+    """Latest fmp_fundamentals snapshot stamp — the row the resolver's
+    inputs watermark actually reads."""
+    try:
+        return db.execute_query(
+            "SELECT MAX(generated_at) AS g FROM stock_insights_snapshots"
+            " WHERE stock_symbol=:s AND source='fmp_fundamentals'",
+            {"s": sym})[0]["g"]
+    except Exception:
+        return None
+
+
 def refresh_after_print(sym: str) -> Dict[str, Any]:
     """Post-print refresh: refetch the FMP fundamentals bundle (fresh
-    eps_forward, estimates, TTM actuals) then re-resolve FV."""
+    eps_forward, estimates, TTM actuals) then re-resolve FV. Reports
+    honestly — a fetch that wrote no new snapshot is not 'refreshed':
+    re-resolving on the same inputs just stamps a fresh run on the
+    same broken blend (TEM kept showing '2d old run' on 86d inputs)."""
     out: Dict[str, Any] = {"symbol": sym}
+    before = _fundamentals_snap_stamp(sym)
     try:
         from app.data_management.refresh_manager import (
             DataRefreshManager, RefreshMode)
-        DataRefreshManager().refresh_fundamentals_bundle(
+        res = DataRefreshManager().refresh_fundamentals_bundle(
             sym, mode=RefreshMode.ON_DEMAND, force=True)
-        out["fundamentals"] = "refreshed"
+        after = _fundamentals_snap_stamp(sym)
+        if after is not None and (before is None or after > before):
+            out["fundamentals"] = "refreshed"
+        else:
+            failed = getattr(res, "total_failed", None)
+            req = getattr(res, "total_requested", None)
+            out["fundamentals"] = (
+                "no_new_snapshot"
+                + (f" ({failed}/{req} legs failed)"
+                   if failed is not None and req is not None else ""))
     except Exception as exc:
         logger.warning("fv_sweep refresh %s: %s", sym, exc)
         out["fundamentals"] = f"error: {exc}"

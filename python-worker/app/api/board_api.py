@@ -27,6 +27,11 @@ def _js(v):
 # job name → state — in-memory is fine; refreshes are idempotent anyway
 _jobs: dict[str, dict[str, Any]] = {}
 
+# symbol → epoch of last fv self-heal attempt — the health endpoint's
+# stale-inputs heal fetches a ~6-leg provider bundle; per-view would
+# burn the rate limit, so attempts are throttled to hourly
+_fv_heal_last: dict[str, float] = {}
+
 
 def _mark(job: str, **kw):
     at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1781,6 +1786,16 @@ async def symbol_health(sym: str):
         pass
     if "extreme_gap" in (fv.get("flags") or []):
         needs_input_refresh = True
+    if needs_input_refresh:
+        # every page view would otherwise trigger a ~6-call provider
+        # bundle fetch — one heal attempt per symbol per hour per
+        # process; a failed fetch then can't hammer the rate limit
+        import time
+        now = time.time()
+        if now - _fv_heal_last.get(sym.upper(), 0) < 3600:
+            needs_input_refresh = False
+        else:
+            _fv_heal_last[sym.upper()] = now
     if fv.get("stale") or needs_input_refresh:
         async def _fv_bg() -> None:
             try:

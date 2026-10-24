@@ -723,6 +723,26 @@ def _fv_detail(run_row: dict, spot, fund_as_of=None) -> dict:
                 issues.append(f"stale_inputs:{age}d")
         except Exception:
             pass
+    # pre_earnings blends die by stale balance-sheet inputs — the
+    # survival tree prices p_survival off cash/debt/burn, so a name
+    # passes the 120d fundamentals gate while its runway math is two
+    # months out of date (TEM: 86d-old inputs → $1.10 FV on a $67
+    # stock). Inputs-watermark age is the honest clock here.
+    reg = str(run_row.get("regime") or "")
+    inp = str(run_row.get("inputs_watermark") or "")[:10]
+    if "pre_earnings" in reg and inp:
+        try:
+            iage = (date.today() - date.fromisoformat(inp)).days
+            if iage > 45 and not any(
+                    i.startswith("stale_inputs") for i in issues):
+                issues.append(f"stale_inputs:{iage}d")
+        except Exception:
+            pass
+    # a blend at a fraction of spot is model-vs-market mismatch —
+    # diagnostic context, never a trade target; demote like the
+    # other validation gates
+    if "extreme_gap" in (run_row.get("quality_flags") or []):
+        issues.append("extreme_gap")
     fvs = sorted(m["fv"] for m in methods if m.get("fv"))
     if len(fvs) >= 3:
         med = fvs[len(fvs) // 2]
