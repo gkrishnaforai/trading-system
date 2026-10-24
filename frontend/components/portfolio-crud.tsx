@@ -252,6 +252,67 @@ export function AddPositionDock({ books }: {
   )
 }
 
+/** Armed delete for a book — two taps, auto-disarms, routes home. */
+export function DeleteBookButton({ id, name }: { id: string; name: string }) {
+  const [arm, setArm] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const router = useRouter()
+
+  useEffect(() => {
+    if (!arm) return
+    const t = setTimeout(() => setArm(false), 6000)
+    return () => clearTimeout(t)
+  }, [arm])
+
+  if (arm) {
+    return (
+      <span className="inline-flex items-center gap-2.5">
+        <span className="text-xs text-defensive">
+          delete “{name}” + its positions?
+        </span>
+        <button
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            setErr(null)
+            const res = await call(`portfolios/${id}`, 'DELETE')
+            setBusy(false)
+            if (res.ok) {
+              router.push('/portfolio')
+              router.refresh()
+            } else {
+              setErr(res.error ?? 'delete failed')
+              setArm(false)
+            }
+          }}
+          className="rounded-full bg-defensive px-2.5 py-0.5 text-[11px] font-semibold text-canvas disabled:opacity-40"
+        >
+          {busy ? '…' : 'yes, delete'}
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => setArm(false)}
+          className="text-[11px] font-medium text-faint hover:text-ink"
+        >
+          no
+        </button>
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-2">
+      <button
+        onClick={() => setArm(true)}
+        className="text-[11px] font-medium text-faint hover:text-defensive transition-colors"
+      >
+        delete book
+      </button>
+      {err && <span className="text-[11px] text-defensive">{err}</span>}
+    </span>
+  )
+}
+
 export function HoldingRow({ p, h }: {
   p: string
   h: {
@@ -370,14 +431,12 @@ export function HoldingRow({ p, h }: {
           <span>@ ${Number(h.average_cost ?? 0).toFixed(2)}</span>
           <button
             onClick={() => setEdit(true)}
-            className="text-faint hover:text-accent"
-            title="edit"
-          >✎</button>
+            className="font-sans text-[11px] font-medium text-faint hover:text-accent"
+          >edit</button>
           <button
             onClick={() => setArm(true)}
-            className="text-faint hover:text-defensive"
-            title="remove"
-          >✕</button>
+            className="font-sans text-[11px] font-medium text-faint hover:text-defensive"
+          >remove</button>
         </div>
       )}
     </div>

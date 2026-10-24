@@ -4,7 +4,7 @@ import { WatchlistCard } from '@/components/watchlist'
 import { TIER_LIMITS, currentTier } from '@/lib/tier'
 import { listPortfolios, listHoldings } from '@/lib/portfolio'
 import {
-  AddHoldingForm, AddPositionDock, BookRail,
+  AddHoldingForm, AddPositionDock, BookRail, DeleteBookButton,
   HoldingRow as UserHoldingRow, NewPortfolioForm,
 } from '@/components/portfolio-crud'
 
@@ -364,6 +364,9 @@ export default async function PortfolioPage({
                       <UserHoldingRow key={h.symbol} p={selected.id} h={h} />
                     ))
                   )}
+                </div>
+                <div className="mt-3 flex justify-end border-t border-hairline/60 pt-3">
+                  <DeleteBookButton id={selected.id} name={selected.name} />
                 </div>
               </section>
             </div>

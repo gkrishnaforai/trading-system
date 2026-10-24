@@ -335,6 +335,29 @@ async def create_portfolio(
         total_invested=float(portfolio['total_invested'])
     )
 
+@router.delete("/portfolios/{portfolio_id}")
+async def delete_portfolio(
+    portfolio_id: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db)
+):
+    """Delete a book and its holdings (FK cascade). Hard delete —
+    the journal tables don't key off portfolios, so nothing else
+    is orphaned."""
+    portfolio = db.execute_query_positional(
+        "SELECT id, name FROM portfolios WHERE id = $1",
+        [portfolio_id]
+    )
+    if not portfolio:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portfolio not found"
+        )
+    db.execute_update_positional(
+        "DELETE FROM portfolios WHERE id = $1", [portfolio_id]
+    )
+    return {"message": f"Portfolio '{portfolio[0]['name']}' deleted"}
+
 @router.get("/portfolios/{portfolio_id}/holdings", response_model=List[HoldingResponse])
 async def get_portfolio_holdings(
     portfolio_id: str,
