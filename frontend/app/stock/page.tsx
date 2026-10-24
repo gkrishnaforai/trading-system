@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { api } from '@/lib/api'
-import { Suspense } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import { Chip, Gate, Kv, Section, Stat, fmtShort } from '@/components/regime'
 import { FundPanel, TapePanel } from '@/components/panels'
 import { TheCall } from '@/components/thecall'
@@ -221,8 +221,23 @@ function FvRange({ scen, expected, spot }: {
   )
 }
 
-/** 'Why is it moving' — the tape-diagnosis block as prose + one
-    comparative attribution line, not a key/value dump. */
+/** Small labeled stat — label above value, the design-system cell. */
+function MiniL({ label, children }: {
+  label: string; children: ReactNode
+}) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-faint">
+        {label}
+      </div>
+      <div className="pt-0.5 font-mono text-xs text-ink">{children}</div>
+    </div>
+  )
+}
+
+/** 'Why is it moving' — every diagnosis field, labeled, in a compact
+    grid + readable line + event wire. Same info as the raw dump,
+    minus the column of whitespace. */
 function Diagnosis({ d }: { d: Record<string, unknown> }) {
   const attr = obj(d.attribution)
   const causes = Array.isArray(d.causes) ? d.causes.map(String) : []
@@ -239,94 +254,109 @@ function Diagnosis({ d }: { d: Record<string, unknown> }) {
       : x < 0 ? 'text-defensive'
         : x > 0 ? 'text-aggressive' : 'text-muted'
   }
-  const vTone = /earned|accumulat|earned_momentum/.test(verdict ?? '')
+  const dirT = d.direction === 'weak' ? 'text-defensive'
+    : d.direction === 'strong' ? 'text-aggressive' : 'text-muted'
+  const vTone = /earned|accumulat/.test(verdict ?? '')
     ? 'text-aggressive'
-    : /hype|unexplained|knife|beta/.test(verdict ?? '')
+    : /hype|unexplained|knife/.test(verdict ?? '')
       ? 'text-caution' : 'text-muted'
   return (
     <div>
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
-          why is it moving
-        </span>
-        <span className="flex items-baseline gap-2">
-          {d.state != null && (
-            <span className="font-mono text-[11px] text-faint">
-              {String(d.state)}
-              {d.sessions_in_state != null &&
-                ` · ${String(d.sessions_in_state)}d`}
-            </span>
-          )}
-          {verdict && (
-            <span className={`text-xs font-medium ${vTone}`}>
-              {verdict}
-            </span>
-          )}
-        </span>
+      <div className="text-[10px] uppercase tracking-[0.18em] text-faint">
+        why is it moving
       </div>
+      {/* the facts — every field labeled, one compact row */}
+      <div className="pt-2 grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2">
+        <MiniL label="direction">
+          <span className={dirT}>{String(d.direction ?? '—')}</span>
+        </MiniL>
+        <MiniL label="state">{String(d.state ?? '—')}</MiniL>
+        <MiniL label="sessions in state">
+          {String(d.sessions_in_state ?? '—')}
+        </MiniL>
+        <MiniL label="verdict">
+          <span className={vTone}>{verdict ?? '—'}</span>
+        </MiniL>
+      </div>
+      {/* attribution — labeled, one comparative line */}
+      {attr && (
+        <div className="pt-2.5">
+          <div className="text-[10px] uppercase tracking-wider text-faint">
+            attribution
+          </div>
+          <div className="pt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-mono text-xs text-muted">
+            <span>
+              <span className="text-faint">stock </span>
+              <span className={toneR(attr.stock_5d)}>
+                {fmtR(attr.stock_5d)}
+              </span>
+              <span className="text-faint"> 5d</span>
+            </span>
+            <span>
+              <span className={toneR(attr.stock_20d)}>
+                {fmtR(attr.stock_20d)}
+              </span>
+              <span className="text-faint"> 20d</span>
+            </span>
+            <span className="text-faint">vs</span>
+            {attr.sector_etf != null && (
+              <span>
+                <span className="text-faint">
+                  {String(attr.sector_etf)}{' '}
+                </span>
+                <span className={toneR(attr.sector_5d)}>
+                  {fmtR(attr.sector_5d)}
+                </span>
+              </span>
+            )}
+            <span>
+              <span className="text-faint">SPY </span>
+              <span className={toneR(attr.spy_5d)}>
+                {fmtR(attr.spy_5d)}
+              </span>
+            </span>
+          </div>
+        </div>
+      )}
+      {/* the explanation */}
       {d.line != null && (
-        <p className="pt-1.5 text-xs text-muted leading-relaxed">
+        <p className="pt-2 text-xs text-muted leading-relaxed">
           {String(d.line)}
           {d.note != null && (
             <span className="text-faint"> · {String(d.note)}</span>
           )}
         </p>
       )}
-      {/* attribution — the decomposition on one line */}
-      {attr && (
-        <div className="pt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-mono text-[11px] text-muted">
-          <span>
-            <span className="text-faint">stock </span>
-            <span className={toneR(attr.stock_5d)}>
-              {fmtR(attr.stock_5d)}
-            </span>
-            <span className="text-faint"> 5d</span>
-          </span>
-          <span>
-            <span className={toneR(attr.stock_20d)}>
-              {fmtR(attr.stock_20d)}
-            </span>
-            <span className="text-faint"> 20d</span>
-          </span>
-          <span className="text-faint">vs</span>
-          {attr.sector_etf != null && (
-            <span>
-              <span className="text-faint">
-                {String(attr.sector_etf)}{' '}
-              </span>
-              <span className={toneR(attr.sector_5d)}>
-                {fmtR(attr.sector_5d)}
-              </span>
-            </span>
-          )}
-          <span>
-            <span className="text-faint">SPY </span>
-            <span className={toneR(attr.spy_5d)}>
-              {fmtR(attr.spy_5d)}
-            </span>
-          </span>
+      {/* causes — the event wire, dated */}
+      <div className="pt-2">
+        <div className="text-[10px] uppercase tracking-wider text-faint">
+          causes
         </div>
-      )}
-      {causes.length > 0 && (
-        <ul className="pt-2 space-y-0.5">
-          {causes.slice(0, 4).map((c, i) => {
-            const j = c.indexOf(' · ')
-            const dt = j > 0 ? c.slice(5, j) : null
-            const title = j > 0 ? c.slice(j + 3) : c
-            return (
-              <li key={i}
-                className="text-[11px] leading-snug text-muted">
-                {dt != null && (
-                  <span className="font-mono text-faint">
-                    {dt}{' '}
-                  </span>
-                )}
-                {title}
-              </li>
-            )
-          })}
-        </ul>
-      )}
+        {causes.length > 0 ? (
+          <ul className="pt-0.5 space-y-0.5">
+            {causes.slice(0, 5).map((c, i) => {
+              const j = c.indexOf(' · ')
+              const dt = j > 0 ? c.slice(5, j) : null
+              const title = j > 0 ? c.slice(j + 3) : c
+              return (
+                <li key={i}
+                  className="text-[11px] leading-snug text-muted">
+                  {dt != null && (
+                    <span className="font-mono text-faint">
+                      {dt}{' '}
+                    </span>
+                  )}
+                  {title}
+                </li>
+              )
+            })}
+          </ul>
+        ) : (
+          <div className="pt-0.5 text-[11px] text-faint">
+            — no events on the wire in the window
+          </div>
+        )}
+      </div>
     </div>
   )
 }
