@@ -490,6 +490,7 @@ async function StockCore({ sym }: { sym: string }) {
   const upside = card.fv_upside_pct
   const earnings = obj(card.earnings)
   const dataConf = obj(card.data_confidence)
+  const multiples = obj(card.multiples)
   const spark = Array.isArray(card.spark)
     ? (card.spark as unknown[]).map(Number)
       .filter((v): v is number => Number.isFinite(v))
@@ -698,6 +699,33 @@ async function StockCore({ sym }: { sym: string }) {
           )}
           <FvRange scen={fvScen} expected={fv.expected}
             spot={num(card.spot ?? fv.spot)} />
+          {/* multiples — the P/E context for the blend: trailing off
+              journaled actuals, forward off consensus */}
+          {multiples && (multiples.pe_ttm != null ||
+            multiples.fwd_pe != null) && (
+              <div className="pt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-xs text-muted">
+                <span className="text-[10px] uppercase tracking-wider text-faint font-sans">
+                  multiples
+                </span>
+                <span>
+                  <span className="text-faint">P/E ttm </span>
+                  {multiples.pe_ttm != null
+                    ? `${Number(multiples.pe_ttm).toFixed(0)}×`
+                    : '—'}
+                </span>
+                <span>
+                  <span className="text-faint">fwd </span>
+                  {multiples.fwd_pe != null
+                    ? `${Number(multiples.fwd_pe).toFixed(0)}×`
+                    : '—'}
+                  {multiples.fwd_eps != null && (
+                    <span className="text-faint">
+                      {' '}(est {money(multiples.fwd_eps)})
+                    </span>
+                  )}
+                </span>
+              </div>
+            )}
           {Array.isArray(fv.flags) && fv.flags.length > 0 && (
             <div className="pt-3 flex flex-wrap gap-2">
               {(fv.flags as unknown[]).map((f, i) => (

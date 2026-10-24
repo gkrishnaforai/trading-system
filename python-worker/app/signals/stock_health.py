@@ -412,6 +412,32 @@ def card(sym: str) -> dict[str, Any]:
     except Exception:
         pass
 
+    # multiples — trailing P/E off the journaled print stream (last 4
+    # actuals), forward P/E off the flywheel's consensus. Both are
+    # context for the FV ladder, not part of it. Negative/zero EPS →
+    # nulls, the UI shows '—'.
+    eps_ttm = None
+    try:
+        er = db.execute_query(
+            "SELECT eps_actual FROM earnings_data"
+            " WHERE stock_symbol=:s AND eps_actual IS NOT NULL"
+            " ORDER BY earnings_date DESC LIMIT 4", {"s": s})
+        if len(er) == 4:
+            eps_ttm = round(sum(float(r["eps_actual"]) for r in er), 2)
+    except Exception:
+        pass
+    fwd_eps = fly.get("fwd_eps_avg")
+    fwd_pe = fly.get("fwd_pe")
+    if fwd_pe is None and fwd_eps and float(fwd_eps) > 0 and spot:
+        fwd_pe = round(float(spot) / float(fwd_eps), 1)
+    multiples = {
+        "eps_ttm": eps_ttm,
+        "pe_ttm": (round(spot / eps_ttm, 1)
+                   if spot and eps_ttm and eps_ttm > 0 else None),
+        "fwd_eps": fwd_eps,
+        "fwd_pe": fwd_pe,
+    }
+
     # earnings event — canonical fields (stocks.next_earnings_* are
     # derived from earnings_events by the indexer) + provenance + the
     # staleness invariant: a journaled print NEWER than the 'next'
@@ -559,6 +585,7 @@ def card(sym: str) -> dict[str, Any]:
                               if st.get("next_earnings_date") else None),
             "earnings": earnings,
             "last_print": last_print,
+            "multiples": multiples,
             "spark": spark,
             "spark_as_of": spark_as_of,
             "data_confidence": data_confidence,
