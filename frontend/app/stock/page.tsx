@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { api } from '@/lib/api'
 import { Suspense } from 'react'
-import { Chip, Gate, Kv, Section, Stat, Val, fmtShort } from '@/components/regime'
+import { Chip, Gate, Kv, Section, Stat, fmtShort } from '@/components/regime'
 import { FundPanel, TapePanel } from '@/components/panels'
 import { TheCall } from '@/components/thecall'
 import { WatchToggle } from '@/components/watchlist'
@@ -217,6 +217,116 @@ function FvRange({ scen, expected, spot }: {
           {' '}<span className="text-accent">spot {money(spot)}</span></span>
         <span>bull {money(bull)}</span>
       </div>
+    </div>
+  )
+}
+
+/** 'Why is it moving' — the tape-diagnosis block as prose + one
+    comparative attribution line, not a key/value dump. */
+function Diagnosis({ d }: { d: Record<string, unknown> }) {
+  const attr = obj(d.attribution)
+  const causes = Array.isArray(d.causes) ? d.causes.map(String) : []
+  const verdict = d.verdict != null
+    ? String(d.verdict).replace(/_/g, ' ') : null
+  const fmtR = (v: unknown) => {
+    const x = Number(v)
+    return Number.isFinite(x)
+      ? `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}%` : '—'
+  }
+  const toneR = (v: unknown) => {
+    const x = Number(v)
+    return !Number.isFinite(x) ? 'text-muted'
+      : x < 0 ? 'text-defensive'
+        : x > 0 ? 'text-aggressive' : 'text-muted'
+  }
+  const vTone = /earned|accumulat|earned_momentum/.test(verdict ?? '')
+    ? 'text-aggressive'
+    : /hype|unexplained|knife|beta/.test(verdict ?? '')
+      ? 'text-caution' : 'text-muted'
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+          why is it moving
+        </span>
+        <span className="flex items-baseline gap-2">
+          {d.state != null && (
+            <span className="font-mono text-[11px] text-faint">
+              {String(d.state)}
+              {d.sessions_in_state != null &&
+                ` · ${String(d.sessions_in_state)}d`}
+            </span>
+          )}
+          {verdict && (
+            <span className={`text-xs font-medium ${vTone}`}>
+              {verdict}
+            </span>
+          )}
+        </span>
+      </div>
+      {d.line != null && (
+        <p className="pt-1.5 text-xs text-muted leading-relaxed">
+          {String(d.line)}
+          {d.note != null && (
+            <span className="text-faint"> · {String(d.note)}</span>
+          )}
+        </p>
+      )}
+      {/* attribution — the decomposition on one line */}
+      {attr && (
+        <div className="pt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-mono text-[11px] text-muted">
+          <span>
+            <span className="text-faint">stock </span>
+            <span className={toneR(attr.stock_5d)}>
+              {fmtR(attr.stock_5d)}
+            </span>
+            <span className="text-faint"> 5d</span>
+          </span>
+          <span>
+            <span className={toneR(attr.stock_20d)}>
+              {fmtR(attr.stock_20d)}
+            </span>
+            <span className="text-faint"> 20d</span>
+          </span>
+          <span className="text-faint">vs</span>
+          {attr.sector_etf != null && (
+            <span>
+              <span className="text-faint">
+                {String(attr.sector_etf)}{' '}
+              </span>
+              <span className={toneR(attr.sector_5d)}>
+                {fmtR(attr.sector_5d)}
+              </span>
+            </span>
+          )}
+          <span>
+            <span className="text-faint">SPY </span>
+            <span className={toneR(attr.spy_5d)}>
+              {fmtR(attr.spy_5d)}
+            </span>
+          </span>
+        </div>
+      )}
+      {causes.length > 0 && (
+        <ul className="pt-2 space-y-0.5">
+          {causes.slice(0, 4).map((c, i) => {
+            const j = c.indexOf(' · ')
+            const dt = j > 0 ? c.slice(5, j) : null
+            const title = j > 0 ? c.slice(j + 3) : c
+            return (
+              <li key={i}
+                className="text-[11px] leading-snug text-muted">
+                {dt != null && (
+                  <span className="font-mono text-faint">
+                    {dt}{' '}
+                  </span>
+                )}
+                {title}
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </div>
   )
 }
@@ -461,11 +571,13 @@ async function StockCore({ sym }: { sym: string }) {
             </ul>
           )}
           {diagnosis != null && (
-            <div className="pt-3 border-t border-hairline/60 mt-3 text-xs">
+            <div className="pt-3 border-t border-hairline/60 mt-3">
               {typeof diagnosis === 'object' ? (
-                <Val v={diagnosis} depth={1} />
+                <Diagnosis d={diagnosis as Record<string, unknown>} />
               ) : (
-                <span className="text-muted">{String(diagnosis)}</span>
+                <span className="text-xs text-muted">
+                  {String(diagnosis)}
+                </span>
               )}
             </div>
           )}
