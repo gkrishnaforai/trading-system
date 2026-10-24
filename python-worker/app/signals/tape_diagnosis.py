@@ -168,7 +168,9 @@ def _explain(sym: str, direction: str, rets: dict,
         else:
             v, line = "unexplained", (
                 "unexplained — no market, sector, or documented "
-                "catalyst; flow-driven. Watch for the shoe to drop")
+                "catalyst found; likely positioning/flow. Absence "
+                "of a catalyst is not evidence — keep the thesis "
+                "watch on, don't read hidden information into it")
         if next_earnings:
             from datetime import date
             try:

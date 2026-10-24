@@ -7,10 +7,24 @@ knife = 'watch, don't catch the knife').
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+# stocks.industry → thematic ETF. Broad GICS sectors blur semis into
+# "Technology" — relative-strength reads (and the sector-flow chip)
+# should compare a semi name against SMH, not XLK. First match wins;
+# patterns are substrings of FMP industry names.
+_INDUSTRY_TO_THEME_ETF = [
+    ("semicon", "SMH"),
+    ("software", "IGV"),
+    ("biotech", "XBI"),
+    ("banks - regional", "KRE"),
+    ("regional banks", "KRE"),
+    ("aerospace", "ITA"),
+    ("defense", "ITA"),
+]
 
 
 def _verdict(fund: Optional[str], mom: Optional[str],
@@ -152,16 +166,32 @@ def card(sym: str) -> dict[str, Any]:
     symbol, plus real LTM quality from the quarterly journal."""
     from app.database import db
     s = sym.upper()
-    st = db.execute_query(
-        "SELECT symbol, company_name, sector, market_cap,"
-        " momentum_state, momentum_detail, momentum_updated_at,"
-        " fundamental_state, fundamental_detail, fundamental_risk,"
-        " fundamental_updated_at,"
-        " revision_score, revision_grade, priced_status,"
-        " emerging_growth, fwd_detail,"
-        " next_earnings_date, rating, price_target"
-        " FROM stocks WHERE symbol=:s",
-        {"s": s})
+    try:
+        st = db.execute_query(
+            "SELECT symbol, company_name, sector, market_cap,"
+            " momentum_state, momentum_detail, momentum_updated_at,"
+            " fundamental_state, fundamental_detail, fundamental_risk,"
+            " fundamental_updated_at,"
+            " revision_score, revision_grade, priced_status,"
+            " emerging_growth, fwd_detail,"
+            " next_earnings_date, next_earnings_session,"
+            " next_earnings_source, next_earnings_updated_at,"
+            " rating, price_target, industry"
+            " FROM stocks WHERE symbol=:s",
+            {"s": s})
+    except Exception:
+        # pre-026 schema — provenance columns absent; degrade to the
+        # narrow select rather than 500 the card
+        st = db.execute_query(
+            "SELECT symbol, company_name, sector, market_cap,"
+            " momentum_state, momentum_detail, momentum_updated_at,"
+            " fundamental_state, fundamental_detail, fundamental_risk,"
+            " fundamental_updated_at,"
+            " revision_score, revision_grade, priced_status,"
+            " emerging_growth, fwd_detail,"
+            " next_earnings_date, rating, price_target, industry"
+            " FROM stocks WHERE symbol=:s",
+            {"s": s})
     st = dict(st[0]) if st else {"symbol": s}
 
     def _j(v):
@@ -326,14 +356,34 @@ def card(sym: str) -> dict[str, Any]:
     # not an entry signal.
     sector_flow = None
     try:
-        from app.api.board_api import _sector_flow_map, _SECTOR_TO_ETF
-        from app.market_regime.rotation import SECTOR_NAMES
+        from app.api.board_api import _sector_flow_map
+        from app.market_regime.rotation import (
+            SECTOR_NAMES, THEME_ETFS, _SECTOR_TO_ETF)
         _etf = _SECTOR_TO_ETF.get((st.get("sector") or "").lower())
+        # industry refines the broad GICS sector — a semi name reads
+        # against SMH, software against IGV, not the XLK blend
+        _ind = (st.get("industry") or "").lower()
+        for _pat, _tetf in _INDUSTRY_TO_THEME_ETF:
+            if _pat in _ind:
+                _etf = _tetf
+                break
         if _etf:
-            _m = _sector_flow_map().get(_etf)
-            sector_flow = {"etf": _etf, "name": SECTOR_NAMES.get(_etf),
-                           "flow": (_m or {}).get("flow"),
-                           "score": (_m or {}).get("score")}
+            _flow = _sector_flow_map()
+            _m = _flow.get(_etf)
+            if _m is None and _etf != _SECTOR_TO_ETF.get(
+                    (st.get("sector") or "").lower()):
+                # theme ETF has no bar coverage — fall back to the
+                # parent sector rather than show an empty read
+                _etf = _SECTOR_TO_ETF.get(
+                    (st.get("sector") or "").lower())
+                _m = _flow.get(_etf) if _etf else None
+            if _etf:
+                sector_flow = {
+                    "etf": _etf,
+                    "name": SECTOR_NAMES.get(_etf)
+                            or THEME_ETFS.get(_etf),
+                    "flow": (_m or {}).get("flow"),
+                    "score": (_m or {}).get("score")}
     except Exception:
         pass
 
@@ -362,6 +412,144 @@ def card(sym: str) -> dict[str, Any]:
     except Exception:
         pass
 
+    # earnings event — canonical fields (stocks.next_earnings_* are
+    # derived from earnings_events by the indexer) + provenance + the
+    # staleness invariant: a journaled print NEWER than the 'next'
+    # date means the calendar is stale, and a next_earnings_updated_at
+    # older than a month is unverified, not verified
+    earnings = None
+    try:
+        today = date.today()
+        ne = st.get("next_earnings_date")
+        verified_at = st.get("next_earnings_updated_at")
+        lp_date = None
+        if last_print and last_print.get("earnings_date"):
+            try:
+                lp_date = date.fromisoformat(
+                    str(last_print["earnings_date"])[:10])
+            except Exception:
+                lp_date = None
+        issues: list[str] = []
+        ne_date = None
+        if ne:
+            try:
+                ne_date = (ne.date() if isinstance(ne, datetime)
+                           else ne)
+            except Exception:
+                ne_date = None
+        if lp_date and ne_date and lp_date > ne_date:
+            issues.append(
+                "a newer print exists than the 'next' date — "
+                "earnings calendar is stale")
+        if ne_date and ne_date < today:
+            issues.append("next earnings date is in the past — "
+                          "calendar not refreshed since the print")
+        verified_age = None
+        if verified_at:
+            try:
+                va = (verified_at.date()
+                      if isinstance(verified_at, datetime)
+                      else verified_at)
+                verified_age = (today - va).days
+                if verified_age > 30:
+                    issues.append(
+                        f"earnings date last verified {verified_age}d "
+                        "ago — unverified")
+            except Exception:
+                verified_age = None
+        else:
+            if ne_date:
+                issues.append("earnings date unverified "
+                              "(no verification stamp)")
+        if ne_date or issues or lp_date:
+            earnings = {
+                "date": str(ne_date) if ne_date else None,
+                "days": ((ne_date - today).days if ne_date else None),
+                "session": st.get("next_earnings_session"),
+                "source": st.get("next_earnings_source"),
+                "verified_at": str(verified_at)[:10]
+                    if verified_at else None,
+                "verified_age_days": verified_age,
+                "last_print_date": str(lp_date) if lp_date else None,
+                "stale": bool(issues),
+                "issues": issues,
+            }
+    except Exception:
+        earnings = None
+
+    # 60-bar sparkline — canonical daily_bars, server-rendered; the
+    # last-bar date rides along so a stale price feed is visible
+    # instead of looking current
+    spark: list[float] = []
+    spark_as_of = None
+    try:
+        sp = db.execute_query(
+            "SELECT close, date FROM daily_bars WHERE symbol=:s"
+            " ORDER BY date DESC LIMIT 60", {"s": s})
+        spark = [float(r["close"]) for r in reversed(sp)
+                 if r.get("close") is not None]
+        if sp and sp[0].get("date"):
+            spark_as_of = str(sp[0]["date"])[:10]
+    except Exception:
+        spark = []
+
+    # data confidence — one rolled-up trust grade across every
+    # staleness/quality flag the card already computes. Per-section
+    # flags tell you WHERE the rot is; this tells you whether to trust
+    # the page today.
+    conf_issues: list[str] = []
+    try:
+        if fv_detail.get("valuation_status") == "needs_validation":
+            vi = fv_detail.get("valuation_issues") or []
+            conf_issues.append(
+                "valuation: " + ", ".join(vi) if vi
+                else "valuation flagged")
+        if "extreme_gap" in (fv_detail.get("flags") or []):
+            conf_issues.append("fv vs spot gap is extreme")
+        if earnings and earnings.get("stale"):
+            conf_issues.append(
+                "; ".join(earnings["issues"]))
+        try:
+            fl_at = fly.get("updated_at")
+            fl_d = (fl_at.date() if isinstance(fl_at, datetime)
+                    else fl_at)
+            if fl_d and (date.today() - fl_d).days > 10:
+                conf_issues.append(
+                    f"fundamentals engine {(date.today() - fl_d).days}d "
+                    "stale")
+            elif not fl_d:
+                conf_issues.append("no fundamentals engine data")
+        except Exception:
+            pass
+        try:
+            mo_at = st.get("momentum_updated_at")
+            mo_d = (mo_at.date() if isinstance(mo_at, datetime)
+                    else mo_at)
+            if mo_d and (date.today() - mo_d).days > 3:
+                conf_issues.append(
+                    f"tape engine {(date.today() - mo_d).days}d stale")
+            elif not mo_d:
+                conf_issues.append("no tape engine data")
+        except Exception:
+            pass
+        try:
+            if spark_as_of:
+                sa = date.fromisoformat(spark_as_of)
+                if (date.today() - sa).days > 4:
+                    conf_issues.append(
+                        f"price feed {(date.today() - sa).days}d stale")
+            else:
+                conf_issues.append("no price bars")
+        except Exception:
+            pass
+    except Exception:
+        pass
+    data_confidence = {
+        "grade": ("high" if not conf_issues
+                  else "medium" if len(conf_issues) == 1 else "low"),
+        "issues": conf_issues,
+    }
+
     return {"symbol": s, "name": st.get("company_name"),
             "sector": st.get("sector"),
             "sector_flow": sector_flow,
@@ -369,7 +557,11 @@ def card(sym: str) -> dict[str, Any]:
             "spot": spot,
             "next_earnings": (str(st.get("next_earnings_date"))
                               if st.get("next_earnings_date") else None),
+            "earnings": earnings,
             "last_print": last_print,
+            "spark": spark,
+            "spark_as_of": spark_as_of,
+            "data_confidence": data_confidence,
             "verdict": verdict,
             "fundamental": {"state": st.get("fundamental_state"),
                             "risk": st.get("fundamental_risk"),

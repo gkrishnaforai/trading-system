@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { api } from '@/lib/api'
+import { Suspense } from 'react'
 import { Chip, Gate, Kv, Section, Stat, Val, fmtShort } from '@/components/regime'
 import { FundPanel, TapePanel } from '@/components/panels'
 import { TheCall } from '@/components/thecall'
@@ -8,6 +9,11 @@ import { ThesisFlag } from '@/components/thesis-flag'
 import { ThesisReport } from '@/components/thesis-report'
 import { SignalStrip, toneOf } from '@/components/signal-strip'
 import FvRecompute from '@/components/fv-recompute'
+
+function num(v: unknown) {
+  const x = Number(v)
+  return Number.isFinite(x) ? x : null
+}
 
 function money(v: unknown, dec = 2) {
   const n = Number(v)
@@ -48,6 +54,173 @@ function Fresh({
   )
 }
 
+/** One-sentence read — tape × fundamentals × valuation × trust, in
+    words not numbers. Sits under the hero so the page answers "so
+    what" before any detail. */
+function readLine(card: Record<string, unknown>): string {
+  const t = obj(card.technical)?.state
+  const f = obj(card.fundamental)?.state
+  const dcf = obj(card.data_confidence)?.grade
+  const fv = obj(card.fv)
+  const fvWord =
+    fv?.valuation_status === 'needs_validation' ? 'fair value unverified'
+      : card.fv_upside_pct != null
+        ? `fair value ${pct(card.fv_upside_pct)} vs spot`
+        : 'no fair value yet'
+  const parts = [
+    t ? `${String(t)} tape` : null,
+    f ? `${String(f)} fundamentals` : null,
+    fvWord,
+    dcf ? `data confidence ${String(dcf)}` : null,
+  ].filter(Boolean)
+  return parts.join(' · ')
+}
+
+/** 60-day close sparkline — pure SVG, zero client JS. */
+function Sparkline({ closes, spot, asOf }: {
+  closes: number[]; spot?: number | null; asOf?: string | null
+}) {
+  if (!closes || closes.length < 5) return null
+  const w = 720, h = 56, pad = 4
+  const lo = Math.min(...closes), hi = Math.max(...closes)
+  const span = hi - lo || 1
+  const pts = closes
+    .map((c, i) =>
+      `${(pad + (i / (closes.length - 1)) * (w - 2 * pad)).toFixed(1)},` +
+      `${(h - pad - ((c - lo) / span) * (h - 2 * pad)).toFixed(1)}`)
+    .join(' ')
+  const last = closes[closes.length - 1]
+  const lastY = h - pad - ((last - lo) / span) * (h - 2 * pad)
+  const chg = closes.length > 1
+    ? ((last / closes[0]) - 1) * 100 : 0
+  return (
+    <div className="pt-3">
+      <svg viewBox={`0 0 ${w} ${h}`} className="h-14 w-full"
+        preserveAspectRatio="none" role="img"
+        aria-label={`60-day close range ${lo.toFixed(2)} to ${hi.toFixed(2)}`}>
+        <polyline points={pts} fill="none" stroke="#78716C"
+          strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+        <circle cx={w - pad} cy={lastY} r="3" fill="#EA580C" />
+      </svg>
+      <div className="flex justify-between font-mono text-[10px] text-faint">
+        <span>60d low {money(lo)}</span>
+        <span className={chg >= 0 ? 'text-aggressive' : 'text-defensive'}>
+          {chg >= 0 ? '+' : ''}{chg.toFixed(0)}% · {money(last)}
+          {asOf != null && (
+            <span className={`text-faint ${asOf < new Date(Date.now() - 4 * 864e5).toISOString().slice(0, 10) ? ' text-caution' : ''}`}>
+              {' '}· {asOf}
+            </span>
+          )}
+        </span>
+        <span>60d high {money(hi)}</span>
+      </div>
+    </div>
+  )
+}
+
+/** Earnings event with provenance — date, session, source, verified
+    age, and the staleness invariant surfaced as a warning. */
+function EarningsBlock({ e }: { e: Record<string, unknown> | null }) {
+  if (!e || (!e.date && !e.last_print_date)) return null
+  const days = typeof e.days === 'number' ? e.days : null
+  const stale = Boolean(e.stale)
+  const soon = days != null && days >= 0 && days <= 14
+  const issues = Array.isArray(e.issues) ? e.issues : []
+  return (
+    <span
+      className={`text-xs ${stale || soon ? 'text-caution' : 'text-muted'}`}
+      title={issues.map(String).join(' · ')}
+    >
+      {(stale || soon) && '⚠ '}
+      {e.date ? (
+        <>
+          earnings {String(e.date)}
+          {days != null && days >= 0 && ` · in ${days}d`}
+          {e.session != null && ` ${String(e.session)}`}
+        </>
+      ) : 'no earnings date'}
+      {e.source != null && (
+        <span className="text-faint"> · {String(e.source)}</span>
+      )}
+      {e.verified_age_days != null && (
+        <span className="text-faint">
+          {' '}· verified {Number(e.verified_age_days)}d ago
+        </span>
+      )}
+      {stale && issues.length > 0 && (
+        <span className="text-caution"> — {String(issues[0])}</span>
+      )}
+    </span>
+  )
+}
+
+/** Rolled-up data trust — one chip answering 'can I trust this page'. */
+function ConfChip({ d }: { d: Record<string, unknown> | null }) {
+  if (!d?.grade) return null
+  const g = String(d.grade)
+  const issues = Array.isArray(d.issues) ? d.issues : []
+  return (
+    <span
+      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${g === 'high' ? 'border-aggressive/40 text-aggressive'
+        : g === 'medium' ? 'border-caution/40 text-caution'
+          : 'border-defensive/40 text-defensive'
+        }`}
+      title={issues.map(String).join(' · ')}
+    >
+      data {g}{issues.length > 0 ? ` (${issues.length})` : ''}
+    </span>
+  )
+}
+
+/** FV scenario range — bear…base…bull band with expected + spot
+    markers. A picture of the distribution, not just three numbers. */
+function FvRange({ scen, expected, spot }: {
+  scen: Record<string, unknown> | null
+  expected?: unknown
+  spot?: number | null
+}) {
+  const bear = Number(scen?.bear), base = Number(scen?.base),
+    bull = Number(scen?.bull), exp = Number(expected)
+  const vals = [bear, base, bull, exp, spot].filter(
+    (v): v is number => Number.isFinite(v))
+  if (vals.length < 3 || !(bull > bear)) return null
+  const lo = Math.min(...vals) * 0.97, hi = Math.max(...vals) * 1.03
+  const span = hi - lo
+  const x = (v: number) => ((v - lo) / span) * 100
+  return (
+    <div className="pt-4">
+      <div className="relative h-2 rounded-full bg-elevated">
+        {Number.isFinite(bear) && Number.isFinite(bull) && (
+          <div
+            className="absolute inset-y-0 rounded-full bg-accent/20"
+            style={{ left: `${x(bear)}%`, width: `${x(bull) - x(bear)}%` }}
+          />
+        )}
+        {Number.isFinite(base) && (
+          <span className="absolute -top-1 h-4 w-[2px] bg-faint"
+            style={{ left: `${x(base)}%` }} title={`base ${money(base)}`} />
+        )}
+        {Number.isFinite(exp) && (
+          <span className="absolute -top-1.5 h-5 w-[3px] rounded bg-ink"
+            style={{ left: `${x(exp)}%` }} title={`expected ${money(exp)}`} />
+        )}
+        {Number.isFinite(Number(spot)) && (
+          <span
+            className="absolute -top-1.5 h-5 w-[3px] rounded bg-accent"
+            style={{ left: `${x(Number(spot))}%` }}
+            title={`spot ${money(spot)}`} />
+        )}
+      </div>
+      <div className="mt-1.5 flex justify-between font-mono text-[10px] text-faint">
+        <span>bear {money(bear)}</span>
+        <span>base {money(base)} · expected {money(exp)} ·
+          {' '}<span className="text-accent">spot {money(spot)}</span></span>
+        <span>bull {money(bull)}</span>
+      </div>
+    </div>
+  )
+}
+
 function stateTone(s?: unknown) {
   const v = String(s ?? '').toLowerCase()
   if (['ready', 'confirmed', 'accelerating', 'healthy', 'improving', 'strong']
@@ -65,7 +238,7 @@ function obj(v: unknown): Record<string, unknown> | null {
     : null
 }
 
-export default async function StockPage({
+export default function StockPage({
   searchParams,
 }: {
   searchParams: { sym?: string | string[] }
@@ -85,11 +258,34 @@ export default async function StockPage({
     )
   }
 
-  const [card, alerts, squeeze] = await Promise.all([
-    api.stockHealth(sym),
-    api.alerts({ symbol: sym, hours: 168 }),
-    api.shortSqueeze(sym).catch(() => null),
-  ])
+  // stream: the card fetch gates first paint; squeeze + alerts are
+  // independent fetches inside their own Suspense boundaries — they
+  // pop in when ready instead of blocking the whole page
+  return (
+    <Suspense fallback={<StockSkeleton sym={sym} />}>
+      <StockCore sym={sym} />
+    </Suspense>
+  )
+}
+
+function StockSkeleton({ sym }: { sym: string }) {
+  return (
+    <main className="mx-auto max-w-5xl px-5 pb-20">
+      <div className="pt-6 pb-2 text-xs text-faint">← board</div>
+      <header className="pb-8 animate-pulse">
+        <div className="flex items-baseline justify-between gap-4">
+          <h1 className="font-semibold text-display text-ink">{sym}</h1>
+          <div className="h-8 w-24 rounded bg-elevated" />
+        </div>
+        <div className="mt-3 h-3 w-2/3 rounded bg-elevated" />
+        <div className="mt-6 h-24 rounded-xl bg-elevated" />
+      </header>
+    </main>
+  )
+}
+
+async function StockCore({ sym }: { sym: string }) {
+  const card = await api.stockHealth(sym)
   if (!card) {
     return (
       <main className="mx-auto max-w-3xl px-5 pb-20 pt-10">
@@ -152,11 +348,12 @@ export default async function StockPage({
   const tailwinds = Array.isArray(card.tailwinds) ? card.tailwinds : []
   const themes = Array.isArray(card.themes) ? card.themes : []
   const upside = card.fv_upside_pct
-  const earn = card.next_earnings ? String(card.next_earnings) : null
-  const earnDays = earn ? daysOld(earn) !== null
-    ? Math.round((Date.parse(earn) - Date.now()) / 86400000)
-    : null : null
-
+  const earnings = obj(card.earnings)
+  const dataConf = obj(card.data_confidence)
+  const spark = Array.isArray(card.spark)
+    ? (card.spark as unknown[]).map(Number)
+      .filter((v): v is number => Number.isFinite(v))
+    : []
   return (
     <main className="mx-auto max-w-5xl px-5 pb-20">
       <div className="pt-6 pb-2 text-xs">
@@ -206,54 +403,20 @@ export default async function StockPage({
               {sectorFlow.score != null && ` ${sectorFlow.score}`}
             </span>
           )}
-          {earnDays != null && earnDays >= 0 && earnDays <= 14 && (
-            <span className="text-xs text-caution">
-              ⚠ earnings in {earnDays}d ({earn})
-            </span>
-          )}
+          <ConfChip d={dataConf} />
         </div>
-        {/* short positioning — covering vs accumulation */}
-        {squeeze && squeeze.verdict !== 'insufficient_data' && (
-          <div className="pt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
-            <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
-              shorts
-            </span>
-            {squeeze.si_pct != null && (
-              <span className="font-mono text-muted">
-                SI {squeeze.si_pct}% · {squeeze.days_to_cover ?? '?'}d cover
-              </span>
-            )}
-            {squeeze.sv_ratio_latest != null && (
-              <span className="font-mono text-muted">
-                ratio {squeeze.sv_ratio_latest}%
-                {squeeze.sv_trend != null && (
-                  <span className={squeeze.sv_trend <= -1 ? 'text-aggressive'
-                    : squeeze.sv_trend >= 1 ? 'text-defensive' : 'text-faint'}>
-                    {' '}{squeeze.sv_trend <= -1 ? '↓' : squeeze.sv_trend >= 1 ? '↑' : '→'}
-                  </span>
-                )}
-              </span>
-            )}
-            <span className={`font-medium ${squeeze.verdict === 'likely_covering' ? 'text-caution'
-              : squeeze.verdict === 'new_shorts_pressing' ? 'text-defensive'
-                : squeeze.verdict === 'squeeze_setup' ? 'text-accent'
-                  : squeeze.verdict === 'genuine_accumulation' ? 'text-aggressive'
-                    : 'text-faint'}`}>
-              {squeeze.verdict === 'likely_covering'
-                ? `⚠ covering rally${squeeze.covering_probability != null ? ` ${squeeze.covering_probability}%` : ''} — fade risk`
-                : squeeze.verdict === 'new_shorts_pressing'
-                  ? '⚠ shorts pressing into strength'
-                  : squeeze.verdict === 'squeeze_setup'
-                    ? `⚡ squeeze fuel ${squeeze.fuel ?? '?'} — a real bid could trigger covering`
-                    : squeeze.verdict === 'genuine_accumulation'
-                      ? 'rally looks like real buying'
-                      : 'no clear short signal'}
-            </span>
-            {squeeze.data_quality === 'partial' && (
-              <span className="text-faint">(partial data)</span>
-            )}
-          </div>
+        {/* the read — one line of words, then the canonical earnings
+            event (provenance + staleness) instead of a bare countdown */}
+        <p className="pt-2 text-sm text-muted">{readLine(card)}</p>
+        <div className="pt-1.5"><EarningsBlock e={earnings} /></div>
+        {spark.length >= 5 && (
+          <Sparkline closes={spark} spot={num(card.spot)}
+            asOf={card.spark_as_of ? String(card.spark_as_of) : null} />
         )}
+        {/* short positioning — covering vs accumulation (streams in) */}
+        <Suspense fallback={null}>
+          <SqueezeLine sym={sym} />
+        </Suspense>
 
         {/* glanceable flags — one chip per decision dimension */}
         <div className="pt-4">
@@ -391,6 +554,8 @@ export default async function StockPage({
                 ` · spot at run ${money(fv.spot_at_run)}`}
             </div>
           )}
+          <FvRange scen={fvScen} expected={fv.expected}
+            spot={num(card.spot ?? fv.spot)} />
           {Array.isArray(fv.flags) && fv.flags.length > 0 && (
             <div className="pt-3 flex flex-wrap gap-2">
               {(fv.flags as unknown[]).map((f, i) => (
@@ -418,6 +583,9 @@ export default async function StockPage({
           <div className="flex items-baseline justify-between">
             <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
               Fundamentals
+              <span className="ml-2 normal-case tracking-normal text-faint/70">
+                · per print
+              </span>
             </span>
             <span className="flex items-baseline gap-2">
               <ThesisFlag thesis={thesis} />
@@ -469,6 +637,9 @@ export default async function StockPage({
           <div className="flex items-baseline justify-between">
             <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
               Tape
+              <span className="ml-2 normal-case tracking-normal text-faint/70">
+                · daily
+              </span>
             </span>
             {technical?.as_of != null && (
               <span className="font-mono text-[11px] text-faint">
@@ -634,36 +805,9 @@ export default async function StockPage({
       {/* expandable depth */}
       <div className="mt-8">
         <Gate feature="detail_sections">
-          {(alerts?.items ?? []).length > 0 && (
-            <Section title="Alerts on this name" subtitle="last 7 days" defaultOpen>
-              <div className="divide-y divide-hairline/60">
-                {(alerts?.items ?? []).slice(0, 8).map((a, i) => (
-                  <div key={a.id ?? i} className="py-2.5 text-sm">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className={
-                        String(a.direction).toLowerCase() === 'negative'
-                          ? 'text-defensive'
-                          : String(a.direction).toLowerCase() === 'positive'
-                            ? 'text-aggressive'
-                            : 'text-ink'
-                      }>
-                        {a.title ?? '—'}
-                      </span>
-                      <span className="shrink-0 font-mono text-[11px] text-faint">
-                        {a.event_type != null &&
-                          String(a.event_type).replace(/_/g, ' ')}
-                      </span>
-                    </div>
-                    {a.detail != null && (
-                      <div className="pt-0.5 text-xs text-muted">
-                        {fmtShort(a.detail).slice(0, 180)}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </Section>
-          )}
+          <Suspense fallback={null}>
+            <AlertsSection sym={sym} />
+          </Suspense>
           {fvMethods.length > 0 && (
             <Section title="Valuation methods" subtitle={`${fvMethods.length} blended`}>
               <div className="divide-y divide-transparent">
@@ -749,5 +893,90 @@ export default async function StockPage({
         <span className="font-mono">{sym}</span>
       </footer>
     </main>
+  )
+}
+
+/** Short-positioning strip — own fetch, streams into the hero. */
+async function SqueezeLine({ sym }: { sym: string }) {
+  const squeeze = await api.shortSqueeze(sym).catch(() => null)
+  if (!squeeze || squeeze.verdict === 'insufficient_data') return null
+  return (
+    <div className="pt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+      <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+        shorts
+      </span>
+      {squeeze.si_pct != null && (
+        <span className="font-mono text-muted">
+          SI {squeeze.si_pct}% · {squeeze.days_to_cover ?? '?'}d cover
+        </span>
+      )}
+      {squeeze.sv_ratio_latest != null && (
+        <span className="font-mono text-muted">
+          sv ratio {squeeze.sv_ratio_latest}%
+          {squeeze.sv_trend != null && (
+            <span className={squeeze.sv_trend <= -1 ? 'text-aggressive'
+              : squeeze.sv_trend >= 1 ? 'text-defensive' : 'text-faint'}>
+              {' '}{squeeze.sv_trend <= -1 ? '↓' : squeeze.sv_trend >= 1 ? '↑' : '→'}
+            </span>
+          )}
+        </span>
+      )}
+      <span className={`font-medium ${squeeze.verdict === 'likely_covering' ? 'text-caution'
+        : squeeze.verdict === 'new_shorts_pressing' ? 'text-defensive'
+          : squeeze.verdict === 'squeeze_setup' ? 'text-accent'
+            : squeeze.verdict === 'genuine_accumulation' ? 'text-aggressive'
+              : 'text-faint'}`}>
+        {squeeze.verdict === 'likely_covering'
+          ? `⚠ covering rally${squeeze.covering_probability != null ? ` ${squeeze.covering_probability}%` : ''} — fade risk`
+          : squeeze.verdict === 'new_shorts_pressing'
+            ? '⚠ shorts pressing into strength'
+            : squeeze.verdict === 'squeeze_setup'
+              ? `⚡ squeeze fuel ${squeeze.fuel ?? '?'} — a real bid could trigger covering`
+              : squeeze.verdict === 'genuine_accumulation'
+                ? 'rally looks like real buying'
+                : 'no clear short signal'}
+      </span>
+      {squeeze.data_quality === 'partial' && (
+        <span className="text-faint">(partial data)</span>
+      )}
+    </div>
+  )
+}
+
+/** Recent alerts — own fetch, streams into the depth area. */
+async function AlertsSection({ sym }: { sym: string }) {
+  const alerts = await api.alerts({ symbol: sym, hours: 168 })
+    .catch(() => null)
+  const items = alerts?.items ?? []
+  if (items.length === 0) return null
+  return (
+    <Section title="Alerts on this name" subtitle="last 7 days" defaultOpen>
+      <div className="divide-y divide-hairline/60">
+        {items.slice(0, 8).map((a, i) => (
+          <div key={a.id ?? i} className="py-2.5 text-sm">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className={
+                String(a.direction).toLowerCase() === 'negative'
+                  ? 'text-defensive'
+                  : String(a.direction).toLowerCase() === 'positive'
+                    ? 'text-aggressive'
+                    : 'text-ink'
+              }>
+                {a.title ?? '—'}
+              </span>
+              <span className="shrink-0 font-mono text-[11px] text-faint">
+                {a.event_type != null &&
+                  String(a.event_type).replace(/_/g, ' ')}
+              </span>
+            </div>
+            {a.detail != null && (
+              <div className="pt-0.5 text-xs text-muted">
+                {fmtShort(a.detail).slice(0, 180)}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </Section>
   )
 }

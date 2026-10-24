@@ -1329,8 +1329,8 @@ def _sector_flow_map() -> dict:
         return cached
     from app.database import db
     from app.market_regime.rotation import (
-        SECTOR_NAMES, _flow_tag, _momentum_score)
-    etfs = list(SECTOR_NAMES) + ["SPY"]
+        SECTOR_NAMES, THEME_ETFS, _flow_tag, _momentum_score)
+    etfs = list(SECTOR_NAMES) + list(THEME_ETFS) + ["SPY"]
     rows = db.execute_query(
         "SELECT symbol, date, close, volume FROM daily_bars "
         "WHERE symbol = ANY(%s) ORDER BY symbol, date", (etfs,))

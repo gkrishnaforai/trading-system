@@ -401,11 +401,24 @@ export function TapePanel({ d, spot }: { d: Record<string, unknown>; spot?: numb
             )}
           </div>
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10.5px] text-muted">
-            {[...levels].sort((a, b) => a.v - b.v).map((x) => (
-              <span key={x.k}>
-                <span className="text-faint">{x.k}</span> {x.v >= 1000 ? x.v.toFixed(0) : x.v.toFixed(2)}
-              </span>
-            ))}
+            {[...levels].sort((a, b) => a.v - b.v).map((x) => {
+              const above = px !== null && x.v > px
+              // side-awareness: a level labeled 'support' that sits
+              // ABOVE price is misclassified — it's resistance
+              // (or a stale swing read); say so instead of lying
+              const mislabeled = x.k === 'support' && above
+              return (
+                <span key={x.k}>
+                  <span className={mislabeled ? 'text-caution' : 'text-faint'}>
+                    {mislabeled ? 'resistance' : x.k}
+                  </span>{' '}
+                  {x.v >= 1000 ? x.v.toFixed(0) : x.v.toFixed(2)}
+                  {px !== null && (
+                    <span className="text-faint"> {above ? '↑' : '↓'}</span>
+                  )}
+                </span>
+              )
+            })}
             {px !== null && (
               <span className="text-accent">spot {px >= 1000 ? px.toFixed(0) : px.toFixed(2)}</span>
             )}
