@@ -613,6 +613,28 @@ def _invariants() -> list[dict]:
                     bad.append(f"{k}({v})={s}")
         return not bad, bad or f"{len(_RANK_NORM)} components bounded"
 
+    def feat_adj_bounded():
+        # learned feature adjustments are corrective-first: a rogue
+        # weight can subtract at most 6, add at most 2 — and an
+        # unfired feature always contributes zero (w injected → no DB)
+        from app.signals.daily_board import _feat_adj
+        cases = [
+            (_feat_adj("screen_ready", True,
+                       lambda k: {"adj": 50.0}), 2.0),
+            (_feat_adj("screen_ready", True,
+                       lambda k: {"adj": -50.0}), -6.0),
+            (_feat_adj("screen_ready", True,
+                       lambda k: -50.0), -6.0),
+            (_feat_adj("screen_ready", True,
+                       lambda k: None), 0.0),
+            (_feat_adj("screen_ready", True,
+                       lambda k: {"adj": "junk"}), 0.0),
+            (_feat_adj("prior_good", False,
+                       lambda k: {"adj": -50.0}), 0.0),
+        ]
+        bad = [f"{got}≠{want}" for got, want in cases if got != want]
+        return not bad, bad or "bounded [-6,+2], unfired → 0"
+
     ck("resilience_bounds", resilience_bounds)
     ck("resilience_min_days", resilience_min_days)
     ck("defense_alone_not_resilient", defense_alone_not_resilient)
@@ -621,6 +643,7 @@ def _invariants() -> list[dict]:
     ck("unknown_key_fails", unknown_key_never_passes)
     ck("posture_fails_closed", posture_fails_closed)
     ck("rank_norm_bounds", rank_norm_bounds)
+    ck("feat_adj_bounded", feat_adj_bounded)
     return out
 
 

@@ -2388,7 +2388,7 @@ async def hedge_engine_report():
 # learning tables → the timestamp column that means "last write"
 _LEARN_TABLES = {
     "engine_weights": "updated_at",
-    "engine_weights_log": "created_at",
+    "engine_weights_log": "logged_at",
     "pattern_priors": "computed_at",
     "swing_pilot_trades": "created_at",
     "board_decisions": "created_at",
@@ -2411,7 +2411,8 @@ async def learning_lab():
     import json as _j
 
     out: dict = {"engines": [], "tables": {}, "learned": [],
-                 "milestones": [], "calibration": None}
+                 "milestones": [], "calibration": None,
+                 "migrations": getattr(db, "migration_report", None)}
 
     # --- per-table accrual -------------------------------------------
     for t, ts in _LEARN_TABLES.items():
@@ -2433,7 +2434,8 @@ async def learning_lab():
     try:
         rows = db.execute_query(
             "SELECT key, value, updated_at FROM engine_weights"
-            " WHERE key ~ '^(dip:|gate:|meta:)' ORDER BY key")
+            " WHERE key ~ '^(dip:|gate:|meta:|feat:|calls:|alpha:"
+            "|posture:)' ORDER BY key")
         for r in rows:
             v = r["value"]
             if isinstance(v, str):

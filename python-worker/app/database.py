@@ -204,7 +204,9 @@ def run_migrations():
         logger.info("No Postgres migrations found")
         return
 
-    # Ensure migration tracking table exists
+    # Ensure migration tracking table exists (+ content hash for drift
+    # detection — a file edited AFTER apply must be caught, not
+    # silently skipped: appended statements never ran)
     db.execute_update(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -213,9 +215,13 @@ def run_migrations():
         )
         """
     )
+    db.execute_update(
+        "ALTER TABLE schema_migrations"
+        " ADD COLUMN IF NOT EXISTS content_sha TEXT")
 
     try:
-        applied = db.execute_query("SELECT migration_name FROM schema_migrations")
+        applied = db.execute_query(
+            "SELECT migration_name, content_sha FROM schema_migrations")
     except Exception as e:
         # If a legacy/incompatible schema_migrations table exists, reset it.
         # This is safe for non-production environments and avoids crashing startup.
@@ -225,24 +231,47 @@ def run_migrations():
             """
             CREATE TABLE schema_migrations (
               migration_name TEXT PRIMARY KEY,
-              applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+              applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              content_sha TEXT
             )
             """
         )
         applied = []
 
-    applied_set = {row["migration_name"] for row in applied}
+    applied_map = {row["migration_name"]: row.get("content_sha")
+                   for row in applied}
+
+    import hashlib
+    report: dict[str, Any] = {"applied": len(applied_map),
+                              "failed": [], "drifted": []}
 
     logger.info("📝 Running Postgres migrations...")
     for migration_file in migration_files:
-        if migration_file in applied_set:
-            logger.debug(f"Skipping already applied migration {migration_file}")
-            continue
         migration_path = migrations_dir / migration_file
         try:
-            with open(migration_path, "r") as f:
-                sql = f.read()
-
+            sql = migration_path.read_text()
+        except Exception as e:
+            logger.error(f"❌ Cannot read migration {migration_file}: {e}")
+            report["failed"].append(migration_file)
+            continue
+        sha = hashlib.sha1(sql.encode()).hexdigest()
+        if migration_file in applied_map:
+            known = applied_map[migration_file]
+            if known is None:
+                # applied before hashing existed — backfill so future
+                # edits are caught
+                db.execute_update(
+                    "UPDATE schema_migrations SET content_sha=:s"
+                    " WHERE migration_name=:n",
+                    {"s": sha, "n": migration_file})
+            elif known != sha:
+                report["drifted"].append(migration_file)
+                logger.error(
+                    f"❌ Migration {migration_file} changed since apply"
+                    " — appended statements NEVER RAN. Ship a new"
+                    " migration file instead of editing applied ones.")
+            continue
+        try:
             with db.get_session() as session:
                 try:
                     for stmt in _split_sql_statements(sql):
@@ -253,18 +282,23 @@ def run_migrations():
                     # Record as applied
                     db.execute_update(
                         """
-                        INSERT INTO schema_migrations (migration_name)
-                        VALUES (:migration_name)
+                        INSERT INTO schema_migrations
+                            (migration_name, content_sha)
+                        VALUES (:migration_name, :sha)
                         ON CONFLICT (migration_name) DO NOTHING
                         """,
-                        {"migration_name": migration_file},
+                        {"migration_name": migration_file, "sha": sha},
                     )
+                    report["applied"] += 1
                 except Exception as e:
                     logger.error(f"❌ Failed to apply migration {migration_file}: {e}")
                     session.rollback()
                     raise
         except Exception as e:
-            logger.warning(f"Error applying migration {migration_file}: {e}")
+            report["failed"].append(migration_file)
+            logger.error(f"❌ Error applying migration {migration_file}: {e}")
+
+    db.migration_report = report
 
 
 def _split_sql_statements(sql: str) -> List[str]:

@@ -38,7 +38,9 @@ logger = logging.getLogger(__name__)
 _MIN = 20           # cohort size before a weight write is allowed
 
 # signal name → evidence-substring matchers (the 'why' lines the board
-# writes into decision evidence)
+# writes into decision evidence). Needles must be unique to the
+# feature: 'swing' would also match 'swing structure broken';
+# 'focus' misses the 🎯 event lines entirely.
 _SIGNALS = {
     "dip_turning_up":  ["dip turning up"],
     "dip_stabilizing": ["dip stabilizing"],
@@ -46,9 +48,9 @@ _SIGNALS = {
     "prior_good":      ["prior:"],            # refined below by hit-rate
     "alert_neg":       ["NEGATIVE catalyst"],
     "alert_pos":       ["positive catalyst"],
-    "screen_ready":    ["swing"],
-    "focus_event":     ["focus"],
-    "fund_accel":      ["accelerating"],
+    "screen_ready":    [" ready"],
+    "focus_event":     ["focus book", "🎯"],
+    "fund_accel":      ["fund accelerating"],
 }
 
 
@@ -90,7 +92,7 @@ def _weight_num(key: str, default: float) -> float:
 
 def run() -> dict[str, Any]:
     from app.database import db
-    import json
+    from app.signals.weights import put
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rep: dict[str, Any] = {"at": now, "writes": [], "notes": []}
@@ -122,16 +124,28 @@ def run() -> dict[str, Any]:
                 continue
             delta = lf["with"]["med"] - lf["without"]["med"]
             adj = float(max(-12.0, min(8.0, round(delta * 120, 1))))
-            db.execute_update(
-                "INSERT INTO engine_weights (key, value, updated_at)"
-                " VALUES (:k, CAST(:v AS jsonb), now())"
-                " ON CONFLICT (key) DO UPDATE SET"
-                " value=CAST(:v AS jsonb), updated_at=now()",
-                {"k": f"dip:{phase}",
-                 "v": json.dumps({"adj": adj, "n": lf["with"]["n"],
-                                  "lift": float(round(delta, 4)),
-                                  "by": "meta", "at": now})})
+            put(f"dip:{phase}",
+                {"adj": adj, "n": lf["with"]["n"],
+                 "lift": float(round(delta, 4)), "at": now})
             rep["writes"].append(f"dip:{phase} → {adj:+.1f}")
+
+        # feature weights — the board applies feat:{sig} (bounded
+        # [-6, +2], corrective-first) wherever the signal adds score.
+        # Asymmetric cap: negative lift earns real subtraction, a
+        # positive read earns only a small bonus — presence-lift is
+        # confounded by already-high scores, so trust it less. Needs
+        # 30 in the 'with' cohort — noisier than dip-phase.
+        for sig in ("prior_good", "screen_ready", "focus_event",
+                    "alert_pos", "fund_accel"):
+            lf = lifts.get(sig)
+            if not lf or lf["with"]["n"] < 30:
+                continue
+            delta = lf["with"]["med"] - lf["without"]["med"]
+            adj = float(max(-6.0, min(2.0, round(delta * 80, 1))))
+            put(f"feat:{sig}",
+                {"adj": adj, "n": lf["with"]["n"],
+                 "lift": float(round(delta, 4)), "at": now})
+            rep["writes"].append(f"feat:{sig} → {adj:+.1f}")
 
         # calibration — score decile vs realized return (report-only)
         dec = {}
@@ -161,15 +175,9 @@ def run() -> dict[str, Any]:
             continue
         med = st.median(rets)
         if med < 0:                          # proven loser → gate OFF
-            db.execute_update(
-                "INSERT INTO engine_weights (key, value, updated_at)"
-                " VALUES (:k, CAST(:v AS jsonb), now())"
-                " ON CONFLICT (key) DO UPDATE SET"
-                " value=CAST(:v AS jsonb), updated_at=now()",
-                {"k": f"gate:{key}",
-                 "v": json.dumps({"enabled": False, "n": len(rets),
-                                  "med": float(round(med, 4)),
-                                  "by": "meta", "at": now})})
+            put(f"gate:{key}",
+                {"enabled": False, "n": len(rets),
+                 "med": float(round(med, 4)), "at": now})
             rep["writes"].append(f"gate:{key} → OFF (med {med:+.1%})")
 
     # --- 2.5 call plan quality — did the PLAN work, not just the pick
@@ -199,16 +207,10 @@ def run() -> dict[str, Any]:
         cur_mult = _weight_num("calls:band_mult", 1.5)
         if stop_share > 0.45 and recovered > 0.5 and cur_mult < 2.2:
             new = round(cur_mult + 0.1, 2)
-            db.execute_update(
-                "INSERT INTO engine_weights (key, value, updated_at)"
-                " VALUES (:k, CAST(:v AS jsonb), now())"
-                " ON CONFLICT (key) DO UPDATE SET"
-                " value=CAST(:v AS jsonb), updated_at=now()",
-                {"k": "calls:band_mult",
-                 "v": json.dumps({"value": new, "n": len(co),
-                                  "stop_share": round(stop_share, 3),
-                                  "recovered": round(recovered, 3),
-                                  "by": "meta", "at": now})})
+            put("calls:band_mult",
+                {"value": new, "n": len(co),
+                 "stop_share": round(stop_share, 3),
+                 "recovered": round(recovered, 3), "at": now})
             rep["writes"].append(
                 f"calls:band_mult {cur_mult}→{new} "
                 f"({len(stopped)}/{len(co)} stopped, "
@@ -219,17 +221,11 @@ def run() -> dict[str, Any]:
         if exp_share > 0.40 and exp_mfe \
                 and st.median(exp_mfe) > 6 and cur_rr > 1.5:
             new = round(cur_rr - 0.15, 2)
-            db.execute_update(
-                "INSERT INTO engine_weights (key, value, updated_at)"
-                " VALUES (:k, CAST(:v AS jsonb), now())"
-                " ON CONFLICT (key) DO UPDATE SET"
-                " value=CAST(:v AS jsonb), updated_at=now()",
-                {"k": "calls:rr_target",
-                 "v": json.dumps({"value": new, "n": len(co),
-                                  "exp_share": round(exp_share, 3),
-                                  "exp_med_mfe": float(round(
-                                      st.median(exp_mfe), 2)),
-                                  "by": "meta", "at": now})})
+            put("calls:rr_target",
+                {"value": new, "n": len(co),
+                 "exp_share": round(exp_share, 3),
+                 "exp_med_mfe": float(round(
+                     st.median(exp_mfe), 2)), "at": now})
             rep["writes"].append(
                 f"calls:rr_target {cur_rr}→{new} "
                 f"({len(expired)}/{len(co)} expired, med MFE "
@@ -260,15 +256,9 @@ def run() -> dict[str, Any]:
             # firing but not bouncing → the zone is too eager; raise it
             if bounce_rate < 0.35 and cur_zone < 80:
                 new = round(cur_zone + 5)
-                db.execute_update(
-                    "INSERT INTO engine_weights (key, value, updated_at)"
-                    " VALUES (:k, CAST(:v AS jsonb), now())"
-                    " ON CONFLICT (key) DO UPDATE SET"
-                    " value=CAST(:v AS jsonb), updated_at=now()",
-                    {"k": "alpha:cap_zone",
-                     "v": json.dumps({"value": new, "n": len(hot),
-                                      "bounce": round(bounce_rate, 3),
-                                      "by": "meta", "at": now})})
+                put("alpha:cap_zone",
+                    {"value": new, "n": len(hot),
+                     "bounce": round(bounce_rate, 3), "at": now})
                 rep["writes"].append(
                     f"alpha:cap_zone {cur_zone:.0f}→{new} "
                     f"(fired {len(hot)}×, only "
@@ -282,16 +272,9 @@ def run() -> dict[str, Any]:
             # put candidates keep out-performing → the bar's too low
             if med_hr < 45 and cur_min < 60:
                 new = round(cur_min + 5)
-                db.execute_update(
-                    "INSERT INTO engine_weights (key, value, updated_at)"
-                    " VALUES (:k, CAST(:v AS jsonb), now())"
-                    " ON CONFLICT (key) DO UPDATE SET"
-                    " value=CAST(:v AS jsonb), updated_at=now()",
-                    {"k": "alpha:put_min",
-                     "v": json.dumps({"value": new, "n": len(hrs),
-                                      "med_hit": float(
-                                          round(med_hr, 1)),
-                                      "by": "meta", "at": now})})
+                put("alpha:put_min",
+                    {"value": new, "n": len(hrs),
+                     "med_hit": float(round(med_hr, 1)), "at": now})
                 rep["writes"].append(
                     f"alpha:put_min {cur_min:.0f}→{new} "
                     f"(med underperformance rate {med_hr:.0f}%)")
@@ -331,16 +314,10 @@ def run() -> dict[str, Any]:
             elif b_med < a_med - 3 and cur < 38:
                 new = cur + 2      # proven protective → widen a bit
             if new != cur:
-                db.execute_update(
-                    "INSERT INTO engine_weights (key, value,"
-                    " updated_at) VALUES (:k, CAST(:v AS jsonb),"
-                    " now()) ON CONFLICT (key) DO UPDATE SET"
-                    " value=CAST(:v AS jsonb), updated_at=now()",
-                    {"k": "posture:thin_tape:breadth_score_lt",
-                     "v": json.dumps(
-                         {"value": new, "blocked_med": round(b_med, 2),
-                          "allowed_med": round(a_med, 2),
-                          "n": len(po), "by": "meta", "at": now})})
+                put("posture:thin_tape:breadth_score_lt",
+                    {"value": new, "blocked_med": round(b_med, 2),
+                     "allowed_med": round(a_med, 2),
+                     "n": len(po), "at": now})
                 rep["writes"].append(
                     f"posture:thin_tape bs<{cur:.0f}→{new:.0f} "
                     f"(blocked 20d med {b_med:+.1f}% vs allowed "
@@ -379,11 +356,6 @@ def run() -> dict[str, Any]:
     rep["rank_rows"] = len(rk or [])
 
     # --- 3. the report itself is a weight row — the UI reads it ------
-    db.execute_update(
-        "INSERT INTO engine_weights (key, value, updated_at)"
-        " VALUES ('meta:report', CAST(:v AS jsonb), now())"
-        " ON CONFLICT (key) DO UPDATE SET"
-        " value=CAST(:v AS jsonb), updated_at=now()",
-        {"v": json.dumps(rep, default=str)})
     rep["writes"] = rep["writes"] or ["report only — no weight changes"]
+    put("meta:report", rep)
     return rep

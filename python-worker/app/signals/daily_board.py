@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +212,27 @@ def _posture(tape: dict, regime: Optional[dict]) -> dict[str, Any]:
             # as_of = data vintage (session the snapshot describes)
             "regime_session_date": (regime or {}).get("session_date"),
             "as_of": (regime or {}).get("as_of")}
+
+
+def _feat_adj(name: str, fired: bool,
+              w: Callable[[str, Any], Any] = None) -> float:
+    """Meta-learned per-feature adjustment, bounded [-6, +2].
+
+    Corrective-first by design: a feature whose cohort underperforms
+    earns real subtraction, but positive lift earns only a small
+    bonus — presence-lift is confounded by already-high scores.
+    `w` injectable so the eval suite can test the bound."""
+    if not fired:
+        return 0.0
+    if w is None:
+        from app.signals.swing_pilot import weight
+        w = weight
+    v = w(f"feat:{name}")
+    adj = v.get("adj", 0.0) if isinstance(v, dict) else (v or 0.0)
+    try:
+        return max(-6.0, min(2.0, float(adj)))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _latest_screen() -> dict[str, dict]:
@@ -536,13 +557,29 @@ def _accumulate_scores() -> list[dict[str, Any]]:
             score += 8
             why.append("turn candidate")
         a = alerts.get(sym)
+        alert_pos = bool(a and a["direction"] == "POSITIVE"
+                         and a["materiality"] == "HIGH")
         if a:
-            if a["direction"] == "POSITIVE" and a["materiality"] == "HIGH":
+            if alert_pos:
                 score += 8
                 why.append("positive catalyst")
             elif a["direction"] == "NEGATIVE" and a["materiality"] == "HIGH":
                 score -= 12
                 why.append("NEGATIVE catalyst — check before buying")
+        # meta-learned per-feature adjustments — the nightly lift
+        # measurement writes feat:* weights; bounded [-6,+2] nudges
+        # applied exactly where each signal fired. Corrective-first:
+        # a feature whose cohort keeps underperforming earns real
+        # subtraction rather than another free +8.
+        for _f, _on in (("screen_ready", entry_ready),
+                        ("prior_good", bool(pr)),
+                        ("focus_event", bool(fe or sym in focus_syms)),
+                        ("alert_pos", alert_pos),
+                        ("fund_accel", fstate == "accelerating")):
+            _fa = _feat_adj(_f, _on)
+            if _fa:
+                score += _fa
+                why.append(f"learned {_f} {_fa:+.0f}")
         if score <= 0:
             continue
         instrument = ("LEAPS call" if state in {"pullback", "recovery",
