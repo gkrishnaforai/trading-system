@@ -510,7 +510,14 @@ use_cases:
       - when:
           any:
             - {tape_in: swing_constructive}
-            - {dip_phase_in: [stabilizing, turning_up, confirmed]}
+            - all:
+                # dip-resolution can qualify a SOFT tape (range,
+                # rolling_over) early — but never violence: a knife
+                # 'turning_up' is the false-bottom trap; every other
+                # layer (calls engine, best-picks gate) hard-excludes
+                # broken tape
+                - {dip_phase_in: [stabilizing, turning_up, confirmed]}
+                - {tape_not_in: tape_broken}
         line: "constructive tape — `{tape}`, dip phase `{dip_phase}` (want pullback/stabilizing)"
       - when: {vs50_gt: 0}
         line: "above the 50dma ({vs50}) — the trend filter"

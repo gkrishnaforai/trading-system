@@ -1028,7 +1028,8 @@ def board() -> dict[str, Any]:
     # sector-flow scores — the industry-group leg of the rank. Same
     # math the pulse board runs on cached sector-ETF bars.
     try:
-        from app.api.board_api import _sector_flow_map, _SECTOR_TO_ETF
+        from app.api.board_api import _sector_flow_map
+        from app.market_regime.rotation import _SECTOR_TO_ETF
         _flow = _sector_flow_map()
     except Exception:
         _flow, _SECTOR_TO_ETF = {}, {}

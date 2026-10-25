@@ -584,6 +584,7 @@ def _accumulate_scores() -> list[dict[str, Any]]:
                     "levels": levels,
                     "dip_phase": det.get("dip_phase"),
                     "dip_health": det.get("dip_health"),
+                    "atr_pct": det.get("atr_pct"),
                     "swing": det.get("swing"),
                     "rs_pct": rs_pct, "rs_nh": bool(rs_nh),
                     "days_to_earnings": days_to_er,

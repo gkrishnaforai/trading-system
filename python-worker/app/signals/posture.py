@@ -135,8 +135,9 @@ def current() -> dict:
         " ORDER BY as_of DESC, created_at DESC LIMIT 1")
     if not r:
         return {"posture": "unknown",
-                "note": "no regime snapshot journaled yet",
-                "new_longs": True, "shorts": False, "hedge_on": False}
+                "note": "no regime snapshot journaled yet — "
+                        "permission can't be verified, fail closed",
+                "new_longs": False, "shorts": False, "hedge_on": False}
     row = r[0]
     p = row["payload"]
     if isinstance(p, str):

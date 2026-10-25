@@ -73,7 +73,8 @@ def generate(today: Optional[date] = None) -> dict[str, Any]:
                 and r["days_to_earnings"] <= 3:
             continue
         hit = _prior_hit(sym, state, dip)
-        if weight(f"gate:{state}|{dip or 'none'}") == "off":
+        _g = weight(f"gate:{state}|{dip or 'none'}")
+        if isinstance(_g, dict) and _g.get("enabled") is False:
             continue
         if dip == "turning_up":
             pass
@@ -117,7 +118,8 @@ def generate(today: Optional[date] = None) -> dict[str, Any]:
         px = bars[-1].close if bars else None
         if not px:
             continue
-        atr_pct = (p.get("momentum_detail") or {}).get("atr_pct")
+        atr_pct = p.get("atr_pct") \
+            or (p.get("momentum_detail") or {}).get("atr_pct")
         band = min(0.10, max(0.04, band_mult * (atr_pct or 0.03)))
         stop = round(px * (1 - band), 2)
         tgt = round(px + rr_t * (px - stop), 2)

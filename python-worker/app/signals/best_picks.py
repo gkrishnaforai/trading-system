@@ -284,7 +284,8 @@ def _bulk_ctx() -> dict[str, dict]:
     # sector flow — same cached map the pulse board / health board use
     flow, sec2etf = {}, {}
     try:
-        from app.api.board_api import _sector_flow_map, _SECTOR_TO_ETF
+        from app.api.board_api import _sector_flow_map
+        from app.market_regime.rotation import _SECTOR_TO_ETF
         flow = _sector_flow_map() or {}
         sec2etf = _SECTOR_TO_ETF
     except Exception:
@@ -407,6 +408,10 @@ def _bulk_ctx() -> dict[str, dict]:
             "pct_b": _num(det.get("pct_b")),
             "hist_dir": _num(det.get("hist_dir")),
             "atr_pct": atr, "rs_pct": _num(det.get("rs_pct")),
+            "down_cap": _num(det.get("down_cap")),
+            "up_cap": _num(det.get("up_cap")),
+            "rebound_x": _num(det.get("rebound_x")),
+            "rs_quality": det.get("rs_quality"),
             "off_high": round(px / hi52 - 1, 4)
                         if px and hi52 else None,
             "off_low": round(px / lo52 - 1, 4)
