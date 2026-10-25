@@ -2003,7 +2003,29 @@ async def morning_regime_report():
             "buckets, llm, verdict, horizon_1m, horizon_3m "
             "FROM morning_regime_snapshots "
             "ORDER BY as_of DESC LIMIT 1"))
-    return {"today": today[0] if today else None,
+    t = today[0] if today else None
+    if t is not None:
+        # fed block rides the snapshot's structural lane, but the
+        # snapshot is once-a-day — live-merge the latest journal row
+        # so a fresh fed_predictions write shows today, not tomorrow
+        try:
+            import json as _j
+            from app.signals import fed_path
+            fed = await asyncio.to_thread(fed_path.read)
+            if fed:
+                b = t.get("buckets")
+                if isinstance(b, str):
+                    b = _j.loads(b)
+                if isinstance(b, dict):
+                    st = b.get("structural")
+                    if not isinstance(st, dict):
+                        st = {}
+                    st["fed"] = fed
+                    b["structural"] = st
+                    t["buckets"] = b
+        except Exception:
+            pass
+    return {"today": t,
             "record": await asyncio.to_thread(morning.record)}
 
 
