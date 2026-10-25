@@ -146,6 +146,12 @@ async def _screen_symbol(symbol: str, flags: dict, spy_bars, regime, env,
         row["grade_action"] = ov["grade_action"]
         row["grade_detail"] = " ".join(
             p for p in [ov.get("grade_company"), ov.get("grade_date")] if p)
+    # sector-relative leadership from the RS pass — selection inputs:
+    # who defends on red days and expands on green within the group
+    for k in ("rs_pct", "rs_quality", "rs_bench",
+              "down_cap", "up_cap", "rebound_x"):
+        if ov.get(k) is not None:
+            row[k] = ov[k]
     if ov.get("eps_delta_pct") is not None:
         row["eps_delta_pct"] = ov["eps_delta_pct"]
         row["eps_fiscal_year"] = ov.get("eps_fiscal_year")
@@ -177,7 +183,13 @@ async def _screen_symbol(symbol: str, flags: dict, spy_bars, regime, env,
                 "price": price, "rsi": t.rsi, "rsi2": t.rsi2,
                 "atr_pct": t.atr_pct, "volume_ratio": t.volume_ratio,
                 "trend_turn_bars": t.trend_turn_bars},
-                "relative_strength": {"vs_spy20": stock.relative_strength.vs_spy20}},
+                "relative_strength": {
+                    "vs_spy20": stock.relative_strength.vs_spy20,
+                    "rs_pct": ov.get("rs_pct"),
+                    "rs_quality": ov.get("rs_quality"),
+                    "down_cap": ov.get("down_cap"),
+                    "up_cap": ov.get("up_cap"),
+                    "rebound_x": ov.get("rebound_x")}},
             "risk": {"entry": price, "stop": stop, "target": target,
                      "reward_risk": 2.0, "status": "screener"},
             "decision": {},

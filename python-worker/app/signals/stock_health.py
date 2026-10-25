@@ -12,19 +12,24 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# stocks.industry → thematic ETF. Broad GICS sectors blur semis into
-# "Technology" — relative-strength reads (and the sector-flow chip)
-# should compare a semi name against SMH, not XLK. First match wins;
-# patterns are substrings of FMP industry names.
-_INDUSTRY_TO_THEME_ETF = [
-    ("semicon", "SMH"),
-    ("software", "IGV"),
-    ("biotech", "XBI"),
-    ("banks - regional", "KRE"),
-    ("regional banks", "KRE"),
-    ("aerospace", "ITA"),
-    ("defense", "ITA"),
-]
+
+def _leadership(det: dict, fly: dict) -> dict | None:
+    """Sector-relative leadership — RS rank + the day-level
+    defense/offense pattern + the estimate-stability confirmation
+    leg. Selection vocabulary for 'one name in the group' reads —
+    a prioritization input, never an entry trigger."""
+    if det.get("rs_pct") is None:
+        return None
+    return {"rs_pct": det.get("rs_pct"),
+            "rs_nh": det.get("rs_nh"),
+            "bench": det.get("rs_bench") or "SPY",
+            "quality": det.get("rs_quality"),
+            "down_cap": det.get("down_cap"),
+            "down_n": det.get("down_n"),
+            "up_cap": det.get("up_cap"),
+            "up_n": det.get("up_n"),
+            "rebound_x": det.get("rebound_x"),
+            "est_rev": fly.get("est_revision_pct")}
 
 
 def _verdict(fund: Optional[str], mom: Optional[str],
@@ -358,7 +363,8 @@ def card(sym: str) -> dict[str, Any]:
     try:
         from app.api.board_api import _sector_flow_map
         from app.market_regime.rotation import (
-            SECTOR_NAMES, THEME_ETFS, _SECTOR_TO_ETF)
+            SECTOR_NAMES, THEME_ETFS, _SECTOR_TO_ETF,
+            _INDUSTRY_TO_THEME_ETF)
         _etf = _SECTOR_TO_ETF.get((st.get("sector") or "").lower())
         # industry refines the broad GICS sector — a semi name reads
         # against SMH, software against IGV, not the XLK blend
@@ -603,6 +609,7 @@ def card(sym: str) -> dict[str, Any]:
                                     else None),
                           "detail": det},
             "growth": fly,
+            "leadership": _leadership(det, fly),
             "forward": {"revision_score": st.get("revision_score"),
                         "revision_grade": st.get("revision_grade"),
                         "priced_status": st.get("priced_status"),

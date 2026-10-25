@@ -49,6 +49,23 @@ _SECTOR_TO_ETF = {
     "communication services": "XLC", "communication": "XLC",
 }
 
+# stocks.industry → thematic ETF. Broad GICS sectors blur semis into
+# "Technology" — a semi/optical name's peer-relative reads (sector
+# flow, RS benchmark) belong against SMH, not XLK. Substring match,
+# first hit wins; consumers fall back to the parent sector ETF when
+# the theme ETF lacks bar coverage.
+_INDUSTRY_TO_THEME_ETF = [
+    ("semicon", "SMH"),
+    ("optical", "SMH"),           # photonics/optical (LITE-class) trades
+                                  # with the AI-semi complex
+    ("software", "IGV"),
+    ("biotech", "XBI"),
+    ("banks - regional", "KRE"),
+    ("regional banks", "KRE"),
+    ("aerospace", "ITA"),
+    ("defense", "ITA"),
+]
+
 
 def _action_tag(score: float, r5: Optional[float], flow: str,
                 above50: bool) -> str:

@@ -652,6 +652,10 @@ rank_weights:
                                    # fundamental tailwind behind the tape
       - {k: fwd_flags,    w: 5}    # emerging_growth + beat streak —
                                    # forward growth confirmation
+      - {k: resilience,   w: 10}   # sector-relative day pattern —
+                                   # defends on red days, expands on
+                                   # green: the 'leader of the group'
+                                   # tell; rank input, not an entry gate
       - {k: earn_risk,    w: -15}  # flat penalty — earnings ≤7d
     caps:
       - {when: {fund_in: fund_bad_hard}, cap: 40}
@@ -677,6 +681,9 @@ rank_weights:
       - {k: room_to_run,    w: 10} # %B/RSI headroom left
       - {k: priced_status,  w: 10}
       - {k: fv_upside,      w: 10}
+      - {k: resilience,     w: 5}  # defend/rebound pattern — leaders
+                                 # worth a 12-24m call still lead their
+                                 # group day-to-day
       - {k: tape_dir,       w: 5}
     caps:
       - {when: {fund_in: fund_bad_hard}, cap: 35}

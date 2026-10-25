@@ -60,6 +60,36 @@ def persisted_overlay(symbols: list[str]) -> dict[str, dict]:
         logger.debug("overlay catalyst lookup failed: %s", exc)
 
     try:
+        # sector-relative leadership — RS rank + the defense/offense
+        # day-pattern merged by the momentum pass into momentum_detail
+        for r in db.execute_query(
+            "SELECT symbol,"
+            " momentum_detail->>'rs_pct' AS rs_pct,"
+            " momentum_detail->>'rs_quality' AS rs_quality,"
+            " momentum_detail->>'rs_bench' AS rs_bench,"
+            " momentum_detail->>'down_cap' AS down_cap,"
+            " momentum_detail->>'up_cap' AS up_cap,"
+            " momentum_detail->>'rebound_x' AS rebound_x"
+            " FROM stocks WHERE symbol = ANY(:symbols)"
+            " AND momentum_detail ? 'rs_pct'",
+            {"symbols": syms},
+        ):
+            slot = overlay.setdefault(r["symbol"].upper(), {})
+            for k in ("rs_pct", "rs_quality", "rs_bench",
+                      "down_cap", "up_cap", "rebound_x"):
+                v = r.get(k)
+                if v is None:
+                    continue
+                try:
+                    v = float(v) if k != "rs_quality" and k != "rs_bench" \
+                        else v
+                except (TypeError, ValueError):
+                    continue
+                slot[k] = v
+    except Exception as exc:
+        logger.debug("overlay rs lookup failed: %s", exc)
+
+    try:
         # Most recent actual revision within the lookback — not the latest-day
         # diff (which reads 0% once a revision has been absorbed). If several
         # fiscal years moved on the same day, take the largest absolute move.

@@ -123,6 +123,14 @@ def _normalize(row: dict) -> dict:
         "structural_proof": _num(row.get("structural_proof")),
         # rank inputs — the candidate-ordering layer reads these
         "rs_pct": _num(det.get("rs_pct")),
+        # resilience — sector-relative down-day defense / rebound
+        # offense from the RS pass; selection inputs for rules like
+        # "leader within the group", never entry triggers on their own
+        "rs_quality": det.get("rs_quality"),
+        "rs_bench": det.get("rs_bench"),
+        "down_cap": _num(det.get("down_cap")),
+        "up_cap": _num(det.get("up_cap")),
+        "rebound_x": _num(det.get("rebound_x")),
         "vol_dip": _num(det.get("vol_dip")),
         "atr_pct": _num(det.get("atr_pct")),
         "px": _num(row.get("px") or row.get("close")),
@@ -574,6 +582,10 @@ _RANK_NORM = {
     "earn_risk":     lambda c:
         1.0 if (c.get("earn_days") is not None
                 and c["earn_days"] <= 7) else 0.0,
+    # defense+offense hit-rate blend → 0-100; the sector-relative
+    # "holds up on red, expands on green" selection axis
+    "resilience":    lambda c: _clamp(
+        (c["down_cap"] or 0) * 60 + (c["up_cap"] or 0) * 40),
 }
 
 
@@ -600,6 +612,9 @@ def _rank_raw(k: str, c: dict):
         return f"%B={c.get('pct_b')}·rsi={c.get('rsi')}"
     if k == "earn_risk":
         return c.get("earn_days")
+    if k == "resilience":
+        return None if c.get("down_cap") is None else (
+            f"def={c['down_cap']}·reb={c.get('up_cap')}")
     return c.get(_RANK_RAW_ALIAS.get(k, k))
 
 

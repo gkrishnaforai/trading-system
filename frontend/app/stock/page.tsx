@@ -154,6 +154,40 @@ function EarningsBlock({ e }: { e: Record<string, unknown> | null }) {
   )
 }
 
+/** Sector-relative leadership — 'who leads the group': RS rank, the
+    day-level defense/offense pattern vs the group benchmark, and the
+    estimate-stability confirmation. Selection vocabulary, never an
+    entry trigger. */
+function Leadership({ l }: { l: Record<string, unknown> | null }) {
+  if (!l) return null
+  const pct = num(l.rs_pct)
+  if (pct == null) return null
+  const bench = String(l.bench || 'SPY')
+  const q = String(l.quality || '')
+  const dc = num(l.down_cap), dn = num(l.down_n)
+  const uc = num(l.up_cap), un = num(l.up_n), rx = num(l.rebound_x)
+  const rev = num(l.est_rev)
+  const parts: string[] = [`RS ${Math.round(pct)}th pct vs ${bench}`]
+  if (l.rs_nh === true) parts.push('RS line new high')
+  if (dc != null && dn != null && dn > 0)
+    parts.push(`defends ${Math.round(dc * dn)}/${dn} red days`)
+  if (uc != null && un != null && un > 0)
+    parts.push(`outperforms ${Math.round(uc * un)}/${un} green days`
+      + (rx != null ? ` · ${rx >= 0 ? '+' : ''}${(rx * 100).toFixed(1)}%` : ''))
+  if (rev != null)
+    parts.push(`est rev ${rev > 0 ? '+' : ''}${(rev * 100).toFixed(0)}%`)
+  const tone = q === 'resilient' ? 'text-aggressive'
+    : q === 'fragile' ? 'text-defensive' : 'text-muted'
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 pt-1 text-xs">
+      <span className={`font-medium ${tone}`}>
+        {q || 'leadership'}
+      </span>
+      <span className="text-muted">{parts.join(' · ')}</span>
+    </div>
+  )
+}
+
 /** Rolled-up data trust — one chip answering 'can I trust this page'. */
 function ConfChip({ d }: { d: Record<string, unknown> | null }) {
   if (!d?.grade) return null
@@ -489,6 +523,7 @@ async function StockCore({ sym }: { sym: string }) {
   const themes = Array.isArray(card.themes) ? card.themes : []
   const upside = card.fv_upside_pct
   const earnings = obj(card.earnings)
+  const leadership = obj(card.leadership)
   const dataConf = obj(card.data_confidence)
   const multiples = obj(card.multiples)
   const spark = Array.isArray(card.spark)
@@ -550,6 +585,7 @@ async function StockCore({ sym }: { sym: string }) {
             event (provenance + staleness) instead of a bare countdown */}
         <p className="pt-2 text-sm text-muted">{readLine(card)}</p>
         <div className="pt-1.5"><EarningsBlock e={earnings} /></div>
+        <Leadership l={leadership} />
         {spark.length >= 5 && (
           <Sparkline closes={spark} spot={num(card.spot)}
             asOf={card.spark_as_of ? String(card.spark_as_of) : null} />
