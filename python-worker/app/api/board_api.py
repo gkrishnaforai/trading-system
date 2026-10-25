@@ -187,11 +187,35 @@ async def _j_rule_breakers():
 
 
 async def _j_smallcap():
-    """5x Scout eval — gates, tiers, discovery (tails refresh too)."""
+    """5x Scout full pass — manual; the scheduler runs the stages."""
     from app.screener.smallcap import run_smallcap, sc_status
     if sc_status()["running"]:
         return {"skipped": "already_running"}
     return await run_smallcap(discover=True)
+
+
+async def _j_smallcap_eval():
+    """5x Scout stage 1 — parallel deep eval of members."""
+    from app.screener.smallcap import eval_members, sc_status
+    if sc_status()["running"] or sc_status()["running_eval"]:
+        return {"skipped": "already_running"}
+    return await eval_members()
+
+
+async def _j_smallcap_discovery():
+    """5x Scout stage 2 — pool cursor sweep, auto-add qualifiers."""
+    from app.screener.smallcap import discovery_sweep, sc_status
+    if sc_status()["running"] or sc_status()["running_discovery"]:
+        return {"skipped": "already_running"}
+    return await discovery_sweep()
+
+
+async def _j_smallcap_tail():
+    """5x Scout stage 3 — research + flywheel + momentum refresh."""
+    from app.screener.smallcap import sc_status, tail_refresh
+    if sc_status()["running"] or sc_status()["running_tail"]:
+        return {"skipped": "already_running"}
+    return await tail_refresh()
 
 
 async def _j_leaps_mark():
@@ -754,7 +778,11 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "alerts":        ("Catalyst alerts", _j_alerts),
     "outcomes":      ("Alert outcomes", _j_outcomes),
     "rule-breakers": ("Rule Breaker eval", _j_rule_breakers),
-    "smallcap":      ("5x Scout eval", _j_smallcap),
+    "smallcap":      ("5x Scout eval (full pass)", _j_smallcap),
+    "smallcap-eval": ("5x Scout — member eval", _j_smallcap_eval),
+    "smallcap-discovery": ("5x Scout — discovery sweep",
+                           _j_smallcap_discovery),
+    "smallcap-tail": ("5x Scout — tail refresh", _j_smallcap_tail),
     "leaps-mark":    ("LEAPS book marks", _j_leaps_mark),
     "regime":        ("Market regime card", _j_regime),
     "flywheel":      ("Expectation gap", _j_flywheel),
@@ -832,7 +860,9 @@ _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "flywheel", "fund-flags", "alerts",
               "fwd-flags",
               "focus-scan",
-              "swing-scan", "rule-breakers", "smallcap", "hidden-gems",
+              "swing-scan", "rule-breakers",
+              "smallcap-eval", "smallcap-discovery", "smallcap-tail",
+              "hidden-gems",
               "fund-journal", "hedge-universe", "tailwinds", "conviction",
               "theme-review", "daily-sheet", "outcomes",
               "leaps-mark", "priors", "pilot", "daily-calls",
@@ -844,6 +874,8 @@ _ALL_ORDER = ["regime", "tier-sync", "momentum",
 
 _JOB_TIMEOUT = {
     "priors": 20 * 60, "rule-breakers": 15 * 60, "smallcap": 15 * 60,
+    "smallcap-eval": 12 * 60, "smallcap-discovery": 12 * 60,
+    "smallcap-tail": 25 * 60,
     "swing-scan": 15 * 60, "alerts": 15 * 60, "focus-scan": 10 * 60,
     "custodian": 10 * 60, "momentum": 8 * 60, "flywheel": 50 * 60,
     "macro-snapshot": 3 * 60, "fund-snapshots": 90 * 60,

@@ -53,8 +53,10 @@ CHECKLIST_MIN = 4
 DISCOVERY_SLICE = 350     # light evals per discovery run (~1k calls)
 
 _state: dict[str, Any] = {
-    "running": False, "last_run_at": None, "evaluated": 0,
-    "error": None}
+    "running": False, "running_eval": False,
+    "running_discovery": False, "running_tail": False,
+    "last_run_at": None, "last_discovery_at": None,
+    "evaluated": 0, "error": None}
 
 
 def sc_status() -> dict[str, Any]:
@@ -317,21 +319,163 @@ def remove_member(symbol: str) -> dict:
 # --- eval loop ------------------------------------------------------------
 
 
-async def run_smallcap(discover: bool = False) -> dict[str, Any]:
-    """Deep-eval all members (gates + hidden engine + score + snapshot);
-    tier transitions and thesis-breaks alert. With `discover`, sweep a
-    slice of the $1-30B pool: light eval → deep eval qualifiers →
-    auto-add. Auto-added names drop when gates collapse; manual adds
-    never do."""
-    from app.alerts import scanner as alert_scanner
+def _mk_alert(scope: dict, today: date, alerts: list):
+    """Alert factory bound to the run's scope/date/bucket."""
     from app.alerts.models import AlertItem
+
+    def _alert(sym, direction, title, detail_extra):
+        flags = scope.get(sym) or {}
+        alerts.append(AlertItem(
+            symbol=sym, event_type="sc_transition",
+            direction=direction, materiality="HIGH",
+            title=title,
+            detail={"bucket": "actionable", "kind": "analyst",
+                    **detail_extra},
+            fingerprint=("sctr:" + hashlib.sha1(
+                f"{sym}|{today}|{direction}|{title[:40]}".encode()
+            ).hexdigest()[:16]),
+            source="smallcap_scout",
+            source_timestamp=datetime.now(timezone.utc),
+            in_portfolio=bool(flags.get("in_portfolio")),
+            in_watchlist=bool(flags.get("in_watchlist")),
+            priority_score=None))
+    return _alert
+
+
+def _persist_alerts(alerts: list) -> None:
+    try:
+        from app.alerts import scanner as alert_scanner
+        inserted, skipped = alert_scanner.persist(alerts)
+        logger.info("sc alerts: %s inserted, %s skipped",
+                    inserted, skipped)
+    except Exception as exc:
+        logger.debug("sc alert persist failed: %s", exc)
+
+
+async def _eval_member(fmp, mem: dict, scope: dict, today: date,
+                       alerts: list) -> bool:
+    """One member's deep eval + tier transitions + snapshot. Side
+    effects are quick DB writes — safe under gather."""
+    _alert = _mk_alert(scope, today, alerts)
+    sym = mem["symbol"]
+    cl = mem.get("checklist") or {}
+    m = await _eval_symbol(fmp, sym, deep=True)
+    if not m:
+        return False
+    gates = _gates(m)
+    gates_met = sum(gates.values())
+    hidden = _hidden_engine(m.get("segments"))
+    score = _score(m, cl, hidden)
+    runner = (gates_met == len(gates)
+              and (bool(hidden) or cl.get("proven")))
+    suggested = ("runner" if runner
+                 else "inflecting" if gates_met >= 4
+                 else "watch")
+    tier = mem["tier"]
+    if tier == "watch" and suggested in ("inflecting", "runner"):
+        upsert_member(sym, suggested, {})
+        _alert(sym, "POSITIVE",
+               f"{sym} promoted to {suggested.upper()} — "
+               f"{gates_met}/5 gates, score {score}",
+               {"from": tier, "to": suggested, "gates": gates})
+    elif tier != "runner" and runner:
+        upsert_member(sym, "runner", {})
+        _alert(sym, "POSITIVE",
+               f"{sym} auto-promoted to RUNNER — 5x signature "
+               f"complete ({gates_met}/5 gates, score {score}"
+               + (f", hidden engine: "
+                  + ", ".join(f"{n} {s['yoy'] * 100:+.0f}%"
+                              for n, s in hidden.items())
+                  if hidden else ", agent-proven thesis") + ")",
+               {"from": tier, "to": "runner",
+                "auto_promoted": True, "gates": gates,
+                "hidden_engine": hidden})
+    elif (tier in ("inflecting", "runner")
+          and m.get("rev_growth") is not None
+          and m["rev_growth"] < 0.10):
+        _alert(sym, "NEGATIVE",
+               f"{sym} 5x thesis check — rev growth "
+               f"{m['rev_growth'] * 100:+.0f}% (<10%)",
+               {"kind": "thesis_check",
+                "rev_growth": m["rev_growth"]})
+    elif tier in ("inflecting", "runner") and not runner \
+            and gates_met < 4 and cl.get("auto") \
+            and suggested == "watch":
+        # auto-added name decayed below the bar — drop it
+        remove_member(sym)
+        _alert(sym, "NEGATIVE",
+               f"{sym} dropped from 5x Scout — gates collapsed "
+               f"to {gates_met}/5", {"dropped": True})
+        return True
+
+    from app.database import db
+    db.execute_update(
+        """INSERT INTO smallcap_snapshots
+           (symbol, as_of, rev_growth, eps_growth, rev_streak,
+            gross_margin, gross_margin_prev, op_margin,
+            fcf_margin, cash, total_debt, net_cash, dd52w,
+            vs_sma200, market_cap, price, segments,
+            hidden_engine, gates_met, gates_detail, sc_score,
+            grade)
+           VALUES (:s,:d,:rg,:eg,:rs,:gm,:gmp,:om,:fcf,:c,:td,:nc,
+                   :dd,:vs,:mc,:px,CAST(:sg AS jsonb),
+                   CAST(:he AS jsonb),:g,CAST(:gd AS jsonb),
+                   :sc,:gr)
+           ON CONFLICT (symbol, as_of) DO UPDATE SET
+            rev_growth=EXCLUDED.rev_growth,
+            eps_growth=EXCLUDED.eps_growth,
+            rev_streak=EXCLUDED.rev_streak,
+            gross_margin=EXCLUDED.gross_margin,
+            gross_margin_prev=EXCLUDED.gross_margin_prev,
+            op_margin=EXCLUDED.op_margin,
+            fcf_margin=EXCLUDED.fcf_margin,
+            cash=EXCLUDED.cash, total_debt=EXCLUDED.total_debt,
+            net_cash=EXCLUDED.net_cash, dd52w=EXCLUDED.dd52w,
+            vs_sma200=EXCLUDED.vs_sma200,
+            market_cap=EXCLUDED.market_cap, price=EXCLUDED.price,
+            segments=EXCLUDED.segments,
+            hidden_engine=EXCLUDED.hidden_engine,
+            gates_met=EXCLUDED.gates_met,
+            gates_detail=EXCLUDED.gates_detail,
+            sc_score=EXCLUDED.sc_score, grade=EXCLUDED.grade""",
+        {"s": sym, "d": today, "rg": m["rev_growth"],
+         "eg": m["eps_growth"], "rs": m["rev_streak"],
+         "gm": m["gross_margin"], "gmp": m["gross_margin_prev"],
+         "om": m["op_margin"], "fcf": m.get("fcf_margin"),
+         "c": m.get("cash"), "td": m.get("total_debt"),
+         "nc": gates["net cash"], "dd": m.get("dd52w"),
+         "vs": m.get("vs_sma200"), "mc": m["market_cap"],
+         "px": m["price"], "sg": json.dumps(m.get("segments") or {}),
+         "he": json.dumps(hidden), "g": gates_met,
+         "gd": json.dumps(gates), "sc": score,
+         "gr": _letter(score)})
+    return True
+
+
+# --- stages — each is an independently schedulable job ----------------
+
+_SC_SEM = 6            # provider concurrency — the FMP plan's ceiling
+
+
+def _stage_guard(key: str) -> bool:
+    """Reentry guard per stage — stages may run in parallel but a
+    stage never overlaps itself."""
+    if _state.get(key):
+        return False
+    _state[key] = True
+    return True
+
+
+async def eval_members() -> dict[str, Any]:
+    """Stage 1 — deep-eval every member in parallel: gates, hidden
+    engine, tier transitions, daily snapshot row. This was the
+    sequential loop that blew the 15m job timeout."""
+    from app.alerts import scanner as alert_scanner
     from app.database import db
     from app.providers.financial_modeling_prep.client import (
         EnhancedFMPClient)
-
-    if _state["running"]:
+    if not _stage_guard("running_eval"):
         return {"status": "already_running"}
-    _state.update(running=True, error=None)
     try:
         fmp = EnhancedFMPClient.from_settings()
         members = db.execute_query(
@@ -339,217 +483,168 @@ async def run_smallcap(discover: bool = False) -> dict[str, Any]:
             "ORDER BY symbol")
         scope = alert_scanner.universe()
         today = date.today()
-        alerts: list[AlertItem] = []
-        evaluated = 0
+        alerts: list = []
+        sem = asyncio.Semaphore(_SC_SEM)
 
-        def _alert(sym, direction, title, detail_extra):
-            flags = scope.get(sym) or {}
-            alerts.append(AlertItem(
-                symbol=sym, event_type="sc_transition",
-                direction=direction, materiality="HIGH",
-                title=title,
-                detail={"bucket": "actionable", "kind": "analyst",
-                        **detail_extra},
-                fingerprint=("sctr:" + hashlib.sha1(
-                    f"{sym}|{today}|{direction}|{title[:40]}".encode()
-                ).hexdigest()[:16]),
-                source="smallcap_scout",
-                source_timestamp=datetime.now(timezone.utc),
-                in_portfolio=bool(flags.get("in_portfolio")),
-                in_watchlist=bool(flags.get("in_watchlist")),
-                priority_score=None))
+        async def _one(mem):
+            async with sem:
+                try:
+                    return await asyncio.wait_for(
+                        _eval_member(fmp, mem, scope, today, alerts),
+                        timeout=120)
+                except Exception:
+                    return False
 
-        member_syms = set()
-        for mem in members:
-            sym = mem["symbol"]
-            member_syms.add(sym)
-            cl = mem.get("checklist") or {}
-            m = await _eval_symbol(fmp, sym, deep=True)
+        done = await asyncio.gather(*(_one(m) for m in members))
+        _persist_alerts(alerts)
+        _state.update(last_run_at=datetime.now(timezone.utc)
+                      .isoformat(),
+                      evaluated=sum(1 for d in done if d))
+        return {"status": "completed",
+                "evaluated": int(sum(1 for d in done if d)),
+                "alerts": len(alerts)}
+    except Exception as exc:
+        logger.error("sc eval_members failed: %s", exc, exc_info=True)
+        _state["error"] = str(exc)
+        return {"status": "error", "error": str(exc)}
+    finally:
+        _state["running_eval"] = False
+
+
+async def discovery_sweep() -> dict[str, Any]:
+    """Stage 2 — the $1-30B pool cursor sweep: light gates → deep eval
+    qualifiers → auto-add. Already parallel; separate so the members
+    pass never shares its timeout."""
+    from app.alerts import scanner as alert_scanner
+    from app.database import db
+    from app.providers.financial_modeling_prep.client import (
+        EnhancedFMPClient)
+    if not _stage_guard("running_discovery"):
+        return {"status": "already_running"}
+    try:
+        fmp = EnhancedFMPClient.from_settings()
+        member_syms = {r["symbol"] for r in db.execute_query(
+            "SELECT symbol FROM smallcap_members")}
+        scope = alert_scanner.universe()
+        today = date.today()
+        alerts: list = []
+        _alert = _mk_alert(scope, today, alerts)
+        pool = [s for s in _pool() if s not in member_syms]
+        cur = int(_kv_get("cursor") or 0)
+        sl = pool[cur:cur + DISCOVERY_SLICE]
+        _kv_set("cursor",
+                str(cur + len(sl) if sl and cur + len(sl) < len(pool)
+                    else 0))
+        sem = asyncio.Semaphore(_SC_SEM)
+
+        async def _one(sym):
+            async with sem:
+                try:
+                    return sym, await asyncio.wait_for(
+                        _eval_symbol(fmp, sym), timeout=45)
+                except Exception:
+                    return sym, None
+
+        results = await asyncio.gather(*(_one(s) for s in sl))
+        shortlist = [s for s, m in results
+                     if m and _light_gates(m) >= 3]
+
+        async def _deep(sym):
+            async with sem:
+                try:
+                    return sym, await asyncio.wait_for(
+                        _eval_symbol(fmp, sym, deep=True),
+                        timeout=60)
+                except Exception:
+                    return sym, None
+
+        deep_results = await asyncio.gather(
+            *(_deep(s) for s in shortlist))
+        discovered = 0
+        for sym, m in deep_results:
             if not m:
                 continue
             gates = _gates(m)
             gates_met = sum(gates.values())
-            hidden = _hidden_engine(m.get("segments"))
-            cl_met = sum(1 for k in ("tam", "moat", "ai_exposure",
-                                     "vectors", "optionality", "proven")
-                         if cl.get(k))
-            score = _score(m, cl, hidden)
-            runner = (gates_met == len(gates)
-                      and (bool(hidden) or cl.get("proven")))
-            suggested = ("runner" if runner
-                         else "inflecting" if gates_met >= 4
-                         else "watch")
-            tier = mem["tier"]
-            if tier == "watch" and suggested in ("inflecting", "runner"):
-                upsert_member(sym, suggested, {})
-                _alert(sym, "POSITIVE",
-                       f"{sym} promoted to {suggested.upper()} — "
-                       f"{gates_met}/5 gates, score {score}",
-                       {"from": tier, "to": suggested, "gates": gates})
-            elif tier != "runner" and runner:
-                upsert_member(sym, "runner", {})
-                _alert(sym, "POSITIVE",
-                       f"{sym} auto-promoted to RUNNER — 5x signature "
-                       f"complete ({gates_met}/5 gates, score {score}"
-                       + (f", hidden engine: "
-                          + ", ".join(f"{n} {s['yoy'] * 100:+.0f}%"
-                                      for n, s in hidden.items())
-                          if hidden else ", agent-proven thesis") + ")",
-                       {"from": tier, "to": "runner",
-                        "auto_promoted": True, "gates": gates,
-                        "hidden_engine": hidden})
-            elif (tier in ("inflecting", "runner")
-                  and m.get("rev_growth") is not None
-                  and m["rev_growth"] < 0.10):
-                _alert(sym, "NEGATIVE",
-                       f"{sym} 5x thesis check — rev growth "
-                       f"{m['rev_growth'] * 100:+.0f}% (<10%)",
-                       {"kind": "thesis_check",
-                        "rev_growth": m["rev_growth"]})
-            elif tier in ("inflecting", "runner") and not runner \
-                    and gates_met < 4 and cl.get("auto") \
-                    and suggested == "watch":
-                # auto-added name decayed below the bar — drop it
-                remove_member(sym)
-                _alert(sym, "NEGATIVE",
-                       f"{sym} dropped from 5x Scout — gates collapsed "
-                       f"to {gates_met}/5", {"dropped": True})
-                member_syms.discard(sym)
-                evaluated += 1
+            if gates_met < 3:
                 continue
+            hidden = _hidden_engine(m.get("segments"))
+            score = _score(m, {}, hidden)
+            tier = ("inflecting" if gates_met >= 4 else "watch")
+            upsert_member(sym, tier, {"auto": True})
+            discovered += 1
+            _alert(sym, "POSITIVE",
+                   f"{sym} discovered by 5x Scout — {gates_met}/5 "
+                   f"gates, score {score}, rev "
+                   f"{(m['rev_growth'] or 0) * 100:+.0f}%, mcap "
+                   f"${(m['market_cap'] or 0) / 1e9:.1f}B"
+                   + (f", engine: {next(iter(hidden))}"
+                      if hidden else ""),
+                   {"discovered": True, "tier": tier,
+                    "gates": gates, "score": score})
+        _persist_alerts(alerts)
+        _state.update(last_discovery_at=datetime.now(timezone.utc)
+                      .isoformat())
+        return {"status": "completed", "scanned": len(sl),
+                "shortlisted": len(shortlist),
+                "discovered": discovered, "alerts": len(alerts)}
+    except Exception as exc:
+        logger.error("sc discovery failed: %s", exc, exc_info=True)
+        _state["error"] = str(exc)
+        return {"status": "error", "error": str(exc)}
+    finally:
+        _state["running_discovery"] = False
 
-            db.execute_update(
-                """INSERT INTO smallcap_snapshots
-                   (symbol, as_of, rev_growth, eps_growth, rev_streak,
-                    gross_margin, gross_margin_prev, op_margin,
-                    fcf_margin, cash, total_debt, net_cash, dd52w,
-                    vs_sma200, market_cap, price, segments,
-                    hidden_engine, gates_met, gates_detail, sc_score,
-                    grade)
-                   VALUES (:s,:d,:rg,:eg,:rs,:gm,:gmp,:om,:fcf,:c,:td,:nc,
-                           :dd,:vs,:mc,:px,CAST(:sg AS jsonb),
-                           CAST(:he AS jsonb),:g,CAST(:gd AS jsonb),
-                           :sc,:gr)
-                   ON CONFLICT (symbol, as_of) DO UPDATE SET
-                    rev_growth=EXCLUDED.rev_growth,
-                    eps_growth=EXCLUDED.eps_growth,
-                    rev_streak=EXCLUDED.rev_streak,
-                    gross_margin=EXCLUDED.gross_margin,
-                    gross_margin_prev=EXCLUDED.gross_margin_prev,
-                    op_margin=EXCLUDED.op_margin,
-                    fcf_margin=EXCLUDED.fcf_margin,
-                    cash=EXCLUDED.cash, total_debt=EXCLUDED.total_debt,
-                    net_cash=EXCLUDED.net_cash, dd52w=EXCLUDED.dd52w,
-                    vs_sma200=EXCLUDED.vs_sma200,
-                    market_cap=EXCLUDED.market_cap, price=EXCLUDED.price,
-                    segments=EXCLUDED.segments,
-                    hidden_engine=EXCLUDED.hidden_engine,
-                    gates_met=EXCLUDED.gates_met,
-                    gates_detail=EXCLUDED.gates_detail,
-                    sc_score=EXCLUDED.sc_score, grade=EXCLUDED.grade""",
-                {"s": sym, "d": today, "rg": m["rev_growth"],
-                 "eg": m["eps_growth"], "rs": m["rev_streak"],
-                 "gm": m["gross_margin"], "gmp": m["gross_margin_prev"],
-                 "om": m["op_margin"], "fcf": m.get("fcf_margin"),
-                 "c": m.get("cash"), "td": m.get("total_debt"),
-                 "nc": gates["net cash"], "dd": m.get("dd52w"),
-                 "vs": m.get("vs_sma200"), "mc": m["market_cap"],
-                 "px": m["price"], "sg": json.dumps(m.get("segments") or {}),
-                 "he": json.dumps(hidden), "g": gates_met,
-                 "gd": json.dumps(gates), "sc": score,
-                 "gr": _letter(score)})
-            evaluated += 1
 
-        # --- discovery sweep: a slice of the $1-30B pool per run -----
-        discovered = 0
-        if discover:
-            pool = [s for s in _pool() if s not in member_syms]
-            cur = int(_kv_get("cursor") or 0)
-            sl = pool[cur:cur + DISCOVERY_SLICE]
-            _kv_set("cursor",
-                    str(cur + len(sl) if sl and cur + len(sl) < len(pool)
-                        else 0))
-            sem = asyncio.Semaphore(6)
-
-            async def _one(sym):
-                async with sem:
-                    try:
-                        return sym, await asyncio.wait_for(
-                            _eval_symbol(fmp, sym), timeout=45)
-                    except Exception:
-                        return sym, None
-
-            results = await asyncio.gather(*(_one(s) for s in sl))
-            shortlist = [s for s, m in results
-                         if m and _light_gates(m) >= 3]
-
-            async def _deep(sym):
-                async with sem:
-                    try:
-                        return sym, await asyncio.wait_for(
-                            _eval_symbol(fmp, sym, deep=True),
-                            timeout=60)
-                    except Exception:
-                        return sym, None
-
-            deep_results = await asyncio.gather(
-                *(_deep(s) for s in shortlist))
-            for sym, m in deep_results:
-                if not m:
-                    continue
-                gates = _gates(m)
-                gates_met = sum(gates.values())
-                if gates_met < 3:
-                    continue
-                hidden = _hidden_engine(m.get("segments"))
-                score = _score(m, {}, hidden)
-                tier = ("inflecting" if gates_met >= 4 else "watch")
-                upsert_member(sym, tier, {"auto": True})
-                discovered += 1
-                _alert(sym, "POSITIVE",
-                       f"{sym} discovered by 5x Scout — {gates_met}/5 "
-                       f"gates, score {score}, rev "
-                       f"{(m['rev_growth'] or 0) * 100:+.0f}%, mcap "
-                       f"${(m['market_cap'] or 0) / 1e9:.1f}B"
-                       + (f", engine: {next(iter(hidden))}"
-                          if hidden else ""),
-                       {"discovered": True, "tier": tier,
-                        "gates": gates, "score": score})
-            evaluated += len(sl)
-
-        try:
-            inserted, skipped = alert_scanner.persist(alerts)
-            logger.info("sc alerts: %s inserted, %s skipped",
-                        inserted, skipped)
-        except Exception as exc:
-            logger.debug("sc alert persist failed: %s", exc)
-
-        # auto-research: agent-scores checklists for members it hasn't
-        # covered — bounded to 2/run (LLM cost + latency)
-        try:
+async def tail_refresh() -> dict[str, Any]:
+    """Stage 3 — the tail: bounded LLM research, expectation-gap
+    refresh for members, canonical momentum flags."""
+    from app.database import db
+    if not _stage_guard("running_tail"):
+        return {"status": "already_running"}
+    out: dict[str, Any] = {}
+    try:
+        member_syms = {r["symbol"] for r in db.execute_query(
+            "SELECT symbol FROM smallcap_members")}
+        try:                        # agent-scores checklists — 2/run
             from app.screener.ai_research import research_missing
             await research_missing(limit=2, engine="smallcap")
+            out["research"] = True
         except Exception as exc:
             logger.debug("sc research_missing failed: %s", exc)
-        # refresh the expectation-gap layer for all members
         try:
             from app.signals.expectation_gap import refresh_flywheel
             await refresh_flywheel(sorted(member_syms))
+            out["flywheel"] = len(member_syms)
         except Exception as exc:
             logger.debug("sc flywheel refresh failed: %s", exc)
-        # canonical momentum flags for all tracked names — one batched
-        # price pull, writes stocks.momentum_state for every surface
         try:
             from app.signals.momentum_regime import (
                 refresh_momentum_all)
             await asyncio.to_thread(refresh_momentum_all)
+            out["momentum"] = True
         except Exception as exc:
             logger.debug("sc momentum refresh failed: %s", exc)
-        _state.update(last_run_at=datetime.now(timezone.utc).isoformat(),
-                      evaluated=evaluated)
-        return {"status": "completed", "evaluated": evaluated,
-                "discovered": discovered if discover else 0,
-                "alerts": len(alerts)}
+        return {"status": "completed", **out}
+    finally:
+        _state["running_tail"] = False
+
+
+async def run_smallcap(discover: bool = False) -> dict[str, Any]:
+    """Full pass — composes the stages for manual/'all' runs. The
+    scheduler runs the stages as separate jobs so no single run
+    shares a timeout budget."""
+    if _state["running"]:
+        return {"status": "already_running"}
+    _state.update(running=True, error=None)
+    try:
+        ev = await eval_members()
+        disc = await discovery_sweep() if discover else None
+        tail = await tail_refresh()
+        return {"status": "completed",
+                "evaluated": ev.get("evaluated"),
+                "discovered": (disc or {}).get("discovered", 0),
+                "tail": tail}
     except Exception as exc:
         logger.error("smallcap run failed: %s", exc, exc_info=True)
         _state["error"] = str(exc)

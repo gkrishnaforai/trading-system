@@ -404,14 +404,14 @@ def _lint_job_targets() -> list[dict]:
                 if isinstance(node, ast.ImportFrom) and \
                         (node.module or "").startswith("app."):
                     for a in node.names:
-                        out.setdefault(a.asname or a.name,
-                                       (node.module, a.name))
+                        # plain assign: a function-local import shadows
+                        # the module-level binding (service → alerts)
+                        out[a.asname or a.name] = (node.module, a.name)
                 elif isinstance(node, ast.Import):
                     for a in node.names:
                         if a.name.startswith("app."):
-                            out.setdefault(
-                                a.asname or a.name.split(".")[-1],
-                                (a.name, None))
+                            out[a.asname or a.name.split(".")[-1]] = \
+                                (a.name, None)
         return out
 
     def defines(module: str, attr: str) -> bool:
@@ -432,12 +432,19 @@ def _lint_job_targets() -> list[dict]:
                 or not fn.name.startswith("_j_"):
             continue
         mods = imports_of(fn)
+        # call targets the job actually invokes — both
+        # asyncio.to_thread(fn) and bare `await fn()` expressions;
+        # an unresolved name in either dies at job time
+        targets = []
         for node in ast.walk(fn):
-            if not (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "to_thread" and node.args):
-                continue
-            tgt = node.args[0]
+            if isinstance(node, ast.Call) \
+                    and isinstance(node.func, ast.Attribute) \
+                    and node.func.attr == "to_thread" and node.args:
+                targets.append(node.args[0])
+            elif isinstance(node, ast.Await) \
+                    and isinstance(node.value, ast.Call):
+                targets.append(node.value.func)
+        for tgt in targets:
             if isinstance(tgt, ast.Attribute) and \
                     isinstance(tgt.value, ast.Name):
                 entry = mods.get(tgt.value.id)
@@ -471,7 +478,46 @@ def _lint_job_targets() -> list[dict]:
                     bad.append(f"{fn.name}: {entry[0]}."
                                f"{entry[1]} missing")
     return [{"id": "lint.job_targets", "ok": not bad,
-             "detail": bad or "all to_thread targets resolve"}]
+             "detail": bad or "all call targets resolve"}]
+
+
+def _lint_job_registry() -> list[dict]:
+    """Every name the dispatcher can fire must exist in JOBS — a
+    seeded job_definitions row or _ALL_ORDER entry with no handler
+    dies as KeyError on its first tick (same drift class as a
+    missing module function)."""
+    import re
+    src = (_APP / "api" / "board_api.py").read_text()
+    tree = ast.parse(src)
+    jobs, order = set(), set()
+    for node in tree.body:
+        tgt = node.target if isinstance(node, ast.AnnAssign) else None
+        if isinstance(node, ast.Assign):
+            tgt = node.targets[0]
+        if not isinstance(tgt, ast.Name):
+            continue
+        if tgt.id == "JOBS" and isinstance(node.value, ast.Dict):
+            jobs = {k.value for k in node.value.keys
+                    if isinstance(k, ast.Constant)}
+        elif tgt.id == "_ALL_ORDER" and \
+                isinstance(node.value, ast.List):
+            order = {e.value for e in node.value.elts
+                     if isinstance(e, ast.Constant)}
+    bad = [f"_ALL_ORDER:{n}" for n in sorted(order - jobs)]
+    # migration-seeded schedules — first string of each VALUES tuple
+    mig = _APP.parent.parent / "supabase" / "migrations"
+    if mig.is_dir():
+        for sql in mig.glob("*.sql"):
+            text = sql.read_text()
+            for ins in re.finditer(
+                    r"INSERT\s+INTO\s+job_definitions\b(.*?);",
+                    text, re.S | re.I):
+                for name in re.findall(
+                        r"\(\s*'([a-zA-Z0-9_-]+)'", ins.group(1)):
+                    if name not in jobs and name != "all":
+                        bad.append(f"{sql.name}:{name}")
+    return [{"id": "lint.job_registry", "ok": not bad,
+             "detail": bad or "every scheduled name resolves"}]
 
 
 def _lint_row_schemas() -> list[dict]:
@@ -1035,7 +1081,7 @@ def run_fix(max_attempts: int = 6, dry: bool = False) -> dict:
 def run(with_judge: bool = False) -> dict:
     checks = (_lint_when_fields() + _lint_rank_components()
               + _lint_internal_imports() + _lint_row_schemas()
-              + _lint_job_targets()
+              + _lint_job_targets() + _lint_job_registry()
               + _scenarios() + _invariants())
     failed = [c for c in checks if not c["ok"]]
     for c in failed:
