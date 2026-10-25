@@ -222,11 +222,15 @@ def learn() -> dict[str, Any]:
             " n=:n, win_rate=:w, updated_at=now()",
             {"k": key, "v": json.dumps({"value": value}), "n": n,
              "w": win})
-        db.execute_update(
-            "INSERT INTO engine_weights_log (key,value,n,win_rate)"
-            " VALUES (:k,CAST(:v AS jsonb),:n,:w)",
-            {"k": key, "v": json.dumps({"value": value}), "n": n,
-             "w": win})
+        try:   # history must never kill the weight write — the log
+               # table can lag a migration on some envs
+            db.execute_update(
+                "INSERT INTO engine_weights_log (key,value,n,win_rate)"
+                " VALUES (:k,CAST(:v AS jsonb),:n,:w)",
+                {"k": key, "v": json.dumps({"value": value}), "n": n,
+                 "w": win})
+        except Exception as exc:
+            logger.debug("weight log %s: %s", key, exc)
         written.append(key)
 
     # per-pattern gates — a pattern that loses money gets switched off
