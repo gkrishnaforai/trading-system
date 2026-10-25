@@ -384,6 +384,96 @@ def _lint_internal_imports() -> list[dict]:
              "detail": bad or "ok"}]
 
 
+def _lint_job_targets() -> list[dict]:
+    """Every _j_* job's asyncio.to_thread(target) must resolve — a
+    renamed/missing callable surfaces as 'module has no attribute'
+    at job time, silently dead on the scheduler (theme_rotation.run).
+    Static resolution: function-local `from app.x import y` binds the
+    name; to_thread(mod.fn) checks submodule file, to_thread(fn)
+    checks the module binds it. Lambdas and non-app targets skip."""
+    src = (_APP / "api" / "board_api.py").read_text()
+    tree = ast.parse(src)
+    bad = []
+
+    def imports_of(fn) -> dict:
+        """local name -> (module, imported_attr|None)."""
+        out = {}
+        scopes = [tree] + ([fn] if fn is not None else [])
+        for scope in scopes:
+            for node in ast.walk(scope):
+                if isinstance(node, ast.ImportFrom) and \
+                        (node.module or "").startswith("app."):
+                    for a in node.names:
+                        out.setdefault(a.asname or a.name,
+                                       (node.module, a.name))
+                elif isinstance(node, ast.Import):
+                    for a in node.names:
+                        if a.name.startswith("app."):
+                            out.setdefault(
+                                a.asname or a.name.split(".")[-1],
+                                (a.name, None))
+        return out
+
+    def defines(module: str, attr: str) -> bool:
+        f = _module_file(f"{module}.{attr}")          # submodule?
+        if f is not None:
+            return True
+        f = _module_file(module)
+        if f is None:
+            return True                              # unresolvable —
+        try:                                          # let imports lint
+            return attr in _top_level_names(
+                ast.parse(f.read_text()))
+        except SyntaxError:
+            return True
+
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                or not fn.name.startswith("_j_"):
+            continue
+        mods = imports_of(fn)
+        for node in ast.walk(fn):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "to_thread" and node.args):
+                continue
+            tgt = node.args[0]
+            if isinstance(tgt, ast.Attribute) and \
+                    isinstance(tgt.value, ast.Name):
+                entry = mods.get(tgt.value.id)
+                if entry is None:
+                    continue
+                mod, attr = entry
+                if attr is None:
+                    base = mod                     # import app.x as n
+                else:
+                    cand = f"{mod}.{attr}"         # from x import y
+                    if _module_file(cand) is not None:
+                        base = cand                # y is a submodule
+                    else:
+                        # y is a bound object/function — the binding
+                        # itself is lintable, its attributes aren't
+                        if not defines(mod, attr):
+                            bad.append(
+                                f"{fn.name}: {mod}.{attr} unresolved")
+                        continue
+                try:
+                    if tgt.attr not in _top_level_names(
+                            ast.parse(_module_file(base).read_text())):
+                        bad.append(f"{fn.name}: {base}.{tgt.attr} "
+                                   "missing")
+                except (SyntaxError, AttributeError):
+                    pass
+            elif isinstance(tgt, ast.Name):
+                entry = mods.get(tgt.id)
+                if entry and entry[1] is not None \
+                        and not defines(entry[0], entry[1]):
+                    bad.append(f"{fn.name}: {entry[0]}."
+                               f"{entry[1]} missing")
+    return [{"id": "lint.job_targets", "ok": not bad,
+             "detail": bad or "all to_thread targets resolve"}]
+
+
 def _lint_row_schemas() -> list[dict]:
     """Fields a downstream engine reads off a shared row must be
     produced upstream — atr_pct off the board row, rs_* off the
@@ -945,6 +1035,7 @@ def run_fix(max_attempts: int = 6, dry: bool = False) -> dict:
 def run(with_judge: bool = False) -> dict:
     checks = (_lint_when_fields() + _lint_rank_components()
               + _lint_internal_imports() + _lint_row_schemas()
+              + _lint_job_targets()
               + _scenarios() + _invariants())
     failed = [c for c in checks if not c["ok"]]
     for c in failed:

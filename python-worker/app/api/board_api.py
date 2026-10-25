@@ -431,7 +431,7 @@ async def _j_theme_rotation():
     """Score every active theme on member tape + evidence + fund growth;
     journals the board so rotations surface as week-over-week deltas."""
     from app.signals import theme_rotation
-    return await asyncio.to_thread(theme_rotation.run)
+    return await asyncio.to_thread(theme_rotation.current)
 
 
 async def _j_iv_coverage():
@@ -1144,7 +1144,7 @@ async def themes_rotation(refresh: bool = False):
     into, computed deterministically from member tape + evidence."""
     from app.signals import theme_rotation
     if refresh:
-        return await asyncio.to_thread(theme_rotation.run)
+        return await asyncio.to_thread(theme_rotation.current)
     return await asyncio.to_thread(theme_rotation.compute_board)
 
 
