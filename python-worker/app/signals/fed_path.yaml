@@ -1,0 +1,104 @@
+version: "1.0"
+
+# Fed path engine — deterministic rate-decision probabilities.
+# Score is not a probability: the market baseline (front-end yield
+# pricing) anchors the distribution; economic pressure only shifts
+# mass within bounded limits. Every journal row is graded later by
+# meta_learn — calibration comes from realized FOMC outcomes, never
+# from tuning the YAML to look right.
+
+engine:
+  name: fed_path
+  horizons: [next_fomc, next_1m, path_3_6m]
+  actions: [hike, hold, cut]
+  decision_step_bps: 25
+
+data_quality:
+  never_invent_missing_values: true
+  missing_policy_rate: degrade           # IRX level is the proxy
+  missing_modules: reduce_confidence
+  stale_series_days: 45                  # monthly prints are freshest leg
+
+# economic pressure composite, -100 (dovish) .. +100 (hawkish).
+# Module scores are 0-100 z-mapped: HIGH inflation.score = LOW
+# inflation (inverted in macro_engine) → dovish contribution.
+pressure:
+  weights:
+    labor_dovish_gap: 0.55       # (labor.score - 50): tight = hawkish
+    inflation_dovish: -0.60      # (inflation.score - 50): high score = disinflation
+    growth: 0.25                 # strong growth tolerates higher rates
+    oil_1m_pct: 0.8              # energy leg, +pct chg → hawkish
+  clamp: [-100, 100]
+
+# market baseline — ^IRX (13w bill) vs policy rate (DFF when present)
+# prices the next ~3 months of policy. Bands in bp.
+spread_baseline:
+  - max_bp: -35
+    probs: {hike: 2,  hold: 26, cut: 72}
+    read: "cut priced within ~1 meeting"
+  - max_bp: -15
+    probs: {hike: 3,  hold: 50, cut: 47}
+    read: "easing bias priced"
+  - max_bp: 10
+    probs: {hike: 6,  hold: 86, cut: 8}
+    read: "hold priced"
+  - max_bp: 30
+    probs: {hike: 40, hold: 57, cut: 3}
+    read: "tightening bias priced"
+  - max_bp: 9999
+    probs: {hike: 70, hold: 28, cut: 2}
+    read: "hike priced within ~1 meeting"
+
+# fallback when DFF is unavailable: IRX 3m delta (repricing momentum)
+# maps to the same baseline table — direction of travel, not level.
+delta_baseline:
+  - max_bp: -30
+    probs: {hike: 3,  hold: 40, cut: 57}
+    read: "repricing toward cuts"
+  - max_bp: -10
+    probs: {hike: 4,  hold: 58, cut: 38}
+    read: "mild easing repricing"
+  - max_bp: 15
+    probs: {hike: 7,  hold: 84, cut: 9}
+    read: "stable — hold priced"
+  - max_bp: 40
+    probs: {hike: 34, hold: 62, cut: 4}
+    read: "repricing toward hikes"
+  - max_bp: 9999
+    probs: {hike: 62, hold: 35, cut: 3}
+    read: "hike repricing underway"
+
+# how much the market baseline dominates as the meeting approaches —
+# inside a week, futures-linked pricing is nearly right; further out,
+# economic pressure earns more relative weight.
+proximity:
+  - max_days: 7
+    baseline_weight: 0.85
+  - max_days: 21
+    baseline_weight: 0.70
+  - max_days: 999
+    baseline_weight: 0.55
+
+# bounded pressure influence: shift this many probability points at
+# full |pressure|=100, hold → hike or hold → cut.
+pressure_shift_pp: 24
+
+# probability hygiene — a scheduled meeting is never certain; tail
+# outcomes (emergency cut, 50bp shock) live outside the buckets.
+prob_clamp: [2, 96]
+renormalize: true
+
+# 3-6m path: IRX spread IS the ~13w implied move; scale by horizon.
+path:
+  expected_bps_clamp: [-150, 150]
+  lean_bands:
+    - max_bps: -40
+      lean: easing_priced
+    - max_bps: -10
+      lean: easing_bias
+    - max_bps: 15
+      lean: hold
+    - max_bps: 45
+      lean: tightening_bias
+    - max_bps: 9999
+      lean: tightening_priced

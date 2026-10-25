@@ -460,6 +460,22 @@ def _run_scenario_engine(sc: dict) -> dict:
         return {"state": state, "fields": res,
                 "checks": [{"ok": False, "line": res.get("reason")}
                            ] if res.get("gated") else []}
+    if eng == "fed_path":
+        from app.signals import fed_path
+        res = fed_path.compute(sc.get("ctx") or {})
+        lean = (res.get("path_3_6m") or {}).get("lean")
+        nf = res.get("next_fomc") or {}
+        return {"state": (res.get("path_1m") or {}).get("lean"),
+                "fields": {**nf, "lean_3_6m": lean,
+                           "expected_bps_3_6m":
+                               (res.get("path_3_6m") or {})
+                                   .get("expected_bps"),
+                           "confidence": (res.get("data_quality") or {})
+                               .get("confidence"),
+                           "p_sum": sum(nf.get(k) or 0
+                                        for k in ("p_hike", "p_hold",
+                                                  "p_cut"))},
+                "checks": []}
     raise ValueError(f"unknown engine '{eng}'")
 
 

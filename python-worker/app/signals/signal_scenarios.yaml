@@ -358,3 +358,95 @@
   expect:
     state_in: [gated]
     field_eq: {gate: "posture_closed"}
+
+# ------------------------------------------------------------------
+# fed_path — rate-decision probabilities. Market baseline anchors,
+# econ pressure only shifts bounded mass; probs always sum to 100
+# and never hit certainty.
+# ------------------------------------------------------------------
+
+- id: fed_cut_priced
+  note: >-
+    IRX 40bp under the policy rate = the market is pricing a cut
+    inside ~1 meeting. The distribution must lean cut.
+  engine: fed_path
+  ctx:
+    policy_rate: 4.50
+    policy_rate_source: dff
+    irx: 4.10
+    fomc_date: "2026-10-28"
+    fomc_days: 5
+    modules: {labor: {score: 55}, inflation: {score: 55}}
+  expect:
+    state_in: [cut]
+    field_eq: {lean_3_6m: "easing_priced", p_sum: 100}
+
+- id: fed_hold_flat
+  note: >-
+    IRX ≈ policy rate and neutral modules → hold dominates.
+  engine: fed_path
+  ctx:
+    policy_rate: 4.50
+    policy_rate_source: dff
+    irx: 4.48
+    fomc_days: 12
+    modules: {labor: {score: 50}, inflation: {score: 50},
+              growth: {score: 50}}
+  expect:
+    state_in: [hold]
+    field_eq: {p_sum: 100}
+
+- id: fed_hawkish_pressure_bounded
+  note: >-
+    Hot inflation (score 10 = very hot under the inverted module)
+    + tight labor shifts hold→hike mass — but bounded: pressure can
+    never drive the distribution alone when the market prices hold.
+  engine: fed_path
+  ctx:
+    policy_rate: 4.50
+    policy_rate_source: dff
+    irx: 4.48
+    fomc_days: 10
+    oil_1m_pct: 12
+    modules: {labor: {score: 90}, inflation: {score: 10},
+              growth: {score: 70}}
+  expect:
+    state_in: [hold, hike]
+    field_eq: {p_sum: 100}
+
+- id: fed_missing_fred_degrades
+  note: >-
+    No FRED modules, no DFF — IRX delta mode still produces a
+    distribution but confidence must drop (missing ≠ invented).
+  engine: fed_path
+  ctx:
+    irx: 4.45
+    irx_3m_bp: -42
+    fomc_days: 9
+  expect:
+    state_in: [cut]
+    field_eq: {confidence: "very_low", p_sum: 100}
+
+- id: fed_no_market_data_flat
+  note: >-
+    Nothing priced at all → honest flat baseline, never a fake lean.
+  engine: fed_path
+  ctx: {}
+  expect:
+    field_eq: {p_sum: 100, confidence: "very_low"}
+
+- id: fed_proxy_rate_no_fake_spread
+  note: >-
+    When the policy rate is the IRX proxy (no DFF), spread is
+    identically 0 — the 3-6m path must use the IRX delta, not a
+    fabricated 'flat' read. -40bp repricing → easing_priced.
+  engine: fed_path
+  ctx:
+    policy_rate: 4.35
+    policy_rate_source: irx_proxy
+    irx: 4.35
+    irx_3m_bp: -40
+    fomc_days: 5
+  expect:
+    field_eq: {lean_3_6m: "easing_priced",
+               expected_bps_3_6m: -40, p_sum: 100}

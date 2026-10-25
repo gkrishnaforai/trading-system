@@ -305,6 +305,18 @@ async def _j_fred_macro():
     return await asyncio.to_thread(_run)
 
 
+async def _j_fed_path():
+    """Fed path — hike/hold/cut odds for the next FOMC + 3-6m lean.
+    Market baseline (^IRX pricing) + bounded econ-pressure shift,
+    journaled to fed_predictions for meta grading. Market-only when
+    FRED is missing — confidence drops, never invents."""
+    from app.signals import fed_path
+    res = await asyncio.to_thread(fed_path.run)
+    return {"p_hold": res["next_fomc"]["p_hold"],
+            "lean_3_6m": res["path_3_6m"]["lean"],
+            "confidence": res["data_quality"]["confidence"]}
+
+
 async def _j_econ_cal_verify():
     """Macro calendar verification — Finnhub econ calendar reconciled
     against the hardcoded BLS/Fed dates. Catches reschedules (shutdowns,
@@ -760,6 +772,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "event-day":     ("Macro event judge", _j_event_day),
     "morning-regime": ("Morning regime engine", _j_morning_regime),
     "fred-macro":   ("FRED structural layer", _j_fred_macro),
+    "fed-path":     ("Fed path — rate probabilities", _j_fed_path),
     "econ-cal-verify": ("Macro calendar verification",
                         _j_econ_cal_verify),
     "econ-cal-poll":  ("Due-print watcher (hourly)",
@@ -811,8 +824,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
 
 # order matters for 'all': posture first, then signals, then evals
 # (evals already tail-refresh momentum+flywheel — harmless overlap)
-_ALL_ORDER = ["regime", "tier-sync", "momentum", "morning-regime",
-              "fred-macro",
+_ALL_ORDER = ["regime", "tier-sync", "momentum",
+              "fred-macro", "fed-path", "morning-regime",
               "econ-cal-verify",
               "etf-flows",
               "strategy", "event-day",

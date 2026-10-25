@@ -90,6 +90,25 @@ def read() -> dict[str, Any]:
                 "age_days": _age(row["as_of_date"]),
             }
 
+        try:                                # Fed path — rate odds
+            from app.signals import fed_path
+            fed = fed_path.read()
+            if fed:
+                out["fed"] = {
+                    "as_of": fed.get("as_of"),
+                    "age_days": fed.get("age_days"),
+                    "policy_rate": fed.get("policy_rate"),
+                    "next_fomc": fed.get("next_fomc"),
+                    "path_1m": fed.get("path_1m"),
+                    "path_3_6m": fed.get("path_3_6m"),
+                    "components": fed.get("components"),
+                    "conclusion": fed.get("conclusion"),
+                    "drivers": fed.get("drivers"),
+                    "data_quality": fed.get("data_quality"),
+                }
+        except Exception:
+            pass
+
         ts = db.execute_query(
             "SELECT symbol, doc_period, role, demand_score, "
             "capex_dir, orders_language, confidence "

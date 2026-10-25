@@ -68,6 +68,22 @@ export default async function RegimePage() {
     structural && typeof structural.capex === 'object' && structural.capex !== null
       ? (structural.capex as Record<string, unknown>)
       : null
+  const fed =
+    structural && typeof structural.fed === 'object' && structural.fed !== null
+      ? (structural.fed as Record<string, unknown>)
+      : null
+  const fedFomc =
+    fed && typeof fed.next_fomc === 'object' && fed.next_fomc !== null
+      ? (fed.next_fomc as Record<string, unknown>)
+      : null
+  const fed36 =
+    fed && typeof fed.path_3_6m === 'object' && fed.path_3_6m !== null
+      ? (fed.path_3_6m as Record<string, unknown>)
+      : null
+  const fedDq =
+    fed && typeof fed.data_quality === 'object' && fed.data_quality !== null
+      ? (fed.data_quality as Record<string, unknown>)
+      : null
 
   const todayExtras = today
     ? Object.entries(today).filter(
@@ -360,6 +376,98 @@ export default async function RegimePage() {
             <p className="pt-3 text-xs leading-relaxed text-muted">
               {String(capex.guidance)}
             </p>
+          )}
+        </section>
+      )}
+
+      {/* Fed path — hike/hold/cut odds for the next FOMC + the 3-6m
+          rate lean. Deterministic: market baseline (IRX pricing) +
+          bounded econ-pressure shift. Journal-graded like everything
+          else — confidence is earned, never declared. */}
+      {fed && fedFomc && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="flex items-baseline justify-between">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              Fed path
+            </div>
+            <span className="font-mono text-[11px] text-faint">
+              {fedDq?.confidence ? `${String(fedDq.confidence)} conf` : ''}
+              {fed.age_days != null && ` · ${String(fed.age_days)}d old`}
+            </span>
+          </div>
+
+          {/* today's conclusion — one deterministic paragraph */}
+          {fed.conclusion != null && (
+            <p className="pt-3 text-sm leading-relaxed text-ink">
+              {String(fed.conclusion)}
+            </p>
+          )}
+
+          {/* probability bar — hike / hold / cut */}
+          <div className="pt-4">
+            <div className="flex justify-between text-[11px] text-faint pb-1.5">
+              <span>
+                next FOMC{fedFomc.date ? ` · ${String(fedFomc.date)}` : ''}
+                {fedFomc.days_away != null && ` (${String(fedFomc.days_away)}d)`}
+              </span>
+              <span>
+                {fedFomc.expected_bps != null &&
+                  `${Number(fedFomc.expected_bps) > 0 ? '+' : ''}${String(fedFomc.expected_bps)}bp expected`}
+              </span>
+            </div>
+            <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-hairline/60">
+              {Number(fedFomc.p_hike) > 0 && (
+                <div className="bg-defensive" style={{ width: `${Number(fedFomc.p_hike)}%` }} />
+              )}
+              {Number(fedFomc.p_hold) > 0 && (
+                <div className="bg-neutral" style={{ width: `${Number(fedFomc.p_hold)}%` }} />
+              )}
+              {Number(fedFomc.p_cut) > 0 && (
+                <div className="bg-aggressive" style={{ width: `${Number(fedFomc.p_cut)}%` }} />
+              )}
+            </div>
+            <div className="pt-1.5 flex gap-4 font-mono text-[11px]">
+              <span className="text-defensive">hike {String(fedFomc.p_hike ?? 0)}%</span>
+              <span className="text-neutral">hold {String(fedFomc.p_hold ?? 0)}%</span>
+              <span className="text-aggressive">cut {String(fedFomc.p_cut ?? 0)}%</span>
+            </div>
+          </div>
+
+          <div className="pt-4 grid grid-cols-2 sm:grid-cols-4 gap-6">
+            <Stat
+              label="Policy rate"
+              value={fed.policy_rate != null ? `${Number(fed.policy_rate).toFixed(2)}%` : '—'}
+            />
+            <Stat
+              label="This month"
+              value={
+                fed.path_1m && typeof fed.path_1m === 'object'
+                  ? String((fed.path_1m as Record<string, unknown>).lean ?? '—')
+                  : '—'
+              }
+            />
+            <Stat
+              label="3-6m lean"
+              value={fed36?.lean ? String(fed36.lean).replace(/_/g, ' ') : '—'}
+            />
+            <Stat
+              label="3-6m implied"
+              value={
+                fed36?.expected_bps != null
+                  ? `${Number(fed36.expected_bps) > 0 ? '+' : ''}${String(fed36.expected_bps)}bp`
+                  : '—'
+              }
+            />
+          </div>
+
+          {Array.isArray(fed.drivers) && fed.drivers.length > 0 && (
+            <div className="pt-3 space-y-0.5">
+              {(fed.drivers as unknown[]).slice(0, 5).map((d, i) => (
+                <p key={i} className="text-[11px] leading-relaxed text-muted">
+                  · {String(d)}
+                </p>
+              ))}
+            </div>
           )}
         </section>
       )}
