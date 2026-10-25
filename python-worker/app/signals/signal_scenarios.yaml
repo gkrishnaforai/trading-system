@@ -1,0 +1,187 @@
+# Signal contract scenarios — behavioral regression table.
+#
+# Each scenario runs the REAL eval_use_case (the function the
+# readiness board calls) against a synthetic row and asserts the
+# verdict. Row keys are exactly what _normalize reads; momentum_detail
+# folds in as the jsonb detail blob.
+#
+# These pin the gate semantics discovered in the board/plan audit —
+# if a future 'fix' reopens a hole (a knife reading ready, a missing
+# field passing a check), the eval suite fails loudly instead of the
+# bad call shipping to the board.
+#
+# expect:
+#   state_in / state_not_in — readiness verdict membership
+#   must_pass / must_fail   — checklist line fragments that must
+#                             carry ok=true / ok=false
+
+- id: knife_hook_is_not_ready
+  note: >-
+    The MSTR bug — a knife printing an early dip hook read swing
+    'ready' when the dip arm didn't require non-broken tape. A
+    broken trend with a hook is a false bottom, not an entry.
+  use_case: swing
+  row:
+    mom_state: knife
+    vs_sma50: 0.08
+    rsi: 42
+    earn_days: 30
+  momentum_detail:
+    dip_phase: turning_up
+    hist_dir: 0.2
+    pct_b: 0.4
+    swing: {phase: broken, confirm_level: 95.0}
+  expect:
+    state_not_in: [ready]
+    must_fail: ["constructive tape"]
+
+- id: capitulation_hook_is_not_ready
+  note: >-
+    Same hole, different broken state — capitulation + turning_up
+    must not qualify through the dip arm either.
+  use_case: swing
+  row:
+    mom_state: capitulation
+    vs_sma50: 0.05
+    rsi: 38
+    earn_days: 20
+  momentum_detail:
+    dip_phase: turning_up
+    hist_dir: 0.3
+    pct_b: 0.3
+    swing: {phase: broken, confirm_level: 80.0}
+  expect:
+    state_not_in: [ready]
+    must_fail: ["constructive tape"]
+
+- id: downtrend_stabilizing_is_not_ready
+  note: >-
+    Downtrend is tape_broken too — 'stabilizing' inside a downtrend
+    is a pause, not a setup.
+  use_case: swing
+  row:
+    mom_state: downtrend
+    vs_sma50: -0.03
+    rsi: 44
+    earn_days: 40
+  momentum_detail:
+    dip_phase: stabilizing
+    hist_dir: -0.1
+    pct_b: 0.35
+    swing: {phase: broken, confirm_level: 70.0}
+  expect:
+    state_not_in: [ready]
+    must_fail: ["constructive tape"]
+
+- id: rolling_over_resolving_can_be_ready
+  note: >-
+    Design intent — SOFT tape (rolling_over is tape_weak but not
+    tape_broken) may qualify early when the dip is resolving. If
+    this starts failing, the dip arm was over-tightened.
+  use_case: swing
+  row:
+    mom_state: rolling_over
+    vs_sma50: 0.04
+    rsi: 50
+    earn_days: 30
+  momentum_detail:
+    dip_phase: turning_up
+    hist_dir: 0.1
+    pct_b: 0.5
+    swing: {phase: higher_low, confirm_level: 92.0}
+  expect:
+    state_in: [ready]
+    must_pass: ["constructive tape"]
+
+- id: pullback_resolving_is_ready
+  note: >-
+    The canonical dip-buy: constructive state + resolving wash +
+    trend intact + structure mapped.
+  use_case: swing
+  row:
+    mom_state: pullback
+    vs_sma50: 0.06
+    rsi: 52
+    earn_days: 25
+  momentum_detail:
+    dip_phase: turning_up
+    hist_dir: 0.15
+    pct_b: 0.55
+    swing: {phase: higher_low, confirm_level: 88.0}
+  expect:
+    state_in: [ready]
+
+- id: missing_dip_phase_fails_check
+  note: >-
+    Missing-data contract — rolling_over isn't in
+    swing_constructive, so it can only qualify via the dip arm;
+    with no dip_phase that arm can't verify → check fails. 'Can't
+    verify' is never 'clean'. (A pullback without dip_phase still
+    passes via the tape arm — that's the OR design, not a hole.)
+  use_case: swing
+  row:
+    mom_state: rolling_over
+    vs_sma50: 0.06
+    rsi: 52
+    earn_days: 25
+  momentum_detail:
+    hist_dir: 0.15
+    pct_b: 0.55
+    swing: {phase: higher_low, confirm_level: 88.0}
+  expect:
+    state_not_in: [ready]
+    must_fail: ["constructive tape"]
+
+- id: leap_call_rejects_knife
+  note: >-
+    LEAP calls need trend support — knife is outside
+    [pullback, uptrend, recovery] regardless of dip phase or
+    fundamentals.
+  use_case: leap_call
+  row:
+    mom_state: knife
+    fund_state: accelerating
+    rsi: 40
+    earn_days: 30
+  momentum_detail:
+    dip_phase: turning_up
+    pct_b: 0.4
+  expect:
+    state_not_in: [ready]
+    must_fail: ["trend supports calls"]
+
+- id: leap_call_clean_uptrend
+  note: >-
+    Canonical LEAP-call candidate: uptrend + resolving dip +
+    accelerating fundamentals + not euphoric.
+  use_case: leap_call
+  row:
+    mom_state: uptrend
+    fund_state: accelerating
+    rsi: 55
+    earn_days: 30
+  momentum_detail:
+    dip_phase: turning_up
+    pct_b: 0.6
+  expect:
+    state_in: [ready]
+
+- id: invest_rejects_knife_entry
+  note: >-
+    Even with perfect fundamentals, hostile entry tape (knife) must
+    block the long-hold checklist — the 'price not hostile' check.
+  use_case: invest
+  row:
+    mom_state: knife
+    fund_state: accelerating
+    rev_growth: 0.25
+    eps_growth: 0.30
+    future_score: 70
+    gq_score: 65
+    fv_upside: -5
+    revision_grade: "B+"
+    is_etf: false
+    earn_days: 30
+  expect:
+    state_not_in: [ready]
+    must_fail: ["price not hostile"]

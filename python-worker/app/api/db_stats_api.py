@@ -249,11 +249,11 @@ async def get_all_profiles_stats() -> Dict[str, Any]:
 async def test_analyst_ratings_storage():
     """Test calling analyst ratings storage method directly"""
     try:
-        from app.services.optimized_fmp_loader import OptimizedFMLoader
+        from app.services.optimized_fmp_loader import OptimizedFMPLoader
         from app.database import get_db
-        
+
         # Create loader instance
-        loader = OptimizedFMLoader()
+        loader = OptimizedFMPLoader()
         
         # Test with mock data
         mock_ratings = [

@@ -720,6 +720,22 @@ async def _j_lev_swings() -> dict:
     return {etf: row["state"] for etf, row in r["etfs"].items()}
 
 
+async def _j_signal_evals() -> dict:
+    """Signal contract evals — the regression net for the decision
+    layer (spec lint / scenarios / invariants, all offline). A red
+    run means engine contract drift — dead imports, unknown `when`
+    fields, gate semantics that changed — before it ships to the
+    board. Failures land as warnings; custodian watches the log."""
+    from app.signals import signal_evals
+    res = await asyncio.to_thread(signal_evals.run)
+    if not res["ok"]:
+        logger.error("signal-evals: %d/%d checks FAILED — %s",
+                     len(res["failed"]), res["total"],
+                     [f["id"] for f in res["failed"]])
+    return {"ok": res["ok"], "passed": res["passed"],
+            "total": res["total"], "failed": res["failed"]}
+
+
 JOBS: dict[str, tuple[str, Callable]] = {
     "momentum":      ("Momentum flags", _j_momentum),
     "swing-scan":    ("Swing screener", _j_swing_scan),
@@ -790,6 +806,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
     "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
     "lev-etf-swings": ("3x semis swing detector", _j_lev_swings),
+    "signal-evals": ("Signal contract evals", _j_signal_evals),
 }
 
 # order matters for 'all': posture first, then signals, then evals
@@ -809,7 +826,7 @@ _ALL_ORDER = ["regime", "tier-sync", "momentum", "morning-regime",
               "daily-puts", "spec-incubator", "meta",
               "sec-facts", "short-data", "short-squeeze",
               "correction-alarms", "selloff", "best-picks",
-              "lev-etf-swings", "custodian"]
+              "lev-etf-swings", "signal-evals", "custodian"]
 
 
 _JOB_TIMEOUT = {
@@ -834,6 +851,7 @@ _JOB_TIMEOUT = {
     "intraday-tape": 3 * 60, "correction-alarms": 3 * 60,
     "best-picks": 5 * 60,
     "lev-etf-swings": 2 * 60,
+    "signal-evals": 3 * 60,
     "conviction": 8 * 60, "theme-review": 10 * 60,
     "tailwinds": 15 * 60, "tailwind-review": 15 * 60,
     "theme-rotation": 5 * 60,

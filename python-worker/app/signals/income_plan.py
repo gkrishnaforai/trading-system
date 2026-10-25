@@ -26,7 +26,8 @@ def _posture() -> dict:
     try:
         return posture.current()
     except Exception:
-        return {"posture": "unknown", "new_longs": False}
+        return {"posture": "unknown",
+                "new_longs": posture_mod.NO_SNAPSHOT["new_longs"]}
 
 
 def _thesis_map() -> dict:

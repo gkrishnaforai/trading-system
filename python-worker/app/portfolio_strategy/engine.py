@@ -729,8 +729,8 @@ def theme_scores(morning: Optional[dict],
     # capex cycle band → AI-infra tailwind
     capex_tw = None
     try:
-        from app.signals.capex_cycle import current
-        cx = current() or {}
+        from app.signals.capex_cycle import read
+        cx = read() or {}
         band = cx.get("band")
         capex_tw = {"acceleration": 90, "expansion": 75,
                     "plateau": 55, "slowdown": 35,

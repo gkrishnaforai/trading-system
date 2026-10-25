@@ -15,6 +15,14 @@ from typing import Any, Optional
 _BENCH = "QQQ"      # book beta ~1.9 — the book trades like the Nasdaq
 _HORIZONS = (1, 5, 10, 20)
 
+# No journaled regime snapshot → permission can't be verified →
+# fail closed. A module constant so the eval suite can pin the
+# contract (NO_SNAPSHOT["new_longs"] is False).
+NO_SNAPSHOT = {"posture": "unknown",
+               "note": "no regime snapshot journaled yet — "
+                       "permission can't be verified, fail closed",
+               "new_longs": False, "shorts": False, "hedge_on": False}
+
 
 def _n(v) -> Optional[float]:
     try:
@@ -134,10 +142,7 @@ def current() -> dict:
         "SELECT as_of, stance, payload FROM regime_snapshots"
         " ORDER BY as_of DESC, created_at DESC LIMIT 1")
     if not r:
-        return {"posture": "unknown",
-                "note": "no regime snapshot journaled yet — "
-                        "permission can't be verified, fail closed",
-                "new_longs": False, "shorts": False, "hedge_on": False}
+        return dict(NO_SNAPSHOT)
     row = r[0]
     p = row["payload"]
     if isinstance(p, str):

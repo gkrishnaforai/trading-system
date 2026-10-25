@@ -222,8 +222,8 @@ async def get_analyst_ratings(symbol: str):
         logger.info(f"📊 Getting analyst ratings for {symbol}")
         
         # Import FMP loader for analyst data
-        from app.data_sources.fmp.optimized_loader import OptimizedFPMLoader
-        optimized_fmp_loader = OptimizedFPMLoader()
+        from app.services.optimized_fmp_loader import OptimizedFMPLoader
+        optimized_fmp_loader = OptimizedFMPLoader()
         
         ratings = optimized_fmp_loader.get_analyst_ratings(symbol)
         targets = optimized_fmp_loader.get_price_targets(symbol)
@@ -234,7 +234,7 @@ async def get_analyst_ratings(symbol: str):
             ratings=ratings,
             price_targets=targets,
             grades=grades,
-            fetched_at=optimized_fmp_loader._get_current_timestamp(),
+            fetched_at=datetime.now().isoformat(),
             created_at=datetime.now().isoformat()
         )
         
