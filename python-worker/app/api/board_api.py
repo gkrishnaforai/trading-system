@@ -171,9 +171,15 @@ async def _j_outcomes():
         mr = await asyncio.to_thread(_mr_eval)
     except Exception:                       # regime call match tape?
         mr = None
+    try:                                    # lane picks → realized
+        from app.screener.pick_outcomes import evaluate_pick_outcomes
+        picks = await evaluate_pick_outcomes()
+    except Exception:                       # forward returns
+        picks = None
     return {"alerts": out, "patterns": pat, "board": bd, "puts": puts,
             "calls": calls, "regime": reg, "crash_alpha": alpha,
-            "rotation": rot, "event_day": ev, "morning": mr}
+            "rotation": rot, "event_day": ev, "morning": mr,
+            "picks": picks}
 
 
 async def _j_rule_breakers():
@@ -216,6 +222,31 @@ async def _j_smallcap_tail():
     if sc_status()["running"] or sc_status()["running_tail"]:
         return {"skipped": "already_running"}
     return await tail_refresh()
+
+
+async def _j_after_hours():
+    """Extended-hours movers board — only meaningful inside its
+    windows: post ≈ 4:30–8pm ET (20:30–00:00 UTC), pre ≈ 7–9:30am ET
+    (11:00–13:30 UTC); yfinance carries the live fields then."""
+    from app.screener.afterhours import run_session_job
+    now_utc = datetime.now(timezone.utc)
+    if now_utc.hour >= 20 or now_utc.hour < 1:
+        return await run_session_job("post")
+    if 11 <= now_utc.hour <= 13:
+        return await run_session_job("pre")
+    return {"skipped": "outside_session"}
+
+
+async def _j_pt_watch():
+    """Analyst-PT watch — one snapshot per date; the table's
+    UNIQUE(symbol, as_of) makes reruns idempotent anyway."""
+    from app.database import db
+    from app.screener.pt_watch import run_pt_watch
+    if db.execute_query(
+            "SELECT 1 FROM pt_snapshots WHERE as_of = current_date "
+            "LIMIT 1"):
+        return {"skipped": "already_ran_today"}
+    return await run_pt_watch()
 
 
 async def _j_leaps_mark():
@@ -776,6 +807,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "momentum":      ("Momentum flags", _j_momentum),
     "swing-scan":    ("Swing screener", _j_swing_scan),
     "alerts":        ("Catalyst alerts", _j_alerts),
+    "after-hours":   ("Extended-hours movers", _j_after_hours),
+    "pt-watch":      ("Analyst PT watch", _j_pt_watch),
     "outcomes":      ("Alert outcomes", _j_outcomes),
     "rule-breakers": ("Rule Breaker eval", _j_rule_breakers),
     "smallcap":      ("5x Scout eval (full pass)", _j_smallcap),
@@ -858,6 +891,7 @@ _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "etf-flows",
               "strategy", "event-day",
               "flywheel", "fund-flags", "alerts",
+              "after-hours", "pt-watch",
               "fwd-flags",
               "focus-scan",
               "swing-scan", "rule-breakers",
@@ -877,6 +911,7 @@ _JOB_TIMEOUT = {
     "smallcap-eval": 12 * 60, "smallcap-discovery": 12 * 60,
     "smallcap-tail": 25 * 60,
     "swing-scan": 15 * 60, "alerts": 15 * 60, "focus-scan": 10 * 60,
+    "after-hours": 8 * 60, "pt-watch": 8 * 60,
     "custodian": 10 * 60, "momentum": 8 * 60, "flywheel": 50 * 60,
     "macro-snapshot": 3 * 60, "fund-snapshots": 90 * 60,
     "fund-flags": 8 * 60, "outcomes": 8 * 60, "leaps-mark": 5 * 60,

@@ -14,7 +14,8 @@ from .models import AlertItem
 
 logger = logging.getLogger(__name__)
 
-MAX_AUTO_REVIEWS_PER_SCAN = 5
+MAX_AUTO_REVIEWS_PER_SCAN = 3
+REVIEW_TIMEOUT_S = 180           # one graph must not eat the scan budget
 FRESH_REVIEW_HOURS = 24
 
 # In-process scan job state (single uvicorn worker; a multi-worker deploy
@@ -61,56 +62,16 @@ async def run_scan_job(lookback_days: float = 0.5, auto_review_enabled: bool = T
         reviews = 0
         if auto_review_enabled and new_items:
             reviews = await auto_review(new_items, max_reviews=max_reviews)
-        try:
-            outcome_eval = await evaluate_alert_outcomes()
-        except Exception as exc:
-            outcome_eval = {}
-            logger.debug("alert outcome evaluation skipped: %s", exc)
+        # Light collectors that belong to the scan cadence — everything
+        # heavier lives in its own scheduled job (outcomes, mover-quality,
+        # rule-breakers, after-hours, pt-watch); piggybacking them here
+        # is what blew the 15m budget.
+        breakout: dict = {}
         try:
             from app.screener.service import check_breakout_triggers
             breakout = await check_breakout_triggers()
         except Exception as exc:
-            breakout = {}
             logger.debug("breakout trigger check skipped: %s", exc)
-        try:
-            from app.screener.quality import evaluate_mover_outcomes
-            mover_eval = await evaluate_mover_outcomes()
-        except Exception as exc:
-            mover_eval = {}
-            logger.debug("mover outcome evaluation skipped: %s", exc)
-        try:
-            from app.screener.pick_outcomes import evaluate_pick_outcomes
-            pick_eval = await evaluate_pick_outcomes()
-        except Exception as exc:
-            pick_eval = {}
-            logger.debug("pick outcome evaluation skipped: %s", exc)
-        # Extended-hours boards — only meaningful inside their windows:
-        # post ≈ 4:30–8pm ET (20:30–00:00 UTC), pre ≈ 7–9:30am ET
-        # (11:00–13:30 UTC); yfinance carries the live fields then.
-        ah = {}
-        try:
-            from datetime import datetime as _dt, timezone as _tz
-            now_utc = _dt.now(_tz.utc)
-            if now_utc.hour >= 20 or now_utc.hour < 1:
-                from app.screener.afterhours import run_session_job
-                ah = await run_session_job("post")
-            elif 11 <= now_utc.hour <= 13:
-                from app.screener.afterhours import run_session_job
-                ah = await run_session_job("pre")
-        except Exception as exc:
-            logger.debug("extended-hours scan skipped: %s", exc)
-        # PT watch — once per day at most (snapshots are per-date; the
-        # table's UNIQUE(symbol, as_of) makes reruns idempotent anyway).
-        ptw = {}
-        try:
-            from app.screener.pt_watch import run_pt_watch
-            have_today = db.execute_query(
-                "SELECT 1 FROM pt_snapshots WHERE as_of = current_date "
-                "LIMIT 1")
-            if not have_today:
-                ptw = await run_pt_watch()
-        except Exception as exc:
-            logger.debug("pt watch skipped: %s", exc)
         # Analyst tape — event-level upgrades/downgrades/PT changes from
         # FMP's latest-news firehoses (2 calls, ~8h window). Runs every
         # scan; rows dedupe on fingerprint so reruns are cheap.
@@ -127,24 +88,13 @@ async def run_scan_job(lookback_days: float = 0.5, auto_review_enabled: bool = T
             _level_watch()
         except Exception as exc:
             logger.debug("level watch skipped: %s", exc)
-        # Rule Breakers — daily member eval (light); weekly universe
-        # discovery auto-adds qualifying names.
-        try:
-            from app.screener.rule_breakers import (
-                run_rule_breakers, discovery_due)
-            await run_rule_breakers(discover=discovery_due())
-        except Exception as exc:
-            logger.debug("rule breakers skipped: %s", exc)
         _scan_state["last_result"] = {
             "scanned_symbols": scanned,
             "new_alerts": len(new_items),
             "duplicates_skipped": skipped,
             "reviews_triggered": reviews,
             "errors": errors,
-            "outcomes_evaluated": outcome_eval.get("evaluated"),
-            "mover_outcomes_evaluated": mover_eval.get("evaluated"),
             "breakout_triggers": breakout.get("triggered"),
-            "afterhours": ah.get("scanned") if ah else None,
         }
     except Exception as exc:
         logger.error("alert scan job failed: %s", exc, exc_info=True)
@@ -449,7 +399,10 @@ async def auto_review(
             continue
         run_id = uuid.uuid4().hex[:12]
         try:
-            result = await run_swing_review(item.symbol, source="alert_auto", run_id=run_id)
+            result = await asyncio.wait_for(
+                run_swing_review(item.symbol, source="alert_auto",
+                                 run_id=run_id),
+                timeout=REVIEW_TIMEOUT_S)
             # fundamental-relevant events also kick the 5-question
             # event review — the swing graph answers "trade it now?",
             # this answers "did the business change?" (deduped 20h)
