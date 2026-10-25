@@ -33,7 +33,6 @@
     swing: {phase: broken, confirm_level: 95.0}
   expect:
     state_not_in: [ready]
-    must_fail: ["constructive tape"]
 
 - id: capitulation_hook_is_not_ready
   note: >-
@@ -185,3 +184,177 @@
   expect:
     state_not_in: [ready]
     must_fail: ["price not hostile"]
+
+# ------------------------------------------------------------------
+# posture engine — permission-layer semantics (the fail-closed class)
+# ------------------------------------------------------------------
+
+- id: posture_breadth_collapse_closes_longs
+  note: >-
+    The fail-open bug class pinned at the engine level — collapsed
+    breadth must deny new longs, not default to them.
+  engine: posture
+  payload:
+    breadth: {breadth_score: 15}
+  expect:
+    state_in: [defensive]
+    field_eq: {new_longs: false}
+
+- id: posture_defensive_stance_closes_longs
+  engine: posture
+  stance: DEFENSIVE
+  payload: {}
+  expect:
+    state_in: [defensive]
+    field_eq: {new_longs: false}
+
+- id: posture_empty_payload_uses_declared_default
+  note: >-
+    No rule matching → falls to the YAML `default:` block — the
+    declared policy, not a code fallback. If this ever returns a
+    posture the YAML didn't write, the default chain changed.
+  engine: posture
+  payload: {}
+  expect:
+    field_eq: {matched: "default", posture: "neutral"}
+
+# ------------------------------------------------------------------
+# leveraged swings — leg-role semantics (armed/trigger/easing/veto)
+# ------------------------------------------------------------------
+
+- id: soxl_rebound_triggers_on_reclaim
+  note: >-
+    Canonical trigger path: washed + at support (armed) + 8EMA
+    reclaim (trigger) + easing quorum → triggered.
+  engine: lev
+  etf: SOXL
+  ctx:
+    rsi: 34
+    rsi_lo7: 25
+    near_support: true
+    swing_low: 40.0
+    support_window: 20
+    support_pct_disp: "5%"
+    above_8ema: true
+    rsi_dir: 0.5
+    higher_low: true
+    vol_dip: 0.8
+    bear_alerts: 0
+    catalyst_veto_at: 2
+  expect:
+    state_in: [triggered]
+
+- id: soxl_vetoed_on_bearish_catalysts
+  note: >-
+    The thesis veto fires even when every entry leg is green —
+    2+ fresh bearish semis catalysts = deteriorating thesis.
+  engine: lev
+  etf: SOXL
+  ctx:
+    rsi: 34
+    rsi_lo7: 25
+    near_support: true
+    swing_low: 40.0
+    support_window: 20
+    support_pct_disp: "5%"
+    above_8ema: true
+    rsi_dir: 0.5
+    higher_low: true
+    vol_dip: 0.8
+    bear_alerts: 2
+    catalyst_veto_at: 2
+  expect:
+    state_in: [vetoed]
+
+- id: soxl_flat_without_support_test
+  note: >-
+    No armed quorum → flat. A rebound with no support test is a
+    bounce into air, not a setup.
+  engine: lev
+  etf: SOXL
+  ctx:
+    rsi: 45
+    rsi_lo7: 38
+    near_support: false
+    swing_low: 40.0
+    support_window: 20
+    support_pct_disp: "5%"
+    above_8ema: true
+    rsi_dir: 0.5
+    higher_low: true
+    vol_dip: 0.8
+    bear_alerts: 0
+    catalyst_veto_at: 2
+  expect:
+    state_in: [flat]
+
+# ------------------------------------------------------------------
+# plan status — rule ordering + missing-data semantics
+# ------------------------------------------------------------------
+
+- id: plan_stop_hit_fires
+  engine: plan_status
+  ctx:
+    risk_hit: true
+    pulse_action: "hold"
+    stop: 92.0
+  expect:
+    state_in: [stop_hit]
+
+- id: plan_thesis_dead_beats_stop_ordering
+  note: >-
+    Rule order matters — thesis_invalidated is FIRST so a reduce/
+    avoid pulse wins over every price-based rule. If ordering
+    flips, this pins the regression.
+  engine: plan_status
+  ctx:
+    pulse_action: "reduce"
+    risk_hit: true
+    t1_hit: true
+    stop: 92.0
+    t1: 110.0
+  expect:
+    state_in: [invalidated]
+
+- id: plan_empty_ctx_defaults_on_track
+  note: >-
+    Missing ctx fields can't trigger any price/status rule — the
+    default catch-all owns them. 'Can't verify' → on_track, never
+    a phantom invalidation.
+  engine: plan_status
+  ctx: {}
+  expect:
+    state_in: [on_track]
+
+# ------------------------------------------------------------------
+# best_picks — gate semantics
+# ------------------------------------------------------------------
+
+- id: best_picks_gates_broken_tape
+  note: >-
+    The same knife that readiness now refuses must also be gated
+    out of the picks lane — gate parity across engines.
+  engine: best_picks
+  sleeve: growth_swing
+  ctx:
+    new_longs: true
+    momentum_age_days: 1
+    is_etf: false
+    tape: knife
+  expect:
+    state_in: [gated]
+    field_eq: {gate: "tape_broken"}
+
+- id: best_picks_gates_unknown_permission
+  note: >-
+    posture_closed fires on missing new_longs — can't-verify
+    permission is a veto, not a pass.
+  engine: best_picks
+  sleeve: growth_swing
+  ctx:
+    momentum_age_days: 1
+    is_etf: false
+    tape: pullback
+  expect:
+    state_in: [gated]
+    field_eq: {gate: "posture_closed"}

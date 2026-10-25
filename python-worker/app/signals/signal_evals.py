@@ -420,27 +420,70 @@ def _lint_row_schemas() -> list[dict]:
 # real engines
 # ------------------------------------------------------------------
 
+def _run_scenario_engine(sc: dict) -> dict:
+    """One scenario → normalized {state, fields, checks}. Every engine
+    is pure over a ctx — scenario rows ARE the ctx, no DB anywhere."""
+    eng = sc.get("engine", "pulse")
+    if eng == "pulse":
+        from app.signals import pulse_engine
+        row = dict(sc.get("row") or {})
+        if "momentum_detail" in sc:
+            row["momentum_detail"] = sc["momentum_detail"]
+        res = pulse_engine.eval_use_case(row, sc["use_case"])
+        return {"state": res["state"], "fields": res,
+                "checks": res.get("rules") or []}
+    if eng == "posture":
+        from app.signals import posture as posture_mod
+        res = posture_mod.evaluate(sc.get("stance"),
+                                   sc.get("payload") or {})
+        return {"state": res.get("posture"), "fields": res,
+                "checks": []}
+    if eng == "lev":
+        from app.signals import leveraged_swings as ls
+        spec = ls._load()
+        res = ls._evaluate_etf(sc["etf"], spec["etfs"][sc["etf"]],
+                               sc.get("ctx") or {})
+        return {"state": res.get("state"), "fields": res,
+                "checks": res.get("checklist") or []}
+    if eng == "plan_status":
+        from app.signals import trade_plans
+        res = trade_plans._match(sc.get("ctx") or {})
+        return {"state": res.get("status"), "fields": res,
+                "checks": []}
+    if eng == "best_picks":
+        from app.signals import best_picks as bp
+        spec = bp._load()
+        res = bp._eval_section(spec[sc["sleeve"]],
+                               sc.get("ctx") or {})
+        state = ("gated" if res.get("gated")
+                 else res.get("tier") or res.get("label"))
+        return {"state": state, "fields": res,
+                "checks": [{"ok": False, "line": res.get("reason")}
+                           ] if res.get("gated") else []}
+    raise ValueError(f"unknown engine '{eng}'")
+
+
 def _scenarios() -> list[dict]:
-    from app.signals import pulse_engine
     doc = yaml.safe_load(_SCENARIOS.read_text())
     out = []
     for sc in doc or []:
         try:
-            row = dict(sc.get("row") or {})
-            if "momentum_detail" in sc:
-                row["momentum_detail"] = sc["momentum_detail"]
-            res = pulse_engine.eval_use_case(row, sc["use_case"])
+            res = _run_scenario_engine(sc)
             exp = sc.get("expect") or {}
             fails = []
-            if "state_in" in exp and \
-                    res["state"] not in exp["state_in"]:
-                fails.append(f"state {res['state']} "
+            state = res["state"]
+            if "state_in" in exp and state not in exp["state_in"]:
+                fails.append(f"state {state} "
                              f"not in {exp['state_in']}")
             if "state_not_in" in exp and \
-                    res["state"] in exp["state_not_in"]:
-                fails.append(f"state {res['state']} "
+                    state in exp["state_not_in"]:
+                fails.append(f"state {state} "
                              f"in {exp['state_not_in']}")
-            checks = res.get("rules") or []
+            for k, v in (exp.get("field_eq") or {}).items():
+                if res["fields"].get(k) != v:
+                    fails.append(f"{k}={res['fields'].get(k)!r} "
+                                 f"≠ {v!r}")
+            checks = res.get("checks") or []
             for frag in exp.get("must_pass", []):
                 if not any(frag in (c.get("line") or "")
                            and c.get("ok") for c in checks):
@@ -451,9 +494,7 @@ def _scenarios() -> list[dict]:
                     fails.append(f"no failing check ~ '{frag}'")
             out.append({"id": f"scenario.{sc['id']}",
                         "ok": not fails,
-                        "detail": fails or
-                                  f"{res['state']} "
-                                  f"{res.get('score')}/{res.get('of')}"})
+                        "detail": fails or f"{state}"})
         except Exception as exc:
             out.append({"id": f"scenario.{sc.get('id')}",
                         "ok": False,
@@ -584,10 +625,285 @@ def _invariants() -> list[dict]:
 
 
 # ------------------------------------------------------------------
+# LLM judge — bounded interpretation on top of the deterministic net
+#
+# The cockpit's own rule applies here too: the LLM INTERPRETS, the
+# deterministic layer DECIDES. Concretely:
+#   * judge() produces ADVISORY findings — line-fidelity review and
+#     scenario-coverage gaps the lint can't express. Never a gate.
+#   * run_fix() is a closed propose-verify loop: for each failing
+#     check the judge gets a context pack and proposes a minimal
+#     patch; a patch is applied only if the FULL suite re-runs at
+#     least as green — and reverted otherwise. The judge can never
+#     patch signal_evals.py itself (it cannot weaken its own net),
+#     and patches to spec/scenario files are flagged needs_review
+#     because those files are policy, not mechanics.
+# ------------------------------------------------------------------
+
+_LLM_MODEL_ENV = "SIGNAL_EVAL_LLM"
+_PROTECTED = {Path(__file__).resolve().name}   # the verifier itself
+_POLICY_FILES = {"signal_scenarios.yaml", "pulse_action_rules.yaml",
+                 "best_picks.yaml", "leveraged_swings.yaml"}
+
+
+def _llm():
+    """Judge transport — litellm + a configured key, else None.
+    The suite skips judge work cleanly with no key; a missing judge
+    is never a failure (deterministic checks always run)."""
+    try:
+        from litellm import completion  # noqa: F401
+    except ImportError:
+        return None
+    import os
+    if not (os.getenv("OPENAI_API_KEY")
+            or os.getenv("ANTHROPIC_API_KEY")
+            or os.getenv("LITELLM_PROXY_URL")):
+        return None
+    model = os.getenv(_LLM_MODEL_ENV, "gpt-4o-mini")
+
+    def call(system: str, user: str) -> str:
+        r = completion(
+            model=model,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": user}],
+            temperature=0)
+        return r.choices[0].message.content
+    return call
+
+
+def _json_out(text: str):
+    """LLM → parsed JSON object/array, tolerant of code fences."""
+    import json as _json
+    import re as _re
+    m = _re.search(r"```(?:json)?\s*(.*?)```", text, _re.S)
+    raw = m.group(1) if m else text
+    return _json.loads(raw.strip())
+
+
+def _judge_line_fidelity(call) -> list[dict]:
+    """Does each checklist `line` honestly describe its `when:`?
+    The deterministic lint checks fields EXIST; it can't check the
+    prose matches the math — a line claiming 'defends the tape' over
+    a {rsi_gt: 50} condition misleads the human making the call.
+    Advisory: findings land in detail, the check fails only when the
+    judge marks a line materially WRONG (not merely unclear)."""
+    items = []
+    for path in (_SIG / "pulse_action_rules.yaml",
+                 _SIG / "leveraged_swings.yaml"):
+        spec = yaml.safe_load(path.read_text())
+        for p, when in _walk_whens(spec):
+            parent = p.rsplit(".", 1)[0]
+            # find the sibling `line` — walk the spec to the parent
+            node = spec
+            for part in parent.replace("[", ".").replace("]", "") \
+                              .split("."):
+                if not part:
+                    continue
+                node = node[int(part)] if isinstance(node, list) \
+                    else node.get(part) or {}
+            line = node.get("line") or node.get("why")
+            if line:
+                items.append({"path": f"{path.name}:{p}",
+                              "when": when, "line": line})
+    if not items:
+        return [{"id": "judge.line_fidelity", "ok": True,
+                 "detail": "no line-bearing conditions"}]
+    user = (
+        "Each entry is a trading-system checklist condition (`when`) "
+        "and the prose `line` shown to a human deciding whether to "
+        "act. For each, say whether the line FAITHFULLY describes "
+        "the condition. Reply JSON: [{\"path\": ..., \"verdict\": "
+        "\"ok\"|\"unclear\"|\"wrong\", \"issue\": \"why (if not ok)\"}]\n\n"
+        + yaml.dump(items[:60], default_flow_style=False))
+    verdicts = _json_out(call(
+        "You audit whether UI text honestly describes trading "
+        "conditions. Be strict about material misdescription, "
+        "lenient about brevity. Reply JSON only.", user))
+    wrong = {v["path"]: v.get("issue") for v in verdicts
+             if isinstance(v, dict) and v.get("verdict") == "wrong"}
+    unclear = {v["path"]: v.get("issue") for v in verdicts
+               if isinstance(v, dict) and v.get("verdict") == "unclear"}
+    return [{"id": "judge.line_fidelity", "ok": not wrong,
+             "advisory": True,
+             "detail": {"wrong": wrong, "unclear": unclear}
+             if (wrong or unclear) else f"{len(items)} lines audited"}]
+
+
+def _judge_coverage(call) -> list[dict]:
+    """Scenario-coverage gaps — the judge sees the gate vocabulary
+    plus existing pins and proposes what's missing. Always advisory:
+    proposals land in detail for a human to turn into scenarios."""
+    doc = yaml.safe_load(_SCENARIOS.read_text())
+    have = [s["id"] for s in doc or []]
+    spec = yaml.safe_load((_SIG / "pulse_action_rules.yaml")
+                          .read_text())
+    ucs = list((spec.get("use_cases") or {}).keys())
+    user = (
+        "A trading system's gate semantics are pinned by behavioral "
+        "scenarios. Existing scenario ids: "
+        f"{have}. Use-cases with checklists: {ucs}. Engines covered: "
+        "pulse readiness, posture, leveraged ETF legs, plan status, "
+        "best-picks gates. What HIGH-VALUE scenario is still unpinned "
+        "— a gate hole, a missing-data edge, an ordering regression? "
+        "Reply JSON: [{\"id\": ..., \"engine\": ..., \"why\": ..., "
+        "\"risk_if_unpinned\": ...}] — max 5, highest value first.")
+    props = _json_out(call(
+        "You find coverage gaps in a trading system's behavioral "
+        "test suite. Propose scenarios a regression would slip "
+        "through. Reply JSON only.", user))
+    return [{"id": "judge.scenario_coverage", "ok": True,
+             "advisory": True,
+             "detail": props or "no gaps proposed"}]
+
+
+def judge() -> list[dict]:
+    """Advisory findings — never counted in the pass/fail gate."""
+    call = _llm()
+    if call is None:
+        return [{"id": "judge.available", "ok": True,
+                 "advisory": True,
+                 "detail": "no LLM key — judge checks skipped; "
+                           "set SIGNAL_EVAL_LLM + a provider key"}]
+    findings = []
+    for fn in (_judge_line_fidelity, _judge_coverage):
+        try:
+            findings.extend(fn(call))
+        except Exception as exc:
+            findings.append({"id": f"judge.{fn.__name__}",
+                             "ok": True, "advisory": True,
+                             "detail": f"judge error: {exc}"})
+    return findings
+
+
+# ------------------------------------------------------------------
+# run_fix — the closed propose→verify→revert loop
+# ------------------------------------------------------------------
+
+def _context_pack(check: dict) -> dict:
+    """What the judge sees for a failing check — the check plus the
+    smallest artifact set that could hold the bug."""
+    pack = {"failing_check": check}
+    if check["id"].startswith("scenario."):
+        sid = check["id"].split(".", 1)[1]
+        doc = yaml.safe_load(_SCENARIOS.read_text())
+        pack["scenario"] = next((s for s in doc or []
+                                 if s.get("id") == sid), None)
+        pack["note"] = ("Decide whether the ENGINE is wrong (fix "
+                        "the engine/spec) or the SCENARIO is wrong "
+                        "(fix the scenario). Scenario edits are "
+                        "policy — flagged for human review.")
+    if check["id"].startswith("lint."):
+        pack["note"] = ("Field/group/import/row-schema drift — the "
+                        "fix is almost always in the referenced "
+                        "source file, not the lint.")
+    return pack
+
+
+def _propose_fix(call, check: dict) -> Optional[dict]:
+    pack = _context_pack(check)
+    user = (
+        "A contract check in a trading system's eval suite failed.\n\n"
+        + yaml.dump(pack, default_flow_style=False)
+        + "\nPropose a MINIMAL patch as JSON: {\"file\": "
+          "\"app/... relative to python-worker\", \"old\": \"exact "
+          "text to replace (must appear verbatim)\", \"new\": "
+          "\"replacement\", \"rationale\": \"...\", \"confidence\": "
+          "0-1}. If no safe minimal patch exists, reply "
+          "{\"patch\": null, \"why\": \"...\"}.")
+    try:
+        p = _json_out(call(
+            "You repair failing contract checks in a trading "
+            "system. Propose minimal, exact-match patches. Never "
+            "weaken a check to make it pass. Reply JSON only.",
+            user))
+        return p if isinstance(p, dict) and p.get("file") else None
+    except Exception:
+        return None
+
+
+def _apply_patch(patch: dict) -> tuple[bool, Optional[str]]:
+    """Exact-match apply within app/ — the same contract as the edit
+    tool: old text must appear exactly once. Refuses protected and
+    out-of-tree paths."""
+    name = (patch.get("file") or "").strip()
+    if not name or name in _PROTECTED or ".." in name:
+        return False, "refused path"
+    target = (_APP / name).resolve()
+    if not str(target).startswith(str(_APP.resolve())) or \
+            not target.is_file():
+        return False, f"no such file under app/: {name}"
+    src = target.read_text()
+    old, new = patch.get("old"), patch.get("new")
+    if old is None or new is None or src.count(old) != 1:
+        return False, "old not unique/absent"
+    target.write_text(src.replace(old, new, 1))
+    return True, None
+
+
+def run_fix(max_attempts: int = 6, dry: bool = False) -> dict:
+    """Propose → apply → re-run → keep-if-green. The loop 'until all
+    issues are fixed' the user asked for — bounded by attempts and
+    by the rule that a patch can never make the suite less green."""
+    history, applied = [], []
+    res = run()
+    call = _llm()
+    for _ in range(max_attempts):
+        failed = [c for c in res["checks"] if not c["ok"]]
+        if not failed:
+            break
+        if call is None:
+            history.append({"note": "no LLM key — propose step "
+                                    "skipped; deterministic fixes "
+                                    "still possible by hand"})
+            break
+        improved = False
+        for f in failed:
+            patch = _propose_fix(call, f)
+            if not patch:
+                history.append({"check": f["id"],
+                                "patch": None})
+                continue
+            patch["needs_review"] = Path(
+                patch.get("file") or "").name in _POLICY_FILES
+            if dry:
+                history.append({"check": f["id"],
+                                "proposed": patch})
+                continue
+            ok, why = _apply_patch(patch)
+            if not ok:
+                history.append({"check": f["id"],
+                                "patch": patch.get("file"),
+                                "rejected": why})
+                continue
+            res2 = run()
+            if len(res2["failed"]) <= len(res["failed"]) and \
+                    any(c["id"] == f["id"] and c["ok"]
+                        for c in res2["checks"]):
+                applied.append({"check": f["id"],
+                                "patch": patch.get("file"),
+                                "needs_review":
+                                    patch["needs_review"]})
+                res = res2
+                improved = True
+            else:
+                # revert — suite got worse or the target didn't pass
+                _apply_patch({"file": patch["file"],
+                              "old": patch["new"],
+                              "new": patch["old"]})
+                history.append({"check": f["id"],
+                                "patch": patch.get("file"),
+                                "reverted": "suite not greener"})
+        if not improved and not dry:
+            break
+    return {"ok": res["ok"], "applied": applied,
+            "history": history, "final": res["failed"]}
+
+
+# ------------------------------------------------------------------
 # runner
 # ------------------------------------------------------------------
 
-def run() -> dict:
+def run(with_judge: bool = False) -> dict:
     checks = (_lint_when_fields() + _lint_rank_components()
               + _lint_internal_imports() + _lint_row_schemas()
               + _scenarios() + _invariants())
@@ -595,18 +911,42 @@ def run() -> dict:
     for c in failed:
         logger.warning("signal_eval FAIL %s — %s",
                        c["id"], c["detail"])
-    return {"ok": not failed,
-            "passed": len(checks) - len(failed),
-            "total": len(checks),
-            "failed": [{"id": c["id"], "detail": c["detail"]}
-                       for c in failed],
-            "checks": checks}
+    out = {"ok": not failed,
+           "passed": len(checks) - len(failed),
+           "total": len(checks),
+           "failed": [{"id": c["id"], "detail": c["detail"]}
+                      for c in failed],
+           "checks": checks}
+    if with_judge:
+        findings = judge()
+        out["judge"] = findings
+        # advisory findings log as warnings but never gate the suite
+        for f_ in findings:
+            if not f_["ok"]:
+                logger.warning("signal_eval JUDGE %s — %s",
+                               f_["id"], f_["detail"])
+    return out
 
 
 def main():
+    import argparse
     import json as _json
     import sys
-    res = run()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--judge", action="store_true",
+                    help="run advisory LLM-judge checks too")
+    ap.add_argument("--fix", action="store_true",
+                    help="propose→verify loop on failing checks")
+    ap.add_argument("--fix-dry", action="store_true",
+                    help="print proposed patches without applying")
+    args = ap.parse_args()
+    if args.fix or args.fix_dry:
+        res = run_fix(dry=args.fix_dry)
+        print(_json.dumps(res, indent=2, default=str))
+        if not res["ok"]:
+            sys.exit(1)
+        return
+    res = run(with_judge=args.judge)
     print(_json.dumps(
         {k: v for k, v in res.items() if k != "checks"},
         indent=2, default=str))
