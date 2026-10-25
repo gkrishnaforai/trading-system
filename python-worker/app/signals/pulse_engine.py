@@ -15,6 +15,7 @@ condition, annotations, gate outcomes, input snapshot, versions.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import operator
 from pathlib import Path
@@ -38,8 +39,48 @@ def _load() -> dict:
     return _spec
 
 
+_spec_hash_cache: dict = {}
+
+
+def spec_version(prefix: str, spec_path, spec: dict) -> str:
+    """version: field + content hash — the learning-lab attribution
+    key. Without the hash, editing a threshold while forgetting the
+    version bump reuses the journal key: evals from different specs
+    become indistinguishable and version-vs-version grading lies.
+    Hash cached per file mtime — a mid-process spec swap rehashes."""
+    p = Path(spec_path)
+    mt = p.stat().st_mtime
+    if _spec_hash_cache.get(str(p), (None,))[0] != mt:
+        _spec_hash_cache[str(p)] = (
+            mt, hashlib.sha1(p.read_bytes()).hexdigest()[:8])
+    return f"{prefix}.v{spec.get('version')}+{_spec_hash_cache[str(p)][1]}"
+
+
+_registered_specs: set = set()
+
+
+def register_spec(engine: str, version: str, spec: dict) -> None:
+    """One row per (engine, version) in spec_versions — the registry
+    every journaled rules_version joins against to recover the exact
+    YAML that produced the eval. Memoized; journal-first failures
+    are non-fatal (the registry catches up next eval)."""
+    if (engine, version) in _registered_specs:
+        return
+    try:
+        import json as _j
+        from app.database import db
+        db.execute_update(
+            "INSERT INTO spec_versions (engine, version, spec)"
+            " VALUES (:e, :v, :s::jsonb)"
+            " ON CONFLICT (engine, version) DO NOTHING",
+            {"e": engine, "v": version, "s": _j.dumps(spec)})
+        _registered_specs.add((engine, version))
+    except Exception:
+        pass
+
+
 def rules_version() -> str:
-    return f"rules.v{_load()['version']}"
+    return spec_version("rules", RULES_PATH, _load())
 
 
 def _num(v) -> Optional[float]:
@@ -504,6 +545,8 @@ def eval_use_case(row: dict, name: str) -> dict:
     the same missing-data semantics as the action rules. State:
     all-pass → ready, n-1 → close, else no."""
     spec = _load()
+    register_spec("pulse", spec_version("rules", RULES_PATH, spec),
+                  spec)
     c = _normalize(row)
     c.update(_stage0(c))
     checks = (spec.get("use_cases") or {}).get(name, {}) \

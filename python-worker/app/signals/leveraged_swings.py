@@ -38,7 +38,8 @@ def _load() -> dict:
 
 
 def rules_version() -> str:
-    return f"lev_swings.v{_load()['version']}"
+    from app.signals.pulse_engine import spec_version
+    return spec_version("lev_swings", _SPEC_PATH, _load())
 
 
 def _ema(closes: list[float], n: int) -> list[float]:
@@ -186,14 +187,8 @@ def _register_spec(spec: dict):
     """Upsert the running spec version — the learning-lab registry.
     Journal rows and positions carry rules_version; join them here
     to grade which POLICY ITERATION produced which outcomes."""
-    from app.database import db
-    try:
-        db.execute_update(
-            "INSERT INTO lev_spec_versions (version, spec)"
-            " VALUES (:v, :s::jsonb) ON CONFLICT (version) DO NOTHING",
-            {"v": rules_version(), "s": json.dumps(spec)})
-    except Exception as exc:
-        logger.debug("spec registry: %s", exc)
+    from app.signals.pulse_engine import register_spec
+    register_spec("lev_swings", rules_version(), spec)
 
 
 def _open_position(etf: str, row: dict, as_of: str) -> Optional[dict]:

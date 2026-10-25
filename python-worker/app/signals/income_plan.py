@@ -111,12 +111,13 @@ def _journal(lanes: dict, pos: dict, bias: str) -> int:
                       *[f for f in s.get("flags") or []],
                       f"thesis:{s['thesis']}" if s.get("thesis") else "",
                       f"iv/hv {s['iv_hv']}" if s.get("iv_hv") else ""]
+                from app.signals import pulse_engine as _pe
                 db.execute_update(
                     "INSERT INTO board_decisions (as_of, symbol, action,"
                     " instrument, score, momentum_state, posture, price,"
-                    " entry, stop, target, evidence)"
+                    " entry, stop, target, evidence, rules_version)"
                     " VALUES (:d,:s,:a,:i,:sc,:m,:p,:px,:e,:st,:t,"
-                    " CAST(:ev AS jsonb))"
+                    " CAST(:ev AS jsonb), :rv)"
                     " ON CONFLICT (as_of, symbol, action) DO NOTHING",
                     {"d": date.today(), "s": s["symbol"], "a": act,
                      "i": inst,
@@ -128,7 +129,8 @@ def _journal(lanes: dict, pos: dict, bias: str) -> int:
                          or s.get("spot"),
                      "st": s.get("stop_px"),
                      "t": s.get("target_px"),
-                     "ev": json.dumps([e for e in ev if e])})
+                     "ev": json.dumps([e for e in ev if e]),
+                     "rv": _pe.rules_version()})
                 n += 1
             except Exception:
                 pass

@@ -132,19 +132,20 @@ def generate(today: Optional[date] = None) -> dict[str, Any]:
                "dip_phase": p.get("dip_phase"),
                "swing_rank": rkmap.get(sym),
                "evidence": (p.get("why") or [])[:8]}
+        from app.signals import pulse_engine as _pe
         db.execute_update(
             "INSERT INTO daily_calls (call_date, rank, symbol, score,"
             " entry_px, stop_px, target_px, rr, state, dip_phase,"
-            " evidence) VALUES (:d,:k,:s,:sc,:e,:sp,:t,:rr,:st,:dp,"
-            " CAST(:ev AS jsonb))"
+            " evidence, rules_version) VALUES (:d,:k,:s,:sc,:e,:sp,"
+            ":t,:rr,:st,:dp, CAST(:ev AS jsonb), :rv)"
             " ON CONFLICT (call_date, symbol) DO UPDATE SET"
             " rank=:k, score=:sc, entry_px=:e, stop_px=:sp,"
             " target_px=:t, rr=:rr, state=:st, dip_phase=:dp,"
-            " evidence=CAST(:ev AS jsonb)",
+            " evidence=CAST(:ev AS jsonb), rules_version=:rv",
             {"d": today, "k": i, "s": sym, "sc": row["score"],
              "e": row["entry_px"], "sp": stop, "t": tgt,
              "rr": row["rr"], "st": row["state"],
-             "dp": row["dip_phase"],
+             "dp": row["dip_phase"], "rv": _pe.rules_version(),
              "ev": __import__("json").dumps(row["evidence"])})
         made.append(row)
     return {"date": str(today), "calls": made}

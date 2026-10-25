@@ -2447,6 +2447,103 @@ async def learning_lab():
                      if l["key"] == "meta:report"), {}) or {}
     out["calibration"] = meta_rep.get("calibration")
 
+    # --- version grade — the 'is it learning?' view: outcomes ------
+    # grouped by the rules_version that produced them. Each block is
+    # a journal→outcome join; a version with better hit/median is a
+    # better spec iteration. Blocks degrade independently so a
+    # missing outcome table can't blank the whole card.
+    grade = []
+    _GRADE_SQL = {
+        # board decisions → forward returns at the 10d horizon
+        "board": (
+            "SELECT d.rules_version rv, count(*) n,"
+            " round(avg(CASE WHEN o.ret_pct>0 THEN 1 ELSE 0 END),3) hit,"
+            " round(avg(o.ret_pct)::numeric,2) avg_ret,"
+            " min(d.as_of) first, max(d.as_of) last"
+            " FROM board_outcomes o JOIN board_decisions d"
+            "  ON d.id=o.decision_id"
+            " WHERE o.horizon_days=10"
+            " GROUP BY d.rules_version ORDER BY min(d.as_of)"),
+        # top-3 calls → stop/target resolution + forward returns
+        "daily_calls": (
+            "SELECT c.rules_version rv, count(*) n,"
+            " round(avg(CASE WHEN o.resolution='target_first'"
+            "           THEN 1 ELSE 0 END),3) hit,"
+            " round(avg(o.ret_10d)::numeric,2) avg_ret,"
+            " min(c.call_date) first, max(c.call_date) last"
+            " FROM daily_call_outcomes o JOIN daily_calls c"
+            "  ON c.id=o.call_id WHERE o.resolution<>'open'"
+            " GROUP BY c.rules_version ORDER BY min(c.call_date)"),
+        # posture permission → forward index returns
+        "posture": (
+            "SELECT e.rules_version rv, count(*) n,"
+            " round(avg(CASE WHEN o.fwd_10d>0 THEN 1 ELSE 0 END),3) hit,"
+            " round(avg(o.fwd_10d)::numeric,2) avg_ret,"
+            " min(o.as_of) first, max(o.as_of) last"
+            " FROM posture_outcomes o JOIN posture_evals e"
+            "  ON e.id=o.eval_id"
+            " GROUP BY e.rules_version ORDER BY min(o.as_of)"),
+        # lev paper positions → realized R by spec iteration
+        "lev_swings": (
+            "SELECT spec rv, count(*) n,"
+            " round(avg(CASE WHEN realized_r>0 THEN 1 ELSE 0 END),3) hit,"
+            " round(avg(realized_r)::numeric,2) avg_ret,"
+            " min(opened_as_of) first, max(opened_as_of) last"
+            " FROM lev_etf_positions WHERE state='closed'"
+            "  AND realized_r IS NOT NULL"
+            " GROUP BY spec ORDER BY min(opened_as_of)"),
+    }
+    for eng, q in _GRADE_SQL.items():
+        try:
+            for r in db.execute_query(q):
+                grade.append({"engine": eng,
+                              "rules_version": r.get("rv"),
+                              "n": r["n"], "hit": r.get("hit"),
+                              "avg_ret": r.get("avg_ret"),
+                              "first": str(r.get("first")),
+                              "last": str(r.get("last"))})
+        except Exception:
+            pass
+    # best_picks — picks journaled per version; forward returns are
+    # computed ad hoc off daily_bars (no outcome table yet).
+    try:
+        bp = db.execute_query(
+            "SELECT e.rules_version rv, count(*) n,"
+            " round(avg(CASE WHEN r.f10>0 THEN 1 ELSE 0 END),3) hit,"
+            " round(avg(r.f10)::numeric,2) avg_ret,"
+            " min(e.as_of) first, max(e.as_of) last"
+            " FROM best_picks_evals e"
+            " LEFT JOIN LATERAL ("
+            "   SELECT (c10.close/c0.close-1)*100 f10"
+            "   FROM LATERAL (SELECT close FROM daily_bars b"
+            "     WHERE b.symbol=e.symbol AND b.date<=e.as_of"
+            "     ORDER BY b.date DESC LIMIT 1) c0,"
+            "   LATERAL (SELECT close FROM daily_bars b"
+            "     WHERE b.symbol=e.symbol AND b.date>e.as_of"
+            "     ORDER BY b.date OFFSET 9 LIMIT 1) c10"
+            " ) r ON true"
+            " WHERE e.lane='pick'"
+            "  AND e.as_of > now() - interval '180 days'"
+            " GROUP BY e.rules_version ORDER BY min(e.as_of)")
+        for r in bp:
+            grade.append({"engine": "best_picks",
+                          "rules_version": r.get("rv"),
+                          "n": r["n"], "hit": r.get("hit"),
+                          "avg_ret": r.get("avg_ret"),
+                          "first": str(r.get("first")),
+                          "last": str(r.get("last"))})
+    except Exception:
+        pass
+    # spec registry — what each version string actually was
+    try:
+        out["spec_versions"] = db.execute_query(
+            "SELECT engine, version,"
+            " to_char(created_at,'YYYY-MM-DD') first_seen"
+            " FROM spec_versions ORDER BY created_at")
+    except Exception:
+        out["spec_versions"] = []
+    out["version_grade"] = grade
+
     # --- engine cards --------------------------------------------------
     def _ew(key):
         r = db.execute_query(

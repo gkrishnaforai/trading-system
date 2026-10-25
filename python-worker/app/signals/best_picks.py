@@ -23,7 +23,7 @@ sizes, orders, or executes.
 """
 from __future__ import annotations
 
-import hashlib
+
 import json
 import logging
 from datetime import date, datetime
@@ -48,9 +48,8 @@ def _load() -> dict:
 
 
 def rules_version() -> str:
-    s = _load()
-    h = hashlib.sha1(SPEC_PATH.read_bytes()).hexdigest()[:8]
-    return f"best_picks.v{s['version']}+{h}"
+    from app.signals.pulse_engine import spec_version
+    return spec_version("best_picks", SPEC_PATH, _load())
 
 
 _SECTIONS = ("growth_swing", "long_term", "compounder_3_5y")
@@ -629,6 +628,8 @@ def run() -> dict:
 
     ctxs = _bulk_ctx()
     rv = rules_version()
+    from app.signals.pulse_engine import register_spec
+    register_spec("best_picks", rv, spec)
     journal_rows: list[dict] = []
     sections: dict[str, dict] = {}
 

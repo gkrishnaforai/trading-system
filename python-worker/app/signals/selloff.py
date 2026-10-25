@@ -567,17 +567,19 @@ def _persist(market: dict, cands: list[dict]) -> None:
         for c in cands[:10]:
             if c["decision"] in ("reject",):
                 continue
+            from app.signals import pulse_engine as _pe
             db.execute_update(
                 "INSERT INTO board_decisions (as_of, symbol, action,"
                 " instrument, score, momentum_state, posture, price,"
-                " entry, stop, target, evidence)"
+                " entry, stop, target, evidence, rules_version)"
                 " VALUES (:d,:s,'SELLOFF','stock',:sc,:m,:p,:px,:e,"
-                " :st,:t,CAST(:ev AS jsonb))"
+                " :st,:t,CAST(:ev AS jsonb),:rv)"
                 " ON CONFLICT (as_of, symbol, action) DO NOTHING",
                 {"d": date.today(), "s": c["symbol"], "sc": c["score"],
                  "m": c["mom"], "p": market.get("level"),
                  "px": c["close"], "e": c["close"],
                  "st": c.get("invalidation"), "t": c.get("fv"),
+                 "rv": _pe.rules_version(),
                  "ev": json.dumps(
                      [f"selloff:{c['classification']}",
                       f"score {c['score']} {c['decision']}",

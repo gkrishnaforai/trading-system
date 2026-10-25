@@ -37,6 +37,8 @@ def snapshot_board(board: dict) -> int:
     the decision day's close."""
     from app.database import db
     today = date.today()
+    from app.signals import pulse_engine as _pe
+    rv = _pe.rules_version()
     n = 0
     for it in board.get("items") or []:
         try:
@@ -45,9 +47,9 @@ def snapshot_board(board: dict) -> int:
                 INSERT INTO board_decisions
                     (as_of, symbol, action, instrument, score,
                      momentum_state, posture, price, entry, stop,
-                     target, evidence)
+                     target, evidence, rules_version)
                 VALUES (:d, :s, :a, :i, :sc, :m, :p, :px, :e, :st, :t,
-                        CAST(:ev AS jsonb))
+                        CAST(:ev AS jsonb), :rv)
                 ON CONFLICT (as_of, symbol, action) DO NOTHING
                 """,
                 {"d": today, "s": it["symbol"], "a": it["action"],
@@ -56,7 +58,8 @@ def snapshot_board(board: dict) -> int:
                  "p": (board.get("posture") or {}).get("stance"),
                  "px": it.get("price"), "e": it.get("entry"),
                  "st": it.get("stop"), "t": it.get("target"),
-                 "ev": __import__("json").dumps(it.get("why") or [])})
+                 "ev": __import__("json").dumps(it.get("why") or []),
+                 "rv": rv})
             n += 1
         except Exception as exc:
             logger.debug("board snapshot %s: %s", it.get("symbol"), exc)
