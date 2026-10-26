@@ -426,6 +426,8 @@ def _fmt(why: str, c: dict, extra: dict) -> str:
             "swing_phase": c.get("swing_phase") or "—",
             "confirm": (f"${c['confirm_level']:.0f}"
                         if c.get("confirm_level") is not None else "—"),
+            "vol_dip": _numf("vol_dip", 2),
+            "vol_dip_trend": c.get("vol_dip_trend") or "—",
             "rev_growth": _pctf("rev_growth"),
             "eps_growth": _pctf("eps_growth"),
             "future_score": _numf("future_score"),
