@@ -35,6 +35,12 @@ _MANUAL_STEPS = [
      "schedule is landing fresh bars (daily_bars recent dates).  "
      "3. Kick momentum from Job Scheduler.  4. If provider throttled, "
      "check FMP/Yahoo keys."),
+    ("schema:missing",
+     "1. Worker redeploy runs migrations at startup — check its boot "
+     "log for the failing file.  2. If no migration defines the "
+     "table, port its DDL into a tracked migration (see 161 for the "
+     "pattern).  3. If it was dropped by 136's dead-table sweep, the "
+     "restore migration should already cover it."),
     ("stale:fundamental",
      "1. job_runs → fund-flags last error.  2. FMP key valid? (401s in "
      "worker log = bad key).  3. Kick fund-flags manually.  "
@@ -169,6 +175,22 @@ def _sense() -> list[dict[str, Any]]:
         except Exception:
             pass
 
+    # schema drift — expected tables (per the migration contract)
+    # that Postgres can't resolve. Catches dropped/missing relations
+    # even when the app swallows the write errors at debug level.
+    try:
+        from .schema_drift import missing_tables
+        for t in missing_tables():
+            findings.append({
+                "signature": f"schema:missing:{t}", "source": "schema",
+                "severity": "high",
+                "detail": {"table": t,
+                           "note": "expected by migrations, absent in "
+                                   "Postgres — apply migration or "
+                                   "restore the drop"}})
+    except Exception:
+        pass
+
     # DB reachability — if this fails, everything above is unknowable
     try:
         db.execute_query("SELECT 1")
@@ -188,6 +210,8 @@ _RULES = [
     ("stale:fundamental", "kick fund-flags refresh",
      "kick:fund-flags", 2),
     ("stale:flywheel", "kick flywheel refresh", "kick:flywheel", 2),
+    ("schema:missing", "missing relation — apply pending migrations "
+     "or restore the drop", "escalate", 3),
     ("db:unreachable", "DB unreachable — human check required",
      "escalate", 3),
 ]

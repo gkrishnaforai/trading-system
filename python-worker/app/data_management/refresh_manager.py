@@ -557,7 +557,11 @@ class DataRefreshManager(BaseService):
                 },
             )
         except Exception as e:
-            self.logger.debug(f"Failed to update ingestion window for {symbol}/{dataset}/{interval}: {e}")
+            # warning, not debug — a missing ingestion-state table or
+            # bad write must surface, not stay invisible for days
+            self.logger.warning(
+                "Failed to update ingestion window for "
+                f"{symbol}/{dataset}/{interval}: {e}")
             return
 
     def get_symbols_to_refresh(self, data_type: DataType, mode: RefreshMode) -> List[str]:

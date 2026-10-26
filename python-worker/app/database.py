@@ -329,6 +329,13 @@ def init_database():
     """Initialize database connection and run migrations"""
     db.initialize()
     run_migrations()
+    # post-migration contract check — a failed/dropped table is a
+    # loud startup error, not a runtime INSERT surprise days later
+    try:
+        from app.support.schema_drift import check_schema_drift
+        check_schema_drift()
+    except Exception as e:
+        logger.warning(f"schema-drift check skipped: {e}")
     return db
 
 
