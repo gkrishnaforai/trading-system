@@ -151,7 +151,10 @@ def _fact_buckets(facts: DimensionFacts, snap: MarketSnapshot,
         if m and m.value is not None:
             detail[k] = {"value": round(m.value, 2),
                          "chg5d": (round(m.chg5d, 4)
-                                   if m.chg5d is not None else None)}
+                                   if m.chg5d is not None else None),
+                         "delta5d": (round(m.delta5d, 3)
+                                     if m.delta5d is not None
+                                     else None)}
     out["macro"]["detail"] = detail
     # two-tier breadth — large-cap vs broad-market legs, when both
     # tranches resolved
@@ -649,6 +652,7 @@ def snapshot() -> Optional[dict[str, Any]]:
         forward = {**forward_probs(rd, breadth, geo,
                                    vix=vix, vix_rising=vix_rising),
                    "geo_risk": geo.get("geo_risk"),
+                   "geo_as_of": geo.get("as_of"),
                    "geo_drivers": (geo.get("drivers") or [])[:4],
                    "defensive_flow": (geo.get("defensive") or {})
                    .get("flow"),

@@ -119,7 +119,26 @@ export default async function RegimePage() {
     buckets && typeof buckets.macro === 'object' && buckets.macro !== null &&
       typeof (buckets.macro as Record<string, unknown>).detail === 'object' &&
       (buckets.macro as Record<string, unknown>).detail !== null
-      ? ((buckets.macro as Record<string, unknown>).detail as Record<string, { value?: number | null; chg5d?: number | null }>)
+      ? ((buckets.macro as Record<string, unknown>).detail as Record<string, { value?: number | null; chg5d?: number | null; delta5d?: number | null }>)
+      : null
+  // canonical engine read — the precise label + secondary regime the
+  // 5-class display coarsens (e.g. 'bear' + 'macro_risk_off'); plus
+  // the trajectory score the forward layer consumes
+  const canonical =
+    buckets && typeof buckets._canonical === 'object' && buckets._canonical !== null
+      ? (buckets._canonical as Record<string, unknown>)
+      : null
+  // divergence safeguard — a bullish 5-class verdict got capped to
+  // neutral because internals disagreed; silence would mislead
+  const divergent = buckets?._divergent === true
+  const canonicalLabel = canonical?.label
+    ? `engine ${String(canonical.label).replace(/_/g, ' ')}${canonical.secondary ? ' · ' + String(canonical.secondary).replace(/_/g, ' ') : ''}`
+    : null
+  // slow structural macro regime — weeks-scale read from
+  // macro_snapshots, distinct from the daily tape regime
+  const structMacro =
+    structural && typeof structural.macro === 'object' && structural.macro !== null
+      ? (structural.macro as Record<string, unknown>)
       : null
   // forward — the ~20-session scenario distribution the regime engine
   // journals (forward_probs) + geo/defensive context. Bounded evidence,
@@ -133,6 +152,11 @@ export default async function RegimePage() {
     const v = forward?.[k]
     return typeof v === 'number' ? v : null
   }
+  // geo context refreshes from the momentum job — a geo_as_of older
+  // than ~36h means the read is stale, not current evidence
+  const geoStale = typeof forward?.geo_as_of === 'string' &&
+    Date.now() - new Date(forward.geo_as_of as string).getTime() >
+    36 * 3600 * 1000
 
   const todayExtras = today
     ? Object.entries(today).filter(
@@ -162,6 +186,9 @@ export default async function RegimePage() {
     today?.verdict && typeof today.verdict === 'object'
       ? today.verdict as RegimeVerdict
       : null
+  const renderVerdictCard = Boolean(
+    verdict?.plain ||
+    (verdict?.rules && Object.keys(verdict.rules).length > 0))
 
   // which feeds actually answered — a null means the section below
   // renders blank; name it instead of failing silently
@@ -302,7 +329,7 @@ export default async function RegimePage() {
       )}
 
       {/* verdict — the plain-English call + action rules */}
-      {(verdict?.plain || (verdict?.rules && Object.keys(verdict.rules).length > 0)) && (
+      {renderVerdictCard && (
         <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
           <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
             Today's call
@@ -337,7 +364,8 @@ export default async function RegimePage() {
 
           {/* regime meta — event risk, data quality, lean, changes */}
           {Boolean(verdict?.event_risk || verdict?.data_quality || verdict?.qqq_lean ||
-            today?.ai_regime || verdict?.llm_dissent) && (
+            today?.ai_regime || verdict?.llm_dissent || canonicalLabel ||
+            divergent) && (
               <div className="pt-3 flex flex-wrap gap-2">
                 {!!verdict?.event_risk && (
                   <Chip label={`event risk ${String(verdict.event_risk)}`}
@@ -354,6 +382,17 @@ export default async function RegimePage() {
                 )}
                 {!!verdict?.llm_dissent && (
                   <Chip label="llm dissent" tone="warn" />
+                )}
+                {!!canonicalLabel && (
+                  <Chip label={canonicalLabel} tone="off" />
+                )}
+                {divergent && (
+                  <Chip label="capped — internals disagree" tone="warn" />
+                )}
+                {typeof canonical?.deterioration_score === 'number' && (
+                  <Chip
+                    label={`deterioration ${(canonical.deterioration_score as number) >= 0 ? '+' : ''}${(canonical.deterioration_score as number).toFixed(2)}`}
+                    tone={(canonical.deterioration_score as number) < -0.3 ? 'warn' : 'off'} />
                 )}
               </div>
             )}
@@ -396,7 +435,7 @@ export default async function RegimePage() {
           )}
         </section>
       )}
-
+      
       {/* what's driving it — the deterministic driver lines (index
           composite, breadth divergence, SMA breaks) as bullets, not
           a JSON blob */}
@@ -428,7 +467,8 @@ export default async function RegimePage() {
             {typeof forward.lead_scenario === 'string' && (
               <span className="font-mono text-[11px] text-faint">
                 lead · {String(forward.lead_scenario).replace(/_/g, ' ')}
-                {forward.confidence === 'medium' ? ' · med conf' : ''}
+                {forward.confidence === 'low' ? ' · low conf'
+                  : forward.confidence === 'medium' ? ' · med conf' : ''}
               </span>
             )}
           </div>
@@ -455,17 +495,24 @@ export default async function RegimePage() {
           </div>
           {(fwdNum('geo_risk') !== null ||
             typeof forward.defensive_stage === 'string' ||
-            typeof forward.defensive_flow === 'string') && (
+            typeof forward.defensive_flow === 'string' ||
+            geoStale) && (
               <div className="pt-3 flex flex-wrap gap-1.5">
                 {fwdNum('geo_risk') !== null && fwdNum('geo_risk')! > 0 && (
                   <span className={`rounded-full px-2.5 py-1 text-[11px] ${(fwdNum('geo_risk') ?? 0) >= 50 ? 'bg-defensive/10 text-defensive' : 'bg-elevated text-muted'}`}>
                     geo-risk {fwdNum('geo_risk')}/100
                   </span>
                 )}
+                {geoStale && (
+                  <span className="rounded-full bg-caution/10 px-2.5 py-1 text-[11px] text-caution">
+                    geo data stale
+                  </span>
+                )}
                 {typeof forward.defensive_stage === 'string' &&
                   forward.defensive_stage !== 'NORMAL' && (
                     <span className="rounded-full bg-defensive/10 px-2.5 py-1 text-[11px] text-defensive">
                       defensive · {String(forward.defensive_stage).replace(/_/g, ' ').toLowerCase()}
+                      {fwdNum('defensive_score') !== null && ` ${fwdNum('defensive_score')}`}
                     </span>
                   )}
                 {forward.defensive_flow === 'risk-off' && (
@@ -475,6 +522,18 @@ export default async function RegimePage() {
                 )}
               </div>
             )}
+          {Array.isArray(forward.geo_drivers) && forward.geo_drivers.length > 0 && (
+            <div className="pt-2 space-y-0.5">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-faint">
+                headline risk
+              </div>
+              {(forward.geo_drivers as unknown[]).slice(0, 3).map((d, i) => (
+                <p key={i} className="text-[11px] leading-relaxed text-muted">
+                  · {String(d)}
+                </p>
+              ))}
+            </div>
+          )}
           {Array.isArray(forward.drivers) && forward.drivers.length > 0 && (
             <div className="pt-2.5 space-y-0.5">
               {(forward.drivers as unknown[]).slice(0, 5).map((d, i) => (
@@ -534,6 +593,55 @@ export default async function RegimePage() {
           </div>
         </section>
       )}
+
+      {/* structural macro — the slow weeks-scale regime read from
+          macro_snapshots (inflation/growth/liquidity modules → regime
+          probs). Distinct horizon from the daily tape regime above */}
+      {structMacro && Boolean(typeof structMacro.overall === 'number' ||
+        (structMacro.regime_probs != null &&
+          typeof structMacro.regime_probs === 'object' &&
+          Object.keys(structMacro.regime_probs as object).length > 0)) && (
+          <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+            <div className="flex items-baseline justify-between">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+                Structural macro
+              </div>
+              {structMacro.age_days != null && (
+                <span className={`font-mono text-[11px] ${typeof structMacro.age_days === 'number' && structMacro.age_days > 7 ? 'text-caution' : 'text-faint'}`}>
+                  {String(structMacro.age_days)}d old
+                </span>
+              )}
+            </div>
+            <div className="pt-3 flex items-baseline gap-6">
+              {typeof structMacro.overall === 'number' && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-faint">
+                    composite
+                  </div>
+                  <div className="font-mono text-lg text-ink">
+                    {structMacro.overall.toFixed(0)}
+                  </div>
+                </div>
+              )}
+              {Boolean(structMacro.regime_probs &&
+                typeof structMacro.regime_probs === 'object') && (
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    {Object.entries(structMacro.regime_probs as Record<string, unknown>)
+                      .filter(([, v]) => typeof v === 'number')
+                      .sort((a, b) => (b[1] as number) - (a[1] as number))
+                      .slice(0, 3)
+                      .map(([k, v]) => (
+                        <span key={k} className="font-mono text-[11px] text-muted">
+                          {k.replace(/_/g, ' ')} {(v as number) <= 1
+                            ? Math.round((v as number) * 100)
+                            : Math.round(v as number)}%
+                        </span>
+                      ))}
+                  </div>
+                )}
+            </div>
+          </section>
+        )}
 
       {/* AI capex cycle — the structural leg under the tape regime:
           hyperscaler spend decel → orders → TSM → ASML chain, scored
@@ -758,24 +866,36 @@ export default async function RegimePage() {
             Cross-asset
           </div>
           <div className="pt-3 grid grid-cols-3 sm:grid-cols-5 gap-x-4 gap-y-2">
-            {Object.entries(macroDetail).map(([k, m]) => (
-              <div key={k}>
-                <div className="text-[10px] uppercase tracking-wider text-faint">
-                  {k.replace(/_/g, ' ')}
-                </div>
-                <div className="font-mono text-[12px] text-ink">
-                  {m.value != null ? m.value : '—'}
-                </div>
-                {m.chg5d != null && (
-                  <div
-                    className={`font-mono text-[10px] ${m.chg5d >= 0 ? 'text-constructive' : 'text-defensive'
-                      }`}
-                  >
-                    5d {m.chg5d >= 0 ? '+' : ''}{(m.chg5d * 100).toFixed(1)}%
+            {Object.entries(macroDetail).map(([k, m]) => {
+              // yield indexes (TNX/TYX/IRX) move in bp — render the
+              // points delta, not a % of the yield level
+              const isYield = ['us10y', 'us30y', 'ust3m'].includes(k)
+              return (
+                <div key={k}>
+                  <div className="text-[10px] uppercase tracking-wider text-faint">
+                    {k.replace(/_/g, ' ')}
                   </div>
-                )}
-              </div>
-            ))}
+                  <div className="font-mono text-[12px] text-ink">
+                    {m.value != null ? m.value : '—'}
+                  </div>
+                  {isYield && m.delta5d != null ? (
+                    <div
+                      className={`font-mono text-[10px] ${m.delta5d <= 0 ? 'text-constructive' : 'text-defensive'
+                        }`}
+                    >
+                      5d {m.delta5d >= 0 ? '+' : ''}{Math.round(m.delta5d * 100)}bp
+                    </div>
+                  ) : m.chg5d != null && (
+                    <div
+                      className={`font-mono text-[10px] ${m.chg5d >= 0 ? 'text-constructive' : 'text-defensive'
+                        }`}
+                    >
+                      5d {m.chg5d >= 0 ? '+' : ''}{(m.chg5d * 100).toFixed(1)}%
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </section>
       )}
