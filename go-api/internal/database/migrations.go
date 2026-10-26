@@ -310,10 +310,37 @@ func splitSQLStatements(sql string) []string {
 		// Not inside any quoted context.
 		// Line comments must not participate in quote tracking — an
 		// apostrophe inside a "--" comment flipped inSingleQuote and
-		// split a statement mid-literal (see 149_event_day_cron incident)
+		// split a statement mid-literal (see 149_event_day_cron incident).
+		// The newline terminating the comment must be preserved: eating it
+		// glued the next line onto the comment, and applyMigration's
+		// comment-stripper then deleted BOTH — silently losing the first
+		// line of every statement that followed a comment (see the
+		// 161_restore_dropped_live_tables incident).
 		if c == '-' && i+1 < len(bytes) && bytes[i+1] == '-' {
 			for i < len(bytes) && bytes[i] != '\n' {
 				current.WriteByte(bytes[i])
+				i++
+			}
+			// i now sits on the '\n' (or EOF); step back so the loop's
+			// own i++ lands on it and the newline is written normally.
+			i--
+			continue
+		}
+
+		// Block comments are opaque: copy them verbatim so quotes or
+		// semicolons inside /* ... */ can never flip quote tracking or
+		// split a statement.
+		if c == '/' && i+1 < len(bytes) && bytes[i+1] == '*' {
+			current.WriteByte(c)
+			current.WriteByte(bytes[i+1])
+			i += 2
+			for i < len(bytes) {
+				current.WriteByte(bytes[i])
+				if bytes[i] == '*' && i+1 < len(bytes) && bytes[i+1] == '/' {
+					current.WriteByte('/')
+					i++
+					break
+				}
 				i++
 			}
 			continue

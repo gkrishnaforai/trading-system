@@ -1,14 +1,16 @@
--- Restore live tables dropped by 136_drop_dead_tables.
--- 136's "verified dead" audit was wrong: these tables are still
--- written/read by python-worker paths (doc_analyses is in the
--- active-tier universe UNION — every universe query errored;
--- fair_value_methods was proven live by prod INSERT errors).
--- Restored verbatim from original migration DDL, idempotent, and
--- dependency-ordered (FK parents before children). Self-healing
--- tables (massive_*, trading_signals, company_profile_scores_auto)
--- and genuinely-orphaned legacy alert/consensus tables stay dropped.
+/*
+ * Restore live tables dropped by 136_drop_dead_tables.
+ * The dead-table audit was wrong: these tables are still written and
+ * read by python-worker paths (doc_analyses is in the active-tier
+ * universe UNION, fair_value_methods was proven live by prod INSERT
+ * errors). Restored verbatim from original migration DDL, idempotent,
+ * dependency-ordered (FK parents before children). Self-healing tables
+ * (massive_*, trading_signals, company_profile_scores_auto) and
+ * genuinely-orphaned legacy alert/consensus tables stay dropped.
+ * NOTE: no line comments, quotes, or semicolons in this file. The
+ * statement splitter is quote-aware but not comment-aware.
+ */
 
--- blog_posts (from supabase/migrations/001_baseline_schema.sql)
 CREATE TABLE IF NOT EXISTS blog_posts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -23,31 +25,29 @@ CREATE TABLE IF NOT EXISTS blog_posts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- doc_analyses (from supabase/migrations/109_doc_analysis.sql)
 CREATE TABLE IF NOT EXISTS doc_analyses (
     id          bigserial PRIMARY KEY,
     symbol      text NOT NULL,
     url         text,
     title       text,
     thesis      text,
-    claims      jsonb,                  -- validated claims
-    dropped     jsonb,                  -- claims killed by validation
+    claims      jsonb,
+    dropped     jsonb,
     created_at  timestamptz DEFAULT now()
 );
 
--- event_day_calls (from supabase/migrations/147_event_day_calls_recreate.sql)
 CREATE TABLE IF NOT EXISTS event_day_calls (
     id           bigserial PRIMARY KEY,
     as_of        date NOT NULL,
     event_name   text NOT NULL,
-    event_kind   text NOT NULL,            -- nfp | cpi | ppi | pce | fomc
-    verdict      text NOT NULL,            -- green | red | choppy
+    event_kind   text NOT NULL,
+    verdict      text NOT NULL,
     confidence   int,
     thesis       text,
-    premarket_spy double precision,        -- % move vs prior close
+    premarket_spy double precision,
     context      jsonb,
-    judge        text,                     -- 'llm:<model>' | 'rules'
-    spy_ret_1d   double precision,         -- graded: realized day return
+    judge        text,
+    spy_ret_1d   double precision,
     correct      boolean,
     graded_at    timestamptz,
     probs        jsonb,
@@ -63,13 +63,12 @@ CREATE TABLE IF NOT EXISTS event_day_calls (
     UNIQUE (as_of, event_kind)
 );
 
--- growth_forecast_snapshots (from supabase/migrations/125_forward_growth.sql)
 CREATE TABLE IF NOT EXISTS growth_forecast_snapshots (
     id              bigserial PRIMARY KEY,
     symbol          text NOT NULL,
     as_of           date NOT NULL,
     model_version   text NOT NULL,
-    -- consensus-side view (the street's forecast at snapshot time)
+
     fwd_eps_avg     numeric,
     fwd_rev_avg     numeric,
     est_revision_pct numeric,
@@ -77,24 +76,23 @@ CREATE TABLE IF NOT EXISTS growth_forecast_snapshots (
     revision_score  numeric,
     revision_grade  text,
     num_analysts    int,
-    -- our-side view (what the engines believed that day)
+
     fundamental_state text,
     priced_status   text,
     emerging_growth text,
-    fwd_rev_uplift_fy1 numeric,             -- Σ product ramps, $ by horizon
+    fwd_rev_uplift_fy1 numeric,
     fwd_rev_uplift_fy3 numeric,
-    detail          jsonb,                  -- scenario buckets, inputs, flags
-    prev_id         bigint,                 -- chain to prior snapshot
+    detail          jsonb,
+    prev_id         bigint,
     created_at      timestamptz DEFAULT now(),
     UNIQUE (symbol, as_of, model_version)
 );
 
--- forecast_actuals (from supabase/migrations/125_forward_growth.sql)
 CREATE TABLE IF NOT EXISTS forecast_actuals (
     id              bigserial PRIMARY KEY,
     symbol          text NOT NULL,
     snapshot_id     bigint REFERENCES growth_forecast_snapshots(id),
-    metric          text NOT NULL,          -- est_revision_pct | rev_growth | eps_growth
+    metric          text NOT NULL,
     horizon_days    int NOT NULL,
     forecast        numeric,
     actual          numeric,
@@ -103,7 +101,6 @@ CREATE TABLE IF NOT EXISTS forecast_actuals (
     UNIQUE (snapshot_id, metric, horizon_days)
 );
 
--- fundamentals_change_events (from supabase/migrations/031_create_fundamentals_change_events.sql)
 CREATE TABLE IF NOT EXISTS fundamentals_change_events (
     id BIGSERIAL PRIMARY KEY,
     stock_symbol TEXT NOT NULL,
@@ -119,7 +116,6 @@ CREATE TABLE IF NOT EXISTS fundamentals_change_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- macro_series_points (from supabase/migrations/116_fred_macro_tables.sql)
 CREATE TABLE IF NOT EXISTS macro_series_points (
     series_id        text        NOT NULL,
     observation_date date        NOT NULL,
@@ -129,7 +125,6 @@ CREATE TABLE IF NOT EXISTS macro_series_points (
     PRIMARY KEY (series_id, observation_date)
 );
 
--- portfolio_agent_trade_theses (from supabase/migrations/033_create_portfolio_agent_history.sql)
 CREATE TABLE IF NOT EXISTS portfolio_agent_trade_theses (
     thesis_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     portfolio_id TEXT,
@@ -151,7 +146,6 @@ CREATE TABLE IF NOT EXISTS portfolio_agent_trade_theses (
     source VARCHAR(128) NOT NULL DEFAULT 'deterministic'
 );
 
--- portfolio_agent_decisions (from supabase/migrations/033_create_portfolio_agent_history.sql)
 CREATE TABLE IF NOT EXISTS portfolio_agent_decisions (
     decision_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     portfolio_id TEXT,
@@ -179,7 +173,6 @@ CREATE TABLE IF NOT EXISTS portfolio_agent_decisions (
     expires_at TIMESTAMPTZ
 );
 
--- portfolio_agent_allocations (from supabase/migrations/033_create_portfolio_agent_history.sql)
 CREATE TABLE IF NOT EXISTS portfolio_agent_allocations (
     allocation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     decision_id UUID NOT NULL REFERENCES portfolio_agent_decisions(decision_id) ON DELETE CASCADE,
@@ -200,7 +193,6 @@ CREATE TABLE IF NOT EXISTS portfolio_agent_allocations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- portfolio_agent_order_plans (from supabase/migrations/033_create_portfolio_agent_history.sql)
 CREATE TABLE IF NOT EXISTS portfolio_agent_order_plans (
     plan_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     decision_id UUID NOT NULL REFERENCES portfolio_agent_decisions(decision_id) ON DELETE RESTRICT,
@@ -222,7 +214,6 @@ CREATE TABLE IF NOT EXISTS portfolio_agent_order_plans (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- portfolio_agent_orders (from supabase/migrations/033_create_portfolio_agent_history.sql)
 CREATE TABLE IF NOT EXISTS portfolio_agent_orders (
     order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     plan_id UUID NOT NULL REFERENCES portfolio_agent_order_plans(plan_id) ON DELETE RESTRICT,
@@ -242,7 +233,6 @@ CREATE TABLE IF NOT EXISTS portfolio_agent_orders (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- portfolio_agent_fills (from supabase/migrations/033_create_portfolio_agent_history.sql)
 CREATE TABLE IF NOT EXISTS portfolio_agent_fills (
     fill_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID NOT NULL REFERENCES portfolio_agent_orders(order_id) ON DELETE RESTRICT,
@@ -258,7 +248,6 @@ CREATE TABLE IF NOT EXISTS portfolio_agent_fills (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- portfolio_agent_position_events (from supabase/migrations/033_create_portfolio_agent_history.sql)
 CREATE TABLE IF NOT EXISTS portfolio_agent_position_events (
     position_event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     portfolio_id TEXT,
@@ -275,7 +264,6 @@ CREATE TABLE IF NOT EXISTS portfolio_agent_position_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- portfolio_agent_outcomes (from supabase/migrations/033_create_portfolio_agent_history.sql)
 CREATE TABLE IF NOT EXISTS portfolio_agent_outcomes (
     outcome_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     decision_id UUID REFERENCES portfolio_agent_decisions(decision_id) ON DELETE SET NULL,
@@ -295,38 +283,35 @@ CREATE TABLE IF NOT EXISTS portfolio_agent_outcomes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- product_initiatives (from supabase/migrations/125_forward_growth.sql)
 CREATE TABLE IF NOT EXISTS product_initiatives (
     id              bigserial PRIMARY KEY,
     symbol          text NOT NULL,
-    name            text NOT NULL,          -- 'data-center power products'
-    channel         text,                   -- tailwinds channel link
+    name            text NOT NULL,
+    channel         text,
     segment         text,
-    stage           text NOT NULL,          -- concept|development|qualification|ramp|production
-    addressable_band text,                  -- e.g. '0.5-2B' qualitative
-    scenario_buckets jsonb,                 -- {fy_plus_1:{bear,base,bull}, fy_plus_3:{...}} revenue $
-    incr_margin     numeric,                -- incremental operating margin assumption
-    confidence      numeric,                -- 0-1
-    evidence        jsonb,                  -- [{source, published_at, claim}]
-    status          text DEFAULT 'active',  -- active | dead | realized
+    stage           text NOT NULL,
+    addressable_band text,
+    scenario_buckets jsonb,
+    incr_margin     numeric,
+    confidence      numeric,
+    evidence        jsonb,
+    status          text DEFAULT 'active',
     created_at      timestamptz DEFAULT now(),
     updated_at      timestamptz DEFAULT now(),
     UNIQUE (symbol, name)
 );
 
--- recovery_deployments (from supabase/migrations/121_defensive_transition.sql)
 CREATE TABLE IF NOT EXISTS recovery_deployments (
     id          bigserial    PRIMARY KEY,
     as_of       date         NOT NULL DEFAULT CURRENT_DATE,
-    stage       integer      NOT NULL,    -- 1=20EMA reclaim
-                                          --  2=50SMA, 3=200DMA
+    stage       integer      NOT NULL,
+
     symbol      text         NOT NULL,
     alloc_usd   numeric      NOT NULL,
     note        text,
     created_at  timestamptz  DEFAULT now()
 );
 
--- sector_candidate_runs (from supabase/migrations/052_sector_candidates.sql)
 CREATE TABLE IF NOT EXISTS sector_candidate_runs (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     ran_at        timestamptz NOT NULL DEFAULT now(),
@@ -334,7 +319,6 @@ CREATE TABLE IF NOT EXISTS sector_candidate_runs (
     results       jsonb NOT NULL DEFAULT '{}'
 );
 
--- theme_rotation_runs (from supabase/migrations/113_theme_rotation.sql)
 CREATE TABLE IF NOT EXISTS theme_rotation_runs (
     id              bigint GENERATED ALWAYS AS IDENTITY,
     theme_key       text NOT NULL,
@@ -358,7 +342,6 @@ CREATE TABLE IF NOT EXISTS theme_rotation_runs (
     UNIQUE (theme_key, as_of)
 );
 
--- wheel_positions (from supabase/migrations/056_wheel_positions.sql)
 CREATE TABLE IF NOT EXISTS wheel_positions (
     id          bigserial PRIMARY KEY,
     symbol      text NOT NULL,
@@ -366,7 +349,7 @@ CREATE TABLE IF NOT EXISTS wheel_positions (
     strike      numeric NOT NULL,
     expiry      date NOT NULL,
     contracts   int NOT NULL DEFAULT 1,
-    premium     numeric,                  -- per share
+    premium     numeric,
     status      text NOT NULL DEFAULT 'open'
                 CHECK (status IN ('open', 'assigned', 'called', 'closed', 'expired')),
     notes       text,
@@ -375,7 +358,6 @@ CREATE TABLE IF NOT EXISTS wheel_positions (
     updated_at  timestamptz DEFAULT now()
 );
 
--- signal_changes (from python-worker/migrations/006_signal_tracking_schema.sql)
 CREATE TABLE IF NOT EXISTS signal_changes (
     id SERIAL PRIMARY KEY,
     symbol VARCHAR(10) NOT NULL,
@@ -385,12 +367,10 @@ CREATE TABLE IF NOT EXISTS signal_changes (
     change_details JSONB NOT NULL,
     timestamp TIMESTAMP NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Constraints
+
     CHECK (change_type IN ('SIGNAL_TYPE_CHANGE', 'CONFIDENCE_THRESHOLD_CHANGE', 'RISK_LEVEL_CHANGE', 'QUALITY_CHANGE'))
 );
 
--- rating_subscriptions (from python-worker/migrations/014_complete_rating_alert_system.sql)
 CREATE TABLE IF NOT EXISTS rating_subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -398,134 +378,116 @@ CREATE TABLE IF NOT EXISTS rating_subscriptions (
     subscription_type VARCHAR(50) NOT NULL CHECK (subscription_type IN ('rating_updates', 'price_target_updates', 'earnings_updates')),
     enabled BOOLEAN DEFAULT TRUE,
     priority INTEGER DEFAULT 2 CHECK (priority BETWEEN 1 AND 5),
-    config JSONB DEFAULT '{}', -- Subscription-specific configuration
+    config JSONB DEFAULT '{}',
     last_processed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    
+
     UNIQUE(user_id, symbol, subscription_type)
 );
 
--- alert_audit_trail (from python-worker/migrations/017_universal_alert_system.sql)
 CREATE TABLE IF NOT EXISTS alert_audit_trail (
     audit_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    
-    -- Entity information
+
     entity_type VARCHAR(20) NOT NULL CHECK (entity_type IN ('alert', 'event', 'notification', 'job', 'plugin', 'user', 'system')),
     entity_id VARCHAR(50) NOT NULL,
     entity_name VARCHAR(200),
-    
-    -- Operation details
+
     operation_type VARCHAR(20) NOT NULL CHECK (operation_type IN ('create', 'update', 'delete', 'trigger', 'send', 'process', 'execute', 'configure')),
     operation_data JSONB NOT NULL,
     previous_state JSONB,
     new_state JSONB,
     state_diff JSONB,
-    
-    -- Execution context
+
     user_id UUID REFERENCES users(id),
     job_id VARCHAR(50),
     plugin_name VARCHAR(50),
     correlation_id VARCHAR(50),
     session_id VARCHAR(50),
-    
-    -- Results and performance
+
     status VARCHAR(20) NOT NULL CHECK (status IN ('started', 'completed', 'failed', 'cancelled', 'timeout')),
     result_data JSONB,
     error_message TEXT,
     error_stack TEXT,
     error_code VARCHAR(50),
-    
-    -- Timing and performance
+
     started_at TIMESTAMPTZ NOT NULL,
     completed_at TIMESTAMPTZ,
     duration_ms INTEGER,
     cpu_time_ms INTEGER,
     memory_usage_mb INTEGER,
-    
-    -- System context
+
     ip_address INET,
     user_agent TEXT,
     hostname VARCHAR(100),
     process_id INTEGER,
     thread_id VARCHAR(50),
-    
-    -- Business context
+
     business_context JSONB DEFAULT '{}',
     impact_level VARCHAR(20) DEFAULT 'low' CHECK (impact_level IN ('low', 'medium', 'high', 'critical')),
-    
-    -- Metadata
+
     tags TEXT[],
     version INTEGER DEFAULT 1,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    
-    -- Constraints
+
     CHECK (duration_ms IS NULL OR duration_ms >= 0),
     CHECK (cpu_time_ms IS NULL OR cpu_time_ms >= 0),
     CHECK (memory_usage_mb IS NULL OR memory_usage_mb >= 0),
     CHECK (version >= 1)
 );
 
--- analysis_logs (from python-worker/migrations/portfolio_schema_industry_standard.sql)
 CREATE TABLE IF NOT EXISTS analysis_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     portfolio_id UUID REFERENCES portfolios(id) ON DELETE SET NULL,
-    
+
     analysis_type VARCHAR(20) NOT NULL CHECK (analysis_type IN ('single', 'portfolio', 'backtest')),
     symbols_analyzed INTEGER DEFAULT 0,
     signals_generated INTEGER DEFAULT 0,
     success_rate DECIMAL(5,2),
-    
+
     start_time TIMESTAMPTZ NOT NULL,
     end_time TIMESTAMPTZ,
     duration_ms INTEGER,
-    
+
     status VARCHAR(20) DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
     error_message TEXT,
-    
+
     metadata JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- grade_changes (from python-worker/migrations/016_enhanced_alert_system.sql)
 CREATE TABLE IF NOT EXISTS grade_changes (
     change_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     symbol VARCHAR(10) NOT NULL REFERENCES stocks(symbol) ON DELETE CASCADE,
     grading_company VARCHAR(100) NOT NULL,
     change_date TIMESTAMPTZ NOT NULL,
     change_type VARCHAR(20) NOT NULL CHECK (change_type IN ('upgrade', 'downgrade', 'initiate', 'suspend', 'maintain')),
-    
-    -- Grade information
+
     previous_grade VARCHAR(20),
     new_grade VARCHAR(20) NOT NULL,
-    grade_difference INTEGER, -- Numerical difference (e.g., +1 for upgrade, -1 for downgrade)
-    
-    -- Market context
+    grade_difference INTEGER,
+
     price_at_change DECIMAL(10,2),
-    price_change_percent DECIMAL(5,2), -- Price change % at time of grade
+    price_change_percent DECIMAL(5,2),
     volume_at_change BIGINT,
-    volume_ratio DECIMAL(5,2), -- Volume ratio vs average
-    
-    -- Consensus information
-    consensus_before DECIMAL(4,2), -- Consensus rating before change
-    consensus_after DECIMAL(4,2), -- Consensus rating after change
-    consensus_change DECIMAL(4,2), -- Consensus change
+    volume_ratio DECIMAL(5,2),
+
+    consensus_before DECIMAL(4,2),
+    consensus_after DECIMAL(4,2),
+    consensus_change DECIMAL(4,2),
     analyst_count_before INTEGER,
     analyst_count_after INTEGER,
-    
-    -- Metadata
+
     data_source VARCHAR(50) DEFAULT 'unknown',
     source_id VARCHAR(100),
     processed_at TIMESTAMPTZ DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    
-    -- Constraints
+
     UNIQUE(symbol, grading_company, change_date, data_source),
     CHECK (grade_difference IS NULL OR grade_difference != 0)
 );
 
--- fair value family (db/migrations/021 — legacy DDL, proven live)
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS fair_value_methods (
