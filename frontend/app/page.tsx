@@ -2,6 +2,7 @@ import { api, type HorizonScenario, type RegimeVerdict } from '@/lib/api'
 import { Chip, Kv, Section, Stat, fmtShort } from '@/components/regime'
 import { VolChips } from '@/components/vol-chips'
 import { TapeChips } from '@/components/tape-chips'
+import { SessionTape } from '@/components/session-tape'
 import { RetryRefresh } from '@/components/retry-refresh'
 
 const TONE: Record<string, string> = {
@@ -94,6 +95,31 @@ export default async function RegimePage() {
   const breadthBucket =
     buckets && typeof buckets.breadth === 'object' && buckets.breadth !== null
       ? (buckets.breadth as Record<string, unknown>)
+      : null
+
+  // evidence + cross-asset confirmation + macro instruments — all
+  // journaled in buckets by the engine; surfaced below instead of
+  // hiding inside the Kv dump
+  const evidence =
+    buckets && typeof buckets.evidence === 'object' && buckets.evidence !== null
+      ? (buckets.evidence as Record<string, unknown>)
+      : null
+  const drivers = Array.isArray(evidence?.drivers)
+    ? (evidence!.drivers as unknown[]).map(String)
+    : []
+  const confX =
+    buckets && typeof buckets._confirmation === 'object' && buckets._confirmation !== null
+      ? (buckets._confirmation as Record<string, unknown>)
+      : null
+  const confVotes =
+    confX && typeof confX.votes === 'object' && confX.votes !== null
+      ? (confX.votes as Record<string, string>)
+      : null
+  const macroDetail =
+    buckets && typeof buckets.macro === 'object' && buckets.macro !== null &&
+      typeof (buckets.macro as Record<string, unknown>).detail === 'object' &&
+      (buckets.macro as Record<string, unknown>).detail !== null
+      ? ((buckets.macro as Record<string, unknown>).detail as Record<string, { value?: number | null; chg5d?: number | null }>)
       : null
 
   const todayExtras = today
@@ -237,6 +263,11 @@ export default async function RegimePage() {
         )}
       </section>
 
+      {/* session tape — how today unfolded: journaled 15-min states
+          with the readings at each transition (the "gapped → rallied
+          → faded — why" answer) */}
+      {tape && <SessionTape tape={tape} />}
+
       {/* thin score strip */}
       {today && (
         <section className="grid grid-cols-2 sm:grid-cols-4 gap-6 rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
@@ -291,6 +322,84 @@ export default async function RegimePage() {
               {verdict.rules.note}
             </p>
           )}
+
+          {/* regime meta — event risk, data quality, lean, changes */}
+          {Boolean(verdict?.event_risk || verdict?.data_quality || verdict?.qqq_lean ||
+            today?.ai_regime || verdict?.llm_dissent) && (
+              <div className="pt-3 flex flex-wrap gap-2">
+                {!!verdict?.event_risk && (
+                  <Chip label={`event risk ${String(verdict.event_risk)}`}
+                    tone={verdict.event_risk === 'extreme' || verdict.event_risk === 'high' ? 'warn' : 'off'} />
+                )}
+                {!!verdict?.data_quality && (
+                  <Chip label={`data ${String(verdict.data_quality)}`} tone="off" />
+                )}
+                {today?.ai_regime && (
+                  <Chip label={`ai growth ${today.ai_regime.replace(/_/g, ' ')}`} tone="off" />
+                )}
+                {!!verdict?.qqq_lean && (
+                  <Chip label={`qqq lean ${String(verdict.qqq_lean).replace(/_/g, ' ')}`} tone="off" />
+                )}
+                {!!verdict?.llm_dissent && (
+                  <Chip label="llm dissent" tone="warn" />
+                )}
+              </div>
+            )}
+
+          {/* cross-asset confirmation — do other markets underwrite
+              the equity move? journaled votes per asset */}
+          {confVotes && Object.keys(confVotes).length > 0 && (
+            <div className="pt-3 flex flex-wrap items-center gap-2">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+                x-asset
+              </span>
+              {Object.entries(confVotes).map(([k, v]) => (
+                <span
+                  key={k}
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono ${v === 'confirm'
+                    ? 'border-aggressive/40 text-aggressive'
+                    : 'border-defensive/40 text-defensive'
+                    }`}
+                >
+                  {k.replace(/_/g, ' ')} {v === 'confirm' ? '✓' : '✗'}
+                </span>
+              ))}
+              {!!confX?.label && (
+                <span className="text-[11px] text-faint">
+                  {String(confX.label)}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* what changed — deterministic day-over-day dimension diffs */}
+          {Array.isArray(verdict?.changes) && (verdict!.changes as unknown[]).length > 0 && (
+            <div className="pt-3 space-y-0.5">
+              {(verdict!.changes as unknown[]).slice(0, 4).map((c, i) => (
+                <p key={i} className="text-[11px] leading-relaxed text-muted">
+                  Δ {typeof c === 'string' ? c : JSON.stringify(c)}
+                </p>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* what's driving it — the deterministic driver lines (index
+          composite, breadth divergence, SMA breaks) as bullets, not
+          a JSON blob */}
+      {drivers.length > 0 && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+            What&apos;s driving it
+          </div>
+          <div className="pt-3 space-y-1">
+            {drivers.slice(0, 8).map((d, i) => (
+              <p key={i} className="text-[12px] leading-relaxed text-muted">
+                · {d}
+              </p>
+            ))}
+          </div>
         </section>
       )}
 
@@ -483,6 +592,106 @@ export default async function RegimePage() {
         </section>
       )}
 
+      {/* index technicals — the core US set + global overlay, visible:
+          the composite read the drivers cite lives here, not in a
+          collapsed dump */}
+      {indexes && Object.keys(indexes).length > 0 && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="flex items-baseline justify-between">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              Index technicals
+            </div>
+            <span className="font-mono text-[11px] text-faint">
+              {breadthBucket?.divergence != null
+                ? `large-cap ${breadthBucket.large_cap ?? '—'}% vs broad ${breadthBucket.broad ?? '—'}% above 50d`
+                : 'core US set + global overlay'}
+            </span>
+          </div>
+          <div className="pt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {Object.entries(indexes).map(([sym, ix]) => {
+              const num = (k: string) =>
+                typeof ix?.[k] === 'number' ? (ix[k] as number) : null
+              const rsi = num('rsi14')
+              const overlay = ix?.overlay === true
+              return (
+                <div
+                  key={sym}
+                  className="rounded-md border border-hairline/60 px-3 py-2"
+                >
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-[13px] font-semibold">{sym}</span>
+                    <span className="font-mono text-[11px] text-faint">
+                      {overlay ? 'overlay' : rsi != null ? `RSI ${rsi.toFixed(0)}` : ''}
+                    </span>
+                  </div>
+                  <div className="mt-1 font-mono text-[12px] text-muted">
+                    {num('price')?.toFixed(2) ?? '—'}
+                  </div>
+                  <div className="mt-1 space-y-0.5 font-mono text-[11px]">
+                    {(['sma20', 'sma50', 'sma200'] as const).map((ma) => {
+                      const above = ix?.[`above_${ma}`]
+                      const dist = num(`dist_${ma}`)
+                      const days = ma === 'sma50' ? num('days_below_sma50') : null
+                      return (
+                        <div key={ma} className="flex justify-between">
+                          <span className="text-faint">
+                            {ma.replace('sma', '')}d
+                          </span>
+                          <span
+                            className={
+                              above === true
+                                ? 'text-constructive'
+                                : above === false
+                                  ? 'text-defensive'
+                                  : 'text-faint'
+                            }
+                          >
+                            {dist != null
+                              ? `${dist >= 0 ? '+' : ''}${(dist * 100).toFixed(1)}%`
+                              : '—'}
+                            {days != null && days > 0 ? ` ·${days}d` : ''}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* cross-asset instruments — 10Y/DXY/credit/TLT/gold/oil with
+          5d moves; the raw evidence the confirmation votes cite */}
+      {macroDetail && Object.keys(macroDetail).length > 0 && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+            Cross-asset
+          </div>
+          <div className="pt-3 grid grid-cols-3 sm:grid-cols-5 gap-x-4 gap-y-2">
+            {Object.entries(macroDetail).map(([k, m]) => (
+              <div key={k}>
+                <div className="text-[10px] uppercase tracking-wider text-faint">
+                  {k.replace(/_/g, ' ')}
+                </div>
+                <div className="font-mono text-[12px] text-ink">
+                  {m.value != null ? m.value : '—'}
+                </div>
+                {m.chg5d != null && (
+                  <div
+                    className={`font-mono text-[10px] ${m.chg5d >= 0 ? 'text-constructive' : 'text-defensive'
+                      }`}
+                  >
+                    5d {m.chg5d >= 0 ? '+' : ''}{(m.chg5d * 100).toFixed(1)}%
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* expandable depth */}
       <div className="mt-10">
         {capex?.components != null &&
@@ -497,74 +706,12 @@ export default async function RegimePage() {
               </div>
             </Section>
           )}
-        {indexes && Object.keys(indexes).length > 0 && (
-          <Section
-            title="Index technicals"
-            subtitle={
-              breadthBucket?.divergence != null
-                ? `large-cap ${breadthBucket.large_cap ?? '—'}% vs broad ${breadthBucket.broad ?? '—'}% above 50d`
-                : 'core US set + global overlay'
-            }
-          >
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {Object.entries(indexes).map(([sym, ix]) => {
-                const num = (k: string) =>
-                  typeof ix?.[k] === 'number' ? (ix[k] as number) : null
-                const rsi = num('rsi14')
-                const overlay = ix?.overlay === true
-                return (
-                  <div
-                    key={sym}
-                    className="rounded-md border border-hairline/60 px-3 py-2"
-                  >
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-[13px] font-semibold">{sym}</span>
-                      <span className="font-mono text-[11px] text-faint">
-                        {overlay ? 'overlay' : rsi != null ? `RSI ${rsi.toFixed(0)}` : ''}
-                      </span>
-                    </div>
-                    <div className="mt-1 font-mono text-[12px] text-muted">
-                      {num('price')?.toFixed(2) ?? '—'}
-                    </div>
-                    <div className="mt-1 space-y-0.5 font-mono text-[11px]">
-                      {(['sma20', 'sma50', 'sma200'] as const).map((ma) => {
-                        const above = ix?.[`above_${ma}`]
-                        const dist = num(`dist_${ma}`)
-                        const days = ma === 'sma50' ? num('days_below_sma50') : null
-                        return (
-                          <div key={ma} className="flex justify-between">
-                            <span className="text-faint">
-                              {ma.replace('sma', '')}d
-                            </span>
-                            <span
-                              className={
-                                above === true
-                                  ? 'text-constructive'
-                                  : above === false
-                                    ? 'text-defensive'
-                                    : 'text-faint'
-                              }
-                            >
-                              {dist != null
-                                ? `${dist >= 0 ? '+' : ''}${(dist * 100).toFixed(1)}%`
-                                : '—'}
-                              {days != null && days > 0 ? ` ·${days}d` : ''}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </Section>
-        )}
         {buckets && (
           <Section title="What's driving it" subtitle="regime inputs">
             <div className="divide-y divide-transparent">
               {Object.entries(buckets)
-                .filter(([k]) => k !== 'structural' && k !== 'indexes')
+                .filter(([k]) => !['structural', 'indexes', 'evidence',
+                  '_confirmation'].includes(k))
                 .map(([k, v]) => (
                   <Kv key={k} k={k.replace(/_/g, ' ')} v={v} />
                 ))}

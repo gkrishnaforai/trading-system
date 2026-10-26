@@ -1,13 +1,13 @@
 import type { IntradayTape } from '@/lib/api'
 
-const TAPE_TONE: Record<string, string> = {
+export const TAPE_TONE: Record<string, string> = {
   buyers_in_control: 'text-aggressive',
   sellers_regaining: 'text-defensive',
   narrow_fragile: 'text-caution',
   sellers_exhausting: 'text-accent',
   chop_unconfirmed: 'text-faint',
 }
-const TAPE_LABEL: Record<string, string> = {
+export const TAPE_LABEL: Record<string, string> = {
   buyers_in_control: 'buyers in control',
   sellers_regaining: 'sellers regaining',
   narrow_fragile: 'narrow, fragile bounce',

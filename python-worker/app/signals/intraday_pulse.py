@@ -287,6 +287,31 @@ def _persist(o: dict[str, Any]) -> None:
 
 # ------------------------------ reads -----------------------------------
 
+def _timeline_row(r: dict) -> dict:
+    """One journaled eval as a timeline entry — state plus the readings
+    that explain WHY the tape looked that way at that moment, so a
+    state transition carries its own evidence (VWAP lost, VIX spiked,
+    leadership rotated) instead of just a label."""
+    rd = r.get("readings") or {}
+    if isinstance(rd, str):
+        try:
+            rd = json.loads(rd)
+        except Exception:
+            rd = {}
+    return {"ts": str(r["ts"]), "state": r["state"],
+            "qqq_chg_open": rd.get("qqq_chg_open"),
+            "spy_chg_open": rd.get("spy_chg_open"),
+            "above_vwap": rd.get("above_vwap"),
+            "vwap_held": rd.get("vwap_held"),
+            "vix": rd.get("vix"),
+            "vix_rising": rd.get("vix_rising"),
+            "vix_falling": rd.get("vix_falling"),
+            "breadth_adv_pct": rd.get("breadth_adv_pct"),
+            "leadership": rd.get("leadership"),
+            "macro_pressure": rd.get("macro_pressure"),
+            "evidence": rd.get("evidence")}
+
+
 def latest() -> dict[str, Any]:
     """Most recent eval + today's state timeline, for the board card."""
     from app.database import db
@@ -298,7 +323,7 @@ def latest() -> dict[str, Any]:
     latest_eval = rows[0]["readings"] or {}
     return {"state": rows[0]["state"], "ts": str(rows[0]["ts"]),
             "eval": latest_eval,
-            "timeline": [{"ts": str(r["ts"]), "state": r["state"]}
+            "timeline": [_timeline_row(r)
                          for r in reversed(rows)]}
 
 

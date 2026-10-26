@@ -354,7 +354,21 @@ export type IntradayTape = {
     morning_recovery?: boolean
     evidence?: string[]
   }
-  timeline?: { ts: string; state: string }[]
+  timeline?: {
+    ts: string
+    state: string
+    qqq_chg_open?: number | null
+    spy_chg_open?: number | null
+    above_vwap?: boolean | null
+    vwap_held?: boolean | null
+    vix?: number | null
+    vix_rising?: boolean | null
+    vix_falling?: boolean | null
+    breadth_adv_pct?: number | null
+    leadership?: string | null
+    macro_pressure?: boolean | null
+    evidence?: string[] | null
+  }[]
 }
 
 export type SqueezeEval = {
