@@ -144,14 +144,24 @@ def _fact_buckets(facts: DimensionFacts, snap: MarketSnapshot,
                     "label": getattr(facts, dim)}
     # macro detail — the cross-asset evidence the old engine showed
     detail = {}
-    for k in ("us10y", "us30y", "ust3m", "dxy", "hyg", "lqd", "tips",
-              "tsy13", "wti", "copper", "gold", "vvix", "btc", "move"):
+    for k in ("us10y", "us30y", "ust3m", "dxy", "hyg", "lqd", "tlt",
+              "tips", "tsy13", "wti", "copper", "gold", "vvix", "btc",
+              "move"):
         m = snap.macro.instruments.get(k)
         if m and m.value is not None:
             detail[k] = {"value": round(m.value, 2),
                          "chg5d": (round(m.chg5d, 4)
                                    if m.chg5d is not None else None)}
     out["macro"]["detail"] = detail
+    # two-tier breadth — large-cap vs broad-market legs, when both
+    # tranches resolved
+    if snap.breadth.breadth_divergence is not None:
+        out["breadth"]["large_cap"] = snap.breadth.pct_above_sma50_large
+        out["breadth"]["broad"] = snap.breadth.pct_above_sma50_broad
+        out["breadth"]["divergence"] = snap.breadth.breadth_divergence
+    # per-index technical cards — core US set plus EFA/EEM overlay
+    out["indexes"] = {s: ix.model_dump()
+                      for s, ix in snap.indexes.items()}
     perm = reg.market_permissions
     out["evidence"] = {"drivers": facts.drivers,
                        "permissions": perm.model_dump() if perm else {}}
@@ -186,6 +196,17 @@ def _confirmation(snap: MarketSnapshot) -> dict[str, Any]:
         risk_on = v5 < -0.25              # VIX points falling = calming
         votes["vix"] = ("confirm" if (risk_on == (eq_dir == "up"))
                         else "against")
+    # duration — TLT read WITH the 10Y: a TLT bid while yields fall is
+    # defensive (against); TLT dumped while yields rise is rate stress
+    # (against); any other mix is ambiguous — no vote
+    tlt = snap.macro.instruments.get("tlt")
+    tnx = snap.macro.instruments.get("us10y")
+    if (tlt and tlt.chg5d is not None
+            and tnx and tnx.delta5d is not None):
+        if tlt.chg5d > 0.005 and tnx.delta5d < -0.05:
+            votes["duration"] = "against"     # flight-to-safety bid
+        elif tlt.chg5d < -0.005 and tnx.delta5d > 0.05:
+            votes["duration"] = "against"     # rate stress
     conf = sum(1 for v in votes.values() if v == "confirm")
     n = len(votes) or 1
     ratio = conf / n

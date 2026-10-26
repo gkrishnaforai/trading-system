@@ -298,6 +298,13 @@ async def _scheduler_loop():
         logger.info("job registry synced: %s jobs", n)
     except Exception as e:
         logger.error(f"registry sync failed: {e}")
+    try:
+        from app.market_regime.index_book import ensure_index_book
+        added = await asyncio.to_thread(ensure_index_book)
+        if added:
+            logger.info("indexes book: %s tracking units added", added)
+    except Exception as e:
+        logger.error(f"indexes book ensure failed: {e}")
     while True:
         try:
             res = await scheduler.tick()

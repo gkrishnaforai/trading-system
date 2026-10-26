@@ -17,12 +17,14 @@ from app.market_data import MarketDataService, indicators
 from app.market_data.models import OHLCVBar
 
 from .models import (
-    BreadthState, MacroInstrument, MacroState, MarketSnapshot, MarketState,
-    MomentumState, ParticipationState, SectorMove, SnapshotPoint,
-    StructureState, TrendState, VolatilityState,
+    BreadthState, IndexTechnicals, MacroInstrument, MacroState,
+    MarketSnapshot, MarketState, MomentumState, ParticipationState,
+    SectorMove, SnapshotPoint, StructureState, TrendState,
+    VolatilityState,
 )
 from .universe import (
-    BREADTH_BASKET, INDEX_ETFS, MACRO_SYMBOLS, ROTATION_ETFS,
+    BREADTH_BASKET, GLOBAL_OVERLAY, INDEX_ETFS, INDEX_UNIVERSE,
+    LARGECAP_BASKET, MACRO_SYMBOLS, MIDCAP_BASKET, ROTATION_ETFS,
     SECTOR_ETFS, SPY, VIX, VIX3M, VXN,
 )
 
@@ -30,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 HISTORY_OFFSETS = (0, 1, 5, 20)
 MAX_CONCURRENT = 8          # keep Yahoo/FMP happy
+_LARGE_SET = set(LARGECAP_BASKET)
+_BROAD_SET = set(MIDCAP_BASKET)
+_OVERLAY_SET = set(GLOBAL_OVERLAY)
 
 
 # ======================= light state (unchanged API) =======================
@@ -173,6 +178,31 @@ def _pct_above(
     return round(above / total * 100, 1) if total else None
 
 
+def _index_technicals(sym: str, bars: List[OHLCVBar],
+                      overlay: bool = False) -> IndexTechnicals:
+    """One index ETF's technical card — same indicator primitives as
+    the canonical SPY reads, projected flat for uniform rendering."""
+    close = bars[-1].close
+    sma20 = indicators.sma(bars, 20)
+    sma50 = indicators.sma(bars, 50)
+    sma200 = indicators.sma(bars, 200)
+    return IndexTechnicals(
+        symbol=sym, price=close,
+        sma20=sma20, sma50=sma50, sma200=sma200,
+        above_sma20=close > sma20 if sma20 else None,
+        above_sma50=close > sma50 if sma50 else None,
+        above_sma200=close > sma200 if sma200 else None,
+        dist_sma20=close / sma20 - 1 if sma20 else None,
+        dist_sma50=close / sma50 - 1 if sma50 else None,
+        dist_sma200=close / sma200 - 1 if sma200 else None,
+        rsi14=indicators.rsi(bars),
+        ret5=indicators.returns(bars, 5),
+        ret20=indicators.returns(bars, 20),
+        days_below_sma50=_days_below(
+            bars, indicators.sma_series(bars, 50)),
+        overlay=overlay)
+
+
 def _breadth_state(
     universe: Dict[str, List[OHLCVBar]],
 ) -> BreadthState:
@@ -235,7 +265,9 @@ async def build_market_snapshot(
     coverage: Dict[str, int] = {}
 
     groups = {
-        "index": _fetch_bars(service, [SPY, "QQQ"], "1y", sem),
+        # core US index set + global overlay — 1y so SMA200 resolves
+        "index": _fetch_bars(
+            service, INDEX_UNIVERSE + GLOBAL_OVERLAY, "1y", sem),
         "rotation": _fetch_bars(
             service, [s for s in ROTATION_ETFS + INDEX_ETFS if s != SPY],
             "3mo", sem, prefer=YAHOO_FIRST),
@@ -313,7 +345,29 @@ async def build_market_snapshot(
     )
 
     # ---- breadth ----
-    breadth = _breadth_state(breadth_univ) if breadth_univ else BreadthState()
+    breadth = _breadth_state(breadth_univ) if breadth_univ \
+        else BreadthState()
+    if breadth_univ:
+        # two-tier read: large-cap names vs the mid/small tranche —
+        # the divergence tells you whether the index surface is
+        # stronger than the median stock underneath it
+        large = {s: b for s, b in breadth_univ.items()
+                 if s in _LARGE_SET}
+        broad = {s: b for s, b in breadth_univ.items()
+                 if s in _BROAD_SET}
+        breadth.pct_above_sma50_large = _pct_above(large, 50)
+        breadth.pct_above_sma50_broad = _pct_above(broad, 50)
+        if (breadth.pct_above_sma50_large is not None
+                and breadth.pct_above_sma50_broad is not None):
+            breadth.breadth_divergence = round(
+                breadth.pct_above_sma50_large
+                - breadth.pct_above_sma50_broad, 1)
+
+    # ---- index technical cards — core set + global overlay ----
+    indexes = {
+        sym: _index_technicals(sym, bars, overlay=sym in _OVERLAY_SET)
+        for sym, bars in (results["index"] or {}).items()
+    }
 
     # ---- volatility ----
     vix = _close_at(vix_bars, 0) if vix_bars else None
@@ -445,4 +499,5 @@ async def build_market_snapshot(
         structure=structure,
         history=history,
         coverage=coverage,
+        indexes=indexes,
     )

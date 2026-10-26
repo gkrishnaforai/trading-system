@@ -91,6 +91,12 @@ class BreadthState(BaseModel):
     breadth_chg_1d: Optional[float] = None    # change in pct_above_sma50
     breadth_chg_5d: Optional[float] = None
     breadth_chg_20d: Optional[float] = None
+    # two-tier breadth — large-cap vs broad-market legs (same universe
+    # fetch, split by basket). divergence = large - broad; >0 means
+    # the index surface is stronger than the median stock
+    pct_above_sma50_large: Optional[float] = None
+    pct_above_sma50_broad: Optional[float] = None
+    breadth_divergence: Optional[float] = None
 
 
 class VolatilityState(BaseModel):
@@ -154,6 +160,28 @@ class StructureState(BaseModel):
     dist_from_52w_high: Optional[float] = None
 
 
+class IndexTechnicals(BaseModel):
+    """Compact per-index technical card — the same reads TrendState/
+    MomentumState carry for SPY, projected flat so every index ETF
+    renders identically. Computed, never fetched."""
+    symbol: str
+    price: Optional[float] = None
+    sma20: Optional[float] = None
+    sma50: Optional[float] = None
+    sma200: Optional[float] = None
+    above_sma20: Optional[bool] = None
+    above_sma50: Optional[bool] = None
+    above_sma200: Optional[bool] = None
+    dist_sma20: Optional[float] = None    # price/ma - 1 (neg = needs
+    dist_sma50: Optional[float] = None    #  +x% to reclaim)
+    dist_sma200: Optional[float] = None
+    rsi14: Optional[float] = None
+    ret5: Optional[float] = None
+    ret20: Optional[float] = None
+    days_below_sma50: Optional[int] = None
+    overlay: bool = False                 # EFA/EEM — context, not score
+
+
 class SnapshotPoint(BaseModel):
     """One column of the history table."""
     offset_days: int                        # 0 = today
@@ -176,6 +204,7 @@ class MarketSnapshot(BaseModel):
     structure: StructureState = Field(default_factory=StructureState)
     history: List[SnapshotPoint] = Field(default_factory=list)
     coverage: Dict[str, int] = Field(default_factory=dict)  # symbols fetched per group
+    indexes: Dict[str, IndexTechnicals] = Field(default_factory=dict)
 
 
 class DimensionFacts(BaseModel):

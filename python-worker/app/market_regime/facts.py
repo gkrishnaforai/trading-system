@@ -77,6 +77,25 @@ def derive_facts(snap: MarketSnapshot,
         ts -= 0.10
     if (t.days_below_sma50 or 0) >= 3:
         ts -= 0.10
+
+    # multi-index composite — one index can hide a split tape; six
+    # proxies can't. "Correction within an intact uptrend" is a
+    # composite state: above the 200 but below the 50.
+    core = [ix for ix in snap.indexes.values() if not ix.overlay]
+    if len(core) >= 4:
+        above_200 = [ix for ix in core if ix.above_sma200]
+        below_200 = [ix for ix in core if ix.above_sma200 is False]
+        correction = [ix for ix in above_200 if ix.above_sma50 is False]
+        drivers.append(f"indexes {len(above_200)}/{len(core)} "
+                       f"above SMA200")
+        if correction:
+            drivers.append(", ".join(ix.symbol for ix in correction)
+                           + " correcting within uptrend")
+        if below_200:
+            drivers.append(", ".join(ix.symbol for ix in below_200)
+                           + " broke below SMA200")
+        ts += 0.15 * (2 * len(above_200) / len(core) - 1)
+
     scores["trend"] = round(_clamp(ts), 2)
 
     # ---- momentum ----
@@ -160,7 +179,22 @@ def derive_facts(snap: MarketSnapshot,
         drivers.append("new lows expanding while SPY is within 3% of "
                        "highs — distribution divergence")
 
+    # two-tier divergence — large caps holding while the broad market
+    # slides means the index surface is stronger than the median
+    # stock; "strong" breadth is a lie when the legs disagree
+    if (b.breadth_divergence is not None
+            and b.breadth_divergence >= 10):
+        drivers.append(
+            f"large-cap breadth {b.pct_above_sma50_large:.0f}% vs "
+            f"broad {b.pct_above_sma50_broad:.0f}% — index surface "
+            f"stronger than the median stock")
+        if breadth in ("strong", "improving"):
+            breadth = "neutral"
+
     bs = 0.0
+    if (b.breadth_divergence is not None
+            and b.breadth_divergence >= 15):
+        bs -= 0.1
     if b50 is not None:
         bs += _clamp((b50 - 50) / 50) * 0.4
     if bchg5 is not None:
@@ -291,6 +325,20 @@ def derive_facts(snap: MarketSnapshot,
         if be > 0.004:
             signals += 1
             drivers.append(f"breakevens firming — TIP/IEI {be:+.1%}/5d")
+    # duration bid — TLT read WITH the 10Y, never alone: TLT up while
+    # yields fall = defensive demand; TLT down while yields rise =
+    # rate stress; TLT up while yields rise = inflation repricing
+    # (conflicted, not clean risk-off). Driver-only — no score weight
+    # until the read is calibrated against outcomes.
+    tlt = ma.instruments.get("tlt")
+    if (tlt and tlt.chg5d is not None and tnx
+            and tnx.delta5d is not None):
+        if tlt.chg5d > 0.005 and tnx.delta5d < -0.05:
+            drivers.append(f"duration bid — TLT {tlt.chg5d:+.1%}/5d "
+                           f"while 10Y eases")
+        elif tlt.chg5d < -0.005 and tnx.delta5d > 0.05:
+            drivers.append(f"duration selling — TLT {tlt.chg5d:+.1%}/5d "
+                           f"while 10Y rises")
     # tail-hedge demand — VVIX elevated means pros are buying tails
     vvix = ma.instruments.get("vvix")
     if vvix and vvix.value is not None and vvix.value > 110:

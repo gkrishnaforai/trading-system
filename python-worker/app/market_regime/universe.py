@@ -22,6 +22,14 @@ SECTOR_ETFS = [
 INDEX_ETFS = ["QQQ", "DIA", "IWM"]
 ROTATION_ETFS = ["QQQ", "SOXX", "IGV", "IWM"]
 
+# Core US index regime set — each gets a full technical card
+# (price vs SMA20/50/200, RSI, streaks). RSP adds the equal-weight
+# read: S&P breadth showing through the index surface itself.
+INDEX_UNIVERSE = ["SPY", "QQQ", "DIA", "IWM", "MDY", "RSP"]
+# Global-risk overlay — confirms/diverges from US risk appetite;
+# shown with the index cards but not blended into the US score.
+GLOBAL_OVERLAY = ["EFA", "EEM"]
+
 # canonical name -> symbol (Yahoo conventions)
 MACRO_SYMBOLS = {
     "us10y": "^TNX",
@@ -36,13 +44,17 @@ MACRO_SYMBOLS = {
     "move":  "^MOVE",
     "hyg":   "HYG",        # credit — junk vs IG is the real risk gauge
     "lqd":   "LQD",
+    "tlt":   "TLT",        # duration bid — read WITH yields, not alone
     "tips":  "TIP",        # breakevens proxy (TIP/IEI)
     "tsy13": "IEI",
     "vvix":  "^VVIX",      # tail-hedge demand — vol of vol
 }
 
-# ~100 liquid names — breadth universe
-BREADTH_BASKET = [
+# ~100 liquid mega/large-cap names — the institutional-breadth leg.
+# Paired with MIDCAP_BASKET this yields the large-cap vs broad-market
+# divergence reading (S&P members holding while the median stock
+# weakens) from a single fetch pass.
+LARGECAP_BASKET = [
     # tech / semis
     "AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM", "ADBE", "AMD", "INTC",
     "CSCO", "QCOM", "TXN", "AMAT", "LRCX", "MU", "KLAC", "SNPS", "CDNS",
@@ -68,3 +80,23 @@ BREADTH_BASKET = [
     "NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "XEL",
     "PLD", "AMT", "EQIX", "SPG", "O",
 ]
+
+# ~50 liquid mid/small names — the broad-market leg. Below the mega
+# caps: when these %s diverge from the large-cap leg, the index
+# surface is lying about participation.
+MIDCAP_BASKET = [
+    # tech / growth
+    "APP", "PLTR", "SNOW", "NET", "DDOG", "CRWD", "ZS", "OKTA",
+    "DOCU", "BILL", "HUBS", "MDB", "TEAM", "TWLO", "U", "RBLX",
+    # consumer / services
+    "ABNB", "DASH", "RCL", "RBRK", "ARMK", "DPZ", "WING", "SHAK",
+    # financials / fintech
+    "SOFI", "HOOD", "COIN", "AFRM", "UPST", "LC", "MQ", "PAGS",
+    # health / biotech-ish liquid
+    "DXCM", "INCY", "BMRN", "ALNY", "EXEL", "SRPT", "PCVX", "RGEN",
+    # industrials / energy / materials
+    "AXON", "JBL", "FLEX", "GNRC", "FSLR", "ENPH", "CF", "ALB",
+    "MLM", "VMC",
+]
+
+BREADTH_BASKET = LARGECAP_BASKET + MIDCAP_BASKET

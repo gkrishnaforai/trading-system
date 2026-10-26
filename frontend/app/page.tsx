@@ -85,6 +85,17 @@ export default async function RegimePage() {
       ? (fed.data_quality as Record<string, unknown>)
       : null
 
+  // per-index technical cards — core US set + EFA/EEM overlay,
+  // journaled under buckets.indexes by the regime engine
+  const indexes =
+    buckets && typeof buckets.indexes === 'object' && buckets.indexes !== null
+      ? (buckets.indexes as Record<string, Record<string, unknown>>)
+      : null
+  const breadthBucket =
+    buckets && typeof buckets.breadth === 'object' && buckets.breadth !== null
+      ? (buckets.breadth as Record<string, unknown>)
+      : null
+
   const todayExtras = today
     ? Object.entries(today).filter(
       ([k]) =>
@@ -486,11 +497,74 @@ export default async function RegimePage() {
               </div>
             </Section>
           )}
+        {indexes && Object.keys(indexes).length > 0 && (
+          <Section
+            title="Index technicals"
+            subtitle={
+              breadthBucket?.divergence != null
+                ? `large-cap ${breadthBucket.large_cap ?? '—'}% vs broad ${breadthBucket.broad ?? '—'}% above 50d`
+                : 'core US set + global overlay'
+            }
+          >
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {Object.entries(indexes).map(([sym, ix]) => {
+                const num = (k: string) =>
+                  typeof ix?.[k] === 'number' ? (ix[k] as number) : null
+                const rsi = num('rsi14')
+                const overlay = ix?.overlay === true
+                return (
+                  <div
+                    key={sym}
+                    className="rounded-md border border-hairline/60 px-3 py-2"
+                  >
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[13px] font-semibold">{sym}</span>
+                      <span className="font-mono text-[11px] text-faint">
+                        {overlay ? 'overlay' : rsi != null ? `RSI ${rsi.toFixed(0)}` : ''}
+                      </span>
+                    </div>
+                    <div className="mt-1 font-mono text-[12px] text-muted">
+                      {num('price')?.toFixed(2) ?? '—'}
+                    </div>
+                    <div className="mt-1 space-y-0.5 font-mono text-[11px]">
+                      {(['sma20', 'sma50', 'sma200'] as const).map((ma) => {
+                        const above = ix?.[`above_${ma}`]
+                        const dist = num(`dist_${ma}`)
+                        const days = ma === 'sma50' ? num('days_below_sma50') : null
+                        return (
+                          <div key={ma} className="flex justify-between">
+                            <span className="text-faint">
+                              {ma.replace('sma', '')}d
+                            </span>
+                            <span
+                              className={
+                                above === true
+                                  ? 'text-constructive'
+                                  : above === false
+                                    ? 'text-defensive'
+                                    : 'text-faint'
+                              }
+                            >
+                              {dist != null
+                                ? `${dist >= 0 ? '+' : ''}${(dist * 100).toFixed(1)}%`
+                                : '—'}
+                              {days != null && days > 0 ? ` ·${days}d` : ''}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </Section>
+        )}
         {buckets && (
           <Section title="What's driving it" subtitle="regime inputs">
             <div className="divide-y divide-transparent">
               {Object.entries(buckets)
-                .filter(([k]) => k !== 'structural')
+                .filter(([k]) => k !== 'structural' && k !== 'indexes')
                 .map(([k, v]) => (
                   <Kv key={k} k={k.replace(/_/g, ' ')} v={v} />
                 ))}

@@ -787,6 +787,64 @@ def _invariants() -> list[dict]:
         bad = [f"{got}≠{want}" for got, want in cases if got != want]
         return not bad, bad or "bounded [-6,+2], unfired → 0"
 
+    def index_composite_correction():
+        # six core indexes above their 200 but below their 50 → the
+        # composite reads "correcting within uptrend" as a driver
+        from app.market_regime.facts import derive_facts
+        from app.market_regime.models import (
+            IndexTechnicals, MarketSnapshot, TrendState)
+        snap = MarketSnapshot(
+            trend=TrendState(spy_price=100.0, above_sma200=True,
+                             above_sma50=False, above_sma20=False),
+            indexes={s: IndexTechnicals(
+                symbol=s, above_sma200=True, above_sma50=False)
+                for s in ("SPY", "QQQ", "DIA", "IWM", "MDY", "RSP")})
+        f = derive_facts(snap)
+        d = " | ".join(f.drivers)
+        ok = ("6/6 above SMA200" in d
+              and "correcting within uptrend" in d)
+        return ok, d[:140]
+
+    def index_composite_breakdown():
+        # IWM broke its 200 while the mega-caps hold → the split tape
+        # is named, not averaged away
+        from app.market_regime.facts import derive_facts
+        from app.market_regime.models import (
+            IndexTechnicals, MarketSnapshot, TrendState)
+        idx = {s: IndexTechnicals(symbol=s, above_sma200=True,
+                                  above_sma50=True)
+               for s in ("SPY", "QQQ", "DIA", "MDY", "RSP")}
+        idx["IWM"] = IndexTechnicals(
+            symbol="IWM", above_sma200=False, above_sma50=False)
+        snap = MarketSnapshot(
+            trend=TrendState(spy_price=100.0, above_sma200=True,
+                             above_sma50=True, above_sma20=True),
+            indexes=idx)
+        f = derive_facts(snap)
+        d = " | ".join(f.drivers)
+        ok = "IWM broke below SMA200" in d
+        return ok, d[:140]
+
+    def breadth_two_tier_divergence():
+        # large-cap 65% vs broad 33% → "strong" breadth is downgraded
+        # and the divergence is named
+        from app.market_regime.facts import derive_facts
+        from app.market_regime.models import (
+            BreadthState, MarketSnapshot, TrendState)
+        snap = MarketSnapshot(
+            trend=TrendState(spy_price=100.0, above_sma200=True,
+                             above_sma50=True, above_sma20=True),
+            breadth=BreadthState(
+                universe_size=150, pct_above_sma50=62.0,
+                pct_above_sma50_large=65.0,
+                pct_above_sma50_broad=33.0,
+                breadth_divergence=32.0))
+        f = derive_facts(snap)
+        d = " | ".join(f.drivers)
+        ok = (f.breadth == "neutral"
+              and "index surface stronger than the median" in d)
+        return ok, f"breadth={f.breadth} | {d[:120]}"
+
     ck("resilience_bounds", resilience_bounds)
     ck("resilience_min_days", resilience_min_days)
     ck("defense_alone_not_resilient", defense_alone_not_resilient)
@@ -796,6 +854,9 @@ def _invariants() -> list[dict]:
     ck("posture_fails_closed", posture_fails_closed)
     ck("rank_norm_bounds", rank_norm_bounds)
     ck("feat_adj_bounded", feat_adj_bounded)
+    ck("index_composite_correction", index_composite_correction)
+    ck("index_composite_breakdown", index_composite_breakdown)
+    ck("breadth_two_tier_divergence", breadth_two_tier_divergence)
     return out
 
 
