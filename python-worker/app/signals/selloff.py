@@ -243,7 +243,7 @@ def _score(d: dict) -> dict:
     pts = 0
     fv = d.get("fv_upside")
     if fv is not None:
-        pts += min(max(fv / 10, 0), 12)         # +30% upside → ~4… +120% → 12
+        pts += min(max(fv * 10, 0), 12)         # fv is a fraction: +30% → ~3… +120% caps
     if d.get("priced_status") in ("partial", "not_priced"):
         pts += 5
     elif d.get("priced_status") in ("full", "substantial"):
@@ -286,7 +286,7 @@ def _score(d: dict) -> dict:
     if d.get("sector") in ("Technology", "Communication Services"):
         pts += 1                                # demand visibility —
         # not an AI bonus, just where dislocations have been recovering
-    if (d.get("fv_upside") or 0) > 30:
+    if (d.get("fv_upside") or 0) > 0.30:
         pts += 3                                # credible recovery path
     legs["catalyst_rr"] = round(min(max(pts, 0), 15), 1)
 
@@ -378,9 +378,12 @@ SELECT s.symbol, s.company_name, s.sector,
           scenario_fair_values, valuation_confidence
    FROM symbol_fair_values v WHERE v.symbol=s.symbol
    ORDER BY as_of DESC LIMIT 1) fv ON true
- WHERE s.is_active AND s.sector IS NOT NULL
- AND s.momentum_state IS NOT NULL
 """
+
+# The scan requires sector for the contagion classifier; a single-name
+# read doesn't — for_symbol scopes by symbol, not sector.
+_ROWS_SCOPE = (" WHERE s.is_active AND s.momentum_state IS NOT NULL"
+               " AND s.sector IS NOT NULL")
 
 
 def _row_to_d(r: dict, m: dict, market: dict,
@@ -424,7 +427,8 @@ def _row_to_d(r: dict, m: dict, market: dict,
         "market": market,
         "close": px, "ret_1d": m["ret_1d"], "ret_5d": m["ret_5d"],
         "rel_5d": round(rel5, 4),
-        "sector_rel": sec_med.get(r["sector"] or "?", 0),
+        "sector_rel": (sec_med.get(r["sector"])
+                       if r.get("sector") else None),
         "dd_60d": m.get("dd_60d"), "vol_ratio": m.get("vol_ratio"),
         "d_sma20": m.get("d_sma20"), "d_sma50": m.get("d_sma50"),
         "d_sma200": m.get("d_sma200"),
@@ -522,11 +526,20 @@ def for_symbol(sym: str) -> dict:
     opportunity' — it's just a stock."""
     from app.database import db
     s = sym.upper()
-    rows = db.execute_query(_ROWS_SQL + " AND s.symbol = :s",
-                            {"s": s})
+    rows = db.execute_query(
+        _ROWS_SQL + " WHERE s.is_active AND s.momentum_state IS NOT NULL"
+                    " AND s.symbol = :s", {"s": s})
     if not rows:
-        return {"symbol": s, "candidate": False,
-                "reason": "no stored fundamentals/momentum row"}
+        chk = db.execute_query(
+            "SELECT is_active, momentum_state FROM stocks"
+            " WHERE symbol = :s", {"s": s})
+        if not chk:
+            why = "not in the stocks registry"
+        elif not chk[0]["is_active"]:
+            why = "inactive"
+        else:
+            why = "no momentum state yet — needs a momentum refresh"
+        return {"symbol": s, "candidate": False, "reason": why}
     r = dict(rows[0])
     m = _one_metrics(s)
     if not m or m.get("ret_5d") is None:
@@ -581,7 +594,7 @@ def scan(funds: Optional[float] = None,
         spy5 = mets_spy5 or 0.0
     market = {**market, "spy_5d": spy5}
 
-    rows = db.execute_query(_ROWS_SQL)
+    rows = db.execute_query(_ROWS_SQL + _ROWS_SCOPE)
 
     # sector median 5d returns for relative dislocation
     by_sec: dict[str, list] = {}
