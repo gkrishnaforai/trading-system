@@ -360,6 +360,212 @@ def _invalidation(det: dict, px: float) -> Optional[float]:
 
 # ----------------------------------- scan ------------------------------------
 
+_ROWS_SQL = """
+SELECT s.symbol, s.company_name, s.sector,
+ s.fundamental_state, s.momentum_state, s.momentum_detail,
+ s.priced_status, s.next_earnings_date,
+ fw.rev_growth, fw.rev_accel, fw.fcf_margin, fw.fcf_ttm,
+ fw.est_revision_pct, fw.beat_streak, fw.last_surprise_pct,
+ fw.net_debt_ebitda, fw.num_analysts,
+ t.status AS thesis_status, t.status_dir AS thesis_dir,
+ fv.fair_value, fv.fv_upside_pct, fv.buy_below,
+ fv.scenario_fair_values, fv.valuation_confidence
+ FROM stocks s
+ LEFT JOIN symbol_flywheel fw ON fw.symbol=s.symbol
+ LEFT JOIN symbol_thesis t ON t.symbol=s.symbol
+ LEFT JOIN LATERAL (
+   SELECT fair_value, fv_upside_pct, buy_below,
+          scenario_fair_values, valuation_confidence
+   FROM symbol_fair_values v WHERE v.symbol=s.symbol
+   ORDER BY as_of DESC LIMIT 1) fv ON true
+ WHERE s.is_active AND s.sector IS NOT NULL
+ AND s.momentum_state IS NOT NULL
+"""
+
+
+def _row_to_d(r: dict, m: dict, market: dict,
+              sec_med: dict, sq: dict) -> dict:
+    """Row + tape metrics → the evidence dict, classified, scored,
+    gated, with the staged entry plan. Shared by scan() (bulk) and
+    for_symbol() (one name on the stock page) — same rules, same
+    inputs, no second classifier."""
+    import json
+    sym = r["symbol"]
+    det = r.get("momentum_detail") or {}
+    if isinstance(det, str):
+        try:
+            det = json.loads(det)
+        except Exception:
+            det = {}
+    scfv = r.get("scenario_fair_values") or {}
+    if isinstance(scfv, str):
+        try:
+            scfv = json.loads(scfv)
+        except Exception:
+            scfv = {}
+    fv_px = _f(r.get("fair_value"))
+    bear = _f(scfv.get("bear"))
+    px = m["close"]
+    inv = _invalidation(det, px)
+    ed = None
+    ne = r.get("next_earnings_date")
+    if ne:
+        d0 = ne.date() if hasattr(ne, "date") else ne
+        try:
+            ed = (d0 - date.today()).days
+        except Exception:
+            pass
+    rel5 = (m["ret_5d"] or 0) - (market.get("spy_5d") or 0)
+    d = {
+        "symbol": sym, "name": r.get("company_name"),
+        "sector": r["sector"],
+        "tier": ("core" if sym in _CORE else
+                 "ai_infra" if sym in _AI_INFRA else "durable"),
+        "market": market,
+        "close": px, "ret_1d": m["ret_1d"], "ret_5d": m["ret_5d"],
+        "rel_5d": round(rel5, 4),
+        "sector_rel": sec_med.get(r["sector"] or "?", 0),
+        "dd_60d": m.get("dd_60d"), "vol_ratio": m.get("vol_ratio"),
+        "d_sma20": m.get("d_sma20"), "d_sma50": m.get("d_sma50"),
+        "d_sma200": m.get("d_sma200"),
+        "mom": r["momentum_state"],
+        "dip_phase": det.get("dip_phase"),
+        "fund_state": r["fundamental_state"] or "unknown",
+        "priced_status": r.get("priced_status"),
+        "rev_growth": _f(r["rev_growth"]),
+        "fcf_margin": _f(r["fcf_margin"]),
+        "est_rev": _f(r["est_revision_pct"]),
+        "last_surprise": _f(r["last_surprise_pct"]),
+        "beats": _f(r["beat_streak"]),
+        "net_debt_ebitda": _f(r["net_debt_ebitda"]),
+        "thesis": r.get("thesis_status"),
+        "thesis_dir": r.get("thesis_dir"),
+        "fv": fv_px, "fv_upside": _f(r["fv_upside_pct"]),
+        "buy_below": _f(r["buy_below"]),
+        "below_bear": bool(bear and px < bear),
+        "fv_conf": r.get("valuation_confidence"),
+        "earn_days": ed, "invalidation": inv,
+        "rr": ((fv_px - px) / (px - inv)
+               if fv_px and inv and px > inv else None),
+        "sq_verdict": sq.get("verdict"),
+        "sq_fuel": sq.get("fuel"),
+        "sq_covering_prob": sq.get("covering_probability"),
+    }
+    d["fund"] = _score({**d, "est_rev": d["est_rev"]})["legs"][
+        "durability"]
+    classification, action = _classify(d)
+    scored = _score(d)
+    gates = _gates(d)
+    if gates:
+        scored["decision"] = ("reject"
+                              if classification in
+                              ("structural_impairment",
+                               "fundamental_repricing")
+                              else "watch")
+    return {**d, "classification": classification,
+            "action": action, **scored, "gates": gates,
+            "rsi": None,
+            "entry_plan": _entry_plan(d)}
+
+
+def _one_metrics(sym: str) -> Optional[dict]:
+    """The scan's tape-metric window pass scoped to one symbol — the
+    stock page's live read, not a separate computation."""
+    from app.database import db
+    rows = db.execute_query(
+        _METRICS_SQL.replace("FROM daily_bars",
+                             "FROM daily_bars WHERE symbol = :s"),
+        {"s": sym})
+    if not rows:
+        return None
+    r = rows[0]
+    c, c1, c5 = _f(r["close"]), _f(r["c1"]), _f(r["c5"])
+    if not c:
+        return None
+    return {"close": c, "ret_1d": (c / c1 - 1) if c1 else None,
+            "ret_5d": (c / c5 - 1) if c5 else None,
+            "dd_60d": (c / _f(r["h60"]) - 1) if _f(r["h60"]) else None,
+            "vol_ratio": (_f(r["v5"]) / _f(r["v60"]))
+            if _f(r["v60"]) else None,
+            "d_sma20": (c / _f(r["s20"]) - 1) if _f(r["s20"]) else None,
+            "d_sma50": (c / _f(r["s50"]) - 1) if _f(r["s50"]) else None,
+            "d_sma200": (c / _f(r["s200"]) - 1) if _f(r["s200"]) else None,
+            "as_of": str(r["date"])}
+
+
+def _sector_median(sector: str) -> Optional[float]:
+    """Median 5d return of same-sector names — the 'falling with
+    peers or on its own merits' input for a single-symbol eval."""
+    if not sector:
+        return None
+    from app.database import db
+    rows = db.execute_query(
+        "SELECT b.close / b.c5 - 1 AS r5 FROM ("
+        " SELECT db.symbol, db.close,"
+        "  LAG(db.close,5) OVER wnd AS c5,"
+        "  ROW_NUMBER() OVER (PARTITION BY db.symbol"
+        "                   ORDER BY db.date DESC) rn"
+        "  FROM daily_bars db"
+        "  JOIN stocks s ON s.symbol = db.symbol"
+        "  WHERE s.sector = :sec AND s.is_active"
+        "  WINDOW wnd AS (PARTITION BY db.symbol ORDER BY db.date)"
+        " ) b WHERE b.rn = 1 AND b.c5 IS NOT NULL",
+        {"sec": sector})
+    vals = sorted(_f(r["r5"]) for r in rows if _f(r["r5"]) is not None)
+    return vals[len(vals) // 2] if vals else None
+
+
+def for_symbol(sym: str) -> dict:
+    """The stock-page read — the same classify/score/gate/plan the
+    scan runs, on stored data, for one name. The intake gate still
+    applies: a name that didn't actually fall isn't a 'selloff
+    opportunity' — it's just a stock."""
+    from app.database import db
+    s = sym.upper()
+    rows = db.execute_query(_ROWS_SQL + " AND s.symbol = :s",
+                            {"s": s})
+    if not rows:
+        return {"symbol": s, "candidate": False,
+                "reason": "no stored fundamentals/momentum row"}
+    r = dict(rows[0])
+    m = _one_metrics(s)
+    if not m or m.get("ret_5d") is None:
+        return {"symbol": s, "candidate": False,
+                "reason": "no tape data"}
+    market = _market()
+    spy5 = _f(market.get("spy_5d")) or 0.0
+    rel5 = m["ret_5d"] - spy5
+    dd60 = m.get("dd_60d") or 0
+    if rel5 > -0.03 and (m["ret_5d"] or 0) > -0.04 and dd60 > -0.10:
+        return {"symbol": s, "candidate": False,
+                "reason": "no dislocation — the intake gate reads "
+                          "this as an ordinary move, not a selloff"}
+    sm = _sector_median(r.get("sector"))
+    sec_med = {r["sector"]: sm} if sm is not None else {}
+    sq = {}
+    try:
+        from app.signals import short_squeeze
+        sq = (short_squeeze.flags([s]) or {}).get(s) or {}
+    except Exception:
+        pass
+    market = {**market, "spy_5d": spy5}
+    c = _row_to_d(r, m, market, sec_med, sq)
+    c["rsi"] = _rsi(s)
+    legs = _score(c)["legs"]            # rescore with RSI present
+    c["legs"] = legs
+    c["score"] = round(sum(legs.values()), 1)
+    c["decision"] = ("priority" if c["score"] >= 85 else
+                     "starter" if c["score"] >= 75 else
+                     "watch" if c["score"] >= 65 else "pass")
+    if c["gates"]:
+        c["decision"] = "watch" if not any(
+            "structural" in g or "repricing" in g
+            for g in c["gates"]) else "reject"
+    c["candidate"] = True
+    c["as_of"] = str(date.today())
+    return c
+
+
 def scan(funds: Optional[float] = None,
          persist: bool = True) -> dict[str, Any]:
     """Full selloff scan → ranked candidates with classification,
@@ -373,27 +579,9 @@ def scan(funds: Optional[float] = None,
     spy5 = _f(market.get("spy_5d"))
     if spy5 is None:
         spy5 = mets_spy5 or 0.0
+    market = {**market, "spy_5d": spy5}
 
-    rows = db.execute_query(
-        "SELECT s.symbol, s.company_name, s.sector,"
-        " s.fundamental_state, s.momentum_state, s.momentum_detail,"
-        " s.priced_status, s.next_earnings_date,"
-        " fw.rev_growth, fw.rev_accel, fw.fcf_margin, fw.fcf_ttm,"
-        " fw.est_revision_pct, fw.beat_streak, fw.last_surprise_pct,"
-        " fw.net_debt_ebitda, fw.num_analysts,"
-        " t.status AS thesis_status, t.status_dir AS thesis_dir,"
-        " fv.fair_value, fv.fv_upside_pct, fv.buy_below,"
-        " fv.scenario_fair_values, fv.valuation_confidence"
-        " FROM stocks s"
-        " LEFT JOIN symbol_flywheel fw ON fw.symbol=s.symbol"
-        " LEFT JOIN symbol_thesis t ON t.symbol=s.symbol"
-        " LEFT JOIN LATERAL ("
-        "   SELECT fair_value, fv_upside_pct, buy_below,"
-        "          scenario_fair_values, valuation_confidence"
-        "   FROM symbol_fair_values v WHERE v.symbol=s.symbol"
-        "   ORDER BY as_of DESC LIMIT 1) fv ON true"
-        " WHERE s.is_active AND s.sector IS NOT NULL"
-        " AND s.momentum_state IS NOT NULL")
+    rows = db.execute_query(_ROWS_SQL)
 
     # sector median 5d returns for relative dislocation
     by_sec: dict[str, list] = {}
@@ -427,81 +615,8 @@ def scan(funds: Optional[float] = None,
         if rel5 > -0.03 and (m["ret_5d"] or 0) > -0.04 \
                 and dd60 > -0.10:
             continue
-        det = r.get("momentum_detail") or {}
-        if isinstance(det, str):
-            try:
-                det = json.loads(det)
-            except Exception:
-                det = {}
-        scfv = r.get("scenario_fair_values") or {}
-        if isinstance(scfv, str):
-            try:
-                scfv = json.loads(scfv)
-            except Exception:
-                scfv = {}
-        fv_px = _f(r.get("fair_value"))
-        bear = _f(scfv.get("bear"))
-        px = m["close"]
-        inv = _invalidation(det, px)
-        ed = None
-        ne = r.get("next_earnings_date")
-        if ne:
-            d0 = ne.date() if hasattr(ne, "date") else ne
-            try:
-                ed = (d0 - date.today()).days
-            except Exception:
-                pass
-        d = {
-            "symbol": sym, "name": r.get("company_name"),
-            "sector": r["sector"],
-            "tier": ("core" if sym in _CORE else
-                     "ai_infra" if sym in _AI_INFRA else "durable"),
-            "market": market,
-            "close": px, "ret_1d": m["ret_1d"], "ret_5d": m["ret_5d"],
-            "rel_5d": round(rel5, 4),
-            "sector_rel": sec_med.get(r["sector"] or "?", 0),
-            "dd_60d": m.get("dd_60d"), "vol_ratio": m.get("vol_ratio"),
-            "d_sma20": m.get("d_sma20"), "d_sma50": m.get("d_sma50"),
-            "d_sma200": m.get("d_sma200"),
-            "mom": r["momentum_state"],
-            "dip_phase": (det.get("dip") or {}).get("phase"),
-            "fund_state": r["fundamental_state"] or "unknown",
-            "priced_status": r.get("priced_status"),
-            "rev_growth": _f(r["rev_growth"]),
-            "fcf_margin": _f(r["fcf_margin"]),
-            "est_rev": _f(r["est_revision_pct"]),
-            "last_surprise": _f(r["last_surprise_pct"]),
-            "beats": _f(r["beat_streak"]),
-            "net_debt_ebitda": _f(r["net_debt_ebitda"]),
-            "thesis": r.get("thesis_status"),
-            "thesis_dir": r.get("thesis_dir"),
-            "fv": fv_px, "fv_upside": _f(r["fv_upside_pct"]),
-            "buy_below": _f(r["buy_below"]),
-            "below_bear": bool(bear and px < bear),
-            "fv_conf": r.get("valuation_confidence"),
-            "earn_days": ed, "invalidation": inv,
-            "rr": ((fv_px - px) / (px - inv)
-                   if fv_px and inv and px > inv else None),
-        }
-        sq = sq_flags.get(sym) or {}
-        d["sq_verdict"] = sq.get("verdict")
-        d["sq_fuel"] = sq.get("fuel")
-        d["sq_covering_prob"] = sq.get("covering_probability")
-        d["fund"] = _score({**d, "est_rev": d["est_rev"]})["legs"][
-            "durability"]
-        classification, action = _classify(d)
-        scored = _score(d)
-        gates = _gates(d)
-        if gates:
-            scored["decision"] = ("reject"
-                                  if classification in
-                                  ("structural_impairment",
-                                   "fundamental_repricing")
-                                  else "watch")
-        cands.append({**d, "classification": classification,
-                      "action": action, **scored, "gates": gates,
-                      "rsi": None,
-                      "entry_plan": _entry_plan(d)})
+        cands.append(_row_to_d(r, m, market, sec_med,
+                               sq_flags.get(sym) or {}))
 
     # RSI only for shortlisted names — bound the reads
     cands.sort(key=lambda c: -c["score"])

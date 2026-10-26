@@ -627,6 +627,7 @@ def card(sym: str) -> dict[str, Any]:
             "sec": sec,
             "review": review,
             "readiness": readiness,
+            "selloff": _try_selloff(s),
             "thesis": _try_thesis(s, fv_up),
             "tailwinds": tws, "watches": _try_watches(s),
             "diagnosis": tape_diagnosis.diagnose(
@@ -851,6 +852,34 @@ def _try_lt_power(sym: str) -> dict:
         return lt_power_for_card(sym) or {}
     except Exception:
         return {}
+
+
+def _try_selloff(sym: str) -> dict:
+    """Drawdown attribution for the card — the same classify/score/
+    gate/plan the selloff scan runs, evaluated live for this symbol
+    on stored data. Falls back to the latest journaled candidate row
+    when live eval can't run; {} when there's no selloff to read."""
+    try:
+        from app.signals import selloff
+        return selloff.for_symbol(sym) or {}
+    except Exception:
+        pass
+    try:
+        from app.database import db
+        r = db.execute_query(
+            "SELECT as_of, classification, score, decision, gates,"
+            " entry_plan, score_legs, tape, fund"
+            " FROM selloff_candidates WHERE symbol=:s"
+            " ORDER BY as_of DESC LIMIT 1", {"s": sym.upper()})
+        if r:
+            out = dict(r[0])
+            out["as_of"] = str(out["as_of"])
+            out["candidate"] = True
+            out["stale"] = True      # journaled scan row, not live
+            return out
+    except Exception:
+        pass
+    return {}
 
 
 def _try_growth_quality(sym: str) -> dict:

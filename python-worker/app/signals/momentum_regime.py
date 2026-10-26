@@ -202,6 +202,19 @@ def dip_health(tech: dict, hist_prev: Optional[float],
     h["vol_dip"] = (round((sum(dn) / len(dn))
                           / (sum(al) / len(al)), 2)
                     if dn and al and sum(al) else None)
+    # prior-window vol_dip — 'is selling volume declining or still
+    # accelerating?' needs a second point, not one ratio. Same
+    # down-day-vs-baseline read on the window just before.
+    dn_p = [b.volume for b in bars[-20:-10] if b.close < b.open]
+    al_p = [b.volume for b in bars[-40:-20]]
+    h["vol_dip_prev"] = (round((sum(dn_p) / len(dn_p))
+                               / (sum(al_p) / len(al_p)), 2)
+                         if dn_p and al_p and sum(al_p) else None)
+    if h["vol_dip"] is not None and h["vol_dip_prev"] is not None:
+        delta = h["vol_dip"] - h["vol_dip_prev"]
+        h["vol_dip_trend"] = ("accelerating" if delta > 0.15 else
+                              "declining" if delta < -0.15
+                              else "steady")
     pts = sum(1 for k, cond in (
         ("hist_dir", (h["hist_dir"] or 0) > 0),
         ("low_streak", h["low_streak"] > 0),

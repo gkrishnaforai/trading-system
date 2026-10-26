@@ -155,6 +155,8 @@ def _normalize(row: dict) -> dict:
             _sw.get("hl_seq") or _sw.get("phase")
             or _sw.get("confirm_level")),
         "swing_phase": _sw.get("phase"),
+        "vol_dip": _num(det.get("vol_dip")),
+        "vol_dip_trend": det.get("vol_dip_trend"),
         "confirm_level": _num(_sw.get("confirm_level")),
         "rev_growth": _num(row.get("rev_growth")),
         "eps_growth": _num(row.get("eps_growth")),

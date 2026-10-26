@@ -530,6 +530,10 @@ use_cases:
         line: "momentum not fading — MACD hist dir {hist_dir} (want >-0.5)"
       - when: {swing_struct: true}
         line: "swing structure mapped — phase `{swing_phase}`, confirm {confirm}"
+      - when: {any: [{swing_phase_is: null}, {swing_phase_not_in: [broken]}]}
+        line: "structure not broken — phase `{swing_phase}` (higher low / confirmed / forming ok)"
+      - when: {any: [{vol_dip_is: null}, {vol_dip_lt: 1.25}]}
+        line: "sellers not accelerating — down-day vol {vol_dip}x avg, trend `{vol_dip_trend}` (want <1.25)"
 
   invest:                           # 🏦 long-hold entry
     checks:

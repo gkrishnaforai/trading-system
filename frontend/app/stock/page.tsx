@@ -269,6 +269,110 @@ function MiniL({ label, children }: {
   )
 }
 
+/** Drawdown attribution — the selloff engine's per-symbol read:
+    what KIND of fall this is (macro panic vs fundamental repricing),
+    the opportunity score, the hard gates, and the staged entry plan.
+    Lives next to 'why is it moving' — same question at drawdown
+    depth. */
+function SelloffPanel({ s }: { s: Record<string, unknown> }) {
+  const cls = String(s.classification ?? '—').replace(/_/g, ' ')
+  const dec = String(s.decision ?? '—')
+  const gates = Array.isArray(s.gates) ? s.gates.map(String) : []
+  const legs = obj(s.score_legs ?? s.legs)
+  const plan = obj(s.entry_plan)
+  const stages = Array.isArray(plan?.stages)
+    ? (plan!.stages as Record<string, unknown>[])
+    : []
+  const tape = obj(s.tape)
+  const dd = Number(s.dd_60d ?? tape?.dd_60d)
+  const clsTone =
+    /impairment|repricing|weakness/.test(cls)
+      ? 'text-defensive'
+      : /panic|contagion|unwind/.test(cls)
+        ? 'text-aggressive'
+        : 'text-muted'
+  const decTone =
+    dec === 'priority' || dec === 'starter'
+      ? 'text-aggressive'
+      : dec === 'reject'
+        ? 'text-defensive'
+        : dec === 'watch'
+          ? 'text-caution'
+          : 'text-muted'
+  return (
+    <div className="pt-3 border-t border-hairline/60 mt-3">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+          drawdown attribution
+        </span>
+        <span className="font-mono text-[10px] text-faint">
+          {s.stale === true ? `last scan · ${String(s.as_of ?? '')}` : 'live'}
+        </span>
+      </div>
+      <div className="pt-2 grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2">
+        <MiniL label="classification">
+          <span className={clsTone}>{cls}</span>
+        </MiniL>
+        <MiniL label="score">
+          {s.score != null ? `${String(s.score)}/100` : '—'}
+        </MiniL>
+        <MiniL label="decision">
+          <span className={decTone}>{dec}</span>
+        </MiniL>
+        <MiniL label="60d drawdown">
+          {Number.isFinite(dd)
+            ? `${(dd * 100).toFixed(1)}%`
+            : '—'}
+        </MiniL>
+      </div>
+      {typeof s.action === 'string' && s.action && (
+        <p className="pt-2 text-xs text-muted leading-relaxed">
+          {s.action}
+        </p>
+      )}
+      {gates.length > 0 && (
+        <div className="pt-2">
+          <div className="text-[10px] uppercase tracking-wider text-faint">
+            hard gates
+          </div>
+          <ul className="pt-1 space-y-0.5 text-xs text-defensive">
+            {gates.slice(0, 4).map((g, i) => (
+              <li key={i}>· {g}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {legs && (
+        <div className="pt-2 font-mono text-[11px] text-faint">
+          {Object.entries(legs)
+            .map(([k, v]) => `${k.replace(/_/g, ' ')} ${String(v)}`)
+            .join(' · ')}
+        </div>
+      )}
+      {stages.length > 0 && (
+        <div className="pt-2">
+          <div className="text-[10px] uppercase tracking-wider text-faint">
+            staged entry
+          </div>
+          <ul className="pt-1 space-y-0.5 text-xs text-muted">
+            {stages.map((st, i) => (
+              <li key={i}>
+                · {String(st.pct ?? '—')}% — {String(st.trigger ?? '')}
+              </li>
+            ))}
+            {plan?.invalidation != null && (
+              <li className="text-defensive">
+                · invalidation {String(plan.invalidation)} —{' '}
+                {String(plan.invalidation_note ?? '')}
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** 'Why is it moving' — every diagnosis field, labeled, in a compact
     grid + readable line + event wire. Same info as the raw dump,
     minus the column of whitespace. */
@@ -519,6 +623,7 @@ async function StockCore({ sym }: { sym: string }) {
   const readiness = obj(card.readiness)
   const thesis = obj(card.thesis) as import('@/components/thesis-flag').Thesis | null
   const diagnosis = card.diagnosis
+  const selloff = obj(card.selloff)
   const tailwinds = Array.isArray(card.tailwinds) ? card.tailwinds : []
   const themes = Array.isArray(card.themes) ? card.themes : []
   const upside = card.fv_upside_pct
@@ -647,6 +752,9 @@ async function StockCore({ sym }: { sym: string }) {
                 </span>
               )}
             </div>
+          )}
+          {selloff?.candidate === true && (
+            <SelloffPanel s={selloff} />
           )}
         </section>
       )}
