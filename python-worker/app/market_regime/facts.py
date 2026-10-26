@@ -344,6 +344,57 @@ def derive_facts(snap: MarketSnapshot,
     if vvix and vvix.value is not None and vvix.value > 110:
         signals += 1
         drivers.append(f"VVIX {vvix.value:.0f} — elevated tail hedging")
+    # inflation shock — oil spiking INTO rising yields is the channel
+    # that actually kills equities (supply-shock repricing), not oil
+    # alone; the standalone wti leg above already scored the move
+    if (wti and wti.chg5d is not None and wti.chg5d > 0.05
+            and tnx and tnx.delta5d is not None
+            and tnx.delta5d * 100 > 10):
+        signals += 1
+        drivers.append(f"inflation shock — oil {wti.chg5d:+.1%}/5d "
+                       f"while 10Y rises")
+    # bond vol — MOVE leads equity vol into stress; the VIX of rates
+    move = ma.instruments.get("move")
+    if move and move.value is not None:
+        if move.value > 130:
+            signals += 2
+            drivers.append(f"MOVE {move.value:.0f} — bond-vol stress")
+        elif move.value > 110:
+            signals += 1
+            drivers.append(f"MOVE {move.value:.0f} — bond vol elevated")
+    # Dr. Copper — copper vs gold is the growth-vs-fear tell; diverges
+    # from the index surface before the index admits it
+    cu, au = ma.instruments.get("copper"), ma.instruments.get("gold")
+    if (cu and au and cu.chg5d is not None
+            and au.chg5d is not None):
+        spread = cu.chg5d - au.chg5d
+        if spread < -0.01:
+            signals += 1
+            drivers.append(f"growth fear — Cu/Au {spread:+.1%}/5d")
+        elif spread > 0.015:
+            drivers.append(f"growth confirming — Cu/Au {spread:+.1%}/5d")
+    # curve — 3m-10y inversion is the classic late-cycle tell; both
+    # instruments are already fetched as yield levels
+    irx = ma.instruments.get("ust3m")
+    if (tnx and irx and tnx.value is not None
+            and irx.value is not None):
+        curve = tnx.value - irx.value
+        if curve < -0.25:
+            signals += 1
+            drivers.append(f"curve inverted — 10Y−3M {curve:+.2f}pp")
+        elif curve < 0:
+            drivers.append(f"curve marginally inverted — 10Y−3M "
+                           f"{curve:+.2f}pp")
+    # carry unwind — USDJPY collapsing means the yen-funded leverage
+    # trade is unwinding; Aug-2024's air-pocket was this exact signal
+    uj = ma.instruments.get("usdjpy")
+    if uj and uj.chg5d is not None:
+        if uj.chg5d < -0.025:
+            signals += 2
+            drivers.append(f"carry unwind — USDJPY {uj.chg5d:+.1%}/5d")
+        elif uj.chg5d < -0.015:
+            signals += 1
+            drivers.append(f"carry stress — USDJPY {uj.chg5d:+.1%}/5d")
     if vix and vix > 25:
         signals += 2
     if not ma.instruments:

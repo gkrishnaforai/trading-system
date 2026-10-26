@@ -36,6 +36,8 @@ MACRO_SYMBOLS = {
     "us30y": "^TYX",
     "ust3m": "^IRX",       # front end — curve shape
     "dxy":   "DX-Y.NYB",
+    "usdjpy": "JPY=X",      # carry-trade unwind proxy — JPY=X falling
+                            # = yen bid = deleveraging risk
     "wti":   "CL=F",
     "brent": "BZ=F",
     "gold":  "GC=F",

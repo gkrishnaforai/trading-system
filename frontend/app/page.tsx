@@ -121,6 +121,18 @@ export default async function RegimePage() {
       (buckets.macro as Record<string, unknown>).detail !== null
       ? ((buckets.macro as Record<string, unknown>).detail as Record<string, { value?: number | null; chg5d?: number | null }>)
       : null
+  // forward — the ~20-session scenario distribution the regime engine
+  // journals (forward_probs) + geo/defensive context. Bounded evidence,
+  // not a forecast; the page shows the split, lead scenario, and the
+  // drivers behind it
+  const forward =
+    buckets && typeof buckets.forward === 'object' && buckets.forward !== null
+      ? (buckets.forward as Record<string, unknown>)
+      : null
+  const fwdNum = (k: string): number | null => {
+    const v = forward?.[k]
+    return typeof v === 'number' ? v : null
+  }
 
   const todayExtras = today
     ? Object.entries(today).filter(
@@ -400,6 +412,82 @@ export default async function RegimePage() {
               </p>
             ))}
           </div>
+        </section>
+      )}
+
+      {/* forward — the ~20-session scenario split the engine journals:
+          deeper / chop / resolves-bullish, plus the geo + defensive
+          context feeding it. Bounded evidence-weighted estimate, not
+          a forecast — calibration happens against realized outcomes */}
+      {forward && fwdNum('p_deeper_dip_20d') !== null && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="flex items-baseline justify-between">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              Next ~20 sessions
+            </div>
+            {typeof forward.lead_scenario === 'string' && (
+              <span className="font-mono text-[11px] text-faint">
+                lead · {String(forward.lead_scenario).replace(/_/g, ' ')}
+                {forward.confidence === 'medium' ? ' · med conf' : ''}
+              </span>
+            )}
+          </div>
+          <div className="pt-3">
+            <div className="flex h-2 w-full overflow-hidden rounded-full">
+              <div className="bg-defensive"
+                style={{ width: `${fwdNum('p_deeper_dip_20d')}%` }} />
+              <div className="bg-neutral"
+                style={{ width: `${fwdNum('p_chop_20d')}%` }} />
+              <div className="bg-aggressive"
+                style={{ width: `${fwdNum('p_bullish_20d')}%` }} />
+            </div>
+            <div className="pt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px]">
+              <span className="text-defensive">
+                ↓ deeper {fwdNum('p_deeper_dip_20d')}%
+              </span>
+              <span className="text-muted">
+                ↔ chop {fwdNum('p_chop_20d')}%
+              </span>
+              <span className="text-aggressive">
+                ↑ growth {fwdNum('p_bullish_20d')}%
+              </span>
+            </div>
+          </div>
+          {(fwdNum('geo_risk') !== null ||
+            typeof forward.defensive_stage === 'string' ||
+            typeof forward.defensive_flow === 'string') && (
+              <div className="pt-3 flex flex-wrap gap-1.5">
+                {fwdNum('geo_risk') !== null && fwdNum('geo_risk')! > 0 && (
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] ${(fwdNum('geo_risk') ?? 0) >= 50 ? 'bg-defensive/10 text-defensive' : 'bg-elevated text-muted'}`}>
+                    geo-risk {fwdNum('geo_risk')}/100
+                  </span>
+                )}
+                {typeof forward.defensive_stage === 'string' &&
+                  forward.defensive_stage !== 'NORMAL' && (
+                    <span className="rounded-full bg-defensive/10 px-2.5 py-1 text-[11px] text-defensive">
+                      defensive · {String(forward.defensive_stage).replace(/_/g, ' ').toLowerCase()}
+                    </span>
+                  )}
+                {forward.defensive_flow === 'risk-off' && (
+                  <span className="rounded-full bg-elevated px-2.5 py-1 text-[11px] text-muted">
+                    flows risk-off
+                  </span>
+                )}
+              </div>
+            )}
+          {Array.isArray(forward.drivers) && forward.drivers.length > 0 && (
+            <div className="pt-2.5 space-y-0.5">
+              {(forward.drivers as unknown[]).slice(0, 5).map((d, i) => (
+                <p key={i} className="text-[11px] leading-relaxed text-muted">
+                  · {String(d)}
+                </p>
+              ))}
+            </div>
+          )}
+          <p className="pt-2 text-[10px] text-faint">
+            evidence-weighted scenario split — calibrates against
+            realized outcomes as journal history accrues
+          </p>
         </section>
       )}
 
@@ -711,7 +799,7 @@ export default async function RegimePage() {
             <div className="divide-y divide-transparent">
               {Object.entries(buckets)
                 .filter(([k]) => !['structural', 'indexes', 'evidence',
-                  '_confirmation'].includes(k))
+                  '_confirmation', 'forward'].includes(k))
                 .map(([k, v]) => (
                   <Kv key={k} k={k.replace(/_/g, ' ')} v={v} />
                 ))}

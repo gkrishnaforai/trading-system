@@ -854,9 +854,104 @@ def _invariants() -> list[dict]:
     ck("posture_fails_closed", posture_fails_closed)
     ck("rank_norm_bounds", rank_norm_bounds)
     ck("feat_adj_bounded", feat_adj_bounded)
+    def _macro_snap(**kw):
+        """A facts-only snapshot carrying just macro instruments."""
+        from app.market_regime.models import (
+            MacroInstrument, MacroState, MarketSnapshot, TrendState)
+        return MarketSnapshot(
+            trend=TrendState(spy_price=100.0),
+            macro=MacroState(instruments={
+                k: MacroInstrument(name=k, **v)
+                for k, v in kw.items()}))
+
+    def macro_inflation_shock():
+        # oil +6%/5d INTO a +12bp 10Y — the supply-shock channel that
+        # actually kills equities, scored on top of the oil leg
+        from app.market_regime.facts import derive_facts
+        f = derive_facts(_macro_snap(
+            us10y={"value": 4.35, "chg5d": 0.03, "delta5d": 0.12},
+            wti={"value": 82.0, "chg5d": 0.061}))
+        d = " | ".join(f.drivers)
+        return ("inflation shock" in d and f.macro != "risk_on",
+                f"macro={f.macro} | {d[:120]}")
+
+    def macro_oil_growth_no_shock():
+        # same oil spike with FALLING yields — demand growth, not an
+        # inflation scare; the composite driver must not fire
+        from app.market_regime.facts import derive_facts
+        f = derive_facts(_macro_snap(
+            us10y={"value": 4.1, "chg5d": -0.02, "delta5d": -0.08},
+            wti={"value": 82.0, "chg5d": 0.061}))
+        d = " | ".join(f.drivers)
+        return "inflation shock" not in d, d[:140]
+
+    def macro_carry_unwind():
+        # USDJPY -3%/5d — the yen-funded leverage unwind that caused
+        # Aug-2024's air-pocket; a two-signal event
+        from app.market_regime.facts import derive_facts
+        f = derive_facts(_macro_snap(
+            usdjpy={"value": 141.5, "chg5d": -0.031}))
+        d = " | ".join(f.drivers)
+        return ("carry unwind" in d and f.macro != "risk_on",
+                f"macro={f.macro} | {d[:120]}")
+
+    def macro_bond_vol_leads():
+        # MOVE 135 — rates-market stress ahead of equity vol
+        from app.market_regime.facts import derive_facts
+        f = derive_facts(_macro_snap(
+            move={"value": 135.0, "chg5d": 0.22}))
+        d = " | ".join(f.drivers)
+        return "bond-vol stress" in d, d[:140]
+
+    def macro_cuau_growth_fear():
+        # copper -4% while gold +3% → growth-vs-fear tell, named
+        from app.market_regime.facts import derive_facts
+        f = derive_facts(_macro_snap(
+            copper={"value": 4.1, "chg5d": -0.04},
+            gold={"value": 2650.0, "chg5d": 0.03}))
+        d = " | ".join(f.drivers)
+        return "growth fear" in d, d[:140]
+
+    def macro_curve_inversion():
+        # 10Y at 4.0 under 3M at 4.8 — the late-cycle tell
+        from app.market_regime.facts import derive_facts
+        f = derive_facts(_macro_snap(
+            us10y={"value": 4.0, "chg5d": 0.0, "delta5d": 0.0},
+            ust3m={"value": 4.8, "chg5d": 0.0, "delta5d": 0.0}))
+        d = " | ".join(f.drivers)
+        return "curve inverted" in d, d[:140]
+
+    def forward_probs_bounded():
+        # extreme inputs → probs still normalize to a 3-way split that
+        # sums to 100 and respects the floors — no certainty allowed
+        from app.market_regime.forward import forward_probs
+        p = forward_probs(
+            {"bullish_transition_score": 10, "transition_delta_5d": -20,
+             "risk_level": "very_high", "deterioration_score": -2.0,
+             "spy_vs_200": -0.15},
+            {"breadth_score": 5, "pct_hl_broken": 70,
+             "pct_above_50": 12},
+            {"geo_risk": 100, "defensive": {"flow": "risk-off"}},
+            vix=42, vix_rising=True)
+        s = p["p_deeper_dip_20d"] + p["p_chop_20d"] + p["p_bullish_20d"]
+        ok = (abs(s - 100) <= 1        # independent rounding ±1
+              and all(p[k] >= 5 for k in
+                      ("p_deeper_dip_20d", "p_chop_20d",
+                       "p_bullish_20d"))
+              and all(p[k] <= 85 for k in
+                      ("p_deeper_dip_20d", "p_bullish_20d")))
+        return ok, f"deeper={p['p_deeper_dip_20d']} chop={p['p_chop_20d']} bull={p['p_bullish_20d']}"
+
     ck("index_composite_correction", index_composite_correction)
     ck("index_composite_breakdown", index_composite_breakdown)
     ck("breadth_two_tier_divergence", breadth_two_tier_divergence)
+    ck("macro_inflation_shock", macro_inflation_shock)
+    ck("macro_oil_growth_no_shock", macro_oil_growth_no_shock)
+    ck("macro_carry_unwind", macro_carry_unwind)
+    ck("macro_bond_vol_leads", macro_bond_vol_leads)
+    ck("macro_cuau_growth_fear", macro_cuau_growth_fear)
+    ck("macro_curve_inversion", macro_curve_inversion)
+    ck("forward_probs_bounded", forward_probs_bounded)
     return out
 
 

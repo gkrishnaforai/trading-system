@@ -145,8 +145,8 @@ def _fact_buckets(facts: DimensionFacts, snap: MarketSnapshot,
     # macro detail — the cross-asset evidence the old engine showed
     detail = {}
     for k in ("us10y", "us30y", "ust3m", "dxy", "hyg", "lqd", "tlt",
-              "tips", "tsy13", "wti", "copper", "gold", "vvix", "btc",
-              "move"):
+              "tips", "tsy13", "wti", "brent", "copper", "gold", "vvix",
+              "btc", "move", "usdjpy"):
         m = snap.macro.instruments.get(k)
         if m and m.value is not None:
             detail[k] = {"value": round(m.value, 2),
@@ -615,6 +615,48 @@ def snapshot() -> Optional[dict[str, Any]]:
         events = []
     event_risk = _event_risk(events)
     conf_x = _confirmation(snap)
+    # forward layer — the "what next?" read. Same journaled inputs the
+    # momentum job already feeds forward_probs: transition score +
+    # book internals + geo context, plus values the canonical snap
+    # carries (SPY vs 200dma, VIX). Composed reads, no new fetches;
+    # probs are evidence-weighted scenarios, not certainty — the
+    # journal grades them against realized outcomes later.
+    forward = None
+    try:
+        from app.market_regime.forward import forward_probs
+        from app.market_regime.defensive_store import (
+            DefensiveTransitionStore)
+        from app.signals import breadth as _br, geo_context as _geo
+        rd: dict[str, Any] = {"risk_level": facts.risk_level,
+                              "deterioration_score":
+                                  facts.deterioration_score}
+        ts = db.execute_query(
+            "SELECT score, delta_5d FROM market_transition_snapshots"
+            " ORDER BY as_of DESC LIMIT 1")
+        if ts:
+            rd["bullish_transition_score"] = float(ts[0]["score"])
+            rd["transition_delta_5d"] = float(ts[0]["delta_5d"] or 0)
+        spy_ix = snap.indexes.get("SPY")
+        if spy_ix and spy_ix.dist_sma200 is not None:
+            rd["spy_vs_200"] = spy_ix.dist_sma200
+        vix = snap.volatility.vix
+        vix_rising = bool(          # chg fields are VIX points
+            (snap.volatility.vix_chg_1d or 0) > 0.5
+            or (snap.volatility.vix_chg_5d or 0) > 2.0)
+        geo = _geo.read()
+        breadth = _br.read()
+        defensive = DefensiveTransitionStore().latest() or {}
+        forward = {**forward_probs(rd, breadth, geo,
+                                   vix=vix, vix_rising=vix_rising),
+                   "geo_risk": geo.get("geo_risk"),
+                   "geo_drivers": (geo.get("drivers") or [])[:4],
+                   "defensive_flow": (geo.get("defensive") or {})
+                   .get("flow"),
+                   "defensive_stage": defensive.get("stage"),
+                   "defensive_score": defensive.get("score")}
+        buckets["forward"] = forward
+    except Exception as exc:
+        logger.warning("morning: forward layer failed: %s", exc)
     # data quality — unknown dimensions shouldn't look like signal
     dims = ("trend", "momentum", "breadth", "volatility",
             "participation", "macro", "structure")
