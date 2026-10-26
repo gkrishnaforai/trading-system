@@ -28,6 +28,7 @@ async function proxy(
       },
       body,
       cache: 'no-store',
+      signal: AbortSignal.timeout(60_000),
     })
     const text = await res.text()
     return new NextResponse(text, {

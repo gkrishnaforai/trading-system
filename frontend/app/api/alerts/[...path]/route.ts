@@ -9,7 +9,11 @@ export const dynamic = 'force-dynamic'
 
 async function forward(req: NextRequest, path: string[]) {
   const url = `${BASE}/api/v1/alerts/${path.join('/')}${req.nextUrl.search}`
-  const init: RequestInit = { method: req.method }
+  const init: RequestInit = {
+    method: req.method,
+    // bounded — a stalled worker must not hold the route open 300s
+    signal: AbortSignal.timeout(60_000),
+  }
   if (req.method === 'POST' || req.method === 'PUT') {
     init.body = await req.text()
     init.headers = { 'Content-Type': 'application/json' }

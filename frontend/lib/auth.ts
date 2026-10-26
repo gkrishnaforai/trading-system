@@ -15,6 +15,7 @@ async function postJson(path: string, body: unknown) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     cache: 'no-store',
+    signal: AbortSignal.timeout(20_000),
   })
 }
 
@@ -109,6 +110,8 @@ export async function authedFetch(
         'Content-Type': 'application/json',
       },
       cache: 'no-store',
+      // caller may pass a tighter signal; default bounds the wait
+      signal: init.signal ?? AbortSignal.timeout(60_000),
     })
   } catch {
     return null

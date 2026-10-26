@@ -36,6 +36,9 @@ async function proxy(
       },
       body,
       cache: 'no-store',
+      // single-worker uvicorn stalls during heavy jobs — fail fast
+      // instead of hanging until undici's ~300s headersTimeout
+      signal: AbortSignal.timeout(60_000),
     })
     const text = await res.text()
     return new NextResponse(text, {
