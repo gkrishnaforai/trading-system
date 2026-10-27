@@ -1486,7 +1486,8 @@ async def portfolio_pulse(portfolio_id: str = None):
         except (ValueError, AttributeError):
             return {"rows": [], "book": {},
                     "error": "invalid portfolio_id"}
-    rows = db.execute_query("""
+    try:
+        rows = db.execute_query("""
         WITH uni AS (
             SELECT s.symbol, SUM(pp.quantity) AS qty,
                    SUM(pp.quantity * pp.avg_price)
@@ -1497,7 +1498,7 @@ async def portfolio_pulse(portfolio_id: str = None):
             JOIN stocks s ON s.id = pp.stock_id
             JOIN portfolios p ON p.id = pp.portfolio_id
             WHERE pp.quantity > 0 AND length(s.symbol) > 1
-              AND (:pid IS NULL OR pp.portfolio_id = CAST(:pid AS uuid))
+              AND (:pid IS NULL OR pp.portfolio_id::text = :pid)
             GROUP BY s.symbol
             UNION ALL
             SELECT h.symbol, h.shares_held, h.average_cost,
@@ -1505,12 +1506,12 @@ async def portfolio_pulse(portfolio_id: str = None):
             FROM portfolio_holdings h
             JOIN portfolios p ON p.id = h.portfolio_id
             WHERE h.status IN ('active','inactive')
-              AND (:pid IS NULL OR h.portfolio_id = CAST(:pid AS uuid))
+              AND (:pid IS NULL OR h.portfolio_id::text = :pid)
               AND NOT EXISTS (
                   SELECT 1 FROM portfolio_positions pp
                   JOIN stocks s2 ON s2.id = pp.stock_id
                   WHERE s2.symbol = h.symbol AND pp.quantity > 0
-                    AND pp.portfolio_id = h.portfolio_id)
+                    AND pp.portfolio_id::text = h.portfolio_id::text)
         )
         SELECT u.symbol, u.qty, u.cost, u.status, u.portfolio,
                px.close, ppx.close AS prev_close, spark.closes AS spark,
@@ -1565,204 +1566,217 @@ async def portfolio_pulse(portfolio_id: str = None):
             ORDER BY l.as_of DESC LIMIT 1) prev ON true
         LEFT JOIN symbol_flywheel fw ON fw.symbol = u.symbol
         ORDER BY u.status, u.symbol""", {"pid": pid})
-    from app.market_regime.rotation import _SECTOR_TO_ETF
-    etf_ctx = _sector_flow_map()
-    from app.signals.spec_pulse import spec_symbols
-    spec_set = spec_symbols()
-    out = []
-    for r in rows:
-        sym = r["symbol"]
-        sec = r.get("sector")
-        sec_etf = (_SECTOR_TO_ETF.get(str(sec).lower())
-                   if sec else None)
-        sec_ctx = etf_ctx.get(sec_etf) if sec_etf else None
-        px = r.get("close")
-        cost = float(r["cost"] or 0)
-        shares = float(r["qty"] or 0)
-        pnl = (float(px) / cost - 1) * 100 if px and cost > 0 else None
-        ppx = r.get("prev_close")
-        day_chg = (float(px) / float(ppx) - 1) * 100 \
-            if px and ppx else None
-        fv_ev = r.get("expected_fair_value")
-        fv_up = (float(fv_ev) / float(px) - 1) * 100 \
-            if fv_ev and px else None
-        det = r.get("momentum_detail") or {}
-        if isinstance(det, str):
-            import json as _j
-            det = _j.loads(det)
-        ev = _pulse_action_eval(
-            {**r, "mom_state": r.get("momentum_state"),
-             "prev_state": r.get("prev_state"),
-             "fund_state": r.get("fundamental_state"),
-             "fv_upside": fv_up}, det)
-        act, why = ev["action"], ev["why"]
-        kind = "position" if (r["status"] == "active"
-                              and shares > 0) else "watch"
-        if kind == "watch" and act in ("reduce", "trim"):
-            act, why = "avoid", why  # zero shares — nothing to reduce
-        # display bucket — engine action stays canonical; `watch`
-        # splits into entry candidates (stalk) vs warnings (attention)
-        bucket = (act if act != "watch"
-                  else "stalk" if ev.get("label") in _STALK_LABELS
-                  else "attention")
-        try:  # journal the eval — first write of the day wins
+    except Exception as e:
+        logger.exception("portfolio-pulse: universe query failed")
+        return {"rows": [], "book": {},
+                "error": f"{type(e).__name__}: {e}"}
+    try:
+        out = []
+        from app.market_regime.rotation import _SECTOR_TO_ETF
+        etf_ctx = _sector_flow_map()
+        from app.signals.spec_pulse import spec_symbols
+        spec_set = spec_symbols()
+        for r in rows:
+            sym = r["symbol"]
+            sec = r.get("sector")
+            sec_etf = (_SECTOR_TO_ETF.get(str(sec).lower())
+                       if sec else None)
+            sec_ctx = etf_ctx.get(sec_etf) if sec_etf else None
+            px = r.get("close")
+            cost = float(r["cost"] or 0)
+            shares = float(r["qty"] or 0)
+            pnl = (float(px) / cost - 1) * 100 if px and cost > 0 else None
+            ppx = r.get("prev_close")
+            day_chg = (float(px) / float(ppx) - 1) * 100 \
+                if px and ppx else None
+            fv_ev = r.get("expected_fair_value")
+            fv_up = (float(fv_ev) / float(px) - 1) * 100 \
+                if fv_ev and px else None
+            det = r.get("momentum_detail") or {}
+            spark_v = r.get("spark")
+            if isinstance(det, str) or isinstance(spark_v, str):
+                import json as _j
+                if isinstance(det, str):
+                    det = _j.loads(det)
+                if isinstance(spark_v, str):
+                    spark_v = _j.loads(spark_v)
+            ev = _pulse_action_eval(
+                {**r, "mom_state": r.get("momentum_state"),
+                 "prev_state": r.get("prev_state"),
+                 "fund_state": r.get("fundamental_state"),
+                 "fv_upside": fv_up}, det)
+            act, why = ev["action"], ev["why"]
+            kind = "position" if (r["status"] == "active"
+                                  and shares > 0) else "watch"
+            if kind == "watch" and act in ("reduce", "trim"):
+                act, why = "avoid", why  # zero shares — nothing to reduce
+            # display bucket — engine action stays canonical; `watch`
+            # splits into entry candidates (stalk) vs warnings (attention)
+            bucket = (act if act != "watch"
+                      else "stalk" if ev.get("label") in _STALK_LABELS
+                      else "attention")
+            try:  # journal the eval — first write of the day wins
+                db.execute_update(
+                    "INSERT INTO pulse_rule_evals (symbol, as_of, kind,"
+                    " action, label, matched_rule, confidence, stage0,"
+                    " annotations, condition_log, gate_results,"
+                    " input_snapshot, rules_version, engine_version)"
+                    " VALUES (:s, CURRENT_DATE, :k, :a, :l, :m, :c,"
+                    " CAST(:s0 AS jsonb), CAST(:an AS jsonb),"
+                    " CAST(:cl AS jsonb), CAST(:gr AS jsonb),"
+                    " CAST(:inp AS jsonb), :rv, :ev)"
+                    " ON CONFLICT (symbol, as_of, rules_version)"
+                    " DO NOTHING",
+                    {"s": sym, "k": kind, "a": act, "l": ev.get("label"),
+                     "m": ev.get("matched_rule"),
+                     "c": ev.get("confidence"),
+                     "s0": _js(ev.get("stage0")),
+                     "an": _js(ev.get("annotations")),
+                     "cl": _js(ev.get("condition_log")),
+                     "gr": _js(ev.get("gate_results")),
+                     "inp": _js(ev.get("input_snapshot")),
+                     "rv": ev.get("rules_version"),
+                     "ev": ev.get("engine_version")})
+            except Exception:
+                pass
+            out.append({
+                "symbol": sym, "portfolio": r["portfolio"],
+                "kind": kind,
+                "shares": shares, "avg_cost": cost, "price": px,
+                "pnl_pct": round(pnl, 1) if pnl is not None else None,
+                "prev_close": (float(ppx) if ppx is not None else None),
+                "day_chg_pct": (round(day_chg, 2)
+                                if day_chg is not None else None),
+                "spark": spark_v,
+                "mom_state": r.get("momentum_state"),
+                "mom_prev": r.get("prev_state"),
+                "rsi": round(det["rsi"], 1) if det.get("rsi") else None,
+                "vs_sma50": det.get("vs_sma50"),
+                "dd52w": det.get("dd52w"),
+                "dip_phase": det.get("dip_phase"),
+                "spring": (det.get("spring") or {}).get("score")
+                          if isinstance(det.get("spring"), dict) else None,
+                "stoch_w_up": ((det.get("stoch") or {}).get("w") or {})
+                              .get("up"),
+                "stoch_w_zone": ((det.get("stoch") or {}).get("w") or {})
+                                .get("zone"),
+                "stoch_d_cross": ((det.get("stoch") or {}).get("d") or {})
+                                 .get("cross"),
+                "fund_state": r.get("fundamental_state"),
+                "revision_grade": r.get("revision_grade"),
+                "priced_status": r.get("priced_status"),
+                "emerging_growth": r.get("emerging_growth"),
+                "fv_upside": round(fv_up, 1) if fv_up is not None else None,
+                "gq_pct": r.get("gq_pct"),
+                "gq_flags": r.get("gq_flags"),
+                "fwd_pe": round(r["fwd_pe"], 1)
+                          if r.get("fwd_pe") is not None else None,
+                "sector": sec,
+                "sector_etf": sec_etf,
+                "sector_flow": sec_ctx["flow"] if sec_ctx else None,
+                "sector_score": sec_ctx["score"] if sec_ctx else None,
+                # spec-board membership — the name lives on exactly one
+                # board: engine-promoted members (minus fortresses) or
+                # names the valuation engine can't anchor
+                "spec": bool(
+                    sym in spec_set
+                    or (r.get("is_etf") is not True
+                        and r.get("expected_fair_value") is None
+                        and (r.get("num_analysts") or 0) <= 3)),
+                "next_earnings_date": (
+                    str(r["next_earnings_date"])
+                    if r.get("next_earnings_date") else None),
+                "action": act, "bucket": bucket, "why": why,
+                "action_label": ev.get("label"),
+                "action_confidence": ev.get("confidence"),
+                "matched_rule": ev.get("matched_rule"),
+            })
+        order = {"reduce": 0, "trim": 1, "add": 2, "stalk": 3,
+                 "attention": 4, "hold": 5, "avoid": 6}
+        out.sort(key=lambda x: (x["kind"] != "position",
+                                order.get(x["bucket"], 9),
+                                -(x["pnl_pct"] or 0)))
+        # ---- book vs target — the "is this beating the goal" strip.
+        # The benchmark isn't SPY: it's PORTFOLIO_TARGET_PCT annualized,
+        # and pace is measured on journaled book snapshots.
+        import os
+        tgt = float(os.environ.get("PORTFOLIO_TARGET_PCT", "24")) / 100
+        pos = [r for r in out if r["kind"] == "position"]
+        cost = sum(r["shares"] * r["avg_cost"] for r in pos
+                   if r["avg_cost"])
+        val = sum(r["shares"] * r["price"] for r in pos if r["price"])
+        priced_cost = sum(r["shares"] * r["avg_cost"] for r in pos
+                          if r["avg_cost"] and r["price"])
+        pnl = val - priced_cost
+        day_pnl = sum(
+            r["shares"] * (float(r["price"]) - float(r["prev_close"]))
+            for r in pos if r["price"] and r["prev_close"])
+        prev_val = val - day_pnl
+        book = {"positions": len(pos),
+                "cost": round(cost), "value": round(val),
+                "pnl": round(pnl),
+                "pnl_pct": round(pnl / priced_cost * 100, 1)
+                           if priced_cost else None,
+                "day_pnl": round(day_pnl),
+                "day_chg_pct": round(day_pnl / prev_val * 100, 2)
+                               if prev_val else None,
+                "unpriced_cost": round(cost - priced_cost),
+                "target_pct": tgt * 100,
+                "pace_month": round(((1 + tgt) ** (1 / 12) - 1) * 100, 2),
+                "pace_week": round(((1 + tgt) ** (1 / 52) - 1) * 100, 2),
+                "target_value_12m": round(cost * (1 + tgt)),
+                "goal_month": round(cost * ((1 + tgt) ** (1 / 12) - 1))}
+        # daily book snapshot — first write wins; the pace series.
+        # Scoped calls journal under that book's id, so user books get
+        # their own track record too.
+        _BOOK_ID = "00000000-0000-0000-0000-00000000000b"
+        snap_pid = pid or _BOOK_ID
+        try:
             db.execute_update(
-                "INSERT INTO pulse_rule_evals (symbol, as_of, kind,"
-                " action, label, matched_rule, confidence, stage0,"
-                " annotations, condition_log, gate_results,"
-                " input_snapshot, rules_version, engine_version)"
-                " VALUES (:s, CURRENT_DATE, :k, :a, :l, :m, :c,"
-                " CAST(:s0 AS jsonb), CAST(:an AS jsonb),"
-                " CAST(:cl AS jsonb), CAST(:gr AS jsonb),"
-                " CAST(:inp AS jsonb), :rv, :ev)"
-                " ON CONFLICT (symbol, as_of, rules_version)"
-                " DO NOTHING",
-                {"s": sym, "k": kind, "a": act, "l": ev.get("label"),
-                 "m": ev.get("matched_rule"),
-                 "c": ev.get("confidence"),
-                 "s0": _js(ev.get("stage0")),
-                 "an": _js(ev.get("annotations")),
-                 "cl": _js(ev.get("condition_log")),
-                 "gr": _js(ev.get("gate_results")),
-                 "inp": _js(ev.get("input_snapshot")),
-                 "rv": ev.get("rules_version"),
-                 "ev": ev.get("engine_version")})
+                "INSERT INTO portfolio_snapshots (portfolio_id,"
+                " snapshot_date, total_value, invested_value, cash_balance)"
+                " VALUES (:pid, CURRENT_DATE, :v, :c, 0)"
+                " ON CONFLICT (portfolio_id, snapshot_date) DO UPDATE SET"
+                " total_value=EXCLUDED.total_value,"
+                " invested_value=EXCLUDED.invested_value",
+                {"pid": snap_pid, "v": val, "c": cost})
+            base = db.execute_query(
+                "SELECT snapshot_date, total_value FROM portfolio_snapshots"
+                " WHERE portfolio_id::text = :pid"
+                " ORDER BY snapshot_date LIMIT 1",
+                {"pid": snap_pid})
+            if base and base[0]["total_value"] and val:
+                days = (datetime.now().date()
+                        - base[0]["snapshot_date"]).days
+                since = (val / float(base[0]["total_value"]) - 1) * 100
+                tgt_since = ((1 + tgt) ** (days / 365.0) - 1) * 100
+                book.update({"track_days": days,
+                             "track_ret_pct": round(since, 1),
+                             "track_target_pct": round(tgt_since, 1),
+                             "on_pace": bool(since >= tgt_since)})
+                if days > 0:  # SPY context over the same window
+                    try:
+                        from app.market_data import bars as _bars
+                        allb = _bars.load(["SPY"],
+                                          days=days + 15).get("SPY") or []
+                        at = [b for b in allb
+                              if b.date <= base[0]["snapshot_date"]]
+                        now = [b for b in allb
+                               if b.date <= datetime.now().date()]
+                        if at and now and at[-1].close:
+                            spy = (now[-1].close / at[-1].close - 1) * 100
+                            book["spy_ret_pct"] = round(spy, 1)
+                            book["excess_pct"] = round(since - spy, 1)
+                    except Exception:
+                        pass
         except Exception:
             pass
-        out.append({
-            "symbol": sym, "portfolio": r["portfolio"],
-            "kind": kind,
-            "shares": shares, "avg_cost": cost, "price": px,
-            "pnl_pct": round(pnl, 1) if pnl is not None else None,
-            "prev_close": ppx,
-            "day_chg_pct": (round(day_chg, 2)
-                            if day_chg is not None else None),
-            "spark": r.get("spark"),
-            "mom_state": r.get("momentum_state"),
-            "mom_prev": r.get("prev_state"),
-            "rsi": round(det["rsi"], 1) if det.get("rsi") else None,
-            "vs_sma50": det.get("vs_sma50"),
-            "dd52w": det.get("dd52w"),
-            "dip_phase": det.get("dip_phase"),
-            "spring": (det.get("spring") or {}).get("score")
-                      if isinstance(det.get("spring"), dict) else None,
-            "stoch_w_up": ((det.get("stoch") or {}).get("w") or {})
-                          .get("up"),
-            "stoch_w_zone": ((det.get("stoch") or {}).get("w") or {})
-                            .get("zone"),
-            "stoch_d_cross": ((det.get("stoch") or {}).get("d") or {})
-                             .get("cross"),
-            "fund_state": r.get("fundamental_state"),
-            "revision_grade": r.get("revision_grade"),
-            "priced_status": r.get("priced_status"),
-            "emerging_growth": r.get("emerging_growth"),
-            "fv_upside": round(fv_up, 1) if fv_up is not None else None,
-            "gq_pct": r.get("gq_pct"),
-            "gq_flags": r.get("gq_flags"),
-            "fwd_pe": round(r["fwd_pe"], 1)
-                      if r.get("fwd_pe") is not None else None,
-            "sector": sec,
-            "sector_etf": sec_etf,
-            "sector_flow": sec_ctx["flow"] if sec_ctx else None,
-            "sector_score": sec_ctx["score"] if sec_ctx else None,
-            # spec-board membership — the name lives on exactly one
-            # board: engine-promoted members (minus fortresses) or
-            # names the valuation engine can't anchor
-            "spec": bool(
-                sym in spec_set
-                or (r.get("is_etf") is not True
-                    and r.get("expected_fair_value") is None
-                    and (r.get("num_analysts") or 0) <= 3)),
-            "next_earnings_date": (
-                str(r["next_earnings_date"])
-                if r.get("next_earnings_date") else None),
-            "action": act, "bucket": bucket, "why": why,
-            "action_label": ev.get("label"),
-            "action_confidence": ev.get("confidence"),
-            "matched_rule": ev.get("matched_rule"),
-        })
-    order = {"reduce": 0, "trim": 1, "add": 2, "stalk": 3,
-             "attention": 4, "hold": 5, "avoid": 6}
-    out.sort(key=lambda x: (x["kind"] != "position",
-                            order.get(x["bucket"], 9),
-                            -(x["pnl_pct"] or 0)))
-    # ---- book vs target — the "is this beating the goal" strip.
-    # The benchmark isn't SPY: it's PORTFOLIO_TARGET_PCT annualized,
-    # and pace is measured on journaled book snapshots.
-    import os
-    tgt = float(os.environ.get("PORTFOLIO_TARGET_PCT", "24")) / 100
-    pos = [r for r in out if r["kind"] == "position"]
-    cost = sum(r["shares"] * r["avg_cost"] for r in pos
-               if r["avg_cost"])
-    val = sum(r["shares"] * r["price"] for r in pos if r["price"])
-    priced_cost = sum(r["shares"] * r["avg_cost"] for r in pos
-                      if r["avg_cost"] and r["price"])
-    pnl = val - priced_cost
-    day_pnl = sum(
-        r["shares"] * (float(r["price"]) - float(r["prev_close"]))
-        for r in pos if r["price"] and r["prev_close"])
-    prev_val = val - day_pnl
-    book = {"positions": len(pos),
-            "cost": round(cost), "value": round(val),
-            "pnl": round(pnl),
-            "pnl_pct": round(pnl / priced_cost * 100, 1)
-                       if priced_cost else None,
-            "day_pnl": round(day_pnl),
-            "day_chg_pct": round(day_pnl / prev_val * 100, 2)
-                           if prev_val else None,
-            "unpriced_cost": round(cost - priced_cost),
-            "target_pct": tgt * 100,
-            "pace_month": round(((1 + tgt) ** (1 / 12) - 1) * 100, 2),
-            "pace_week": round(((1 + tgt) ** (1 / 52) - 1) * 100, 2),
-            "target_value_12m": round(cost * (1 + tgt)),
-            "goal_month": round(cost * ((1 + tgt) ** (1 / 12) - 1))}
-    # daily book snapshot — first write wins; the pace series.
-    # Scoped calls journal under that book's id, so user books get
-    # their own track record too.
-    _BOOK_ID = "00000000-0000-0000-0000-00000000000b"
-    snap_pid = pid or _BOOK_ID
-    try:
-        db.execute_update(
-            "INSERT INTO portfolio_snapshots (portfolio_id,"
-            " snapshot_date, total_value, invested_value, cash_balance)"
-            " VALUES (CAST(:pid AS uuid), CURRENT_DATE, :v, :c, 0)"
-            " ON CONFLICT (portfolio_id, snapshot_date) DO UPDATE SET"
-            " total_value=EXCLUDED.total_value,"
-            " invested_value=EXCLUDED.invested_value",
-            {"pid": snap_pid, "v": val, "c": cost})
-        base = db.execute_query(
-            "SELECT snapshot_date, total_value FROM portfolio_snapshots"
-            " WHERE portfolio_id=CAST(:pid AS uuid)"
-            " ORDER BY snapshot_date LIMIT 1",
-            {"pid": snap_pid})
-        if base and base[0]["total_value"] and val:
-            days = (datetime.now().date()
-                    - base[0]["snapshot_date"]).days
-            since = (val / float(base[0]["total_value"]) - 1) * 100
-            tgt_since = ((1 + tgt) ** (days / 365.0) - 1) * 100
-            book.update({"track_days": days,
-                         "track_ret_pct": round(since, 1),
-                         "track_target_pct": round(tgt_since, 1),
-                         "on_pace": bool(since >= tgt_since)})
-            if days > 0:  # SPY context over the same window
-                try:
-                    from app.market_data import bars as _bars
-                    allb = _bars.load(["SPY"],
-                                      days=days + 15).get("SPY") or []
-                    at = [b for b in allb
-                          if b.date <= base[0]["snapshot_date"]]
-                    now = [b for b in allb
-                           if b.date <= datetime.now().date()]
-                    if at and now and at[-1].close:
-                        spy = (now[-1].close / at[-1].close - 1) * 100
-                        book["spy_ret_pct"] = round(spy, 1)
-                        book["excess_pct"] = round(since - spy, 1)
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    return {"as_of": str(datetime.now().date()), "rows": out,
-            "book": book}
+        return {"as_of": str(datetime.now().date()), "rows": out,
+                "book": book}
+    except Exception as e:
+        logger.exception("portfolio-pulse: processing failed")
+        return {"rows": out, "book": {},
+                "error": f"{type(e).__name__}: {e}"}
 
 
 @router.get("/conviction/leaderboard")
