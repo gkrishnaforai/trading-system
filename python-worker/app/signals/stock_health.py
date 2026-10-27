@@ -416,10 +416,12 @@ def card(sym: str) -> dict[str, Any]:
             it = last_print.get("one_time_items")
             last_print["one_time_items"] = (
                 it if isinstance(it, list) else None)
-            det = last_print.get("detail")
-            det = _j(det) if det else {}
-            last_print["narrative"] = det.get("narrative")
-            last_print["drivers"] = det.get("drivers") or []
+            # NB: not `det` — that name holds momentum_detail for the
+            # whole card (technical detail, leadership, diagnosis);
+            # shadowing it here leaked earnings detail into the tape panel
+            lpdet = _j(last_print.get("detail"))
+            last_print["narrative"] = lpdet.get("narrative")
+            last_print["drivers"] = lpdet.get("drivers") or []
             last_print.pop("detail", None)
     except Exception:
         pass
