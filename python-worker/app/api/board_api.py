@@ -1498,7 +1498,8 @@ async def portfolio_pulse(portfolio_id: str = None):
             JOIN stocks s ON s.id = pp.stock_id
             JOIN portfolios p ON p.id = pp.portfolio_id
             WHERE pp.quantity > 0 AND length(s.symbol) > 1
-              AND (:pid IS NULL OR pp.portfolio_id::text = :pid)
+              AND pp.portfolio_id::text
+                  = COALESCE(:pid, pp.portfolio_id::text)
             GROUP BY s.symbol
             UNION ALL
             SELECT h.symbol, h.shares_held, h.average_cost,
@@ -1506,7 +1507,8 @@ async def portfolio_pulse(portfolio_id: str = None):
             FROM portfolio_holdings h
             JOIN portfolios p ON p.id = h.portfolio_id
             WHERE h.status IN ('active','inactive')
-              AND (:pid IS NULL OR h.portfolio_id::text = :pid)
+              AND h.portfolio_id::text
+                  = COALESCE(:pid, h.portfolio_id::text)
               AND NOT EXISTS (
                   SELECT 1 FROM portfolio_positions pp
                   JOIN stocks s2 ON s2.id = pp.stock_id
@@ -1742,7 +1744,7 @@ async def portfolio_pulse(portfolio_id: str = None):
                 {"pid": snap_pid, "v": val, "c": cost})
             base = db.execute_query(
                 "SELECT snapshot_date, total_value FROM portfolio_snapshots"
-                " WHERE portfolio_id::text = :pid"
+                " WHERE portfolio_id::text = CAST(:pid AS text)"
                 " ORDER BY snapshot_date LIMIT 1",
                 {"pid": snap_pid})
             if base and base[0]["total_value"] and val:
