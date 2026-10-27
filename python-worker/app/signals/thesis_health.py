@@ -516,34 +516,57 @@ def _check_line(c: dict) -> str:
     return out
 
 
-def stance_for(status: str, fv_upside_pct: Optional[float]) -> str:
+def stance_for(status: str, fv_upside_pct: Optional[float],
+               mom_state: Optional[str] = None) -> str:
     """Deterministic stance line — thesis status × whether the market
-    already paid for the improvement."""
+    already paid for the improvement, annotated with tape context.
+
+    This is a THESIS verdict (business confirmed + valuation), not a
+    timing call — so the tape clause names the missing leg instead of
+    pretending the stance covers it. The FV leg gates on the same
+    plausibility band the pulse engine uses (pulse_engine.fv_usable):
+    an |upside| outside ±75% is model-blind, not 'cheap'/'pricey'."""
     if status == "broken":
         return "Avoid — thesis broken"
     if status == "deteriorating":
         return "Reduce / no new adds — legs moving against the thesis"
     if status == "unknown":
         return "No standing thesis — insufficient data"
+    from app.signals.pulse_engine import fv_usable, tape_groups
     up = fv_upside_pct
-    cheap = up is not None and up >= 25
-    pricey = up is not None and up <= -20
+    usable = fv_usable(up)[0]
+    cheap = usable and up >= 25
+    pricey = usable and up <= -20
+    suspect = up is not None and not usable
     if status == "on_track":
         if cheap:
-            return "Accumulate candidate — confirmed and still cheap"
-        if pricey:
-            return "Hold — thesis on track, price already paid for it"
-        return "On track — hold / add on weakness"
-    if status == "improving":
+            out = "Accumulate candidate — confirmed and still cheap"
+        elif pricey:
+            out = "Hold — thesis on track, price already paid for it"
+        else:
+            out = "On track — hold / add on weakness"
+    elif status == "improving":
         if cheap:
-            return "Watch / staged entry — progress, unconfirmed legs, cheap"
-        if pricey:
-            return "Watch — improving but priced ahead of the evidence"
-        return "Watch / staged entry — improving, legs still open"
-    return "Watch — mixed evidence"
+            out = "Watch / staged entry — progress, unconfirmed legs, cheap"
+        elif pricey:
+            out = "Watch — improving but priced ahead of the evidence"
+        else:
+            out = "Watch / staged entry — improving, legs still open"
+    else:
+        out = "Watch — mixed evidence"
+    if suspect:
+        out += f" · FV gap {up:+.0f}% suspect — valuation unverified"
+    if mom_state:
+        groups = tape_groups()
+        if mom_state in (groups.get("tape_hostile_entry") or []):
+            out += f" · tape {mom_state} — stalk the base, don't chase"
+        elif mom_state in (groups.get("tape_weak") or []):
+            out += f" · tape {mom_state}"
+    return out
 
 
-def build_report(t: dict, fv_upside_pct: Optional[float] = None) -> dict:
+def build_report(t: dict, fv_upside_pct: Optional[float] = None,
+                 mom_state: Optional[str] = None) -> dict:
     """'What I like / what I want confirmed' — deterministic prose from
     a persisted symbol_thesis row. Passing legs are the likes; unknown,
     deteriorating or broken legs are the open confirmations. No LLM —
@@ -593,7 +616,7 @@ def build_report(t: dict, fv_upside_pct: Optional[float] = None) -> dict:
                            + (f" {dp:.0%}" if dp is not None else "")
                            + " — management's own number, not ours")
     return {"stance": stance_for(str(t.get("status") or "unknown"),
-                                 fv_upside_pct),
+                                 fv_upside_pct, mom_state),
             "likes": likes[:6], "confirm": confirm[:6],
             "status": t.get("status"), "dir": t.get("status_dir"),
             "archetype": t.get("archetype")}

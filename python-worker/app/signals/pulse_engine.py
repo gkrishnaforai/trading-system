@@ -39,6 +39,38 @@ def _load() -> dict:
     return _spec
 
 
+# |fv_upside| beyond this band is model-blind, not evidence — the
+# single source for the stage-0 plausibility gate (the rules yaml's
+# fv_valid precedence prose mirrors this bound). Every consumer of a
+# fair-value gap — action rules AND the thesis stance — must gate on
+# the same band or the pages contradict each other.
+FV_SUSPECT_BAND = 75
+
+
+def fv_usable(fv) -> tuple[bool, Optional[str]]:
+    """Stage-0 fv_valid policy — (usable, note). None/non-finite →
+    (False, 'missing'); outside ±FV_SUSPECT_BAND → (False, 'suspect
+    band'); else (True, None)."""
+    if fv is None:
+        return False, "missing"
+    try:
+        f = float(fv)
+    except (TypeError, ValueError):
+        return False, "missing"
+    if not math.isfinite(f):
+        return False, "missing"
+    if f > FV_SUSPECT_BAND or f < -FV_SUSPECT_BAND:
+        return False, "suspect band"
+    return True, None
+
+
+def tape_groups() -> dict:
+    """The spec's `groups:` block — shared tape vocabulary
+    (broken / weak / constructive / extensible / hostile_entry) so
+    other consumers don't re-hardcode state lists."""
+    return _load().get("groups") or {}
+
+
 _spec_hash_cache: dict = {}
 
 
@@ -192,14 +224,8 @@ def _normalize(row: dict) -> dict:
 def _stage0(c: dict) -> dict:
     """Single-assignment derived inputs — precedence explicit."""
     spec = _load()
-    # fv_valid — null/non-finite or |fv|>75 → unusable
-    fv = c["fv"]
-    if fv is None:
-        fv_valid, fv_note = False, "missing"
-    elif fv > 75 or fv < -75:
-        fv_valid, fv_note = False, "suspect band"
-    else:
-        fv_valid, fv_note = True, None
+    # fv_valid — shared policy, see fv_usable()
+    fv_valid, fv_note = fv_usable(c["fv"])
     # rev_class — letter → policy class. Three outcomes: a real class,
     # `missing` (no grade at all), or the spec's configured fallback
     # (default `malformed`) for non-null unrecognized values — a feed

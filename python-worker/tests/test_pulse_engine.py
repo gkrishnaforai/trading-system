@@ -612,3 +612,41 @@ def test_invest_valid_fv_premium_still_fails():
         r = eval_use_case(_row(mom_state="knife", fv_upside=-41.8,
                                priced_status=ps), "invest")
         assert r["rules"][3]["ok"] is False, ps
+
+
+# ---------- shared fv_usable policy + thesis stance coherence -----------
+# The stance line must gate cheapness on the same ±75% plausibility
+# band the action rules use — CLS surfaced the drift: thesis said
+# 'accumulate, still cheap' on a +119% gap the rules refuse to read.
+
+def test_fv_usable_band_and_edges():
+    from app.signals.pulse_engine import fv_usable, FV_SUSPECT_BAND
+    assert fv_usable(FV_SUSPECT_BAND)[0] is True      # boundary valid
+    assert fv_usable(-FV_SUSPECT_BAND)[0] is True
+    assert fv_usable(FV_SUSPECT_BAND + 0.1) == (False, "suspect band")
+    assert fv_usable(None) == (False, "missing")
+    assert fv_usable(float("nan")) == (False, "missing")
+    assert fv_usable("junk") == (False, "missing")
+
+
+def test_stance_rejects_suspect_fv_cheapness():
+    from app.signals.thesis_health import stance_for
+    s = stance_for("on_track", 119.2, "downtrend")
+    assert "cheap" not in s and "Accumulate" not in s
+    assert "suspect" in s and "downtrend" in s
+    # symmetric — a suspect 'premium' can't claim price paid for it
+    s2 = stance_for("on_track", -119.0, "pullback")
+    assert "paid for it" not in s2 and "suspect" in s2
+
+
+def test_stance_valid_fv_and_tape_suffix():
+    from app.signals.thesis_health import stance_for
+    assert stance_for("on_track", 40.0, "uptrend") == \
+        "Accumulate candidate — confirmed and still cheap"
+    # hostile-entry tape names the missing leg; weak tape notes it
+    assert "don't chase" in stance_for("on_track", 40.0, "capitulation")
+    assert "tape rolling_over" in stance_for("on_track", 40.0,
+                                             "rolling_over")
+    # defensive stances carry no tape clause — already defensive
+    assert stance_for("broken", 119.2, "downtrend") == \
+        "Avoid — thesis broken"

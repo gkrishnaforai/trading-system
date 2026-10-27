@@ -636,7 +636,8 @@ def card(sym: str) -> dict[str, Any]:
             "review": review,
             "readiness": readiness,
             "selloff": _try_selloff(s),
-            "thesis": _try_thesis(s, fv_up),
+            "thesis": _try_thesis(s, fv_up,
+                                  st.get("momentum_state")),
             "tailwinds": tws, "watches": _try_watches(s),
             "diagnosis": tape_diagnosis.diagnose(
                 s, sector=st.get("sector"),
@@ -952,12 +953,13 @@ def _try_capex(sym: str) -> dict:
         return {}
 
 
-def _try_thesis(sym: str, fv_up=None) -> dict:
+def _try_thesis(sym: str, fv_up=None, mom_state=None) -> dict:
     """Archetype thesis flag — status + direction vs the prior nightly
     eval + which legs just confirmed/refuted + the deterministic
     'like / want confirmed' report. Symbols outside the pilot get a
     lazy first eval via the archetype fallback rules so the card works
-    for any tracked name."""
+    for any tracked name. mom_state feeds the stance's tape clause so
+    the thesis verdict never reads as a timing call."""
     import json as _json
     from app.database import db
 
@@ -984,7 +986,7 @@ def _try_thesis(sym: str, fv_up=None) -> dict:
             if t.get(k) is not None:
                 t[k] = str(t[k])
         from app.signals.thesis_health import build_report
-        t["report"] = build_report(t, fv_up)
+        t["report"] = build_report(t, fv_up, mom_state)
         return t
     except Exception:
         return {}
