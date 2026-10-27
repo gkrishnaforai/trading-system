@@ -650,3 +650,63 @@ def test_stance_valid_fv_and_tape_suffix():
     # defensive stances carry no tape clause — already defensive
     assert stance_for("broken", 119.2, "downtrend") == \
         "Avoid — thesis broken"
+
+
+# ---------- Layer-B slowing severity (fund-state × decel-cause) --------
+# CLS surfaced the coherence gap: `slowing` on base-effect EPS decel
+# + demand strong + street raising was treated identically to real
+# deterioration. The raw label is preserved; the ACTION rules read
+# the cause-aware severity. Benign causes are candidates, not proof —
+# hard risk overrides restore full severity.
+
+def _slowing_row(**kw):
+    base = dict(mom_state="downtrend", fund_state="slowing",
+                decel_cause="base_normalization",
+                demand_health="strong", est_revision_pct=0.296,
+                rev_growth=0.825, gm_slope=-0.02,
+                momentum_detail={"pct_b": 0.4,
+                                 "dip_phase": "stabilizing"})
+    base.update(kw)
+    return _row(**base)
+
+
+def test_benign_slowing_is_not_a_failing_leg():
+    # CLS profile — severity low blocks both_legs_failing; broken tape
+    # alone routes to watch, and the benign annotation surfaces why
+    r = evaluate(_slowing_row())
+    assert r["action"] == "watch" and r["matched_rule"] != \
+        "both_legs_failing"
+    assert r["stage0"]["slowing_severity"] == "low"
+    assert "slowing_benign_cause" in r["annotations"]["confidence"]
+
+
+def test_slow_severity_hard_overrides():
+    # weak demand / estimate cuts / FCF burn / severe margin damage
+    # each restore full severity even with a benign cause
+    for kw in ({"demand_health": "weak"},
+               {"est_revision_pct": -0.05},
+               {"gq_flags": ["fcf_negative"]},
+               {"gm_slope": -0.08}):
+        r = evaluate(_slowing_row(**kw))
+        assert r["action"] == "reduce", kw
+        assert r["matched_rule"] == "both_legs_failing", kw
+
+
+def test_slow_severity_context_must_corroborate():
+    # benign cause alone doesn't neutralize — missing cause, weak
+    # growth level, or flat revisions all keep full severity
+    for kw in ({"decel_cause": None},
+               {"rev_growth": 0.03},
+               {"est_revision_pct": 0.0},
+               {"decel_cause": "demand_deterioration"}):
+        r = evaluate(_slowing_row(**kw))
+        assert r["action"] == "reduce", kw
+
+
+def test_slow_severity_only_modulates_slowing():
+    # pressured/deteriorating carry the benign fields but are
+    # unaffected — the modifier can never soften a real failing leg
+    for fund in ("pressured", "deteriorating", "declining"):
+        r = evaluate(_slowing_row(fund_state=fund))
+        assert r["action"] == "reduce", fund
+        assert r["stage0"]["slowing_severity"] == "normal", fund

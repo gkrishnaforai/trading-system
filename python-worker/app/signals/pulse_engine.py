@@ -71,6 +71,13 @@ def tape_groups() -> dict:
     return _load().get("groups") or {}
 
 
+# decel_cause values the fundamental classifier can call benign —
+# candidates for a low-severity `slowing`, never automatic proof.
+# Mirrors _decel_cause() in fundamental_health.py.
+_BENIGN_DECEL = {"base_normalization", "capacity_investment",
+                 "rd_investment", "conversion_delay"}
+
+
 _spec_hash_cache: dict = {}
 
 
@@ -192,6 +199,13 @@ def _normalize(row: dict) -> dict:
         "confirm_level": _num(_sw.get("confirm_level")),
         "rev_growth": _num(row.get("rev_growth")),
         "eps_growth": _num(row.get("eps_growth")),
+        # Layer-B slowing severity inputs — the cause/demand context
+        # the classifier journaled in stocks.fundamental_detail; the
+        # raw `fund` label stays canonical, these only modulate how
+        # much a `slowing` leg weighs in the action rules
+        "decel_cause": row.get("decel_cause"),
+        "demand_health": row.get("demand_health"),
+        "gm_slope": _num(row.get("gm_slope")),
         "future_score": _num(row.get("future_score")),
         "lane": row.get("lane"),
         "gq_score": _num(row.get("gq_score")),
@@ -252,10 +266,39 @@ def _stage0(c: dict) -> dict:
         stop = px * 0.92
     risk_atr = (abs(px - stop) / (px * atr)
                 if px and stop and atr else None)
+    # slowing_severity — Layer-B read of a `slowing` fund label. The
+    # classifier's raw state stays canonical upstream (journal, stock
+    # page); this computed input decides how much it weighs as a
+    # FAILING leg in the action rules.
+    #   low    — benign decel cause AND demand intact AND street
+    #            raising AND growth level still strong — growth-rate
+    #            normalization, not business deterioration
+    #   normal — everything else, INCLUDING non-slowing states, so the
+    #            modifier can never soften a real failing leg
+    # Benign causes are candidates, not proof — the hard-risk override
+    # restores full severity on estimate cuts, weak demand, FCF burn,
+    # or severe margin damage. Missing inputs never qualify as benign.
+    # (balance-sheet stress has no reliable row input yet — the
+    # leverage flag is pending_calibration; TODO when it promotes.)
+    if c["fund"] == "slowing":
+        benign = (c.get("decel_cause") in _BENIGN_DECEL
+                  and c.get("demand_health") in ("strong", "healthy")
+                  and (c.get("est_rev") or 0) > 0
+                  and (c.get("rev_growth") or 0) > 0.08)
+        hard = (c.get("demand_health") == "weak"
+                or (c.get("est_rev") is not None
+                    and c["est_rev"] < -0.01)
+                or "fcf_negative" in c["flags"]
+                or (c.get("gm_slope") is not None
+                    and c["gm_slope"] < -0.05))
+        severity = "low" if (benign and not hard) else "normal"
+    else:
+        severity = "normal"
     return {"fv_valid": fv_valid, "fv_note": fv_note,
             "rev_class": rev_class, "instrument": instrument,
             "stop_px": round(stop, 2) if stop else None,
-            "risk_atr": round(risk_atr, 2) if risk_atr else None}
+            "risk_atr": round(risk_atr, 2) if risk_atr else None,
+            "slowing_severity": severity}
 
 
 # ---------------- condition interpreter ---------------------------------
@@ -558,7 +601,7 @@ def evaluate(row: dict) -> dict:
             "confidence": conf, "why": why,
             "stage0": {k: c.get(k) for k in
                        ("fv_valid", "rev_class", "instrument",
-                        "extended_metrics")},
+                        "extended_metrics", "slowing_severity")},
             "annotations": ann,
             "condition_log": journal,
             "gate_results": gate_log or None,

@@ -19,7 +19,7 @@
 # on a null scalar are both FALSE — "not in D" is not the same as
 # "is C". Comparators are exactly as named (gt strict, gte inclusive).
 
-version: 3.8
+version: 3.9
 
 # ---------------------------------------------------------------------
 # STAGE 0 — computed inputs (single-assignment, explicit precedence)
@@ -129,6 +129,13 @@ annotations:
     - name: fv_unusable
       when: {fv_valid: false}
       note: "FV leg ignored ({reason from Stage 0})"
+    - name: slowing_benign_cause
+      # the classifier's decel cause is benign AND demand/revisions
+      # corroborate — the `slowing` label is real but not a failing
+      # leg; surfaced so the row why explains a non-reduce
+      when: {slowing_severity: low}
+      note: "fundamentals slowing ({decel_cause}) — demand intact,
+             revisions positive; not a failing leg"
     - name: metrics_contradict_state
       when: {extended_metrics: true, tape_not_in: tape_extensible}
       note: "extension reads off a non-constructive state — likely a
@@ -252,6 +259,12 @@ rules:
     when:
       tape_in: tape_broken
       fund_in: {union: [fund_soft_bad, fund_bad_hard]}
+      # Layer-B severity: a `slowing` whose decel cause is benign
+      # (base normalization, capacity/R&D investment, conversion
+      # delay) with demand intact and street raising is growth-rate
+      # cooling, not a failing fundamental leg — it cannot convict.
+      # 'normal' default means non-slowing states are unaffected.
+      slowing_severity_not_in: [low]
     action: reduce
     confidence: high
     why: "tape {tape} + fundamentals {fund} — both legs failing"
@@ -284,6 +297,9 @@ rules:
     when:
       tape_in: tape_broken
       fund_in: {union: [fund_neutral, fund_soft_bad, fund_bad_hard]}
+      # same severity gate as both_legs_failing — benign-cause
+      # 'slowing' is not a failing leg here either
+      slowing_severity_not_in: [low]
       rev_class_in: [B, C, D, missing]
         # explicit, not `not: A` — under null-condition semantics a
         # `not_in` on a missing grade is FALSE, which would wrongly
@@ -835,6 +851,10 @@ acceptance_tests:              # all must pass before deploy
   - "dq_block + reduce/trim → action still fires, confidence=low
      (cap overrides literal confidence: high)"
   - "REIT / financials + leverage_critical → not_applicable"
+  - "slowing + benign decel cause + demand strong + revisions up →
+     severity low, never reduce; same row with weak demand, estimate
+     cuts, fcf_negative flag, or gm_slope ≤ -5pts → severity normal,
+     reduce fires"
 
 # portfolio sizing lives outside this file — a stock-level `add` never
 # implies the book has room (position size, sector cap, correlated

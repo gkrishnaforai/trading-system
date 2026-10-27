@@ -1288,6 +1288,16 @@ def _pulse_action_eval(row, det) -> dict:
         "vs_sma50": (row.get("momentum_detail") or {}).get("vs_sma50")
                     or det.get("vs_sma50"),
         "momentum_detail": det,
+        # Layer-B slowing severity — cause/demand context the
+        # classifier journaled in fundamental_detail; the raw
+        # fund_state label stays canonical
+        "decel_cause": row.get("decel_cause"),
+        "demand_health": row.get("demand_health"),
+        "rev_growth": row.get("rev_growth"),
+        "eps_growth": row.get("eps_growth"),
+        "gm_slope": row.get("gm_slope"),
+        "est_revision_pct": row.get("est_revision_pct"),
+        "beat_streak": row.get("beat_streak"),
         "earn_days": earn_days,
         "num_analysts": row.get("num_analysts"),
         "flywheel_age_days": _age(row.get("flywheel_at")),
@@ -1537,6 +1547,10 @@ async def portfolio_pulse(portfolio_id: str = None):
                gq.score AS gq_score, gq.percentile AS gq_pct,
                gq.flags AS gq_flags,
                fw.fwd_pe, fw.num_analysts, fw.updated_at AS flywheel_at,
+               fw.rev_growth, fw.eps_growth, fw.gm_slope,
+               fw.est_revision_pct, fw.beat_streak,
+               s.fundamental_detail->>'decel_cause' AS decel_cause,
+               s.fundamental_detail->>'demand_health' AS demand_health,
                prev.state AS prev_state
         FROM uni u
         LEFT JOIN stocks s ON s.symbol = u.symbol
