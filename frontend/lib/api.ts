@@ -320,7 +320,40 @@ export const api = {
   shortSqueeze: (symbol: string) =>
     get<SqueezeEval>(`/short-squeeze/${encodeURIComponent(symbol)}`),
   intraday: () => get<IntradayTape>('/intraday'),
+  readiness: () => get<ReadinessBoard>('/readiness'),
   correctionAlarms: () => get<CorrectionAlarms>('/correction-alarms'),
+}
+
+export type ReadinessRow = {
+  symbol: string
+  name?: string | null
+  state?: string            // ready | close | no
+  score?: number | null
+  of?: number | null
+  fails?: string[] | null
+  rank?: number | null
+  parts?: Record<string, unknown> | null
+  mom?: string | null
+  fund?: string | null
+  thesis?: string | null
+  thesis_dir?: string | null
+  fv_upside?: number | null
+  mcap_b?: number | null
+  catalyst?: string | null
+  swing_phase?: string | null
+  confirm_level?: number | null
+  avwap?: number | null
+  prior_low?: number | null
+  pe_band?: string | null
+  pe_cat?: string | null
+  stage_txt?: string | null
+}
+
+export type ReadinessBoard = {
+  as_of?: string | null
+  sections?: Record<string, ReadinessRow[]>
+  skipped?: string[]
+  counts?: Record<string, { ready?: number; close?: number; no?: number }>
 }
 
 export type CorrectionAlarms = {
