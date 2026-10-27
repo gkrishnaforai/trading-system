@@ -1501,7 +1501,7 @@ async def portfolio_pulse():
                   WHERE s2.symbol = h.symbol AND pp.quantity > 0)
         )
         SELECT u.symbol, u.qty, u.cost, u.status, u.portfolio,
-               px.close,
+               px.close, ppx.close AS prev_close, spark.closes AS spark,
                s.momentum_state,
                s.momentum_detail, s.fundamental_state,
                s.revision_grade, s.priced_status, s.emerging_growth,
@@ -1531,6 +1531,15 @@ async def portfolio_pulse():
             WHERE b.symbol = u.symbol
             ORDER BY b.date DESC LIMIT 1) px ON true
         LEFT JOIN LATERAL (
+            SELECT close FROM daily_bars b
+            WHERE b.symbol = u.symbol
+            ORDER BY b.date DESC LIMIT 1 OFFSET 1) ppx ON true
+        LEFT JOIN LATERAL (
+            SELECT json_agg(c ORDER BY d ASC) AS closes FROM (
+                SELECT close AS c, date AS d FROM daily_bars b
+                WHERE b.symbol = u.symbol
+                ORDER BY b.date DESC LIMIT 30) t) spark ON true
+        LEFT JOIN LATERAL (
             SELECT expected_fair_value FROM fair_value_v2_runs f
             WHERE f.symbol = u.symbol
             ORDER BY f.as_of DESC, f.run_id DESC LIMIT 1) fv ON true
@@ -1559,6 +1568,9 @@ async def portfolio_pulse():
         cost = float(r["cost"] or 0)
         shares = float(r["qty"] or 0)
         pnl = (float(px) / cost - 1) * 100 if px and cost > 0 else None
+        ppx = r.get("prev_close")
+        day_chg = (float(px) / float(ppx) - 1) * 100 \
+            if px and ppx else None
         fv_ev = r.get("expected_fair_value")
         fv_up = (float(fv_ev) / float(px) - 1) * 100 \
             if fv_ev and px else None
@@ -1610,6 +1622,10 @@ async def portfolio_pulse():
             "kind": kind,
             "shares": shares, "avg_cost": cost, "price": px,
             "pnl_pct": round(pnl, 1) if pnl is not None else None,
+            "prev_close": ppx,
+            "day_chg_pct": (round(day_chg, 2)
+                            if day_chg is not None else None),
+            "spark": r.get("spark"),
             "mom_state": r.get("momentum_state"),
             "mom_prev": r.get("prev_state"),
             "rsi": round(det["rsi"], 1) if det.get("rsi") else None,
@@ -1645,6 +1661,9 @@ async def portfolio_pulse():
                 or (r.get("is_etf") is not True
                     and r.get("expected_fair_value") is None
                     and (r.get("num_analysts") or 0) <= 3)),
+            "next_earnings_date": (
+                str(r["next_earnings_date"])
+                if r.get("next_earnings_date") else None),
             "action": act, "bucket": bucket, "why": why,
             "action_label": ev.get("label"),
             "action_confidence": ev.get("confidence"),
@@ -1667,11 +1686,18 @@ async def portfolio_pulse():
     priced_cost = sum(r["shares"] * r["avg_cost"] for r in pos
                       if r["avg_cost"] and r["price"])
     pnl = val - priced_cost
+    day_pnl = sum(
+        r["shares"] * (float(r["price"]) - float(r["prev_close"]))
+        for r in pos if r["price"] and r["prev_close"])
+    prev_val = val - day_pnl
     book = {"positions": len(pos),
             "cost": round(cost), "value": round(val),
             "pnl": round(pnl),
             "pnl_pct": round(pnl / priced_cost * 100, 1)
                        if priced_cost else None,
+            "day_pnl": round(day_pnl),
+            "day_chg_pct": round(day_pnl / prev_val * 100, 2)
+                           if prev_val else None,
             "unpriced_cost": round(cost - priced_cost),
             "target_pct": tgt * 100,
             "pace_month": round(((1 + tgt) ** (1 / 12) - 1) * 100, 2),

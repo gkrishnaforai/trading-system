@@ -7,29 +7,7 @@ import {
   AddHoldingForm, AddPositionDock, BookRail, DeleteBookButton,
   HoldingRow as UserHoldingRow, NewPortfolioForm,
 } from '@/components/portfolio-crud'
-
-const BUCKET_ORDER = [
-  'reduce', 'trim', 'avoid', 'attention', 'add', 'stalk', 'hold',
-]
-const BUCKET_LABEL: Record<string, string> = {
-  reduce: 'Reduce', trim: 'Trim', avoid: 'Avoid',
-  attention: 'Attention', add: 'Add', stalk: 'Stalk', hold: 'Hold',
-}
-const BUCKET_TONE: Record<string, string> = {
-  reduce: 'text-defensive', trim: 'text-caution', avoid: 'text-defensive',
-  attention: 'text-caution', add: 'text-aggressive',
-  stalk: 'text-constructive', hold: 'text-muted',
-}
-const BUCKET_DOT: Record<string, string> = {
-  reduce: '#B91C1C', trim: '#A16207', avoid: '#B91C1C',
-  attention: '#A16207', add: '#15803D',
-  stalk: '#0F766E', hold: '#57534C',
-}
-
-const FLOW_TONE: Record<string, string> = {
-  inflow: 'text-aggressive', 'rotating in': 'text-constructive',
-  outflow: 'text-defensive', 'rotating out': 'text-caution',
-}
+import { PortfolioTable } from '@/components/portfolio-table'
 
 function money(v?: number | null, dec = 0) {
   if (v === null || v === undefined || !Number.isFinite(Number(v)))
@@ -38,11 +16,11 @@ function money(v?: number | null, dec = 0) {
     { maximumFractionDigits: dec, minimumFractionDigits: dec })}`
 }
 
-function pct(v?: number | null, sign = true) {
+function pct(v?: number | null, sign = true, dec = 1) {
   if (v === null || v === undefined || !Number.isFinite(Number(v)))
     return '—'
   const n = Number(v)
-  return `${sign && n >= 0 ? '+' : ''}${n.toFixed(1)}%`
+  return `${sign && n >= 0 ? '+' : ''}${n.toFixed(dec)}%`
 }
 
 function tone(v?: number | null) {
@@ -156,114 +134,63 @@ function SectorBar({ rows }: { rows: PulseRow[] }) {
   )
 }
 
-function HoldingRow({ r, bookValue }: { r: PulseRow; bookValue: number }) {
-  const value = (r.shares ?? 0) * (r.price ?? 0)
-  const weight = bookValue > 0 ? (value / bookValue) * 100 : null
-  const bucket = String(r.bucket ?? 'hold')
+/** "What happened today" — top day movers + biggest $ swings. */
+function TodayStrip({ rows }: { rows: PulseRow[] }) {
+  const pos = rows.filter(
+    (r) => r.kind === 'position' && r.day_chg_pct != null,
+  )
+  if (!pos.length) return null
+  const byPct = [...pos].sort(
+    (a, b) => Number(b.day_chg_pct) - Number(a.day_chg_pct),
+  )
+  const day$ = (r: PulseRow) =>
+    (r.shares ?? 0) * (Number(r.price) - Number(r.prev_close))
+  const by$ = [...pos].sort((a, b) => Math.abs(day$(b)) - Math.abs(day$(a)))
+  const winners = byPct.slice(0, 3)
+  const losers = byPct.slice(-3).reverse()
+    .filter((r) => Number(r.day_chg_pct) < 0)
+  const mover = by$[0]
+  const Item = ({ r, sub }: { r: PulseRow; sub: string }) => (
+    <Link
+      href={`/stock?sym=${encodeURIComponent(String(r.symbol))}`}
+      className="flex items-baseline justify-between gap-3 rounded-lg border border-hairline bg-white/70 px-3 py-2 hover:border-accent/40 transition-colors"
+    >
+      <span className="font-mono text-xs font-semibold text-ink">
+        {r.symbol}
+      </span>
+      <span className="font-mono text-[11px]">
+        <span className={tone(r.day_chg_pct)}>
+          {pct(r.day_chg_pct, true, 2)}
+        </span>
+        <span className="text-faint"> · {sub}</span>
+      </span>
+    </Link>
+  )
   return (
-    <div className="group rounded-lg px-2.5 py-3 transition-colors hover:bg-elevated/70">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <Link
-            href={`/stock?sym=${encodeURIComponent(String(r.symbol ?? ''))}`}
-            className="font-mono text-sm font-semibold text-ink hover:text-accent"
-          >
-            {r.symbol}
-          </Link>
-          {r.kind === 'watch' && (
-            <span className="rounded-full border border-hairline px-2 py-0.5 text-[10px] text-muted">
-              watch
+    <div className="pt-5">
+      <div className="flex items-baseline justify-between pb-2">
+        <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+          Today
+        </span>
+        {mover && (
+          <span className="font-mono text-[11px] text-faint">
+            biggest swing {mover.symbol}{' '}
+            <span className={tone(day$(mover))}>
+              {money(day$(mover), 0)}
             </span>
-          )}
-          {r.spec && (
-            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
-              spec
-            </span>
-          )}
-          <span className={`text-xs font-medium ${BUCKET_TONE[bucket]}`}>
-            {BUCKET_LABEL[bucket] ?? bucket}
           </span>
-        </div>
-        <div className="flex items-baseline gap-4 shrink-0 font-mono text-xs">
-          {weight != null && (
-            <span className="text-faint w-12 text-right">
-              {weight.toFixed(1)}%
-            </span>
-          )}
-          <span className="text-muted">{money(r.price, 2)}</span>
-          <span className={`w-16 text-right ${tone(r.pnl_pct)}`}>
-            {pct(r.pnl_pct)}
-          </span>
-          {r.fv_upside != null && (
-            <span
-              className={`w-14 text-right ${tone(r.fv_upside)}`}
-              title="FV upside"
-            >
-              FV {pct(r.fv_upside)}
-            </span>
-          )}
-        </div>
+        )}
       </div>
-      {/* weight rail */}
-      {weight != null && (
-        <div className="pt-1.5">
-          <div className="h-0.5 rounded-full bg-elevated">
-            <div
-              className="h-0.5 rounded-full bg-accent/70"
-              style={{ width: `${Math.min(weight, 100)}%` }}
-            />
-          </div>
-        </div>
-      )}
-      <div className="pt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-muted">
-        {r.shares != null && r.kind === 'position' && (
-          <span>{r.shares.toLocaleString()} × {money(r.avg_cost, 2)}</span>
-        )}
-        {r.mom_state && (
-          <span>
-            mom {r.mom_state}
-            {r.dip_phase &&
-              ['knife', 'capitulation', 'downtrend', 'breakdown', 'pullback']
-                .includes(String(r.mom_state)) &&
-              ` · ${String(r.dip_phase).replace(/_/g, ' ')}`}
-            {r.stoch_w_up != null && (
-              <span
-                className={
-                  r.stoch_w_up ? 'text-aggressive' : 'text-defensive'
-                }
-                title={`weekly stochastic ${r.stoch_w_up ? 'rising' : 'falling'}` +
-                  (r.stoch_w_zone ? ` · ${r.stoch_w_zone}` : '') +
-                  (r.stoch_d_cross ? ` · daily ${r.stoch_d_cross} cross` : '')}
-              >
-                {' '}wk{r.stoch_w_zone === 'oversold' ? ' os' : ''}
-                {r.stoch_w_up ? '↑' : '↓'}
-                {r.stoch_d_cross === 'bull' ? '⇈' : ''}
-              </span>
-            )}
-            {r.spring != null && r.spring >= 60 && (
-              <span className="text-accent" title="elastic — deep wash +
-intact thesis + high vol: rips when the tape turns">
-                {' '}⚡spring {r.spring}
-              </span>
-            )}
-            {r.mom_prev && r.mom_prev !== r.mom_state &&
-              ` ← ${r.mom_prev}`}
-          </span>
-        )}
-        {r.fund_state && <span>fund {r.fund_state}</span>}
-        {r.sector_flow && (
-          <span className={FLOW_TONE[String(r.sector_flow)] ?? ''}>
-            {r.sector_etf} {String(r.sector_flow)}
-          </span>
-        )}
-        {r.revision_grade && <span>rev {r.revision_grade}</span>}
-        {r.gq_pct != null && <span>GQ {r.gq_pct}th</span>}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        {winners.map((r) => (
+          <Item key={`w-${r.symbol}`} r={r}
+            sub={money(day$(r), 0)} />
+        ))}
+        {losers.map((r) => (
+          <Item key={`l-${r.symbol}`} r={r}
+            sub={money(day$(r), 0)} />
+        ))}
       </div>
-      {Array.isArray(r.why) && r.why.length > 0 && (
-        <div className="pt-1 text-xs text-muted leading-relaxed">
-          · {r.why.slice(0, 2).join(' · ')}
-        </div>
-      )}
     </div>
   )
 }
@@ -285,10 +212,6 @@ export default async function PortfolioPage({
   const sel = searchParams.p ?? 'book'
   const selected = portfolios.find((p) => p.id === sel)
   const holdings = selected ? await listHoldings(selected.id) : null
-
-  const groups = BUCKET_ORDER
-    .map((b) => [b, rows.filter((r) => r.bucket === b)] as const)
-    .filter(([, rs]) => rs.length > 0)
 
   const rail = (
     <div className="flex items-stretch gap-2">
@@ -393,11 +316,24 @@ export default async function PortfolioPage({
                 <h1 className="font-mono text-[clamp(1.9rem,4.5vw,2.9rem)] font-semibold tracking-tight text-ink">
                   {money(book?.value)}
                 </h1>
+                {book?.day_chg_pct != null && (
+                  <span
+                    className={`font-mono text-xl ${Number(book.day_chg_pct) >= 0
+                      ? 'text-aggressive'
+                      : 'text-defensive'
+                      }`}
+                    title="today vs previous close"
+                  >
+                    {pct(book.day_chg_pct, true, 2)}
+                    <span className="text-sm"> today</span>
+                  </span>
+                )}
                 <span
                   className={`font-mono text-xl ${Number(book?.pnl_pct) >= 0
                     ? 'text-aggressive'
                     : 'text-defensive'
                     }`}
+                  title="unrealized vs cost"
                 >
                   {pct(book?.pnl_pct)}
                 </span>
@@ -429,7 +365,7 @@ export default async function PortfolioPage({
                   </span>
                 )}
               </div>
-              <div className="pt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="pt-4 grid grid-cols-2 sm:grid-cols-5 gap-2">
                 <DeckStat label="Positions"
                   value={String(book?.positions ?? 0)} />
                 <DeckStat label="Cost" value={money(book?.cost)} />
@@ -442,8 +378,18 @@ export default async function PortfolioPage({
                       : 'text-defensive'
                   }
                 />
+                <DeckStat
+                  label="Day P/L"
+                  value={book?.day_pnl != null ? money(book.day_pnl) : '—'}
+                  toneCls={
+                    Number(book?.day_pnl) >= 0
+                      ? 'text-aggressive'
+                      : 'text-defensive'
+                  }
+                />
                 <DeckStat label="Goal /mo" value={money(book?.goal_month)} />
               </div>
+              <TodayStrip rows={rows} />
               <SectorBar rows={rows} />
             </Deck>
           </div>
@@ -457,7 +403,8 @@ export default async function PortfolioPage({
                   Holdings
                 </span>
                 <span className="font-mono text-[11px] text-faint">
-                  attention first · {rows.length} names
+                  click a row for the engine's reasoning ·{' '}
+                  {rows.length} names
                 </span>
               </div>
               {rows.length === 0 ? (
@@ -466,31 +413,10 @@ export default async function PortfolioPage({
                   appear here with tape state, FV gap and action hints.
                 </p>
               ) : (
-                groups.map(([bucket, rs]) => (
-                  <div key={bucket} className="mt-5 first:mt-3">
-                    <div className="flex items-center gap-2 pb-2">
-                      <span
-                        className="h-1.5 w-1.5 rounded-full"
-                        style={{ background: BUCKET_DOT[bucket] }}
-                      />
-                      <span
-                        className={`text-[11px] font-semibold uppercase tracking-wider ${BUCKET_TONE[bucket]}`}
-                      >
-                        {BUCKET_LABEL[bucket] ?? bucket}
-                      </span>
-                      <span className="font-mono text-[11px] text-faint">
-                        {rs.length}
-                      </span>
-                      <span className="h-px flex-1 bg-hairline/60" />
-                    </div>
-                    <div className="divide-y divide-hairline/50">
-                      {rs.map((r) => (
-                        <HoldingRow key={r.symbol} r={r}
-                          bookValue={book?.value ?? 0} />
-                      ))}
-                    </div>
-                  </div>
-                ))
+                <div className="pt-3">
+                  <PortfolioTable rows={rows}
+                    bookValue={book?.value ?? 0} />
+                </div>
               )}
             </section>
             <div className="space-y-4">

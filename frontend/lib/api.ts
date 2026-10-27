@@ -184,6 +184,9 @@ export type PulseRow = {
   avg_cost?: number
   price?: number
   pnl_pct?: number | null
+  prev_close?: number | null
+  day_chg_pct?: number | null
+  spark?: number[] | null
   mom_state?: string
   mom_prev?: string
   dip_phase?: string
@@ -214,6 +217,8 @@ export type PulseBook = {
   value?: number
   pnl?: number
   pnl_pct?: number | null
+  day_pnl?: number
+  day_chg_pct?: number | null
   target_pct?: number
   on_pace?: boolean
   track_days?: number
