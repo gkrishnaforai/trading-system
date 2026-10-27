@@ -927,10 +927,35 @@ async function StockCore({ sym }: { sym: string }) {
                     ` (${Number(lastPrint.surprise_percentage) > 0 ? '+' : ''}${Number(lastPrint.surprise_percentage).toFixed(0)}%)`}
                 </>
               )}
+              {lastPrint.revenue_actual != null && lastPrint.revenue_estimate != null && (
+                <>
+                  {' · rev '}{(Number(lastPrint.revenue_actual) / 1e9).toFixed(2)}B
+                  {` vs ${(Number(lastPrint.revenue_estimate) / 1e9).toFixed(2)}B`}
+                  {` (${((Number(lastPrint.revenue_actual) - Number(lastPrint.revenue_estimate)) / Math.abs(Number(lastPrint.revenue_estimate)) * 100) > 0 ? '+' : ''}${((Number(lastPrint.revenue_actual) - Number(lastPrint.revenue_estimate)) / Math.abs(Number(lastPrint.revenue_estimate)) * 100).toFixed(1)}%)`}
+                </>
+              )}
               {lastPrint.adjusted_eps_actual != null &&
                 ` · adj ${Number(lastPrint.adjusted_eps_actual).toFixed(2)} ex-1x`}
               {' — '}
               <span className={lpTone}>{lpVerdict}</span>
+              {Array.isArray(lastPrint.drivers) && (lastPrint.drivers as Record<string, unknown>[]).some(d => d?.delta_dir === 'cut' || d?.delta_dir === 'raised') && (
+                <div className="pt-1">
+                  {(lastPrint.drivers as Record<string, unknown>[])
+                    .filter(d => d?.delta_dir === 'cut' || d?.delta_dir === 'raised')
+                    .slice(0, 3)
+                    .map((d, i) => (
+                      <span key={i} className={d.delta_dir === 'cut' ? 'text-defensive' : 'text-aggressive'}>
+                        {i > 0 && ' · '}{String(d.metric)} {String(d.period)} guide {String(d.delta_dir)}
+                        {d.delta_pct != null && ` ${(Number(d.delta_pct) * 100).toFixed(0)}%`}
+                      </span>
+                    ))}
+                </div>
+              )}
+              {lastPrint.narrative != null && (
+                <div className="pt-1.5 font-sans text-[12px] leading-relaxed text-muted whitespace-pre-line">
+                  {String(lastPrint.narrative)}
+                </div>
+              )}
             </div>
           )}
           <div className="pt-3">

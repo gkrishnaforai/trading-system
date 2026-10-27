@@ -30,7 +30,8 @@ HISTORY_EVENTS = 8        # past prints to keep synced in earnings_data
 
 
 def _sync_earnings_events(sym: str, tk,
-                          eps_est=None, rev_est=None) -> None:
+                          eps_est=None, rev_est=None,
+                          next_date=None) -> None:
     """Upsert the last ~8 earnings events + the upcoming print into
     earnings_data. Past rows carry actuals + surprise; the upcoming row
     carries the consensus estimates so next_earnings_* has full context."""
@@ -78,6 +79,67 @@ def _sync_earnings_events(sym: str, tk,
                           if pd.notna(row.get("Surprise(%)")) else None)})
         except Exception as exc:
             logger.debug("earnings_data upsert %s %s: %s", sym, idx, exc)
+    # pending print: the calendar knows the date (day-of prints, rescheds)
+    # before earnings_dates lists it — without this row the indexer stamps
+    # next_earnings_date NULL and the watcher is blind to today's print.
+    if next_date is not None:
+        if isinstance(next_date, datetime):
+            next_date = next_date.date()
+        if isinstance(next_date, date) and next_date >= today \
+                and next_date not in future_dates:
+            future_dates.append(next_date)
+            try:
+                db.execute_update(
+                    "INSERT INTO earnings_data "
+                    "(stock_symbol, earnings_date, eps_estimate, "
+                    " revenue_estimate, source) "
+                    "VALUES (:s, :d, :est, :rev, 'yahoo') "
+                    "ON CONFLICT (stock_symbol, earnings_date) DO UPDATE SET "
+                    "eps_estimate = COALESCE(EXCLUDED.eps_estimate, "
+                    "                        earnings_data.eps_estimate), "
+                    "revenue_estimate = COALESCE(EXCLUDED.revenue_estimate, "
+                    "                        earnings_data.revenue_estimate), "
+                    "updated_at = now()",
+                    {"s": sym, "d": next_date,
+                     "est": float(eps_est) if eps_est else None,
+                     "rev": int(rev_est) if rev_est else None})
+            except Exception as exc:
+                logger.debug("earnings_data pending %s: %s", sym, exc)
+    # revenue actuals — EPS lands in earnings_dates but the revenue
+    # column never fills; quarterly_income_stmt carries the real figure
+    # once the statement posts (same lag as EPS). Map each print to the
+    # fiscal quarter that ended just before it (~3-7 weeks).
+    try:
+        qi = tk.quarterly_income_stmt
+        if qi is not None and not qi.empty and "Total Revenue" in qi.index:
+            rev = qi.loc["Total Revenue"]
+            qmap = {}
+            for col, v in rev.items():
+                try:
+                    if pd.notna(v):
+                        qmap[col.date() if hasattr(col, "date") else col] \
+                            = float(v)
+                except Exception:
+                    continue
+            rows = db.execute_query(
+                "SELECT earnings_date FROM earnings_data"
+                " WHERE stock_symbol=:s AND eps_actual IS NOT NULL"
+                " AND revenue_actual IS NULL",
+                {"s": sym})
+            for r in rows:
+                d = r["earnings_date"]
+                cands = [qe for qe in qmap
+                         if qe < d and (d - qe).days <= 110]
+                if cands:
+                    qe = max(cands)
+                    db.execute_update(
+                        "UPDATE earnings_data SET revenue_actual=:r,"
+                        " updated_at=now() WHERE stock_symbol=:s"
+                        " AND earnings_date=:d"
+                        " AND revenue_actual IS NULL",
+                        {"s": sym, "d": d, "r": qmap[qe]})
+    except Exception as exc:
+        logger.debug("revenue backfill %s: %s", sym, exc)
     # moved prints: the provider's current view is authoritative for
     # un-realized events — drop future rows it no longer reports so a
     # shifted date can't linger as a same-quarter duplicate (the
@@ -120,7 +182,8 @@ def refresh_earnings_calendar(sym: str) -> dict:
         eps_est, rev_est = (cal.get("Earnings Average"),
                             cal.get("Revenue Average"))
 
-        _sync_earnings_events(sym, tk, eps_est, rev_est)
+        _sync_earnings_events(sym, tk, eps_est, rev_est,
+                              next_date=next_date)
         # Derive stocks.next_earnings_* (date/session/source/tz) from the
         # event table via the existing indexer, then stamp the consensus
         # snapshot on top.
@@ -133,7 +196,10 @@ def refresh_earnings_calendar(sym: str) -> dict:
         out = {"symbol": sym, "next_earnings_date": next_date,
                "eps_est": eps_est, "rev_est": rev_est}
     except Exception as exc:
-        logger.debug("earnings calendar %s: %s", sym, exc)
+        # a dead provider env (missing yfinance, network) must not look
+        # like a clean "no data" — callers can't tell the difference
+        logger.warning("earnings calendar %s failed: %s", sym, exc)
+        out["error"] = str(exc)
     return out
 
 

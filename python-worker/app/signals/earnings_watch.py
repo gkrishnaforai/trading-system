@@ -90,7 +90,8 @@ def due_reporters() -> list[tuple[str, date]]:
 def _print(sym: str, day: date) -> Optional[dict]:
     """The day's earnings_data row once actuals (or estimates) exist."""
     rows = _q("SELECT stock_symbol, earnings_date, eps_estimate,"
-              " eps_actual, revenue_estimate, surprise_percentage"
+              " eps_actual, revenue_estimate, revenue_actual,"
+              " surprise_percentage"
               " FROM earnings_data WHERE stock_symbol=:s"
               " AND earnings_date = :d",
               {"s": sym, "d": day})
@@ -165,6 +166,103 @@ def _verdict(before: Optional[str], after: Optional[str],
     return v
 
 
+def _numbers_in(text: str) -> list[float]:
+    """Numeric tokens with B/M/% normalization — the grounding set."""
+    import re as _re
+    out = []
+    for m in _re.finditer(
+            r"(-?\$?\d[\d,]*\.?\d*)\s*([BbMm]|[Bb]illion|"
+            r"[Mm]illion|%|x)?", text):
+        try:
+            v = float(m.group(1).replace(",", "").replace("$", ""))
+        except ValueError:
+            continue
+        u = (m.group(2) or "").lower()
+        if u.startswith("b"):
+            v *= 1e9
+        elif u.startswith("m"):
+            v *= 1e6
+        out.append(v)
+    return out
+
+
+def _grounded_narrative(narr: str, evidence: str) -> bool:
+    """Every material number in the narrative must trace to the
+    evidence (±2% tolerance for rounding like 2.96 vs 2.95963). Small
+    ordinals/percent-counts under 2 are exempt — '2 drivers', '1 cut'."""
+    ev_nums = _numbers_in(evidence)
+    for v in _numbers_in(narr):
+        if abs(v) < 2:
+            continue
+        if not any(abs(v - e) <= max(0.02 * abs(v), 0.02)
+                   for e in ev_nums):
+            return False
+    return True
+
+
+def _synthesize(sym: str, detail: dict) -> Optional[str]:
+    """Bounded post-print narrative — LLM narrates the journaled
+    evidence only. Every material number must trace back to the
+    evidence or the whole narrative is dropped. Advisory prose on top
+    of the deterministic verdict; never feeds scores or sizing."""
+    try:
+        from litellm import completion
+        from app.config import settings
+        # the 8-K extraction wrote verbatim-grounded claims to
+        # doc_analyses — that's the release evidence the narrative may
+        # cite (guidance language, quality caveats)
+        claims: list[dict] = []
+        try:
+            for r in _q(
+                    "SELECT claims FROM doc_analyses WHERE symbol=:s"
+                    " AND (created_at AT TIME ZONE 'America/New_York')"
+                    "::date = (now() AT TIME ZONE 'America/New_York')"
+                    "::date ORDER BY created_at DESC LIMIT 3",
+                    {"s": sym}):
+                c = r.get("claims")
+                claims.extend(json.loads(c) if isinstance(c, str)
+                              else (c or []))
+        except Exception:
+            pass
+        evidence = json.dumps(
+            {"print": detail,
+             "release_claims": [str(c.get("text")) for c in
+                                claims][:10],
+             "release_quotes": [str(c.get("quote")) for c in
+                                claims][:10]},
+            default=str)[:9000]
+        mdl = getattr(settings, "litellm_model", None) or "gpt-4o-mini"
+        resp = completion(
+            model=mdl, temperature=0.1, max_tokens=700, timeout=45,
+            messages=[
+                {"role": "system", "content":
+                 "You write the post-earnings review for a human "
+                 "trader. Use ONLY figures present in the supplied "
+                 "evidence JSON — never invent, derive, or estimate "
+                 "numbers; missing data says 'not captured'. ~180 "
+                 "words, four short labeled parts: The print (EPS/rev "
+                 "vs street and vs guidance when present) / Guidance & "
+                 "named drivers (call out cuts explicitly — a driver "
+                 "cut against a headline beat is the story) / Quality "
+                 "flags (one-time items, margin or cash-flow caveats "
+                 "in the claims) / Verdict (echo the deterministic "
+                 "verdict + thesis transition verbatim — do not "
+                 "invent your own)."},
+                {"role": "user", "content":
+                 f"Symbol: {sym}\nEvidence:\n{evidence}"}])
+        narr = (resp.choices[0].message.content or "").strip()
+        if not narr or len(narr) < 60:
+            return None
+        if not _grounded_narrative(narr, evidence):
+            logger.warning("earnings narrative %s failed grounding — "
+                           "dropped", sym)
+            return None
+        return narr
+    except Exception as exc:
+        logger.debug("earnings narrative %s: %s", sym, exc)
+        return None
+
+
 def check_symbol(sym: str, day: Optional[date] = None) -> dict:
     """One symbol's earnings-day check for `day` (defaults to ET today).
     Idempotent — a journaled row for that print means the work already
@@ -186,9 +284,16 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
         logger.debug("earnings_watch refresh %s: %s", sym, exc)
     pr = _print(sym, today)
     if not pr or pr.get("eps_actual") is None:
-        # print not out yet (or no actuals feed) — leave for next poll
+        # print not out yet (or no actuals feed) — leave for next poll.
+        # Fall back to the indexed estimate — the calendar knows the
+        # consensus even when the pending row hasn't synced yet.
+        est = pr.get("eps_estimate") if pr else None
+        if est is None:
+            r = _q("SELECT next_earnings_eps_est e FROM stocks"
+                   " WHERE symbol=:s", {"s": sym})
+            est = r[0]["e"] if r else None
         return {"symbol": sym, "status": "awaiting_print",
-                "est": pr.get("eps_estimate") if pr else None}
+                "est": _f(est)}
 
     # the print landed — pull the 8-K through doc_extract (claims,
     # guidance → thesis_watches) then re-score the thesis
@@ -205,6 +310,12 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
         logger.debug("earnings_watch thesis %s: %s", sym, exc)
 
     surp = pr.get("surprise_percentage")
+    # revenue surprise — computed at read time; the print's rev number
+    # backfills from the quarterly income statement as it posts
+    rev_est, rev_act = _f(pr.get("revenue_estimate")), \
+        _f(pr.get("revenue_actual"))
+    rev_surp = ((rev_act - rev_est) / abs(rev_est)
+                if rev_est and rev_act is not None else None)
     # one-time charge pass — legal/severance/impairment items buried
     # in the release can turn an adjusted beat into a reported miss;
     # annotate the row so the verdict isn't fooled (META Q2-26)
@@ -223,7 +334,9 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
         "eps": {"est": _f(pr["eps_estimate"]),
                 "act": _f(pr["eps_actual"])},
         "surprise_pct": _f(surp),
-        "rev_est": _f(pr["revenue_estimate"]),
+        "rev_est": rev_est, "rev_actual": rev_act,
+        "rev_surprise_pct": (rev_surp * 100
+                             if rev_surp is not None else None),
         "thesis": {"before": before, "after": after},
         "one_time": ({k: v for k, v in adj.items()
                       if k in ("items", "charges", "adjusted_eps",
@@ -232,6 +345,9 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
         "release": {"analyzed": ext.get("analyzed"),
                     "claims": ext.get("claims")},
         "verdict": verdict}
+    narr = _synthesize(sym, detail)
+    if narr:
+        detail["narrative"] = narr
     _u("INSERT INTO earnings_watch (symbol, earnings_date, session,"
        " eps_est, eps_actual, surprise_pct, rev_est, thesis_before,"
        " thesis_after, verdict, detail, alerted)"
@@ -270,6 +386,9 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
         "mat": "HIGH" if abs(surp or 0) >= 5 else "MEDIUM",
         "t": (f"{sym} earnings: EPS {beat} "
               f"{surp:+.1f}%"
+              + (f" · rev {rev_surp * 100:+.1f}%"
+                 if rev_surp is not None and abs(rev_surp) >= 0.02
+                 else "")
               + (f" (adj {adj_surp:+.1f}% ex-one-time)"
                  if adj_surp is not None
                  and abs((adj_surp or 0) - (surp or 0)) >= 2
@@ -311,7 +430,10 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
         logger.debug("earnings_watch review %s: %s", sym, exc)
     return {"symbol": sym, "status": "journaled",
             "verdict": verdict, "surprise_pct": _f(surp),
+            "rev_surprise_pct": (rev_surp * 100
+                                 if rev_surp is not None else None),
             "thesis": {"before": before, "after": after},
+            "narrative": bool(narr),
             "review_verdict": rev.get("verdict"),
             "fv": {k: v for k, v in fv.items() if k != "symbol"}}
 

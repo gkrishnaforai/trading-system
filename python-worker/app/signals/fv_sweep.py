@@ -81,6 +81,21 @@ def refresh_after_print(sym: str) -> Dict[str, Any]:
         after = _fundamentals_snap_stamp(sym)
         if after is not None and (before is None or after > before):
             out["fundamentals"] = "refreshed"
+            # re-score the derived state — the bundle refresh updates raw
+            # inputs but stocks.fundamental_state/risk/detail only move
+            # when the flywheel recomputes and fundamental_health grades
+            try:
+                from app.providers.financial_modeling_prep.client import (
+                    EnhancedFMPClient)
+                from app.signals.expectation_gap import compute_flywheel
+                from app.signals import fundamental_health
+                compute_flywheel(EnhancedFMPClient.from_settings(), sym)
+                fundamental_health.refresh_all([sym])
+                out["fundamental_state"] = "rescored"
+            except Exception as exc:
+                logger.warning(
+                    "fv_sweep fundamental rescore %s: %s", sym, exc)
+                out["fundamental_state"] = f"error: {exc}"
         else:
             failed = getattr(res, "total_failed", None)
             req = getattr(res, "total_requested", None)

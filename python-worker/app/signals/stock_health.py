@@ -401,7 +401,8 @@ def card(sym: str) -> dict[str, Any]:
         lp = db.execute_query(
             "SELECT e.earnings_date, e.eps_estimate, e.eps_actual,"
             " e.surprise_percentage, e.adjusted_eps_actual,"
-            " e.one_time_items, w.verdict"
+            " e.one_time_items, e.revenue_estimate, e.revenue_actual,"
+            " w.verdict, w.detail"
             " FROM earnings_data e"
             " LEFT JOIN earnings_watch w"
             "   ON w.symbol=e.stock_symbol"
@@ -415,6 +416,11 @@ def card(sym: str) -> dict[str, Any]:
             it = last_print.get("one_time_items")
             last_print["one_time_items"] = (
                 it if isinstance(it, list) else None)
+            det = last_print.get("detail")
+            det = _j(det) if det else {}
+            last_print["narrative"] = det.get("narrative")
+            last_print["drivers"] = det.get("drivers") or []
+            last_print.pop("detail", None)
     except Exception:
         pass
 

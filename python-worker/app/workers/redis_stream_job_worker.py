@@ -620,6 +620,27 @@ class RedisStreamWorker:
 
     def _run_fair_value_warmup(self, payload: FairValueWarmupJobPayload) -> Dict[str, Any]:
         sym = payload.symbol.strip().upper()
+        # Prime first — a fresh book add typically has no daily_bars
+        # (spot_at_run=None → no upside/decision), no fundamentals
+        # snapshots, and no earnings index. All best-effort: a missing
+        # leg degrades the run, it shouldn't kill it.
+        try:
+            from app.market_data import bars as bars_mod
+            bars_mod.live(sym, period="2y")
+        except Exception as exc:
+            logger.debug("warmup bars %s: %s", sym, exc)
+        try:
+            from app.signals import earnings_calendar
+            earnings_calendar.refresh_earnings_calendar(sym)
+        except Exception as exc:
+            logger.debug("warmup earnings calendar %s: %s", sym, exc)
+        try:
+            from app.data_management.refresh_manager import (
+                DataRefreshManager, RefreshMode)
+            DataRefreshManager().refresh_fundamentals_bundle(
+                sym, mode=RefreshMode.ON_DEMAND)
+        except Exception as exc:
+            logger.debug("warmup fundamentals %s: %s", sym, exc)
         from app.fair_value_v2.resolver import FairValueV2Resolver
         result, meta = FairValueV2Resolver().resolve(sym, force=payload.force)
         return {

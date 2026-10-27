@@ -942,6 +942,54 @@ def _invariants() -> list[dict]:
                       ("p_deeper_dip_20d", "p_bullish_20d")))
         return ok, f"deeper={p['p_deeper_dip_20d']} chop={p['p_chop_20d']} bull={p['p_bullish_20d']}"
 
+    def narrative_grounding():
+        # the post-print narrative dies if any material number can't
+        # trace to the evidence — invented figures must never journal
+        import json as _j
+        from app.signals.earnings_watch import _grounded_narrative
+        ev = _j.dumps({"eps": {"est": 2.95963, "act": 3.30},
+                       "rev_est": 5465714840, "rev_actual": 5830000000,
+                       "surprise_pct": 11.5,
+                       "drivers": [{"value": 4.6e8,
+                                    "prior_value": 6.0e8}]})
+        good = ("EPS $3.30 vs $2.96 street (+11.5%). Revenue $5.83B "
+                "vs ~$5.5B. FCF guide cut to $0.46B from $0.60B.")
+        bad = ("EPS $3.30 vs $2.96 street. Revenue $7.20B crushed "
+               "estimates.")
+        ok = (_grounded_narrative(good, ev)
+              and not _grounded_narrative(bad, ev))
+        return ok, "traceable passes, invented $7.2B rejected"
+
+    def narrative_numbers_units():
+        # B/M suffix scaling — a '$0.46B' claim must compare against
+        # a stored 460000000, not against 0.46
+        from app.signals.earnings_watch import _numbers_in
+        nums = _numbers_in("rev $5.83B, fcf $0.46B, eps 3.30, "
+                           "beat 11.5%, cut 23%")
+        ok = (5830000000.0 in nums and 460000000.0 in nums
+              and 3.3 in nums)
+        return ok, f"{nums}"
+
+    def driver_cut_overrides_beat():
+        # the CLS case: EPS beats but a named driver (FCF guide) is
+        # cut — the cut IS the story, verdict can't read 'improving'
+        from app.signals.earnings_watch import _verdict
+        v = _verdict(None, None, 11.5,
+                     [{"metric": "fcf", "period": "FY26",
+                       "delta_dir": "cut", "delta_pct": -0.23,
+                       "consensus_pct": None}])
+        return v == "deteriorating", f"verdict={v}"
+
+    def raise_lifts_mixed():
+        # guide raise with no thesis history and a tiny surprise →
+        # the raise upgrades 'mixed' to 'improving'
+        from app.signals.earnings_watch import _verdict
+        v = _verdict(None, None, 2.0,
+                     [{"metric": "revenue", "period": "FY27",
+                       "delta_dir": "raised", "delta_pct": 0.90,
+                       "consensus_pct": 0.85}])
+        return v == "improving", f"verdict={v}"
+
     ck("index_composite_correction", index_composite_correction)
     ck("index_composite_breakdown", index_composite_breakdown)
     ck("breadth_two_tier_divergence", breadth_two_tier_divergence)
@@ -952,6 +1000,10 @@ def _invariants() -> list[dict]:
     ck("macro_cuau_growth_fear", macro_cuau_growth_fear)
     ck("macro_curve_inversion", macro_curve_inversion)
     ck("forward_probs_bounded", forward_probs_bounded)
+    ck("narrative_grounding", narrative_grounding)
+    ck("narrative_numbers_units", narrative_numbers_units)
+    ck("driver_cut_overrides_beat", driver_cut_overrides_beat)
+    ck("raise_lifts_mixed", raise_lifts_mixed)
     return out
 
 

@@ -2411,6 +2411,16 @@ class FairValueService:
         updated_at: datetime,
         method_results: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[str]:
+        # all-empty inputs produce a meaningless run (fair_value 0.0,
+        # 'Unknown' rating) — journal nothing rather than a junk row
+        # a reader could mistake for a real valuation
+        if (float(fundamentals.eps_ttm or 0.0) <= 0
+                and float(fundamentals.revenue or 0.0) <= 0
+                and float(fundamentals.book_value or 0.0) <= 0):
+            logger.warning(
+                "v1 FV %s skipped — no fundamentals (eps/rev/book all "
+                "empty); run not journaled", symbol)
+            return None
         try:
             run_id = f"fv_{uuid.uuid4().hex[:16]}"
             valuation_ratio = None

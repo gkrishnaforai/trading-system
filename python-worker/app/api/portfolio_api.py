@@ -705,6 +705,23 @@ async def add_holding(
         },
     )
 
+    # Mirror into portfolio_holdings — the display/API table. Without it
+    # a v1 add is signal-visible but absent from the holdings view.
+    db.execute_update(
+        """
+        INSERT INTO portfolio_holdings
+            (portfolio_id, symbol, asset_type, shares_held, average_cost, status)
+        VALUES (:portfolio_id, :symbol, 'stock', :shares, :cost, 'active')
+        ON CONFLICT DO NOTHING
+        """,
+        {
+            "portfolio_id": portfolio_id,
+            "symbol": symbol,
+            "shares": float(holding_data.shares_held),
+            "cost": float(holding_data.average_cost),
+        },
+    )
+
     row = db.execute_query(
         """
         SELECT

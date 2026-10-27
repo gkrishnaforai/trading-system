@@ -462,14 +462,43 @@ async def add_holding(
     # Add holding
     db.execute_update_positional(
         """
-        INSERT INTO portfolio_holdings 
+        INSERT INTO portfolio_holdings
         (portfolio_id, symbol, asset_type, shares_held, average_cost, notes)
         VALUES ($1, $2, $3, $4, $5, $6)
         """,
         [portfolio_id, holding_data.symbol.upper(), holding_data.asset_type,
          holding_data.shares_held, holding_data.average_cost, holding_data.notes]
     )
-    
+
+    # Mirror into portfolio_positions — the signal layer (earnings
+    # watch, tiers, thesis, book risk) reads positions, not holdings.
+    # Without this, a UI add is invisible to every engine.
+    stock_row = db.execute_query_positional(
+        "SELECT id FROM stocks WHERE symbol = $1",
+        [holding_data.symbol.upper()])
+    if stock_row:
+        db.execute_update_positional(
+            """
+            INSERT INTO portfolio_positions
+                (portfolio_id, stock_id, quantity, avg_price, updated_at)
+            VALUES ($1, $2, $3, $4, NOW())
+            ON CONFLICT (portfolio_id, stock_id)
+            DO UPDATE SET quantity = EXCLUDED.quantity,
+                avg_price = EXCLUDED.avg_price, updated_at = NOW()
+            """,
+            [portfolio_id, stock_row[0]['id'],
+             float(holding_data.shares_held), float(holding_data.average_cost)])
+
+    # Best-effort: prime bars/fundamentals/earnings + resolve FV in the
+    # background so a fresh add isn't decision-blind until the next
+    # scheduled sweep.
+    try:
+        from app.workers.job_producer import enqueue_fair_value_warmup
+        enqueue_fair_value_warmup(holding_data.symbol.upper(),
+                                  portfolio_id=portfolio_id)
+    except Exception:
+        pass
+
     # Get the created holding
     holding = db.execute_query_positional(
         """
@@ -538,8 +567,8 @@ async def update_holding(
     # Update holding
     db.execute_update_positional(
         """
-        UPDATE portfolio_holdings 
-        SET shares_held = $1, average_cost = $2, asset_type = $3, 
+        UPDATE portfolio_holdings
+        SET shares_held = $1, average_cost = $2, asset_type = $3,
             notes = $4, updated_at = CURRENT_TIMESTAMP
         WHERE portfolio_id = $5 AND symbol = $6
         """,
@@ -552,6 +581,17 @@ async def update_holding(
             symbol.upper()
         ]
     )
+
+    # keep the signal-layer mirror in step
+    db.execute_update_positional(
+        """
+        UPDATE portfolio_positions pp
+        SET quantity = $1, avg_price = $2, updated_at = NOW()
+        FROM stocks s
+        WHERE pp.stock_id = s.id AND s.symbol = $3 AND pp.portfolio_id = $4
+        """,
+        [float(holding_data.shares_held), float(holding_data.average_cost),
+         symbol.upper(), portfolio_id])
     
     # Get updated holding
     updated_holding = db.execute_query_positional(
@@ -627,6 +667,16 @@ async def delete_holding(
         "DELETE FROM portfolio_holdings WHERE portfolio_id = $1 AND symbol = $2",
         [portfolio_id, symbol.upper()]
     )
+
+    # and the signal-layer mirror — a removed holding must stop being
+    # 'in the book' for every engine.
+    db.execute_update_positional(
+        """
+        DELETE FROM portfolio_positions pp
+        USING stocks s
+        WHERE pp.stock_id = s.id AND s.symbol = $1 AND pp.portfolio_id = $2
+        """,
+        [symbol.upper(), portfolio_id])
     
     return {"message": f"Holding for {symbol.upper()} deleted successfully"}
 
