@@ -468,7 +468,7 @@ rules:
             {fund_in: fund_bad_hard}, {tape_dir: degrading},
             {priced_in: [full, beyond_lt_avg]}]
     action: watch
-    why: "{notes}"
+    why: "degraded leg — tape `{tape}`, fundamentals `{fund}`"
 
   # ==================== ADD ====================
   # Both rules run INSIDE add_policy — a fail lands here, not hold.
