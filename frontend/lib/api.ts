@@ -274,9 +274,10 @@ export const api = {
     get<{ decisions?: Receipt[]; regime?: RegimeReceipt[] }>(
       `/receipts?limit=${limit}`,
     ),
-  portfolioPulse: () =>
+  portfolioPulse: (portfolioId?: string) =>
     get<{ as_of?: string; rows?: PulseRow[]; book?: PulseBook }>(
-      '/portfolio-pulse',
+      `/portfolio-pulse${portfolioId
+        ? `?portfolio_id=${encodeURIComponent(portfolioId)}` : ''}`,
     ),
   strategy: () => get<Record<string, unknown>>('/strategy'),
   conviction: () => get<Record<string, unknown>>('/conviction'),

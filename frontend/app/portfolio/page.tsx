@@ -1,10 +1,10 @@
 import Link from 'next/link'
-import { api, type PulseRow } from '@/lib/api'
+import { api, type PulseBook, type PulseRow } from '@/lib/api'
 import { WatchlistCard } from '@/components/watchlist'
 import { TIER_LIMITS, currentTier } from '@/lib/tier'
 import { listPortfolios, listHoldings } from '@/lib/portfolio'
 import {
-  AddHoldingForm, AddPositionDock, BookRail, DeleteBookButton,
+  AddHoldingForm, AddPositionDock, BookSelect, DeleteBookButton,
   HoldingRow as UserHoldingRow, NewPortfolioForm,
 } from '@/components/portfolio-crud'
 import { PortfolioTable } from '@/components/portfolio-table'
@@ -195,6 +195,110 @@ function TodayStrip({ rows }: { rows: PulseRow[] }) {
   )
 }
 
+/** The command-deck readout shared by the aggregate book and any
+    single user book — value, today, unrealized, pace, stats,
+    day movers and sector mix. */
+function BookHero({ kicker, title, sub, right, book, rows }: {
+  kicker: string
+  title: string
+  sub?: React.ReactNode
+  right?: string
+  book?: PulseBook
+  rows: PulseRow[]
+}) {
+  return (
+    <div className="pt-6">
+      <Deck kicker={kicker} right={right}>
+        <div className="pt-4 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+          <h1 className="font-semibold text-[clamp(1.3rem,2.8vw,1.8rem)] tracking-tight text-ink">
+            {title}
+          </h1>
+          {sub}
+        </div>
+        <div className="pt-2 flex flex-wrap items-baseline gap-x-5 gap-y-2">
+          <span className="font-mono text-[clamp(1.7rem,4vw,2.6rem)] font-semibold tracking-tight text-ink">
+            {money(book?.value)}
+          </span>
+          {book?.day_chg_pct != null && (
+            <span
+              className={`font-mono text-xl ${Number(book.day_chg_pct) >= 0
+                ? 'text-aggressive'
+                : 'text-defensive'
+                }`}
+              title="today vs previous close"
+            >
+              {pct(book.day_chg_pct, true, 2)}
+              <span className="text-sm"> today</span>
+            </span>
+          )}
+          <span
+            className={`font-mono text-xl ${Number(book?.pnl_pct) >= 0
+              ? 'text-aggressive'
+              : 'text-defensive'
+              }`}
+            title="unrealized vs cost"
+          >
+            {pct(book?.pnl_pct)}
+          </span>
+          {book?.on_pace != null && (
+            <span
+              className={`rounded-full px-2.5 py-1 text-xs font-medium ${book.on_pace
+                ? 'bg-aggressive/10 text-aggressive'
+                : 'bg-accent/10 text-accent'
+                }`}
+            >
+              {book.on_pace ? 'on pace' : 'behind pace'} vs{' '}
+              {book.target_pct}% target
+            </span>
+          )}
+          {book?.track_ret_pct != null && (book.track_days ?? 0) > 0 && (
+            <span className="text-xs text-muted">
+              {pct(book.track_ret_pct)} over {book.track_days}d
+              {book.excess_pct != null && (
+                <span
+                  className={
+                    Number(book.excess_pct) >= 0
+                      ? 'text-aggressive'
+                      : 'text-defensive'
+                  }
+                >
+                  {' '}({pct(book.excess_pct)} vs SPY)
+                </span>
+              )}
+            </span>
+          )}
+        </div>
+        <div className="pt-4 grid grid-cols-2 sm:grid-cols-5 gap-2">
+          <DeckStat label="Positions"
+            value={String(book?.positions ?? 0)} />
+          <DeckStat label="Cost" value={money(book?.cost)} />
+          <DeckStat
+            label="Unrealized"
+            value={money(book?.pnl)}
+            toneCls={
+              Number(book?.pnl) >= 0
+                ? 'text-aggressive'
+                : 'text-defensive'
+            }
+          />
+          <DeckStat
+            label="Day P/L"
+            value={book?.day_pnl != null ? money(book.day_pnl) : '—'}
+            toneCls={
+              Number(book?.day_pnl) >= 0
+                ? 'text-aggressive'
+                : 'text-defensive'
+            }
+          />
+          <DeckStat label="Goal /mo" value={money(book?.goal_month)} />
+        </div>
+        <TodayStrip rows={rows} />
+        <SectorBar rows={rows} />
+      </Deck>
+    </div>
+  )
+}
+
 export default async function PortfolioPage({
   searchParams,
 }: {
@@ -204,20 +308,25 @@ export default async function PortfolioPage({
     api.portfolioPulse(),
     listPortfolios(),
   ])
-  const rows = pulse?.rows ?? []
-  const book = pulse?.book
   const tier = currentTier()
   const limit = TIER_LIMITS[tier].portfolios
 
   const sel = searchParams.p ?? 'book'
   const selected = portfolios.find((p) => p.id === sel)
-  const holdings = selected ? await listHoldings(selected.id) : null
+  const [scoped, holdings] = selected
+    ? await Promise.all([
+      api.portfolioPulse(selected.id),
+      listHoldings(selected.id),
+    ])
+    : [null, null]
+
+  const view = selected ? scoped : pulse
+  const rows = view?.rows ?? []
+  const book = view?.book
 
   const rail = (
     <div className="flex items-stretch gap-2">
-      <div className="min-w-0 flex-1">
-        <BookRail options={portfolios} selected={selected?.id ?? null} />
-      </div>
+      <BookSelect options={portfolios} selected={selected?.id ?? null} />
       <NewPortfolioForm used={portfolios.length} limit={limit} />
     </div>
   )
@@ -225,43 +334,25 @@ export default async function PortfolioPage({
   return (
     <main className="mx-auto max-w-5xl px-5 pb-20">
       {selected ? (
-        /* ---- a user book: its holdings + CRUD ---- */
+        /* ---- a user book: same cockpit, scoped to the book ---- */
         <>
-          <div className="pt-6">
-            <Deck
-              kicker={`Portfolio · ${selected.portfolio_type ?? 'book'}`}
-              right={`${pulse?.as_of ?? ''} · ${portfolios.length}/${limit} books`}
-            >
-              <div className="pt-4 flex items-baseline gap-4">
-                <h1 className="font-semibold text-[clamp(1.4rem,3vw,2rem)] tracking-tight text-ink">
-                  {selected.name}
-                </h1>
-                <span className="font-mono text-sm text-muted">
-                  {selected.holdings_count ?? holdings?.length ?? 0} positions
-                </span>
-              </div>
-              <div className="pt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <DeckStat
-                  label="Initial capital"
-                  value={money(selected.initial_capital)}
-                />
-                <DeckStat
-                  label="Invested"
-                  value={money(selected.total_invested)}
-                />
-                <DeckStat label="Currency"
-                  value={selected.currency ?? 'USD'} />
-                <DeckStat
-                  label="Since"
-                  value={selected.created_at
-                    ? new Date(selected.created_at)
-                      .toLocaleDateString('en-US',
-                        { month: 'short', day: 'numeric', year: '2-digit' })
-                    : '—'}
-                />
-              </div>
-            </Deck>
-          </div>
+          <BookHero
+            kicker={`Portfolio · ${selected.portfolio_type ?? 'book'}`}
+            title={selected.name}
+            sub={
+              <span className="font-mono text-xs text-muted">
+                {book?.positions ?? holdings?.length ?? 0} positions
+                {selected.currency && ` · ${selected.currency}`}
+                {selected.created_at &&
+                  ` · since ${new Date(selected.created_at)
+                    .toLocaleDateString('en-US',
+                      { month: 'short', year: '2-digit' })}`}
+              </span>
+            }
+            right={`${view?.as_of ?? ''}`}
+            book={book}
+            rows={rows}
+          />
 
           <div className="pt-4">{rail}</div>
 
@@ -274,28 +365,43 @@ export default async function PortfolioPage({
                     Positions
                   </span>
                   <span className="font-mono text-[11px] text-faint">
+                    click a row for the engine's reasoning ·{' '}
+                    {rows.length} names
+                  </span>
+                </div>
+                {rows.length === 0 ? (
+                  <p className="py-4 text-sm text-muted">
+                    Empty book — add a symbol above (the pulse checks it
+                    against tape + fundamentals on next read).
+                  </p>
+                ) : (
+                  <div className="pt-3">
+                    <PortfolioTable rows={rows}
+                      bookValue={book?.value ?? 0} />
+                  </div>
+                )}
+              </section>
+            </div>
+            <div className="space-y-4">
+              <WatchlistCard />
+              <section className="rounded-xl border border-hairline bg-card px-5 py-4">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+                    Manage
+                  </span>
+                  <span className="font-mono text-[11px] text-faint">
                     {holdings?.length ?? 0} held
                   </span>
                 </div>
                 <div className="mt-2 divide-y divide-hairline/60">
-                  {(holdings ?? []).length === 0 ? (
-                    <p className="py-4 text-sm text-muted">
-                      Empty book — add a symbol above (the pulse checks it
-                      against tape + fundamentals on next read).
-                    </p>
-                  ) : (
-                    (holdings ?? []).map((h) => (
-                      <UserHoldingRow key={h.symbol} p={selected.id} h={h} />
-                    ))
-                  )}
+                  {(holdings ?? []).map((h) => (
+                    <UserHoldingRow key={h.symbol} p={selected.id} h={h} />
+                  ))}
                 </div>
                 <div className="mt-3 flex justify-end border-t border-hairline/60 pt-3">
                   <DeleteBookButton id={selected.id} name={selected.name} />
                 </div>
               </section>
-            </div>
-            <div className="space-y-4">
-              <WatchlistCard />
               <div className="rounded-xl border border-hairline bg-elevated/50 px-5 py-4 text-[11px] leading-relaxed text-faint">
                 Advisory — your book, your call. Records are journals;
                 no orders are placed. Rename/delete for books lands
@@ -307,92 +413,19 @@ export default async function PortfolioPage({
       ) : (
         /* ---- the system book: pulse view ---- */
         <>
-          <div className="pt-6">
-            <Deck
-              kicker="Portfolio · the book"
-              right={`${pulse?.as_of ?? ''} · ${portfolios.length}/${limit} books`}
-            >
-              <div className="pt-4 flex flex-wrap items-baseline gap-x-5 gap-y-2">
-                <h1 className="font-mono text-[clamp(1.9rem,4.5vw,2.9rem)] font-semibold tracking-tight text-ink">
-                  {money(book?.value)}
-                </h1>
-                {book?.day_chg_pct != null && (
-                  <span
-                    className={`font-mono text-xl ${Number(book.day_chg_pct) >= 0
-                      ? 'text-aggressive'
-                      : 'text-defensive'
-                      }`}
-                    title="today vs previous close"
-                  >
-                    {pct(book.day_chg_pct, true, 2)}
-                    <span className="text-sm"> today</span>
-                  </span>
-                )}
-                <span
-                  className={`font-mono text-xl ${Number(book?.pnl_pct) >= 0
-                    ? 'text-aggressive'
-                    : 'text-defensive'
-                    }`}
-                  title="unrealized vs cost"
-                >
-                  {pct(book?.pnl_pct)}
-                </span>
-                {book?.on_pace != null && (
-                  <span
-                    className={`rounded-full px-2.5 py-1 text-xs font-medium ${book.on_pace
-                      ? 'bg-aggressive/10 text-aggressive'
-                      : 'bg-accent/10 text-accent'
-                      }`}
-                  >
-                    {book.on_pace ? 'on pace' : 'behind pace'} vs{' '}
-                    {book.target_pct}% target
-                  </span>
-                )}
-                {book?.track_ret_pct != null && (
-                  <span className="text-xs text-muted">
-                    {pct(book.track_ret_pct)} over {book.track_days}d
-                    {book.excess_pct != null && (
-                      <span
-                        className={
-                          Number(book.excess_pct) >= 0
-                            ? 'text-aggressive'
-                            : 'text-defensive'
-                        }
-                      >
-                        {' '}({pct(book.excess_pct)} vs SPY)
-                      </span>
-                    )}
-                  </span>
-                )}
-              </div>
-              <div className="pt-4 grid grid-cols-2 sm:grid-cols-5 gap-2">
-                <DeckStat label="Positions"
-                  value={String(book?.positions ?? 0)} />
-                <DeckStat label="Cost" value={money(book?.cost)} />
-                <DeckStat
-                  label="Unrealized"
-                  value={money(book?.pnl)}
-                  toneCls={
-                    Number(book?.pnl) >= 0
-                      ? 'text-aggressive'
-                      : 'text-defensive'
-                  }
-                />
-                <DeckStat
-                  label="Day P/L"
-                  value={book?.day_pnl != null ? money(book.day_pnl) : '—'}
-                  toneCls={
-                    Number(book?.day_pnl) >= 0
-                      ? 'text-aggressive'
-                      : 'text-defensive'
-                  }
-                />
-                <DeckStat label="Goal /mo" value={money(book?.goal_month)} />
-              </div>
-              <TodayStrip rows={rows} />
-              <SectorBar rows={rows} />
-            </Deck>
-          </div>
+          <BookHero
+            kicker="Portfolio · the book"
+            title="The book"
+            sub={
+              <span className="font-mono text-xs text-muted">
+                all positions across {portfolios.length} book
+                {portfolios.length === 1 ? '' : 's'}
+              </span>
+            }
+            right={`${view?.as_of ?? ''}`}
+            book={book}
+            rows={rows}
+          />
 
           <div className="pt-4">{rail}</div>
 

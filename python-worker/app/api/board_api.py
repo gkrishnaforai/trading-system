@@ -1472,11 +1472,20 @@ def _sector_flow_map() -> dict:
 
 
 @router.get("/portfolio-pulse")
-async def portfolio_pulse():
+async def portfolio_pulse(portfolio_id: str = None):
     """One-row-per-holding board: tape state + transition, fundamental
     state, FV gap, GQ percentile, and a deterministic action hint.
-    This is the 'what needs attention today' surface."""
+    This is the 'what needs attention today' surface. Scoped to one
+    book when portfolio_id is passed; else the aggregated 'book'."""
     from app.database import db
+    import uuid as _uuid
+    pid = None
+    if portfolio_id:
+        try:
+            pid = str(_uuid.UUID(str(portfolio_id)))
+        except (ValueError, AttributeError):
+            return {"rows": [], "book": {},
+                    "error": "invalid portfolio_id"}
     rows = db.execute_query("""
         WITH uni AS (
             SELECT s.symbol, SUM(pp.quantity) AS qty,
@@ -1488,6 +1497,7 @@ async def portfolio_pulse():
             JOIN stocks s ON s.id = pp.stock_id
             JOIN portfolios p ON p.id = pp.portfolio_id
             WHERE pp.quantity > 0 AND length(s.symbol) > 1
+              AND (:pid IS NULL OR pp.portfolio_id = CAST(:pid AS uuid))
             GROUP BY s.symbol
             UNION ALL
             SELECT h.symbol, h.shares_held, h.average_cost,
@@ -1495,10 +1505,12 @@ async def portfolio_pulse():
             FROM portfolio_holdings h
             JOIN portfolios p ON p.id = h.portfolio_id
             WHERE h.status IN ('active','inactive')
+              AND (:pid IS NULL OR h.portfolio_id = CAST(:pid AS uuid))
               AND NOT EXISTS (
                   SELECT 1 FROM portfolio_positions pp
                   JOIN stocks s2 ON s2.id = pp.stock_id
-                  WHERE s2.symbol = h.symbol AND pp.quantity > 0)
+                  WHERE s2.symbol = h.symbol AND pp.quantity > 0
+                    AND pp.portfolio_id = h.portfolio_id)
         )
         SELECT u.symbol, u.qty, u.cost, u.status, u.portfolio,
                px.close, ppx.close AS prev_close, spark.closes AS spark,
@@ -1552,7 +1564,7 @@ async def portfolio_pulse():
             WHERE l.symbol = u.symbol AND l.as_of < CURRENT_DATE
             ORDER BY l.as_of DESC LIMIT 1) prev ON true
         LEFT JOIN symbol_flywheel fw ON fw.symbol = u.symbol
-        ORDER BY u.status, u.symbol""")
+        ORDER BY u.status, u.symbol""", {"pid": pid})
     from app.market_regime.rotation import _SECTOR_TO_ETF
     etf_ctx = _sector_flow_map()
     from app.signals.spec_pulse import spec_symbols
@@ -1705,7 +1717,10 @@ async def portfolio_pulse():
             "target_value_12m": round(cost * (1 + tgt)),
             "goal_month": round(cost * ((1 + tgt) ** (1 / 12) - 1))}
     # daily book snapshot — first write wins; the pace series.
+    # Scoped calls journal under that book's id, so user books get
+    # their own track record too.
     _BOOK_ID = "00000000-0000-0000-0000-00000000000b"
+    snap_pid = pid or _BOOK_ID
     try:
         db.execute_update(
             "INSERT INTO portfolio_snapshots (portfolio_id,"
@@ -1714,12 +1729,12 @@ async def portfolio_pulse():
             " ON CONFLICT (portfolio_id, snapshot_date) DO UPDATE SET"
             " total_value=EXCLUDED.total_value,"
             " invested_value=EXCLUDED.invested_value",
-            {"pid": _BOOK_ID, "v": val, "c": cost})
+            {"pid": snap_pid, "v": val, "c": cost})
         base = db.execute_query(
             "SELECT snapshot_date, total_value FROM portfolio_snapshots"
             " WHERE portfolio_id=CAST(:pid AS uuid)"
             " ORDER BY snapshot_date LIMIT 1",
-            {"pid": _BOOK_ID})
+            {"pid": snap_pid})
         if base and base[0]["total_value"] and val:
             days = (datetime.now().date()
                     - base[0]["snapshot_date"]).days
