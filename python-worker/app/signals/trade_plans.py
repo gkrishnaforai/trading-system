@@ -58,6 +58,9 @@ def _stored(sym: str) -> dict:
                fw.fwd_pe, fw.num_analysts,
                fw.updated_at AS flywheel_at,
                fw.rev_growth, fw.eps_growth,
+               fw.gm_slope, fw.est_revision_pct, fw.beat_streak,
+               s.fundamental_detail->>'decel_cause' AS decel_cause,
+               s.fundamental_detail->>'demand_health' AS demand_health,
                prev.state AS prev_state,
                px.close AS close
         FROM stocks s
@@ -130,6 +133,15 @@ def _live(sym: str) -> dict:
         "gq_flags": r.get("gq_flags") or [],
         "is_etf": r.get("is_etf"), "sector": r.get("sector"),
         "fwd_pe": r.get("fwd_pe"),
+        # Layer-B inputs — same fields portfolio_pulse feeds; without
+        # them a plan eval would disagree with the board it mirrors
+        "decel_cause": r.get("decel_cause"),
+        "demand_health": r.get("demand_health"),
+        "rev_growth": r.get("rev_growth"),
+        "eps_growth": r.get("eps_growth"),
+        "gm_slope": r.get("gm_slope"),
+        "est_revision_pct": r.get("est_revision_pct"),
+        "beat_streak": r.get("beat_streak"),
     })
     return {"px": float(px) if px else None, "det": det,
             "mom": mom, "dip_phase": det.get("dip_phase"),
