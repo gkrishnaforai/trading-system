@@ -456,10 +456,37 @@ def _f(x) -> Optional[float]:
         return None
 
 
+def _sync_stale_index(limit: int = 6) -> list[str]:
+    """Book names whose earnings index is empty or past. The calendar
+    refresh only fires on add-warmup / flywheel cascades, so a name
+    that never hit those paths carries NULL or a stale
+    next_earnings_date — invisible to todays_reporters AND to the
+    /calendar union, which both key off the index. A bounded sweep
+    each poll heals them; refreshed names drop out of the stale set,
+    and a name that printed today lands in earnings_data where the
+    2-day catch-up leg picks it up."""
+    from app.signals import earnings_calendar
+    rows = _q(
+        "SELECT s.symbol FROM stocks s WHERE " + _TIER +
+        " AND (s.next_earnings_date IS NULL"
+        "      OR s.next_earnings_date < (now() AT TIME ZONE"
+        "        'America/New_York')::date - 3)"
+        " ORDER BY s.symbol LIMIT :n", {"n": limit})
+    synced = []
+    for r in rows:
+        try:
+            earnings_calendar.refresh_earnings_calendar(r["symbol"])
+            synced.append(r["symbol"])
+        except Exception as exc:
+            logger.debug("stale index sync %s: %s", r["symbol"], exc)
+    return synced
+
+
 def poll() -> dict:
     """The 30-min sweep — every active-tier name printing today that
     isn't journaled yet. Safe to run any time; symbols whose print
     hasn't landed return 'awaiting_print' and get retried next poll."""
+    synced = _sync_stale_index()
     reporters = due_reporters()
     out, errs = [], []
     for sym, day in reporters:
@@ -472,7 +499,7 @@ def poll() -> dict:
             if len(errs) >= 10:
                 break
     return {"reporters": len(reporters), "captured": out,
-            "errors": errs}
+            "index_synced": synced, "errors": errs}
 
 
 def latest(days: int = 7) -> list[dict]:
