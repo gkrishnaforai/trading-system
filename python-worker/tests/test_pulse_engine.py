@@ -780,3 +780,50 @@ def test_repair_eligible_never_becomes_add():
                              revision_grade="A", fv_upside=30.0))
     assert r["action"] in ("watch", "hold")
     assert r["action"] != "add"
+
+
+# ---------- trade_plan_outcomes — realized-R grading -------------------
+
+def test_outcome_realized_r_math():
+    from app.signals.trade_plans import _outcome
+    from datetime import date, datetime
+    o = _outcome({'id': 1, 'symbol': 'X', 'use_case': 'swing',
+                  'direction': 'long', 'entry_px': 100,
+                  'entry_date': date(2026, 10, 1), 'stop_px': 90,
+                  'close_px': 115, 'closed_at': datetime(2026, 10, 10)},
+                 ['target1_hit', 'trail_up'])
+    assert o['realized_r'] == 1.5 and o['realized_pct'] == 15.0
+    assert o['days_held'] == 9 and o['hit_t1'] and not o['hit_t2']
+    # short direction inverts the sign — stop-out is negative R
+    o2 = _outcome({'id': 2, 'symbol': 'Y', 'use_case': 'leap_put',
+                   'direction': 'short', 'entry_px': 100,
+                   'entry_date': date(2026, 10, 1), 'stop_px': 110,
+                   'close_px': 112,
+                   'closed_at': datetime(2026, 10, 5)},
+                  ['stop_hit'])
+    assert o2['realized_r'] == -1.2 and o2['stop_hit']
+    # missing close → None, never a fabricated 0R
+    o3 = _outcome({'id': 3, 'symbol': 'Z', 'use_case': 'swing',
+                   'direction': 'long', 'entry_px': 100,
+                   'entry_date': date(2026, 10, 1), 'stop_px': 90}, [])
+    assert o3['realized_r'] is None and o3['realized_pct'] is None
+
+
+def test_suggest_stamps_rules_version():
+    # entry_snapshot must carry the spec version so realized R
+    # attributes back to the rules that produced the entry
+    import app.signals.trade_plans as tp
+    called = {}
+    def fake_live(sym):
+        called['sym'] = sym
+        return {'px': 100.0, 'det': {'atr_pct': 0.03},
+                'mom': 'pullback', 'dip_phase': 'confirmed',
+                'pulse_action': 'add', 'pulse_rule': 'add_growth'}
+    old = tp._live
+    tp._live = fake_live
+    try:
+        s = tp.suggest('X', 'swing')
+    finally:
+        tp._live = old
+    assert s['rules_version'] and s['rules_version'].startswith('rules.')
+    assert s['pulse_action'] == 'add' and s['entry_px'] == 100.0

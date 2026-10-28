@@ -318,7 +318,10 @@ export const api = {
   incomePlan: (funds?: number) =>
     get<IncomePlan>(`/income-plan${funds ? `?funds=${funds}` : ''}`),
   tradePlans: () =>
-    get<{ open?: PlanRow[]; closed?: PlanRow[] }>('/trade-plans?all=1'),
+    get<{
+      open?: PlanRow[]; closed?: PlanRow[];
+      outcomes?: PlanOutcomeStats
+    }>('/trade-plans?all=1'),
   selloff: () => get<SelloffScan>('/selloff'),
   bestPicks: () => get<BestPicks>('/best-picks'),
   levSwings: (funds?: number) =>
@@ -662,7 +665,32 @@ export type PlanRow = {
   r?: number
   days?: number
   dist_stop?: number
+  close_px?: number
+  closed_at?: string
+  close_reason?: string
   eval?: { status?: string; action_hint?: string; why?: string }
+}
+
+export type PlanOutcomeBucket = {
+  use_case?: string
+  entry_pulse_action?: string
+  rules_version?: string
+  n?: number
+  win_rate?: number
+  avg_r?: number
+  avg_pct?: number
+  avg_days?: number
+  t1_rate?: number
+  t2_rate?: number
+  stop_rate?: number
+  invalidated_rate?: number
+}
+
+export type PlanOutcomeStats = {
+  n?: number
+  by_use_case?: PlanOutcomeBucket[]
+  by_entry_pulse?: PlanOutcomeBucket[]
+  by_rules_version?: PlanOutcomeBucket[]
 }
 
 export type PassiveBoard = {

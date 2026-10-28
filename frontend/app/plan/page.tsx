@@ -601,6 +601,8 @@ export default async function PlanPage({
   const pos = plan?.posture ?? {}
   const noLongs = pos.new_longs === false
   const openPlans = open?.open ?? []
+  const closedPlans = open?.closed ?? []
+  const outcomes = open?.outcomes
   return (
     <main className="mx-auto max-w-6xl px-5 pb-20">
       <header className="pt-6 pb-6">
@@ -784,6 +786,111 @@ export default async function PlanPage({
               )
             })}
           </div>
+        </section>
+
+        {/* track record — the closed loop: what the plans actually paid */}
+        <section className="mt-4 rounded-xl border border-hairline bg-card px-5 py-4">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              Track record
+            </span>
+            <span className="text-[11px] text-faint">
+              closed plans graded vs entry risk — the feedback loop
+            </span>
+          </div>
+          {outcomes?.n ? (
+            <>
+              <div className="pt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  ['plans closed', outcomes.n],
+                  ['win rate', outcomes.by_use_case?.length
+                    ? `${Math.round((outcomes.by_use_case.reduce(
+                      (a, b) => a + (b.win_rate ?? 0) * (b.n ?? 0), 0)
+                      / outcomes.n) * 100)}%` : '—'],
+                  ['avg R', outcomes.by_use_case?.length
+                    ? `${(outcomes.by_use_case.reduce(
+                      (a, b) => a + (b.avg_r ?? 0) * (b.n ?? 0), 0)
+                      / outcomes.n).toFixed(2)}R` : '—'],
+                  ['avg days', outcomes.by_use_case?.length
+                    ? Math.round(outcomes.by_use_case.reduce(
+                      (a, b) => a + (b.avg_days ?? 0) * (b.n ?? 0), 0)
+                      / outcomes.n) : '—'],
+                ].map(([l, v]) => (
+                  <div key={String(l)}
+                    className="rounded-lg border border-hairline/60 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wider text-faint">{l}</div>
+                    <div className="pt-0.5 font-mono text-sm text-ink">{String(v)}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="pt-3 overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-left text-faint">
+                      <th className="py-1 pr-3 font-normal">lane</th>
+                      <th className="py-1 pr-3 font-normal text-right">n</th>
+                      <th className="py-1 pr-3 font-normal text-right">win</th>
+                      <th className="py-1 pr-3 font-normal text-right">avg R</th>
+                      <th className="py-1 pr-3 font-normal text-right">t1</th>
+                      <th className="py-1 pr-3 font-normal text-right">t2</th>
+                      <th className="py-1 font-normal text-right">stopped</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(outcomes.by_use_case ?? []).map((b) => (
+                      <tr key={b.use_case} className="border-t border-hairline/40 text-muted">
+                        <td className="py-1 pr-3 text-ink">{b.use_case}</td>
+                        <td className="py-1 pr-3 text-right font-mono">{b.n}</td>
+                        <td className={`py-1 pr-3 text-right font-mono ${(b.win_rate ?? 0) >= 0.5 ? 'text-aggressive' : 'text-defensive'}`}>
+                          {b.win_rate != null ? `${Math.round(b.win_rate * 100)}%` : '—'}
+                        </td>
+                        <td className={`py-1 pr-3 text-right font-mono ${(b.avg_r ?? 0) >= 0 ? 'text-aggressive' : 'text-defensive'}`}>
+                          {b.avg_r != null ? `${Number(b.avg_r).toFixed(2)}R` : '—'}
+                        </td>
+                        <td className="py-1 pr-3 text-right font-mono">
+                          {b.t1_rate != null ? `${Math.round(b.t1_rate * 100)}%` : '—'}
+                        </td>
+                        <td className="py-1 pr-3 text-right font-mono">
+                          {b.t2_rate != null ? `${Math.round(b.t2_rate * 100)}%` : '—'}
+                        </td>
+                        <td className="py-1 text-right font-mono">
+                          {b.stop_rate != null ? `${Math.round(b.stop_rate * 100)}%` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <p className="py-3 text-xs text-muted">
+              no closed plans yet — the grader fills this in as you close
+              trades; entry context + rules version are journaled on every
+              open so outcomes attribute back to the spec that suggested them.
+            </p>
+          )}
+          {closedPlans.length > 0 && (
+            <div className="pt-2 divide-y divide-hairline/60">
+              {closedPlans.slice(0, 8).map((p: PlanRow) => {
+                const entry = Number(p.entry_px), stop = Number(p.stop_px),
+                  close = Number(p.close_px)
+                const sgn = p.direction === 'short' ? -1 : 1
+                const r = (entry && stop && close && entry !== stop)
+                  ? (close - entry) * sgn / Math.abs(entry - stop) : null
+                return (
+                  <div key={p.id} className="flex items-baseline justify-between gap-3 py-1.5 text-[11px]">
+                    <span className="text-muted">
+                      <Link href={`/stock?sym=${p.symbol}`} className="font-semibold text-ink hover:text-accent">{p.symbol}</Link>
+                      <span className="text-faint"> {p.use_case} · in {money(entry)} → out {money(close)}</span>
+                    </span>
+                    <span className={`font-mono ${r != null && r >= 0 ? 'text-aggressive' : 'text-defensive'}`}>
+                      {r != null ? `${r >= 0 ? '+' : ''}${r.toFixed(1)}R` : (p.close_reason ?? 'closed')}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </section>
       </Gate>
 

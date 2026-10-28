@@ -200,6 +200,9 @@ def suggest(sym: str, use_case: str,
             "trail_rule": trail, "time_stop_days": ts_days,
             "mom": live["mom"], "dip_phase": live["dip_phase"],
             "pulse_action": live["pulse_action"],
+            # version stamp — the outcome grader attributes realized R
+            # to the spec that produced this entry context
+            "rules_version": pulse_engine.rules_version(),
             "confirm_level": sw.get("confirm_level"),
             "swing_low": sw.get("swing_low"),
             "prior_low": sw.get("prior_low")}
@@ -338,7 +341,151 @@ def open_plans() -> list[dict]:
                   "px": ev["ctx"]["px"], "r": ev["ctx"]["r"],
                   "days": ev["ctx"]["days"],
                   "dist_stop": ev["ctx"]["dist_stop"]})
+    try:
+        grade()                     # closed plans → outcomes (cheap,
+    except Exception:               # only un-graded rows do work)
+        pass
     return plans
+
+
+# ---------------- outcome grading — the closed loop -------------------
+#
+# trade_plans holds the plan + entry snapshot; trade_plan_events
+# holds the life transitions; trade_plan_outcomes joins them at close
+# into one accountable row — realized R vs entry risk, which levels
+# were touched, which rules fired during the life, the rules_version
+# that produced the entry context. posture_outcomes grades daily
+# evals on forward index returns; plans grade themselves — the
+# human's close_px IS the outcome. stats() is the feedback view:
+# entry contexts and spec versions vs realized R.
+
+def _outcome(plan: dict, kinds: list) -> dict:
+    """Closed plan + its event kinds → the outcome row. Pure — the
+    unit-test surface. Realized R = (close−entry)·sgn/|entry−stop|;
+    pct on the same signed convention. hit/stop/invalidation flags
+    come from the event kind list, not bar replay — the journal is
+    the record."""
+    def _f(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    entry, close, stop = (_f(plan.get("entry_px")),
+                          _f(plan.get("close_px")),
+                          _f(plan.get("stop_px")))
+    sgn = -1 if plan.get("direction") == "short" else 1
+    risk = abs(entry - stop) if (entry and stop) else None
+    r = (round((close - entry) * sgn / risk, 2)
+         if (entry is not None and close is not None and risk) else None)
+    pct = (round((close / entry - 1) * sgn * 100, 2)
+           if (entry and close) else None)
+    ed, ca = plan.get("entry_date"), plan.get("closed_at")
+    days = None
+    try:
+        d0 = ed.date() if isinstance(ed, datetime) else ed
+        d1 = ca.date() if isinstance(ca, datetime) else ca
+        days = (d1 - d0).days
+    except Exception:
+        pass
+    import json
+    snap = plan.get("entry_snapshot") or {}
+    if isinstance(snap, str):
+        try:
+            snap = json.loads(snap)
+        except Exception:
+            snap = {}
+    return {"plan_id": plan["id"], "symbol": plan["symbol"],
+            "use_case": plan.get("use_case"),
+            "direction": plan.get("direction") or "long",
+            "entry_px": entry, "entry_date": str(ed) if ed else None,
+            "stop_px": stop, "stop_basis": plan.get("stop_basis"),
+            "target1_px": _f(plan.get("target1_px")),
+            "target2_px": _f(plan.get("target2_px")),
+            "trail_rule": plan.get("trail_rule"),
+            "time_stop_days": plan.get("time_stop_days"),
+            "qty": _f(plan.get("qty")),
+            "entry_mom": snap.get("mom"),
+            "entry_dip": snap.get("dip_phase"),
+            "entry_pulse_action": snap.get("pulse_action"),
+            "rules_version": snap.get("rules_version"),
+            "close_px": close,
+            "closed_at": str(ca) if ca else None,
+            "close_reason": plan.get("close_reason"),
+            "days_held": days, "realized_pct": pct, "realized_r": r,
+            "hit_t1": "target1_hit" in kinds,
+            "hit_t2": "target2_hit" in kinds,
+            "stop_hit": "stop_hit" in kinds,
+            "invalidated": "invalidated" in kinds,
+            "events": kinds}
+
+
+def grade() -> dict:
+    """Closed plans → trade_plan_outcomes rows. Idempotent upsert —
+    safe every eval; only rows missing outcomes do work."""
+    from app.database import db
+    plans = db.execute_query(
+        "SELECT p.* FROM trade_plans p"
+        " LEFT JOIN trade_plan_outcomes o ON o.plan_id = p.id"
+        " WHERE p.status='closed' AND o.plan_id IS NULL")
+    graded = 0
+    for p in plans or []:
+        kinds = [r["kind"] for r in db.execute_query(
+            "SELECT kind FROM trade_plan_events WHERE plan_id=:p"
+            " ORDER BY as_of, id", {"p": p["id"]})]
+        o = _outcome(dict(p), kinds)
+        db.execute_update(
+            "INSERT INTO trade_plan_outcomes (plan_id, symbol,"
+            " use_case, direction, entry_px, entry_date, stop_px,"
+            " stop_basis, target1_px, target2_px, trail_rule,"
+            " time_stop_days, qty, entry_mom, entry_dip,"
+            " entry_pulse_action, rules_version, close_px, closed_at,"
+            " close_reason, days_held, realized_pct, realized_r,"
+            " hit_t1, hit_t2, stop_hit, invalidated, events)"
+            " VALUES (:plan_id,:symbol,:use_case,:direction,"
+            " :entry_px,:entry_date,:stop_px,:stop_basis,:target1_px,"
+            " :target2_px,:trail_rule,:time_stop_days,:qty,:entry_mom,"
+            " :entry_dip,:entry_pulse_action,:rules_version,:close_px,"
+            " :closed_at,:close_reason,:days_held,:realized_pct,"
+            " :realized_r,:hit_t1,:hit_t2,:stop_hit,:invalidated,"
+            " CAST(:events AS jsonb))"
+            " ON CONFLICT (plan_id) DO NOTHING",
+            {**o, "events": json.dumps(o["events"])})
+        graded += 1
+    return {"graded": graded}
+
+
+def outcome_stats() -> dict:
+    """The feedback view — realized R aggregated by entry context and
+    spec version. 'which entries pay' (use_case / pulse verdict at
+    entry) and 'which rules version pays' — the journal answer to
+    whether plan recommendations have edge."""
+    from app.database import db
+    _AGG = ("count(*) n,"
+            " round(avg(CASE WHEN realized_r>0 THEN 1 ELSE 0 END),3)"
+            "   win_rate,"
+            " round(avg(realized_r),2) avg_r,"
+            " round(avg(realized_pct),2) avg_pct,"
+            " round(avg(days_held),1) avg_days,"
+            " round(avg(CASE WHEN hit_t1 THEN 1 ELSE 0 END),3) t1_rate,"
+            " round(avg(CASE WHEN hit_t2 THEN 1 ELSE 0 END),3) t2_rate,"
+            " round(avg(CASE WHEN stop_hit THEN 1 ELSE 0 END),3)"
+            "   stop_rate,"
+            " round(avg(CASE WHEN invalidated THEN 1 ELSE 0 END),3)"
+            "   invalidated_rate")
+    by_use = [dict(r) for r in db.execute_query(
+        f"SELECT use_case, {_AGG} FROM trade_plan_outcomes"
+        " GROUP BY use_case ORDER BY use_case")]
+    by_pulse = [dict(r) for r in db.execute_query(
+        f"SELECT COALESCE(entry_pulse_action,'unknown') AS"
+        f" entry_pulse_action, {_AGG} FROM trade_plan_outcomes"
+        " GROUP BY 1 ORDER BY 1")]
+    by_version = [dict(r) for r in db.execute_query(
+        f"SELECT COALESCE(rules_version,'pre-versioning') AS"
+        f" rules_version, {_AGG} FROM trade_plan_outcomes"
+        " GROUP BY 1 ORDER BY 1")]
+    return {"n": sum(r["n"] for r in by_use),
+            "by_use_case": by_use, "by_entry_pulse": by_pulse,
+            "by_rules_version": by_version}
 
 
 # ---------------- email digest ----------------------------------------------
@@ -388,6 +535,7 @@ def email_digest() -> dict:
     from app.database import db
     try:
         open_plans()                      # eval + journal transitions
+        grade()                           # + grade any newly closed
     except Exception as e:
         return {"ok": False, "error": f"eval failed: {e}"}
     rows = db.execute_query(

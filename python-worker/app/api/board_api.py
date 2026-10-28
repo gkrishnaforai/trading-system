@@ -3023,12 +3023,13 @@ async def tp_list(all: bool = False):
     from app.database import db
     from app.signals import trade_plans
     plans = await asyncio.to_thread(trade_plans.open_plans)
-    closed = []
+    closed, outcomes = [], {}
     if all:
         closed = [dict(r) for r in db.execute_query(
             "SELECT * FROM trade_plans WHERE status != 'open'"
             " ORDER BY closed_at DESC NULLS LAST LIMIT 100")]
-    return {"open": plans, "closed": closed}
+        outcomes = trade_plans.outcome_stats()
+    return {"open": plans, "closed": closed, "outcomes": outcomes}
 
 
 @router.post("/trade-plans/{pid}/close")
@@ -3043,6 +3044,11 @@ async def tp_close(pid: int, body: dict):
         {"px": body.get("close_px"), "rs": body.get("reason"), "p": pid})
     if not r:
         return {"ok": False, "error": "plan not found or already closed"}
+    try:                          # grade the close into outcomes now —
+        from app.signals import trade_plans as _tp
+        _tp.grade()               # the feedback loop sees it immediately
+    except Exception:
+        pass
     db.execute_update(
         "INSERT INTO trade_plan_events (plan_id, symbol, as_of, kind,"
         " action_hint, message) SELECT :p, symbol, CURRENT_DATE,"

@@ -355,6 +355,21 @@ def run() -> dict[str, Any]:
         for uc, d in cal.items()}
     rep["rank_rows"] = len(rk or [])
 
+    # --- 2.10 trade-plan outcomes — do the engine's plans pay? ------
+    # REPORT-ONLY — the closed-loop grader joins closed plans with
+    # their entry context + rules_version into realized-R aggregates.
+    # Whether a use_case / entry pulse verdict / spec version has edge
+    # is evidence for the human promotion call, not an auto-adjust.
+    try:
+        from app.signals import trade_plans as _tp
+        tp = _tp.outcome_stats()
+        rep["trade_plan_outcomes"] = {
+            "n": tp["n"], "by_use_case": tp["by_use_case"],
+            "by_entry_pulse": tp["by_entry_pulse"],
+            "by_rules_version": tp["by_rules_version"]}
+    except Exception as e:
+        rep["trade_plan_outcomes"] = {"error": str(e)}
+
     # --- 3. the report itself is a weight row — the UI reads it ------
     rep["writes"] = rep["writes"] or ["report only — no weight changes"]
     put("meta:report", rep)
