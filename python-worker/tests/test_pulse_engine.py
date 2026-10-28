@@ -524,11 +524,12 @@ def _asts_like(**kw):
 
 def test_swing_checklist_asts():
     r = eval_use_case(_asts_like(), "swing")
-    assert r["state"] == "no" and r["of"] == 5
+    assert r["state"] == "no" and r["of"] == 7
     oks = [x["ok"] for x in r["rules"]]
-    # fails constructive / above-50dma / hist-dir; passes stretch +
-    # structure-mapped — same verdict the old inline checklist gave
-    assert oks == [False, False, True, False, True]
+    # fails constructive / above-50dma / hist-dir; passes stretch,
+    # structure-mapped, structure-intact and vol — the 7-check
+    # checklist keeps the same verdict the old 5-check gave
+    assert oks == [False, False, True, False, True, True, True]
 
 
 def test_invest_suspect_fv_is_unavailable_not_fail():
@@ -556,7 +557,7 @@ def test_use_case_ready_when_all_pass():
                          "swing": {"phase": "base"}},
         rev_growth=0.2, eps_growth=0.3, future_score=60,
         lane="deploy", gq_score=70), "swing")
-    assert r["state"] == "ready" and r["score"] == 5
+    assert r["state"] == "ready" and r["score"] == 7
     r2 = eval_use_case(_row(
         rev_growth=0.2, eps_growth=0.3, future_score=60,
         lane="deploy", gq_score=70), "invest")
@@ -1028,3 +1029,77 @@ def test_posture_credit_modifiers():
                                        "pct_above_50": 70}})
     assert r4["evidence"]["credit_state"] == "unknown"
     assert "credit_unknown" in r4.get("flags", [])
+
+
+def test_below_run_distinct_observations():
+    # THE PIT/hysteresis contract: repeated copies of the SAME FRED
+    # observation (weekend, holiday, unchanged print) must not advance
+    # the exit counter — only distinct fred_asof values count
+    from app.signals.credit_health import _below_run
+    rows = [
+        # today-2, today-1: same fred_asof (weekend repeat) → 1 obs
+        {"credit_state": "severe", "raw_state": "caution",
+         "fred_asof": "2026-10-24"},
+        {"credit_state": "severe", "raw_state": "caution",
+         "fred_asof": "2026-10-24"},
+        # a distinct permissive obs
+        {"credit_state": "severe", "raw_state": "healthy",
+         "fred_asof": "2026-10-23"},
+        # a non-permissive obs BREAKS the run even mid-severe
+        {"credit_state": "severe", "raw_state": "stress",
+         "fred_asof": "2026-10-22"},
+    ]
+    # today's obs distinct → 24,23 = wait — today's fred_asof is a NEW
+    # obs so seen = {today, 10-24, 10-23} = 3 → exits
+    assert _below_run(rows, "caution", "2026-10-27") == 3
+    # today's obs is a REPEAT of 10-24 (FRED hasn't printed since)
+    # → seen = {10-24, 10-23} = 2 → held
+    assert _below_run(rows, "caution", "2026-10-24") == 2
+    # run breaks on non-permissive raw even inside the held state
+    rows2 = [{"credit_state": "severe", "raw_state": "stress",
+              "fred_asof": "2026-10-26"},
+             {"credit_state": "severe", "raw_state": "caution",
+              "fred_asof": "2026-10-25"}]
+    assert _below_run(rows2, "caution", "2026-10-27") == 1
+
+
+def test_pit_slice_boundary():
+    # _at returns only obs ≤ asof — nothing after the decision date
+    from app.signals.credit_health import _at
+    from datetime import date
+    s = [(date(2026, 10, 1), 3.0), (date(2026, 10, 20), 5.0),
+         (date(2026, 10, 30), 6.5)]
+    last, hist = _at(s, date(2026, 10, 25))
+    assert last == (date(2026, 10, 20), 5.0)
+    assert len(hist) == 2                     # the 6.5 print is future
+    last2, hist2 = _at(s, date(2026, 9, 30))
+    assert last2 is None and hist2 == []
+
+
+def test_caution_does_not_cancel_repair():
+    # a temporary credit warning must not eliminate a valid repair
+    # watch — only severe×stressed (severe_penalty) gates the deferral
+    r = evaluate(_row(mom_state="knife", fund_state="cyclical",
+                      revision_grade="B+", fv_upside=None,
+                      momentum_detail={"dip_phase": "turning_up"},
+                      credit_state="caution",
+                      net_debt_ebitda=0.5, fcf_margin=0.15))
+    assert r["stage0"]["repair_eligible"] is True
+    assert r["action"] == "watch"
+    # same row under healthy credit — identical verdict (credit is a
+    # modifier, the repair test stands on its own evidence)
+    r2 = evaluate(_row(mom_state="knife", fund_state="cyclical",
+                       revision_grade="B+", fv_upside=None,
+                       momentum_detail={"dip_phase": "turning_up"},
+                       credit_state="healthy"))
+    assert r2["stage0"]["repair_eligible"] is True
+
+
+def test_stress_credit_keeps_levered_reduce_path_open():
+    # credit stress must not SUPPRESS a genuinely necessary reduce —
+    # deteriorating fund + broken tape still reduces under stress
+    r = evaluate(_row(mom_state="downtrend", fund_state="pressured",
+                      revision_grade="C", fv_upside=None,
+                      credit_state="stress",
+                      net_debt_ebitda=1.0, fcf_margin=0.15))
+    assert r["action"] == "reduce"
