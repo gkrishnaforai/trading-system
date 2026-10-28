@@ -747,6 +747,16 @@ async def _j_posture_eval() -> dict:
     grades matured evals against forward QQQ returns — the journal
     IS the backtest."""
     from app.signals import posture
+    try:                          # reconstruct credit history once —
+        from app.signals import credit_health  # old snapshots then
+        from app.database import db as _db     # grade credit-aware
+        have = (_db.execute_query(
+            "SELECT count(*) AS n FROM credit_health_snapshots")
+            or [{}])[0]
+        if (have.get("n") or 0) < 200:
+            credit_health.backfill()
+    except Exception:
+        pass
     backfilled = posture.backfill()
     graded = posture.grade()
     cur = posture.current()
@@ -1298,6 +1308,16 @@ def _pulse_action_eval(row, det) -> dict:
         "gm_slope": row.get("gm_slope"),
         "est_revision_pct": row.get("est_revision_pct"),
         "beat_streak": row.get("beat_streak"),
+        # balance-sheet vulnerability (axis 2) — flywheel leverage +
+        # cash generation; banded sector-aware in stage 0
+        "net_debt_ebitda": row.get("net_debt_ebitda"),
+        "debt_to_equity": row.get("debt_to_equity"),
+        "fcf_ttm": row.get("fcf_ttm"),
+        "fcf_margin": row.get("fcf_margin"),
+        # market credit (axis 1) — same block for every row on the
+        # board; the caller injects it once per request
+        "credit_state": row.get("credit_state"),
+        "credit_confidence": row.get("credit_confidence"),
         "earn_days": earn_days,
         "num_analysts": row.get("num_analysts"),
         "flywheel_age_days": _age(row.get("flywheel_at")),
@@ -1549,6 +1569,8 @@ async def portfolio_pulse(portfolio_id: str = None):
                fw.fwd_pe, fw.num_analysts, fw.updated_at AS flywheel_at,
                fw.rev_growth, fw.eps_growth, fw.gm_slope,
                fw.est_revision_pct, fw.beat_streak,
+               fw.net_debt_ebitda, fw.debt_to_equity,
+               fw.fcf_ttm, fw.fcf_margin,
                s.fundamental_detail->>'decel_cause' AS decel_cause,
                s.fundamental_detail->>'demand_health' AS demand_health,
                prev.state AS prev_state
@@ -1592,6 +1614,15 @@ async def portfolio_pulse(portfolio_id: str = None):
         etf_ctx = _sector_flow_map()
         from app.signals.spec_pulse import spec_symbols
         spec_set = spec_symbols()
+        # market-credit axis — one block per board, journaled read;
+        # missing journal → None → stage0 'unknown', never 'healthy'
+        try:
+            from app.signals import credit_health as _ch
+            _cr = _ch.latest() or _ch.snapshot() or {}
+        except Exception:
+            _cr = {}
+        _cr_state, _cr_conf = (_cr.get("credit_state"),
+                               _cr.get("confidence"))
         for r in rows:
             sym = r["symbol"]
             sec = r.get("sector")
@@ -1620,7 +1651,9 @@ async def portfolio_pulse(portfolio_id: str = None):
                 {**r, "mom_state": r.get("momentum_state"),
                  "prev_state": r.get("prev_state"),
                  "fund_state": r.get("fundamental_state"),
-                 "fv_upside": fv_up}, det)
+                 "fv_upside": fv_up,
+                 "credit_state": _cr_state,
+                 "credit_confidence": _cr_conf}, det)
             act, why = ev["action"], ev["why"]
             kind = "position" if (r["status"] == "active"
                                   and shares > 0) else "watch"

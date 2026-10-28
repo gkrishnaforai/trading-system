@@ -37,10 +37,24 @@ def _spec() -> dict:
     return pulse_engine._load().get("posture_rules") or {}
 
 
-def _ctx(payload: dict, stance: Optional[str]) -> dict:
+def _ctx(payload: dict, stance: Optional[str],
+         asof=None) -> dict:
     """regime_snapshots.payload → flat posture condition ctx."""
     b = payload.get("breadth") or {}
     h = payload.get("hedge") or {}
+    cr = payload.get("credit") or {}
+    if not cr.get("credit_state"):
+        # snapshot predates the credit block — fall back to the
+        # credit_health journal at fred_asof ≤ as_of: reconstructed
+        # history keeps old evals point-in-time honest
+        try:
+            from app.signals import credit_health
+            j = credit_health.latest(asof)
+            if j:
+                cr = {"credit_state": j["credit_state"],
+                      "confidence": j["confidence"]}
+        except Exception:
+            pass
     return {
         "breadth_score": _n(b.get("breadth_score")),
         "hl_broken": _n(b.get("pct_hl_broken")),
@@ -52,7 +66,32 @@ def _ctx(payload: dict, stance: Optional[str]) -> dict:
         "stance": stance,
         "regime": payload.get("regime"),
         "hedge_tier": h.get("tier"),
+        # absent → explicit 'unknown', never silently healthy — the
+        # data-quality policy is a real state, matched by the
+        # credit_unknown modifier below
+        "credit_state": cr.get("credit_state") or "unknown",
+        "credit_confidence": cr.get("confidence") or "low",
     }
+
+
+def _credit_mod(res: dict, c: dict, spec: dict) -> dict:
+    """Post-match credit modifier — market-wide credit stress adjusts
+    PERMISSIONS (new_longs, entry confirmation, flags), never the
+    regime label itself. First-match-wins like the rules; set/flag/
+    note merge into the matched result and flow into the journaled
+    evidence. Missing ctx → no modifier matches (fail-closed per
+    _pcond), so 'unknown' requires an explicit yaml entry."""
+    for m in spec.get("credit_modifiers") or []:
+        if _pcond(c, m.get("when") or {}):
+            for k, v in (m.get("set") or {}).items():
+                res[k] = v
+            if m.get("flag"):
+                res.setdefault("flags", []).append(m["flag"])
+            if m.get("note"):
+                res["credit_note"] = m["note"]
+            res["credit_matched"] = m.get("name") or m.get("flag")
+            break
+    return res
 
 
 def _pcond(c: dict, when: dict) -> bool:
@@ -85,29 +124,34 @@ def _thresh(rule: str, cond_key: str, default: float) -> float:
         return default
 
 
-def evaluate(stance: Optional[str], payload: dict) -> dict:
+def evaluate(stance: Optional[str], payload: dict,
+             asof=None) -> dict:
     """(stance, payload) → {posture, new_longs, shorts, hedge_on,
-    note, matched, evidence, instruments}."""
+    note, matched, evidence, instruments, flags?, credit_note?}."""
     spec = _spec()
-    c = _ctx(payload or {}, stance)
+    c = _ctx(payload or {}, stance, asof)
     for r in spec.get("rules") or []:
         when = {k: (_thresh(r["name"], k, v)
                     if k.endswith(("_lt", "_gt")) else v)
                 for k, v in (r.get("when") or {}).items()}
         if _pcond(c, when):
-            return {"posture": r["posture"], "matched": r["name"],
-                    "new_longs": bool(r.get("new_longs")),
-                    "shorts": bool(r.get("shorts")),
-                    "hedge_on": bool(r.get("hedge_on")),
-                    "note": r.get("note"), "evidence": c,
-                    "instruments": spec.get("instruments") or {}}
+            return _credit_mod(
+                {"posture": r["posture"], "matched": r["name"],
+                 "new_longs": bool(r.get("new_longs")),
+                 "shorts": bool(r.get("shorts")),
+                 "hedge_on": bool(r.get("hedge_on")),
+                 "note": r.get("note"), "evidence": c,
+                 "instruments": spec.get("instruments") or {}},
+                c, spec)
     d = spec.get("default") or {}
-    return {"posture": d.get("posture", "neutral"), "matched": "default",
-            "new_longs": bool(d.get("new_longs", True)),
-            "shorts": bool(d.get("shorts")),
-            "hedge_on": bool(d.get("hedge_on")),
-            "note": d.get("note"), "evidence": c,
-            "instruments": spec.get("instruments") or {}}
+    return _credit_mod(
+        {"posture": d.get("posture", "neutral"), "matched": "default",
+         "new_longs": bool(d.get("new_longs", True)),
+         "shorts": bool(d.get("shorts")),
+         "hedge_on": bool(d.get("hedge_on")),
+         "note": d.get("note"), "evidence": c,
+         "instruments": spec.get("instruments") or {}},
+        c, spec)
 
 
 def _journal(res: dict, as_of) -> None:
@@ -147,7 +191,7 @@ def current() -> dict:
     p = row["payload"]
     if isinstance(p, str):
         p = json.loads(p)
-    res = evaluate(row.get("stance"), p)
+    res = evaluate(row.get("stance"), p, asof=row["as_of"])
     res["regime_as_of"] = str(row["as_of"])
     res["vol"] = {"vix": _n(p.get("vix")),
                   "vxn": _n(p.get("vxn")) or _vxn_from_payload(p),
@@ -175,7 +219,8 @@ def backfill() -> int:
         p = row["payload"]
         if isinstance(p, str):
             p = json.loads(p)
-        _journal(evaluate(row.get("stance"), p), row["as_of"])
+        _journal(evaluate(row.get("stance"), p, asof=row["as_of"]),
+                 row["as_of"])
         n += 1
     return n
 

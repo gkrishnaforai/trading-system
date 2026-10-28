@@ -827,3 +827,204 @@ def test_suggest_stamps_rules_version():
         tp._live = old
     assert s['rules_version'] and s['rules_version'].startswith('rules.')
     assert s['pulse_action'] == 'add' and s['entry_px'] == 100.0
+
+
+# ---------- credit axes — market credit × company balance sheet --------
+
+def test_credit_leg_matrix():
+    from app.signals.pulse_engine import _credit_leg
+    assert _credit_leg("severe", "stressed") == "severe_penalty"
+    assert _credit_leg("severe", "healthy") == "market_penalty"
+    assert _credit_leg("severe", "watch") == "market_penalty"
+    assert _credit_leg("stress", "stressed") == "elevated_penalty"
+    assert _credit_leg("stress", "healthy") is None
+    assert _credit_leg("healthy", "stressed") == "company_risk"
+    assert _credit_leg("caution", "stressed") == "company_risk"
+    assert _credit_leg("unknown", "stressed") is None
+    assert _credit_leg("healthy", "healthy") is None
+
+
+def test_balance_sheet_states():
+    from app.signals.pulse_engine import _balance_sheet
+    c = lambda **kw: {**{"sector": "technology"}, **kw}
+    # levered + weak cash → stressed
+    assert _balance_sheet(c(net_debt_ebitda=4.5, fcf_margin=-0.02)
+                        )[0] == "stressed"
+    # extreme leverage alone → stressed even with cash
+    assert _balance_sheet(c(net_debt_ebitda=6.5, fcf_margin=0.10)
+                        )[0] == "stressed"
+    # levered but cash-generative → watch, not stressed
+    assert _balance_sheet(c(net_debt_ebitda=4.5, fcf_margin=0.10)
+                        )[0] == "watch"
+    # fortress → healthy
+    assert _balance_sheet(c(net_debt_ebitda=1.0, fcf_margin=0.15)
+                        )[0] == "healthy"
+    # all inputs missing → unscorable, never inferred healthy
+    assert _balance_sheet(c()) == ("unscorable", "low")
+    # financials — leverage is the business model → exempt
+    assert _balance_sheet(c(sector="financials",
+                            net_debt_ebitda=12.0)) == ("exempt", "low")
+    # sector bands: utilities tolerance is higher
+    assert _balance_sheet(c(sector="utilities", net_debt_ebitda=5.0,
+                            fcf_margin=0.05))[0] == "watch"
+
+
+def test_credit_squeeze_reduce():
+    # severe market credit + stressed balance sheet + broken tape
+    # → the kill combination convicts
+    r = evaluate(_row(mom_state="downtrend", fund_state="growing",
+                      revision_grade="A", fv_upside=None,
+                      credit_state="severe",
+                      net_debt_ebitda=5.0, fcf_margin=-0.02))
+    assert r["action"] == "reduce"
+    assert r["matched_rule"] == "credit_squeeze"
+    assert r["stage0"]["credit_leg"] == "severe_penalty"
+
+
+def test_severe_credit_fortress_no_reduce():
+    # same market shock, strong balance sheet → moderate penalty
+    # only; the broken tape alone stays on the existing path
+    r = evaluate(_row(mom_state="downtrend", fund_state="growing",
+                      revision_grade="A", fv_upside=30.0,
+                      credit_state="severe",
+                      net_debt_ebitda=0.5, fcf_margin=0.20))
+    assert r["action"] != "reduce"
+    assert r["stage0"]["credit_leg"] == "market_penalty"
+    assert "credit_market_stress" in (r.get("annotations") or {}).get("confidence", [])
+
+
+def test_credit_leg_blocks_add():
+    # add-eligible row under severe credit + stressed bs → add_blocked
+    r = evaluate(_row(credit_state="severe",
+                      net_debt_ebitda=5.0, fcf_margin=-0.02))
+    assert r["action"] == "watch" or r.get("label") == "add_blocked"
+    # and a healthy-credit twin of the same row is NOT blocked by credit
+    r2 = evaluate(_row(credit_state="healthy",
+                       net_debt_ebitda=0.5, fcf_margin=0.20))
+    assert r2["stage0"]["credit_leg"] is None
+
+
+def test_severe_penalty_cancels_repair():
+    # SNDK-style repair signature under severe credit + stressed bs
+    # → repair deferred, reduce stands (credit gate on repair_eligible)
+    r = evaluate(_row(mom_state="knife", fund_state="cyclical",
+                      revision_grade="B+", fv_upside=None,
+                      momentum_detail={"dip_phase": "turning_up"},
+                      credit_state="severe",
+                      net_debt_ebitda=5.0, fcf_margin=-0.02))
+    assert r["stage0"]["repair_eligible"] is False
+    assert r["action"] == "reduce"
+
+
+def test_stressed_bs_overrides_benign_slowing():
+    # CLS profile + a stressed balance sheet — the benign-cause
+    # modifier cannot neutralize a real capital-structure risk
+    r = evaluate(_row(
+        mom_state="downtrend", fund_state="slowing",
+        revision_grade="B", decel_cause="base_normalization",
+        demand_health="strong", est_revision_pct=0.29,
+        rev_growth=0.82, credit_state="healthy",
+        net_debt_ebitda=5.5, fcf_margin=-0.05))
+    assert r["stage0"]["slowing_severity"] == "normal"
+    assert r["action"] == "reduce"
+
+
+def test_hard_reduce_fires_regardless_of_credit():
+    # both_legs_failing under HEALTHY credit — credit never rescues
+    # a real two-leg breakdown
+    r = evaluate(_row(mom_state="downtrend", fund_state="deteriorating",
+                      credit_state="healthy",
+                      net_debt_ebitda=0.3, fcf_margin=0.25))
+    assert r["action"] == "reduce"
+    assert r["matched_rule"] == "both_legs_failing"
+
+
+# ---------- credit_health — classifier, freshness, hysteresis ----------
+
+def test_credit_classifier_states():
+    from app.signals.credit_health import _classify
+    # crisis level → severe regardless of velocity
+    assert _classify(6.5, 0.1, 0.9, 0.1)[0] == "severe"
+    # fast HY widening corroborated by IG → severe (spreading)
+    assert _classify(5.0, 0.1, 0.8, 0.30)[0] == "severe"
+    # same HY widening WITHOUT IG confirmation → stress not severe
+    assert _classify(5.0, 0.1, 0.8, None)[0] == "stress"
+    # elevated + widening → stress
+    assert _classify(4.7, 0.1, 0.30, 0.05)[0] == "stress"
+    # elevated level flat → caution (level alone is a flag)
+    assert _classify(4.7, 0.0, 0.0, 0.0)[0] == "caution"
+    # elevated drifting → caution
+    assert _classify(3.7, 0.05, 0.10, 0.02)[0] == "caution"
+    # big velocity off a low base → caution
+    assert _classify(2.9, 0.0, 0.55, 0.0)[0] == "caution"
+    # contained → healthy
+    assert _classify(2.9, 0.0, 0.10, 0.0)[0] == "healthy"
+    # missing → unknown, never inferred healthy
+    assert _classify(None, None, None, None)[0] == "unknown"
+
+
+def test_credit_hysteresis_distinct_obs():
+    from app.signals.credit_health import _apply_hysteresis
+    # enter severe instantly — a brake's false-positive cost is low
+    assert _apply_hysteresis("severe", "healthy", 0) == ("severe", 0)
+    # held severe through 1-2 distinct permissive observations
+    assert _apply_hysteresis("caution", "severe", 1) == ("severe", 1)
+    assert _apply_hysteresis("caution", "severe", 2) == ("severe", 2)
+    # exits on the 3rd distinct permissive observation
+    assert _apply_hysteresis("caution", "severe", 3) == ("caution", 3)
+    # severe → stress exits immediately (still restrictive); only the
+    # permissive exit is held
+    assert _apply_hysteresis("stress", "severe", 0) == ("stress", 0)
+    # relapse resets: raw back to stress while held → no hold
+    assert _apply_hysteresis("stress", "severe", 2) == ("stress", 0)
+
+
+def test_credit_confidence_gates():
+    from app.signals.credit_health import compute
+    # missing HY → unknown + low — never inferred healthy
+    b = compute(hy_oas=None)
+    assert b["credit_state"] == "unknown" and b["confidence"] == "low"
+    # stale >7d → low even with a state
+    b = compute(hy_oas=3.0, hy_oas_d20=0.1, ig_oas_d20=0.02,
+                stale_days=10)
+    assert b["confidence"] == "low"
+    # fresh + corroborated → high
+    b = compute(hy_oas=3.0, hy_oas_d20=0.1, ig_oas=1.2, ig_oas_d20=0.02,
+                stale_days=2, velocity_seen=True)
+    assert b["confidence"] == "high" and b["credit_state"] == "healthy"
+    # missing IG corroboration → medium
+    b = compute(hy_oas=3.0, hy_oas_d20=0.1, ig_oas_d20=None,
+                stale_days=2, velocity_seen=True)
+    assert b["confidence"] == "medium"
+
+
+def test_posture_credit_modifiers():
+    # severe credit restricts new longs WITHOUT changing the regime
+    # label — modifier, not override
+    from app.signals import posture
+    payload = {"breadth": {"breadth_score": 80, "pct_above_50": 70},
+               "credit": {"credit_state": "severe"}}
+    r = posture.evaluate("RISK-ON", payload)
+    assert r["posture"] == "constructive"     # regime unchanged
+    assert r["new_longs"] is False            # permission restricted
+    assert "credit_severe" in r.get("flags", [])
+    # caution flags, never restricts
+    r2 = posture.evaluate("RISK-ON",
+                          {"breadth": {"breadth_score": 80,
+                                       "pct_above_50": 70},
+                           "credit": {"credit_state": "caution"}})
+    assert r2["new_longs"] is True
+    assert "credit_warned" in r2.get("flags", [])
+    # stress requires confirmed entry
+    r3 = posture.evaluate("RISK-ON",
+                          {"breadth": {"breadth_score": 80,
+                                       "pct_above_50": 70},
+                           "credit": {"credit_state": "stress"}})
+    assert r3["new_longs"] is True
+    assert r3.get("entry_confirm_required") is True
+    # absent credit → explicit unknown flag, never silently healthy
+    r4 = posture.evaluate("RISK-ON",
+                          {"breadth": {"breadth_score": 80,
+                                       "pct_above_50": 70}})
+    assert r4["evidence"]["credit_state"] == "unknown"
+    assert "credit_unknown" in r4.get("flags", [])

@@ -19,7 +19,7 @@
 # on a null scalar are both FALSE — "not in D" is not the same as
 # "is C". Comparators are exactly as named (gt strict, gte inclusive).
 
-version: 4.0
+version: 4.1
 
 # ---------------------------------------------------------------------
 # STAGE 0 — computed inputs (single-assignment, explicit precedence)
@@ -136,6 +136,22 @@ annotations:
       when: {slowing_severity: low}
       note: "fundamentals slowing ({decel_cause}) — demand intact,
              revisions positive; not a failing leg"
+    - name: credit_market_stress
+      # market-wide credit stress penalizes every name moderately —
+      # a stressed balance sheet inside it is the failing leg, this
+      # is the moderate leg for healthier names
+      when: {credit_leg_in: [market_penalty, elevated_penalty]}
+      note: "credit {credit_state} — market-level headwind
+             ({credit_leg})"
+    - name: credit_company_risk
+      # stressed balance sheet in non-severe credit — company-level
+      # warning, visible without a market shock
+      when: {credit_leg: company_risk}
+      note: "stressed balance sheet ({balance_sheet_state}) —
+             company-level credit risk"
+    - name: bs_unscorable
+      when: {balance_sheet_state: unscorable}
+      note: "balance sheet unscorable — leverage inputs absent"
     - name: metrics_contradict_state
       when: {extended_metrics: true, tape_not_in: tape_extensible}
       note: "extension reads off a non-constructive state — likely a
@@ -206,6 +222,15 @@ add_policy:
     - hard_risk_active: false
     - risk_unverifiable: false      # can't verify critical risk →
                                     # no add until flags calibrate
+    - any:
+        - {credit_leg_is: null}     # no credit leg — the normal case
+        - {credit_leg_in: [market_penalty, company_risk]}
+                                    # moderate legs annotate, never
+                                    # gate; severe/elevated (credit
+                                    # shock × weak balance sheet) are
+                                    # never an add. Healthy credit
+                                    # removes a headwind — it never
+                                    # creates a buy.
   on_fail: watch
   on_fail_label: add_blocked
   on_fail_why: "add blocked — {gate}"
@@ -318,6 +343,18 @@ rules:
     action: reduce
     confidence: "{high if fv_valid else low}"
     why: "tape {tape}, fundamentals {fund}, revisions {rev} — no leg supporting the position"
+
+  - name: credit_squeeze
+    # the kill combination — severe market credit stress AND a
+    # stressed balance sheet AND a broken tape. Credit shock alone
+    # is market_penalty (annotated); leverage alone is company_risk
+    # (annotated); only the joint leg convicts.
+    when:
+      tape_in: tape_broken
+      credit_leg: severe_penalty
+    action: reduce
+    confidence: high
+    why: "credit severe + stressed balance sheet (nde {net_debt_ebitda}x) + tape {tape} — the credit squeeze"
 
   - name: deteriorating_first_crack
     when: {fund_in: fund_bad_hard, tape_in: [rolling_over]}
@@ -723,7 +760,8 @@ rank_weights:
 # Condition vocabulary (mini-evaluator in posture._pcond):
 #   <key>_lt / <key>_gt / <key>_in / <key> == value
 # ctx keys: breadth_score, hl_broken, pct_above_50, pct_20d_low,
-# pct_up_5d, p_deeper, stance, regime, hedge_tier
+# pct_up_5d, p_deeper, stance, regime, hedge_tier,
+# credit_state, credit_confidence
 # Missing ctx value → condition fails → falls to `default`.
 posture_rules:
   rules:
@@ -781,6 +819,35 @@ posture_rules:
     shorts: true
     hedge_on: false
     note: "no extreme either way — standard playbook"
+
+  # credit_modifiers — POST-MATCH risk-limit adjustments, evaluated
+  # after the posture rule fires (first-match-wins). Credit stress is
+  # a modifier of PERMISSIONS, not a regime override: it can restrict
+  # new risk before breadth breaks but never declares the regime.
+  # caution=flag · stress=require confirmation · severe=no new longs
+  # · unknown=explicit data-quality flag, never inferred healthy.
+  credit_modifiers:
+    - name: credit_severe
+      when: {credit_state: severe}
+      set: {new_longs: false, entry_confirm_required: true}
+      flag: credit_severe
+      note: "credit severe — no new longs; hedge review even if breadth holds"
+
+    - name: credit_stress
+      when: {credit_state: stress}
+      set: {entry_confirm_required: true}
+      flag: credit_stress
+      note: "credit stress — new longs need confirmed entry structure"
+
+    - name: credit_warned
+      when: {credit_state: caution}
+      flag: credit_warned
+      note: "credit caution — flag new-long suggestions; no restriction"
+
+    - name: credit_unknown
+      when: {credit_state: unknown}
+      flag: credit_unknown
+      note: "credit data missing/stale — confidence lowered; not a stress signal"
 
   # what the posture permits TACTICALLY — instruments, not orders
   instruments:

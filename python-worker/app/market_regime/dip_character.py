@@ -54,7 +54,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 _ETFS = ["SPY", "QQQ", "SMH", "ARKK", "XLU", "GLD", "TLT", "UUP",
-         "HYG", "LQD"]
+         "HYG", "LQD", "IEF"]
 
 
 def _closes(books: dict, sym: str) -> list[float]:
@@ -130,6 +130,12 @@ def classify() -> Optional[dict[str, Any]]:
 
     hyg5, lqd5 = _ret(px["HYG"], 5), _ret(px["LQD"], 5)
     credit = (hyg5 - lqd5) if None not in (hyg5, lqd5) else None
+    # 20d confirmations for the credit_health block — junk-vs-IG and
+    # junk-vs-Treasuries RS; corroborate spreads, never substitute
+    hyg20, lqd20, ief20 = (_ret(px["HYG"], 20), _ret(px["LQD"], 20),
+                           _ret(px["IEF"], 20))
+    hyg_lqd_20d = (hyg20 - lqd20) if None not in (hyg20, lqd20) else None
+    hyg_ief_20d = (hyg20 - ief20) if None not in (hyg20, ief20) else None
 
     arkk20, qqq20, xlu20 = (_ret(px["ARKK"], 20), _ret(px["QQQ"], 20),
                             _ret(px["XLU"], 20))
@@ -216,6 +222,10 @@ def classify() -> Optional[dict[str, Any]]:
                              if defen_bid is not None else None),
         "credit_stress_hyg_lqd_5d": (round(credit, 4)
                                     if credit is not None else None),
+        "hyg_lqd_20d": (round(hyg_lqd_20d, 4)
+                        if hyg_lqd_20d is not None else None),
+        "hyg_ief_20d": (round(hyg_ief_20d, 4)
+                        if hyg_ief_20d is not None else None),
         "dispersion_20d": (round(dispersion, 4)
                            if dispersion is not None else None),
         "corr_smh_spy_20d": (round(corr_now, 3)

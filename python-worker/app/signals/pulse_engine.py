@@ -206,6 +206,17 @@ def _normalize(row: dict) -> dict:
         "decel_cause": row.get("decel_cause"),
         "demand_health": row.get("demand_health"),
         "gm_slope": _num(row.get("gm_slope")),
+        # balance-sheet vulnerability (axis 2) — flywheel leverage +
+        # cash-generation legs; sector-banded in stage 0, exempt where
+        # leverage IS the business model
+        "net_debt_ebitda": _num(row.get("net_debt_ebitda")),
+        "debt_to_equity": _num(row.get("debt_to_equity")),
+        "fcf_ttm": _num(row.get("fcf_ttm")),
+        "fcf_margin": _num(row.get("fcf_margin")),
+        # market-credit state (axis 1) — injected per-row by the caller
+        # from credit_health; 'unknown' is a real state, never inferred
+        "credit_state": row.get("credit_state") or "unknown",
+        "credit_confidence": row.get("credit_confidence"),
         "future_score": _num(row.get("future_score")),
         "lane": row.get("lane"),
         "gq_score": _num(row.get("gq_score")),
@@ -234,6 +245,66 @@ def _normalize(row: dict) -> dict:
 
 
 # ---------------- stage 0: computed ------------------------------------
+
+# balance-sheet bands — (stress_nde, watch_nde) net debt/EBITDA by
+# sector; DEFAULT for the rest. Sector-aware because EBITDA/debt
+# levels aren't comparable across business models. Exempt sectors
+# mirror risk_flags.leverage_critical.sector_exempt — leverage IS the
+# business model there and needs an FFO/coverage-style calc that
+# doesn't exist yet, so they route to `exempt`, never `stressed`.
+_BS_EXEMPT = {"financials", "financial services", "banks",
+              "insurance", "reit", "real estate"}
+_BS_BANDS = {"utilities": (6.0, 4.0),
+             "energy": (4.0, 2.5),
+             "communication services": (4.5, 3.0)}
+_BS_DEFAULT = (4.0, 2.5)
+
+
+def _balance_sheet(c: dict) -> tuple[str, str]:
+    """(state, confidence) — the company-vulnerability axis.
+    Corroboration required: a levered ratio alone is `watch`;
+    `stressed` needs leverage AND weak cash generation (or extreme
+    leverage alone — nde ≥ 1.5×band). All inputs missing →
+    `unscorable`, never `healthy`."""
+    if c.get("sector") in _BS_EXEMPT:
+        return "exempt", "low"
+    nde, dte = c.get("net_debt_ebitda"), c.get("debt_to_equity")
+    fcfm, fcft = c.get("fcf_margin"), c.get("fcf_ttm")
+    if all(v is None for v in (nde, dte, fcfm)):
+        return "unscorable", "low"
+    conf = "high" if (nde is not None and fcfm is not None) \
+        else "medium"
+    s_nde, w_nde = _BS_BANDS.get(c.get("sector"), _BS_DEFAULT)
+    weak_cash = ((fcfm is not None and fcfm < 0)
+                 or (fcft is not None and fcft <= 0))
+    if ((nde is not None and nde >= s_nde and weak_cash)
+            or (nde is not None and nde >= s_nde * 1.5)
+            or (dte is not None and dte >= 4 and weak_cash)):
+        return "stressed", conf
+    if ((nde is not None and nde >= w_nde)
+            or (dte is not None and dte >= 2
+                and fcfm is not None and fcfm < 0.05)):
+        return "watch", conf
+    return "healthy", conf
+
+
+def _credit_leg(credit_state: Optional[str], bs_state: str
+                ) -> Optional[str]:
+    """The two-axis decision cell — market credit × company balance
+    sheet. severe×stressed is the only failing leg; a market shock
+    alone is a moderate penalty; a stressed balance sheet in calm
+    credit stays a company-level warning. `unknown` credit yields no
+    leg — missing market data never invents company risk."""
+    if credit_state == "severe":
+        return ("severe_penalty" if bs_state == "stressed"
+                else "market_penalty")
+    if credit_state == "stress" and bs_state == "stressed":
+        return "elevated_penalty"
+    if bs_state == "stressed" and credit_state in \
+            ("healthy", "caution"):
+        return "company_risk"
+    return None
+
 
 def _stage0(c: dict) -> dict:
     """Single-assignment derived inputs — precedence explicit."""
@@ -266,6 +337,13 @@ def _stage0(c: dict) -> dict:
         stop = px * 0.92
     risk_atr = (abs(px - stop) / (px * atr)
                 if px and stop and atr else None)
+    # balance-sheet vulnerability — axis 2 of the credit design.
+    # Computed BEFORE slowing_severity: a `stressed` balance sheet is
+    # a hard-risk override on the benign-cause modifier (a benign
+    # slowdown doesn't neutralize when the capital structure is
+    # deteriorating). Also feeds repair_eligible's credit gate.
+    bs_state, bs_conf = _balance_sheet(c)
+    credit_leg = _credit_leg(c.get("credit_state"), bs_state)
     # slowing_severity — Layer-B read of a `slowing` fund label. The
     # classifier's raw state stays canonical upstream (journal, stock
     # page); this computed input decides how much it weighs as a
@@ -277,9 +355,8 @@ def _stage0(c: dict) -> dict:
     #            modifier can never soften a real failing leg
     # Benign causes are candidates, not proof — the hard-risk override
     # restores full severity on estimate cuts, weak demand, FCF burn,
-    # or severe margin damage. Missing inputs never qualify as benign.
-    # (balance-sheet stress has no reliable row input yet — the
-    # leverage flag is pending_calibration; TODO when it promotes.)
+    # severe margin damage, or a stressed balance sheet. Missing
+    # inputs never qualify as benign.
     if c["fund"] == "slowing":
         benign = (c.get("decel_cause") in _BENIGN_DECEL
                   and c.get("demand_health") in ("strong", "healthy")
@@ -289,6 +366,7 @@ def _stage0(c: dict) -> dict:
                 or (c.get("est_rev") is not None
                     and c["est_rev"] < -0.01)
                 or "fcf_negative" in c["flags"]
+                or bs_state == "stressed"
                 or (c.get("gm_slope") is not None
                     and c["gm_slope"] < -0.05))
         severity = "low" if (benign and not hard) else "normal"
@@ -305,6 +383,9 @@ def _stage0(c: dict) -> dict:
     #     is never deferred by a technical turn)
     #   - rev must be A/B: the street still cutting (C/D) cancels
     #     the deferral
+    #   - severe_credit × stressed balance sheet cancels it too —
+    #     a technical turn doesn't repair a capital-structure
+    #     problem inside a credit shock
     #   - missing inputs never infer repair (in-checks fail on None)
     groups = spec.get("groups") or {}
     neutral_or_good = (set(groups.get("fund_neutral") or [])
@@ -313,12 +394,16 @@ def _stage0(c: dict) -> dict:
         c.get("tape") in set(groups.get("tape_broken") or [])
         and c.get("dip_phase") in ("confirmed", "turning_up")
         and c.get("fund") in neutral_or_good
-        and rev_class in ("A", "B"))
+        and rev_class in ("A", "B")
+        and credit_leg != "severe_penalty")
     return {"fv_valid": fv_valid, "fv_note": fv_note,
             "rev_class": rev_class, "instrument": instrument,
             "stop_px": round(stop, 2) if stop else None,
             "risk_atr": round(risk_atr, 2) if risk_atr else None,
             "slowing_severity": severity,
+            "balance_sheet_state": bs_state,
+            "bs_confidence": bs_conf,
+            "credit_leg": credit_leg,
             "repair_eligible": repair_eligible}
 
 
@@ -623,7 +708,8 @@ def evaluate(row: dict) -> dict:
             "stage0": {k: c.get(k) for k in
                        ("fv_valid", "rev_class", "instrument",
                         "extended_metrics", "slowing_severity",
-                        "repair_eligible")},
+                        "balance_sheet_state", "bs_confidence",
+                        "credit_leg", "repair_eligible")},
             "annotations": ann,
             "condition_log": journal,
             "gate_results": gate_log or None,

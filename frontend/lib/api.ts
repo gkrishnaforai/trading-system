@@ -588,6 +588,10 @@ export type IncomePlan = {
     note?: string
     matched?: string
     regime_as_of?: string
+    flags?: string[]
+    credit_note?: string
+    entry_confirm_required?: boolean
+    evidence?: Record<string, unknown>
   }
   funds?: number | null
   bias?: string

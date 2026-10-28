@@ -627,6 +627,22 @@ export default async function PlanPage({
               {plan.bias === 'fear' ? '↯ be greedy' : '☂ be fearful'}
             </span>
           )}
+          {(() => {
+            const fl: string[] = pos.flags ?? []
+            const cr = fl.find((f: string) => f.startsWith('credit_'))
+            return cr ? (
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${cr === 'credit_severe'
+                ? 'border-defensive/40 text-defensive'
+                : cr === 'credit_stress' ? 'border-caution/40 text-caution'
+                  : 'border-hairline text-faint'}`}
+                title={String(pos.credit_note ?? '')}>
+                credit {cr.replace('credit_', '')}
+                {pos.evidence?.credit_confidence ? (
+                  <span className="text-faint">· {String(pos.evidence.credit_confidence as string)}</span>
+                ) : null}
+              </span>
+            ) : null
+          })()}
           {noLongs && (
             <span className="text-defensive text-[11px]">
               swings gated — contrarian lanes stay open

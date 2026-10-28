@@ -46,6 +46,7 @@ MACRO_SYMBOLS = {
     "move":  "^MOVE",
     "hyg":   "HYG",        # credit — junk vs IG is the real risk gauge
     "lqd":   "LQD",
+    "ief":   "IEF",        # 7-10y TSY — junk-vs-Treasuries credit RS
     "tlt":   "TLT",        # duration bid — read WITH yields, not alone
     "tips":  "TIP",        # breakevens proxy (TIP/IEI)
     "tsy13": "IEI",

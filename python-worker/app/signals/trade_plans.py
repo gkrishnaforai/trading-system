@@ -60,6 +60,8 @@ def _stored(sym: str) -> dict:
                fw.updated_at AS flywheel_at,
                fw.rev_growth, fw.eps_growth,
                fw.gm_slope, fw.est_revision_pct, fw.beat_streak,
+               fw.net_debt_ebitda, fw.debt_to_equity,
+               fw.fcf_ttm, fw.fcf_margin,
                s.fundamental_detail->>'decel_cause' AS decel_cause,
                s.fundamental_detail->>'demand_health' AS demand_health,
                prev.state AS prev_state,
@@ -120,6 +122,11 @@ def _live(sym: str) -> dict:
     ne = r.get("next_earnings_date")
     earn_days = ((ne.date() if hasattr(ne, "date") else ne)
                  - date.today()).days if ne else None
+    try:
+        from app.signals import credit_health as _ch
+        _cr = _ch.latest() or {}
+    except Exception:
+        _cr = {}
     ev = pulse_engine.evaluate({
         "mom_state": mom, "tape_dir": tape_dir,
         "fund_state": r.get("fundamental_state"),
@@ -143,11 +150,20 @@ def _live(sym: str) -> dict:
         "gm_slope": r.get("gm_slope"),
         "est_revision_pct": r.get("est_revision_pct"),
         "beat_streak": r.get("beat_streak"),
+        # credit axes — balance-sheet fields + the market block; same
+        # lockstep contract as board_api._pulse_action_eval
+        "net_debt_ebitda": r.get("net_debt_ebitda"),
+        "debt_to_equity": r.get("debt_to_equity"),
+        "fcf_ttm": r.get("fcf_ttm"),
+        "fcf_margin": r.get("fcf_margin"),
+        "credit_state": _cr.get("credit_state"),
+        "credit_confidence": _cr.get("confidence"),
     })
     return {"px": float(px) if px else None, "det": det,
             "mom": mom, "dip_phase": det.get("dip_phase"),
             "pulse_action": ev["action"],
             "pulse_rule": ev["matched_rule"],
+            "credit_state": _cr.get("credit_state"),
             "row": r}
 
 
@@ -201,6 +217,7 @@ def suggest(sym: str, use_case: str,
             "trail_rule": trail, "time_stop_days": ts_days,
             "mom": live["mom"], "dip_phase": live["dip_phase"],
             "pulse_action": live["pulse_action"],
+            "credit_state": live.get("credit_state"),
             # version stamp — the outcome grader attributes realized R
             # to the spec that produced this entry context
             "rules_version": pulse_engine.rules_version(),

@@ -176,6 +176,19 @@ def snapshot_regime(posture: dict) -> bool:
     fw = posture.get("forward") or {}
     dc = posture.get("dip_character") or {}
     al = posture.get("allocation") or {}
+    # canonical credit block — journaled + stamped into the payload so
+    # posture evals see credit_state PIT (and backfill joins by as_of)
+    try:
+        from app.signals import credit_health
+        ch = credit_health.snapshot()
+        posture = dict(posture)
+        posture["credit"] = {"credit_state": ch["credit_state"],
+                             "confidence": ch["confidence"],
+                             "fred_asof": ch["fred_asof"],
+                             "hy_oas": ch["hy_oas"],
+                             "raw_state": ch["raw_state"]}
+    except Exception as exc:                                # noqa: BLE001
+        logger.debug("credit health snapshot failed: %s", exc)
     try:
         db.execute_update(
             """
