@@ -51,11 +51,9 @@ def _u(sql: str, p: Optional[dict] = None) -> Any:
 
 
 def _active_sql() -> str:
-    return ("SELECT s.symbol FROM stocks s"
-            " JOIN portfolio_positions pp"
-            "   ON pp.stock_id=s.id AND pp.quantity>0"
-            " UNION SELECT s.symbol FROM stocks s"
-            "   JOIN watchlist_stocks ws ON ws.stock_id=s.id"
+    # book (canonical view) ∪ scan memberships — coverage extends
+    # beyond the book, but the book itself is defined once.
+    return ("SELECT symbol FROM book_symbols"
             " UNION SELECT symbol FROM rule_breaker_members"
             " UNION SELECT symbol FROM smallcap_members")
 

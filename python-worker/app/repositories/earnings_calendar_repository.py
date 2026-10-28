@@ -269,16 +269,10 @@ class EarningsCalendarRepository:
         upcoming-print view). Union them, earnings_data wins on a
         (symbol, date) collision since it may carry actuals."""
         # book scope — the calendar is a working surface, not a market
-        # almanac: only names we hold or explicitly watch. Mirrors the
-        # board `uni` union: positions + holdings + watchlist — a name
-        # only in portfolio_holdings must not be invisible here.
-        tier = ("(EXISTS (SELECT 1 FROM portfolio_positions pp"
-                " WHERE pp.stock_id = s.id AND pp.quantity > 0)"
-                " OR EXISTS (SELECT 1 FROM portfolio_holdings h"
-                "            WHERE h.symbol = s.symbol"
-                "            AND h.status IN ('active','inactive'))"
-                " OR EXISTS (SELECT 1 FROM watchlist_stocks ws"
-                "            WHERE ws.stock_id = s.id))")
+        # almanac. ONE canonical definition (book_symbols view,
+        # migration 166): positions>0 ∪ holdings(active,inactive)
+        # ∪ watchlist — identical to what the watcher reviews.
+        tier = ("(s.symbol IN (SELECT symbol FROM book_symbols))")
         query = f"""
         SELECT symbol, company_name, earnings_date,
                eps_estimate, eps_actual, revenue_estimate,

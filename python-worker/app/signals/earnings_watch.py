@@ -46,17 +46,12 @@ def _et_today() -> date:
     return datetime.now(ZoneInfo("America/New_York")).date()
 
 
-# the book — names we hold or explicitly watch. Screener/theme
-# memberships (rule_breaker, smallcap) are deliberately out: the
-# watcher exists to review *our* prints, not the universe.
-# portfolio_holdings joins on symbol (no stock_id); 'active' only —
-# a closed position shouldn't keep generating print alerts.
-_TIER = ("(EXISTS (SELECT 1 FROM portfolio_positions pp"
-         " WHERE pp.stock_id=s.id AND pp.quantity>0)"
-         " OR EXISTS (SELECT 1 FROM portfolio_holdings h"
-         "            WHERE h.symbol=s.symbol AND h.status='active')"
-         " OR EXISTS (SELECT 1 FROM watchlist_stocks ws"
-         "            WHERE ws.stock_id=s.id))")
+# the book — ONE canonical definition (book_symbols view, migration
+# 166): positions>0 ∪ holdings(active,inactive) ∪ watchlist — the
+# same union the board shows. Scan/theme memberships (rule_breaker,
+# smallcap) stay out: the watcher reviews *our* prints, not the
+# universe.
+_TIER = "(s.symbol IN (SELECT symbol FROM book_symbols))"
 
 
 def todays_reporters() -> list[str]:
