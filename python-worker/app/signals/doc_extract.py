@@ -165,7 +165,9 @@ _METRIC_HINTS = [
 
 def _num(num: str, unit: str):
     try:
-        v = float(num.replace(",", ""))
+        # [\d.,]+ can swallow a sentence-ending period ('$9.50.') —
+        # strip it or float() dies and the commitment is lost
+        v = float(num.replace(",", "").rstrip("."))
     except ValueError:
         return None
     u = (unit or "").lower()
@@ -183,16 +185,27 @@ def _revision_scan(text: str, covered: set) -> list:
     global _REV_RE
     if _REV_RE is None:
         _REV_RE = re.compile(
-            r"([^.]*?(?:expect|forecast|anticipate|project|guid|now "
-            r"see|estimate)[^.]*?" + _MONEY + r"[^.]*?(?:vs\.?|versus|"
-            r"compared to|down from|up from|from)[^.]*?" + _MONEY +
-            r"[^.]*?(?:previous|prior|earlier|forecast)[^.]*\.)",
+            r"((?:\d\.\d|[^.])*?(?:expect|forecast|anticipate|project|"
+            r"guid|now see|estimate)(?:\d\.\d|[^.])*?" + _MONEY +
+            r"(?:\d\.\d|[^.])*?(?:vs\.?|versus|compared to|above|"
+            r"below|down from|up from|from)(?:\d\.\d|[^.])*?" + _MONEY +
+            r"(?:\d\.\d|[^.])*?(?:previous|prior|earlier|forecast)"
+            r"(?:\d\.\d|[^.])*\.)",
             re.I | re.S)
     out = []
     for m in _REV_RE.finditer(text):
         sent = re.sub(r"\s+", " ", m.group(1)).strip()
-        new_v, prior_v = _num(m.group(2), m.group(3)), \
-            _num(m.group(4), m.group(5))
+        # value = first $-or-unit money, prior = second — bare digits
+        # ('Q2' → 2.0) poisoned new_v when taken from the regex groups
+        nums = []
+        for x in re.finditer(_MONEY, sent):
+            if "$" not in x.group(0) and not x.group(2):
+                continue
+            n = _num(x.group(1), x.group(2))
+            if n is not None:
+                nums.append(n)
+        new_v, prior_v = (nums[0], nums[1]) if len(nums) >= 2 \
+            else (None, None)
         if new_v is None or prior_v is None or new_v == prior_v:
             continue
         if _norm(sent) in covered:
@@ -206,6 +219,64 @@ def _revision_scan(text: str, covered: set) -> list:
                     "value": new_v, "prior_value": prior_v,
                     "period": (per.group(0).upper().replace(" ", "")
                                if per else "FY"),
+                    "synthetic": True})
+    return out
+
+
+# --- deterministic fresh-guidance safety net -------------------------
+# 'expects Q2 revenue of ~$4.2B' — a NEW commitment vs street is what
+# _journal_driver's consensus_pct compare was built for, but
+# _revision_scan only catches 'X vs ~$Y previously' revisions and the
+# LLM is bounded to 10 claims. Fresh guides need their own net.
+_GUID_RE = None
+_ANALYST_RE = re.compile(
+    r"analyst|street|consensus|zacks|wall\s*st", re.I)
+
+
+def _guidance_scan(text: str, covered: set) -> list:
+    """Management forward commitments with no prior figure — the KLAC
+    class: 'expects Q2 FY27 revenue of ~$4.2B'. Skips revision turf
+    ('vs / previously' — _revision_scan owns it), analyst/street
+    expectation sentences (not management promises), and non-money
+    numbers ('expects 15% growth' is not a $ commitment). A '$X to $Y'
+    range commits to its midpoint."""
+    global _GUID_RE
+    if _GUID_RE is None:
+        _GUID_RE = re.compile(
+            r"((?:\d\.\d|[^.])*?(?:expect|forecast|anticipate|project|"
+            r"guid|target|now see)(?:\d\.\d|[^.])*?" + _MONEY +
+            r"(?:\d\.\d|[^.])*\.)",
+            re.I | re.S)
+    out = []
+    for m in _GUID_RE.finditer(text):
+        sent = re.sub(r"\s+", " ", m.group(1)).strip()
+        sl = sent.lower()
+        if re.search(r"\bvs\.?\b|versus|previously|prior|earlier", sl):
+            continue
+        if _ANALYST_RE.search(sl):
+            continue
+        per = re.search(r"\b(20\d\d|fy\s*'?20?\d\d|q[1-4]\b)", sl)
+        if not per:
+            continue   # no period anchor — not a quarter commitment
+        nums = []
+        for x in re.finditer(_MONEY, sent):
+            raw = x.group(0)
+            if "$" not in raw and not x.group(2):
+                continue   # bare %/counts aren't commitments
+            n = _num(x.group(1), x.group(2))
+            if n is not None:
+                nums.append(n)
+        if not nums:
+            continue
+        val = (nums[0] + nums[1]) / 2 if len(nums) > 1 else nums[0]
+        if _norm(sent) in covered:
+            continue
+        metric = next((name for pat, name in _METRIC_HINTS
+                       if re.search(pat, sl)), "guidance")
+        out.append({"type": "driver", "text": sent[:200],
+                    "quote": sent[:400], "metric": metric,
+                    "value": val,
+                    "period": per.group(0).upper().replace(" ", ""),
                     "synthetic": True})
     return out
 
@@ -257,6 +328,16 @@ def analyze(symbol: str, text: str = "", url: str = "",
             continue
         s["symbol"] = sym
         valid.append(s)
+        covered.add(sn)
+
+    # fresh-guidance net — new commitments vs street the LLM dropped
+    for s in _guidance_scan(text, covered):
+        sn = _norm(s["quote"])
+        if any(cov and (cov in sn or sn in cov) for cov in covered):
+            continue
+        s["symbol"] = sym
+        valid.append(s)
+        covered.add(sn)
 
     # ---- journal: channels + risks → tailwinds; watches → table ----
     from app.signals import tailwinds as tw

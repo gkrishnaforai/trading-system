@@ -130,13 +130,17 @@ def _driver_deltas(sym: str) -> list[dict]:
 def _verdict(before: Optional[str], after: Optional[str],
              surprise: Optional[float],
              drivers: Optional[list] = None,
-             adj_surprise: Optional[float] = None) -> str:
+             adj_surprise: Optional[float] = None,
+             rev_surprise: Optional[float] = None) -> str:
     """improving/deteriorating from the thesis transition; surprise
     breaks ties. A named-driver guide CUT overrides the headline —
     the market repriced NFLX -6% on the ad-rev cut despite an EPS
     beat. A one-time-adjusted surprise can only upgrade the tie-break
     (a legal charge isn't business deterioration); the raw miss is
-    still journaled. 'pending' when there's no basis yet."""
+    still journaled. A material top-line miss caps improving → mixed
+    the same way a driver cut does — the GNRC class: EPS beat +
+    revenue miss + strong backlog is 'qualified', not improving.
+    'pending' when there's no basis yet."""
     rank = {"broken": 0, "deteriorating": 1, "unknown": 2,
             "improving": 3, "on_track": 4}
     cuts = [d for d in (drivers or []) if d.get("delta_dir") == "cut"]
@@ -164,6 +168,8 @@ def _verdict(before: Optional[str], after: Optional[str],
     if cuts + below and not (raises or above):
         return "deteriorating"
     if cuts + below:
+        return {"improving": "mixed", "on_track": "mixed"}.get(v, v)
+    if rev_surprise is not None and rev_surprise <= -0.02:
         return {"improving": "mixed", "on_track": "mixed"}.get(v, v)
     if (raises or above) and v in ("mixed", "pending"):
         return "improving"
@@ -331,7 +337,8 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
         logger.debug("earnings_watch one_time %s: %s", sym, exc)
     adj_surp = adj.get("adjusted_surprise")
     drivers = _driver_deltas(sym)
-    verdict = _verdict(before, after, surp, drivers, adj_surp)
+    verdict = _verdict(before, after, surp, drivers, adj_surp,
+                       rev_surp)
     direction = ("UP" if verdict == "improving" else
                  "DOWN" if verdict == "deteriorating" else "NEUTRAL")
     detail = {
