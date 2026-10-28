@@ -14,6 +14,7 @@ The system flags; the human decides and closes the plan.
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -387,7 +388,6 @@ def _outcome(plan: dict, kinds: list) -> dict:
         days = (d1 - d0).days
     except Exception:
         pass
-    import json
     snap = plan.get("entry_snapshot") or {}
     if isinstance(snap, str):
         try:
