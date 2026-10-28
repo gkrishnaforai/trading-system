@@ -19,7 +19,7 @@
 # on a null scalar are both FALSE — "not in D" is not the same as
 # "is C". Comparators are exactly as named (gt strict, gte inclusive).
 
-version: 3.9
+version: 4.0
 
 # ---------------------------------------------------------------------
 # STAGE 0 — computed inputs (single-assignment, explicit precedence)
@@ -308,14 +308,13 @@ rules:
       all:
         - {any: [{fv_lte: 0},        # valid + no upside
                  {fv_valid: false}]}  # no usable FV → low confidence
-        # …but not INTO a confirmed repair — dip_phase (inside
-        # momentum_detail) is finer-grained than the mom_state label:
-        # `confirmed` means the wash resolved; turning_up alone isn't
-        # enough to defer the reduce, and neither is a confirmed dip
-        # while the street is still cutting (C/D stay reduces).
-        - {any: [{dip_phase_is: null},
-                 {dip_phase_not_in: [confirmed]},
-                 {rev_class_in: [C, D]}]}
+        # …but not INTO a corroborated repair — repair_eligible is the
+        # SAME test base_repairing uses (turning_up+/confirmed dip,
+        # neutral-or-good fund, A/B revisions), so the evidence can't
+        # be 'repair' there and 'no support' here. Soft/hard fund legs
+        # and C/D revisions never defer: hard deterioration overrides
+        # a technical turn.
+        - {repair_eligible: false}
     action: reduce
     confidence: "{high if fv_valid else low}"
     why: "tape {tape}, fundamentals {fund}, revisions {rev} — no leg supporting the position"
@@ -434,15 +433,13 @@ rules:
     # confirmed/turning-up dip structure under a still-broken
     # mom_state — reached only by rows broken_no_support deferred on
     # the dip leg (or fund-good names with unusable FV). The street
-    # must not be cutting — C/D revisions stay reduces.
-    when:
-      tape_in: tape_broken
-      dip_phase_in: [confirmed, turning_up]
-      fund_in: {union: [fund_neutral, fund_good]}
-      rev_class_in: [A, B]
+    # must not be cutting — C/D revisions stay reduces. The test is
+    # the shared stage-0 repair_eligible — one definition, deferred
+    # here and exempted there.
+    when: {repair_eligible: true}
     action: watch
     label: base_repair
-    why: "tape {tape} but dip phase {dip_phase} — structure repairing under a {fund} business, revisions {rev}"
+    why: "reduce deferred — dip `{dip_phase}` repair under broken tape `{tape}`, corroborated by `{fund}` fund + {rev} revisions; unconfirmed turn — stalk, not an add"
 
   - name: turnaround_watch
     # every non-constructive tape, not just weak — a turnaround at
@@ -855,6 +852,12 @@ acceptance_tests:              # all must pass before deploy
      severity low, never reduce; same row with weak demand, estimate
      cuts, fcf_negative flag, or gm_slope ≤ -5pts → severity normal,
      reduce fires"
+  - "turning_up + neutral fund + B revisions → repair_eligible defers
+     broken_no_support → base_repairing stalk; confirmed + same →
+     same; turning_up + soft/hard fund or C/D revisions → reduce
+     still fires (repair never overrides deterioration)"
+  - "knife + no dip + neutral fund + C revisions → broken_no_support
+     reduce unchanged; missing dip_phase never infers repair"
 
 # portfolio sizing lives outside this file — a stock-level `add` never
 # implies the book has room (position size, sector cap, correlated

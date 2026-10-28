@@ -710,3 +710,73 @@ def test_slow_severity_only_modulates_slowing():
         r = evaluate(_slowing_row(fund_state=fund))
         assert r["action"] == "reduce", fund
         assert r["stage0"]["slowing_severity"] == "normal", fund
+
+
+# ---------- repair_eligible — shared broken-tape repair test ------------
+# SNDK surfaced the inconsistency: base_repairing accepted turning_up
+# while broken_no_support only deferred on confirmed — the same dip
+# evidence was 'repair' in one rule and 'no support' in the other.
+# One stage-0 flag now feeds both: deferred reduce ↔ stalk, never add.
+
+def _repair_row(**kw):
+    # SNDK profile — knife + turning_up + cyclical fund + B revisions
+    base = dict(mom_state="knife", fund_state="cyclical",
+                revision_grade="B", fv_upside=None, priced_status=None,
+                momentum_detail={"pct_b": 0.2,
+                                 "dip_phase": "turning_up"})
+    base.update(kw)
+    return _row(**base)
+
+
+def test_turning_up_neutral_b_defers_to_stalk():
+    # the SNDK case — reduce deferred, base_repair fires watch/stalk
+    r = evaluate(_repair_row())
+    assert r["action"] == "watch" and r["label"] == "base_repair"
+    assert r["stage0"]["repair_eligible"] is True
+
+
+def test_confirmed_repair_also_stalks():
+    r = evaluate(_repair_row(momentum_detail={
+        "pct_b": 0.2, "dip_phase": "confirmed"}))
+    assert r["action"] == "watch" and r["label"] == "base_repair"
+
+
+def test_repair_never_overrides_deterioration():
+    # turning_up + soft/hard fundamental legs → reduce still fires;
+    # a technical turn can't defer real deterioration
+    for fund in ("pressured", "deteriorating", "slowing"):
+        r = evaluate(_repair_row(
+            fund_state=fund, revision_grade="C",
+            decel_cause="demand_deterioration"))
+        assert r["action"] == "reduce", fund
+        assert r["stage0"]["repair_eligible"] is False
+
+
+def test_repair_never_overrides_street_cuts():
+    # C/D revisions cancel the deferral even with a confirmed dip +
+    # neutral fund — the street cutting overrides the repair
+    for grade in ("C", "D"):
+        r = evaluate(_repair_row(revision_grade=grade,
+                                 momentum_detail={
+                                     "pct_b": 0.2,
+                                     "dip_phase": "confirmed"}))
+        assert r["action"] == "reduce", grade
+
+
+def test_missing_repair_inputs_never_infer():
+    # null dip / null fund → no repair; reduce path or review per
+    # the surviving legs — repair is never inferred from missing data
+    r = evaluate(_repair_row(momentum_detail={"pct_b": 0.2},
+                             revision_grade="C"))
+    assert r["action"] == "reduce"    # knife + neutral + C, no dip
+    r2 = evaluate(_repair_row(fund_state=None))
+    assert r2["action"] == "watch" and r2["label"] == "review"
+
+
+def test_repair_eligible_never_becomes_add():
+    # corroborated repair is stalk/watch — the label can never reach
+    # an add action even when every other input is constructive
+    r = evaluate(_repair_row(fund_state="growing",
+                             revision_grade="A", fv_upside=30.0))
+    assert r["action"] in ("watch", "hold")
+    assert r["action"] != "add"

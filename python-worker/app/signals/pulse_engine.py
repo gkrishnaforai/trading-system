@@ -294,11 +294,32 @@ def _stage0(c: dict) -> dict:
         severity = "low" if (benign and not hard) else "normal"
     else:
         severity = "normal"
+    # repair_eligible — a broken-tape row whose dip structure is
+    # repairing under a not-failing business while the street isn't
+    # cutting. ONE definition, two consumers: broken_no_support
+    # defers the reduce on it; base_repairing fires the stalk on it —
+    # the same evidence can never be 'no support' in one rule and
+    # 'repair' in the other. Safeguards:
+    #   - fund must be neutral-or-good: slowing-normal / pressured /
+    #     deteriorating legs keep their reduce (hard deterioration
+    #     is never deferred by a technical turn)
+    #   - rev must be A/B: the street still cutting (C/D) cancels
+    #     the deferral
+    #   - missing inputs never infer repair (in-checks fail on None)
+    groups = spec.get("groups") or {}
+    neutral_or_good = (set(groups.get("fund_neutral") or [])
+                       | set(groups.get("fund_good") or []))
+    repair_eligible = (
+        c.get("tape") in set(groups.get("tape_broken") or [])
+        and c.get("dip_phase") in ("confirmed", "turning_up")
+        and c.get("fund") in neutral_or_good
+        and rev_class in ("A", "B"))
     return {"fv_valid": fv_valid, "fv_note": fv_note,
             "rev_class": rev_class, "instrument": instrument,
             "stop_px": round(stop, 2) if stop else None,
             "risk_atr": round(risk_atr, 2) if risk_atr else None,
-            "slowing_severity": severity}
+            "slowing_severity": severity,
+            "repair_eligible": repair_eligible}
 
 
 # ---------------- condition interpreter ---------------------------------
@@ -601,7 +622,8 @@ def evaluate(row: dict) -> dict:
             "confidence": conf, "why": why,
             "stage0": {k: c.get(k) for k in
                        ("fv_valid", "rev_class", "instrument",
-                        "extended_metrics", "slowing_severity")},
+                        "extended_metrics", "slowing_severity",
+                        "repair_eligible")},
             "annotations": ann,
             "condition_log": journal,
             "gate_results": gate_log or None,
