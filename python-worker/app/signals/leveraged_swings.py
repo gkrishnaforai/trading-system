@@ -206,7 +206,7 @@ def _open_position(etf: str, row: dict, as_of: str) -> Optional[dict]:
             " shares, risk_usd, idx_entry, idx_stop, high_water,"
             " spec, notes)"
             " VALUES (:e,:d,:en,:st,:tr,:t1,:t2,:rp,:sh,:ru,:ie,:is,"
-            " :hw,:sp,:n::jsonb)",
+            " :hw,:sp,CAST(:n AS jsonb))",
             {"e": etf, "d": as_of, "en": lv["entry"],
              "st": lv["stop"], "tr": lv["stop"],
              "t1": lv.get("t1"), "t2": lv.get("t2"),
@@ -744,7 +744,7 @@ def evaluate(funds: Optional[float] = None,
                 " stop_px, t1_px, t2_px, risk_pct_px, checklist,"
                 " veto, leaders)"
                 " VALUES (:d,:e,:src,:st,:rsi,:v50,:e8,:ic,:ep,:sp,"
-                " :t1,:t2,:rp,:ck::jsonb,:v,:ld::jsonb)"
+                " :t1,:t2,:rp,CAST(:ck AS jsonb),:v,CAST(:ld AS jsonb))"
                 " ON CONFLICT (as_of, etf) DO UPDATE SET"
                 " state=EXCLUDED.state, rsi=EXCLUDED.rsi,"
                 " vs50=EXCLUDED.vs50, ema8_rel=EXCLUDED.ema8_rel,"

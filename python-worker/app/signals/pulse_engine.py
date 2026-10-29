@@ -110,7 +110,7 @@ def register_spec(engine: str, version: str, spec: dict) -> None:
         from app.database import db
         db.execute_update(
             "INSERT INTO spec_versions (engine, version, spec)"
-            " VALUES (:e, :v, :s::jsonb)"
+            " VALUES (:e, :v, CAST(:s AS jsonb))"
             " ON CONFLICT (engine, version) DO NOTHING",
             {"e": engine, "v": version, "s": _j.dumps(spec)})
         _registered_specs.add((engine, version))
