@@ -695,6 +695,30 @@ async def _j_earnings_watch() -> dict:
     return await asyncio.to_thread(earnings_watch.poll)
 
 
+async def _j_research() -> dict:
+    """AI-tailwind research engine — deterministic evidence → versioned
+    scores → skeptical review → recommendation, journaled PIT to
+    research_runs. Same-day runs are skipped (event-triggered, not
+    every-tick): rerun happens on next day's tick or a manual POST."""
+    from app.research import run as research_run
+    from app.database import db
+    syms = [r["symbol"] for r in db.execute_query(
+        "SELECT symbol FROM stocks"
+        " WHERE LOWER(COALESCE(sector,'')) LIKE '%health%'")]
+    fresh = {r["symbol"] for r in db.execute_query(
+        "SELECT symbol FROM research_runs WHERE as_of=CURRENT_DATE")}
+    todo = [s for s in syms if s not in fresh]
+    done, errs = [], []
+    for s in todo:
+        try:
+            await asyncio.to_thread(research_run.run, s)
+            done.append(s)
+        except Exception as exc:
+            errs.append(f"{s}: {str(exc)[:80]}")
+    return {"ran": len(done), "skipped_fresh": len(syms) - len(todo),
+            "errors": errs[:10], "symbols": done}
+
+
 async def _j_short_data() -> dict:
     """Massive short-data pull → short_interest / short_volume /
     share_float. Staleness-aware and rate-budgeted — the shared key
@@ -881,6 +905,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "tier-sync": ("Coverage tiers + discovery", _j_tier_sync),
     "read-through": ("Extended-hours repricing", _j_read_through),
     "earnings-watch": ("Earnings-day watcher", _j_earnings_watch),
+    "research":     ("AI-tailwind research engine", _j_research),
     "selloff":     ("Selloff opportunity engine", _j_selloff),
     "short-data":  ("Short interest/volume pull", _j_short_data),
     "short-squeeze": ("Squeeze + covering eval", _j_short_squeeze),
@@ -936,6 +961,7 @@ _JOB_TIMEOUT = {
     "weekly-review": 15 * 60,
     "thesis-check": 40 * 60, "tier-sync": 5 * 60,
     "read-through": 8 * 60, "earnings-watch": 8 * 60,
+    "research": 25 * 60,
     "selloff": 5 * 60,
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "intraday-tape": 3 * 60, "correction-alarms": 3 * 60,
