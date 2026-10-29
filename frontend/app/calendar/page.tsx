@@ -224,11 +224,27 @@ function MacroLine({ e, detailed }: { e: MacroEvent; detailed?: boolean }) {
   )
 }
 
-export default async function CalendarPage() {
+export default async function CalendarPage({
+  searchParams,
+}: {
+  searchParams?: { day?: string }
+}) {
   const now = new Date()
   const todayStr = isoDay(now)
-  const start = isoDay(new Date(now.getTime() - 7 * 86400000))
-  const end = isoDay(new Date(now.getTime() + 14 * 86400000))
+  // selected day — ?day=YYYY-MM-DD, defaults to today. The week
+  // strip and past-day headers link here; the window extends to
+  // cover whatever day was picked.
+  const selDay = /^\d{4}-\d{2}-\d{2}$/.test(searchParams?.day ?? '')
+    ? searchParams!.day!
+    : todayStr
+  const start = isoDay(new Date(Math.min(
+    now.getTime() - 7 * 86400000,
+    Date.parse(`${selDay}T12:00:00Z`) - 86400000,
+  )))
+  const end = isoDay(new Date(Math.max(
+    now.getTime() + 14 * 86400000,
+    Date.parse(`${selDay}T12:00:00Z`),
+  )))
 
   const [events, earnings, watch] = await Promise.all([
     api.macroEvents(),
@@ -283,9 +299,9 @@ export default async function CalendarPage() {
     .sort((a, b) => (b.days_away ?? 0) - (a.days_away ?? 0))
     .slice(0, 10)
 
-  const todayEarn = earnByDay.get(todayStr) ?? []
-  const todayMacro = macroByDay.get(todayStr) ?? []
-  const todayEmpty = todayEarn.length === 0 && todayMacro.length === 0
+  const selEarn = earnByDay.get(selDay) ?? []
+  const selMacro = macroByDay.get(selDay) ?? []
+  const selEmpty = selEarn.length === 0 && selMacro.length === 0
   const nextDay = future[0]
   // past prints — earnings_data retains history; the same verdict
   // captures join by symbol|date, so last week renders identically
@@ -311,6 +327,7 @@ export default async function CalendarPage() {
       <section className="grid grid-cols-7 gap-1 pb-8">
         {week.map((d) => {
           const isToday = d === todayStr
+          const isSel = d === selDay
           const nEarn = earnByDay.get(d)?.length ?? 0
           const macros = macroByDay.get(d) ?? []
           const worst = macros.some((m) => m.severity === 'extreme')
@@ -318,9 +335,10 @@ export default async function CalendarPage() {
             : macros.some((m) => m.severity === 'high') ? 'high' : null
           const isWknd = [5, 6].includes(week.indexOf(d))
           return (
-            <div
+            <Link
               key={d}
-              className={`rounded-lg border px-1.5 py-2 text-center ${isToday
+              href={isToday ? '/calendar' : `/calendar?day=${d}`}
+              className={`rounded-lg border px-1.5 py-2 text-center transition-colors hover:border-accent/60 ${isSel
                 ? 'border-accent bg-accent/5'
                 : 'border-hairline'
                 } ${isWknd ? 'opacity-45' : ''}`}
@@ -328,7 +346,7 @@ export default async function CalendarPage() {
               <div className="text-[10px] font-medium uppercase tracking-wider text-faint">
                 {new Date(`${d}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short' })}
               </div>
-              <div className={`font-mono text-sm ${isToday ? 'font-semibold text-accent' : 'text-ink'}`}>
+              <div className={`font-mono text-sm ${isSel ? 'font-semibold text-accent' : 'text-ink'}`}>
                 {Number(d.slice(8))}
               </div>
               <div className="flex h-3.5 items-center justify-center gap-1 pt-0.5">
@@ -339,33 +357,36 @@ export default async function CalendarPage() {
                 )}
                 {worst && <SevDot sev={worst} />}
               </div>
-            </div>
+            </Link>
           )
         })}
       </section>
 
-      {/* today — the focus card */}
+      {/* selected day — the focus card */}
       <section className="rounded-xl border border-hairline bg-elevated p-5">
         <div className="flex items-baseline justify-between">
           <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">
-            Today — {fmtDay(todayStr)}
+            {selDay === todayStr ? 'Today — ' : ''}{fmtDay(selDay)}
+            <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-faint">
+              {relTag(null, selDay, todayStr)}
+            </span>
           </div>
-          {!todayEmpty && (
+          {!selEmpty && (
             <div className="font-mono text-xs text-faint">
-              {todayEarn.length > 0 && `${todayEarn.length} earnings`}
-              {todayEarn.length > 0 && todayMacro.length > 0 && ' · '}
-              {todayMacro.length > 0 && `${todayMacro.length} macro`}
+              {selEarn.length > 0 && `${selEarn.length} earnings`}
+              {selEarn.length > 0 && selMacro.length > 0 && ' · '}
+              {selMacro.length > 0 && `${selMacro.length} macro`}
             </div>
           )}
         </div>
-        {todayEmpty ? (
+        {selEmpty ? (
           <div className="pt-4">
             <p className="text-sm text-muted">
-              {weekend
+              {weekend && selDay === todayStr
                 ? 'Weekend — markets are closed. Nothing scheduled.'
-                : 'Nothing on the tape today.'}
+                : 'Nothing on the tape this day.'}
             </p>
-            {nextDay && (
+            {selDay === todayStr && nextDay && (
               <p className="pt-2 text-xs text-faint">
                 Next up: {fmtDay(nextDay)} ({relTag(null, nextDay, todayStr)})
                 {earnByDay.get(nextDay)?.length
@@ -378,8 +399,8 @@ export default async function CalendarPage() {
           </div>
         ) : (
           <div className="space-y-1 pt-4">
-            {todayMacro.map((e, i) => <MacroLine key={i} e={e} detailed />)}
-            {todayEarn.map((r, i) => (
+            {selMacro.map((e, i) => <MacroLine key={i} e={e} detailed />)}
+            {selEarn.map((r, i) => (
               <EarningsLine key={i} r={r} cap={verdictFor(r)} />
             ))}
           </div>
@@ -402,9 +423,12 @@ export default async function CalendarPage() {
               return (
                 <div key={day}>
                   <div className="flex items-baseline gap-3 pb-2">
-                    <span className={`text-[11px] font-semibold uppercase tracking-wider ${extreme ? 'text-defensive' : 'text-faint'}`}>
+                    <Link
+                      href={`/calendar?day=${day}`}
+                      className={`text-[11px] font-semibold uppercase tracking-wider hover:text-accent transition-colors ${extreme ? 'text-defensive' : 'text-faint'}`}
+                    >
                       {fmtDay(day)}
-                    </span>
+                    </Link>
                     <span className="font-mono text-[10px] text-faint">
                       {relTag(null, day, todayStr)}
                     </span>
@@ -433,9 +457,12 @@ export default async function CalendarPage() {
             {past.map((day) => (
               <div key={day}>
                 <div className="flex items-baseline gap-3 pb-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-faint">
+                  <Link
+                    href={`/calendar?day=${day}`}
+                    className="text-[11px] font-semibold uppercase tracking-wider text-faint hover:text-accent transition-colors"
+                  >
                     {fmtDay(day)}
-                  </span>
+                  </Link>
                   <span className="font-mono text-[10px] text-faint">
                     {relTag(null, day, todayStr)}
                   </span>
