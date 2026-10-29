@@ -1889,6 +1889,16 @@ async def hidden_gems_performance():
     return await asyncio.to_thread(bt.performance)
 
 
+@router.post("/research/{sym}")
+async def research_one(sym: str):
+    """Run the research engine for one symbol — same path as the
+    'research' job and POST /admin/research/{sym}; this route exists
+    so the admin-proxied UI button can reach it."""
+    from app.research import run as research_run
+    return {"report": await asyncio.to_thread(
+        research_run.run, sym.upper())}
+
+
 @router.post("/refresh/{job}")
 async def refresh(job: str):
     """Kick off a named data refresh in the background."""

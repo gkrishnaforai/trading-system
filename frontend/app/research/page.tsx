@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { api, type ResearchRow } from '@/lib/api'
+import { ResearchControls } from './controls'
 
 export const dynamic = 'force-dynamic'
 
@@ -100,11 +101,12 @@ export default async function ResearchPage() {
           exposure, not a cheap stock — the recommendation column is
           the gated decision.
         </p>
-        <div className="pt-3 flex flex-wrap gap-x-6 gap-y-1 border-b border-hairline pb-2 text-[10px] uppercase tracking-[0.18em] text-faint">
+        <div className="pt-3 flex flex-wrap gap-x-6 gap-y-1 pb-3 text-[10px] uppercase tracking-[0.18em] text-faint">
           <span>{scored.length} scored</span>
           <span>{unscored.length} awaiting run</span>
           {scored[0]?.as_of && <span>latest {scored[0].as_of}</span>}
         </div>
+        <ResearchControls />
       </header>
 
       {/* column headers */}
