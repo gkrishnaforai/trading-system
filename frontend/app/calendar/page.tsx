@@ -227,11 +227,12 @@ function MacroLine({ e, detailed }: { e: MacroEvent; detailed?: boolean }) {
 export default async function CalendarPage() {
   const now = new Date()
   const todayStr = isoDay(now)
+  const start = isoDay(new Date(now.getTime() - 7 * 86400000))
   const end = isoDay(new Date(now.getTime() + 14 * 86400000))
 
   const [events, earnings, watch] = await Promise.all([
     api.macroEvents(),
-    api.earningsCalendar(todayStr, end),
+    api.earningsCalendar(start, end),
     api.earningsWatch(30),
   ])
 
@@ -286,6 +287,13 @@ export default async function CalendarPage() {
   const todayMacro = macroByDay.get(todayStr) ?? []
   const todayEmpty = todayEarn.length === 0 && todayMacro.length === 0
   const nextDay = future[0]
+  // past prints — earnings_data retains history; the same verdict
+  // captures join by symbol|date, so last week renders identically
+  const past = [...earnByDay.keys()]
+    .filter((d) => d < todayStr)
+    .sort()
+    .reverse()
+    .slice(0, 7)
   const weekend = now.getUTCDay() === 0 || now.getUTCDay() === 6
 
   return (
@@ -410,6 +418,35 @@ export default async function CalendarPage() {
                 </div>
               )
             })}
+          </div>
+        )}
+      </Section>
+
+      {/* recent results — past book prints, last 7 days */}
+      <Section title="Recent results" subtitle="last 7 days" defaultOpen>
+        {past.length === 0 ? (
+          <p className="text-sm text-muted">
+            No book earnings on record for the past week.
+          </p>
+        ) : (
+          <div className="space-y-5">
+            {past.map((day) => (
+              <div key={day}>
+                <div className="flex items-baseline gap-3 pb-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-faint">
+                    {fmtDay(day)}
+                  </span>
+                  <span className="font-mono text-[10px] text-faint">
+                    {relTag(null, day, todayStr)}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {(earnByDay.get(day) ?? []).map((r, i) => (
+                    <EarningsLine key={i} r={r} cap={verdictFor(r)} />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </Section>
