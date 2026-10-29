@@ -1,0 +1,48 @@
+# Research recommendation policy — v1
+# ====================================
+# First-match-wins, ordered hard-gates → exit → trim → accumulate →
+# starter → watch → hold → research. Research-stage actions only —
+# no order semantics, these feed the human's review list.
+version: 1
+
+rules:
+  # ---- hard-risk gates first — score can never outrank them --------
+  - {action: exit_review, when: {thesis_status: "broken"},
+     note: "thesis broken — score irrelevant"}
+  - {action: exit_review, when: {hard_gate: true},
+     note: "hard-risk gate fired (financing/regulatory/clinical)"}
+  - {action: exit_review,
+     when: {dilution_pct_gte: 0.15, fcf_ttm_lt: 0},
+     note: "diluting while burning"}
+
+  # ---- deterioration — business degrading, not just expensive ------
+  - {action: trim_candidate,
+     when: {thesis_status: "deteriorating"},
+     note: "thesis deteriorating on evidence"}
+  - {action: trim_candidate,
+     when: {driver_cuts_gte: 2, bstrength_lt: 45},
+     note: "repeated commitment cuts + weak business"}
+
+  # ---- conviction — the tailwind case, gated by quality ------------
+  - {action: accumulate_candidate,
+     when: {ai_tailwind_gte: 70, bstrength_gte: 60,
+            thesis_status_in: "on_track_states"},
+     note: "strong tailwind + strong business + delivering"}
+  - {action: starter_candidate,
+     when: {ai_tailwind_gte: 65, bstrength_gte: 50},
+     note: "tailwind credible, business still proving"}
+  - {action: starter_candidate,
+     when: {ai_tailwind_gte: 70},
+     note: "tailwind exceptional — business score unproven"}
+
+  # ---- middle — real but unproven / priced / thin coverage ---------
+  - {action: watch, when: {ai_tailwind_gte: 50},
+     note: "tailwind plausible — needs evidence or better entry"}
+  - {action: hold, when: {bstrength_gte: 55},
+     note: "sound business, no tailwind edge"}
+
+  - {action: research, default: true,
+     note: "insufficient evidence — research, don't act"}
+
+groups:
+  on_track_states: [on_track, improving, unknown]

@@ -1,0 +1,152 @@
+# Healthcare sector configuration — v1
+# =====================================
+# The engine reads this; no healthcare logic lives in generic code.
+# A new sector = a new file here + (optionally) sector-specific
+# analysis nodes where genuinely necessary.
+version: 1
+
+sector: healthcare
+
+# ------------------------------------------------------------------
+# Opportunity taxonomy — where AI is structurally changing healthcare
+# ------------------------------------------------------------------
+opportunities:
+  drug_discovery:        {label: "AI drug discovery & molecular design"}
+  trial_optimization:    {label: "Clinical trial optimization & recruitment"}
+  genomics_precision:    {label: "Genomics, precision medicine & multi-omics"}
+  oncology_diagnostics:  {label: "Oncology diagnostics & liquid biopsy"}
+  clinical_decision:     {label: "Clinical decision support & workflow automation"}
+  imaging_diagnostics:   {label: "Medical imaging & diagnostics AI"}
+  surgical_robotics:     {label: "Surgical robotics & intelligent devices"}
+  data_platforms:        {label: "Healthcare data platforms & clinical intelligence"}
+  research_tools:        {label: "Pharma research software & lab automation"}
+  admin_agents:          {label: "AI agents for administrative/operational cost"}
+
+# ------------------------------------------------------------------
+# Business-model classification — determines the KPI framework.
+# Classification is deterministic keyword matching on stocks.industry
+# / profile text first; unscored models stay 'unclassified', never
+# forced into the nearest bucket.
+# ------------------------------------------------------------------
+business_models:
+  devices_robotics:
+    industry_hints: [medical devices, surgical, robotics, instruments]
+    opportunities: [surgical_robotics, imaging_diagnostics,
+                    clinical_decision]
+    kpis: [procedure_volume, installed_base, recurring_revenue_pct,
+           instrument_vs_recurring_mix, service_attach]
+    valuation: ev_ebitda
+    profitability_expected: true
+  diagnostics:
+    industry_hints: [diagnostics, laboratory, testing]
+    opportunities: [oncology_diagnostics, genomics_precision,
+                    imaging_diagnostics]
+    kpis: [test_volume, rev_per_test, reimbursement_coverage,
+           adoption_rate]
+    valuation: ev_sales
+    profitability_expected: false
+  ai_healthcare_software:
+    industry_hints: [health information, software, healthcare
+                     technology]
+    opportunities: [clinical_decision, data_platforms, admin_agents,
+                    imaging_diagnostics]
+    kpis: [arr_growth, net_revenue_retention, gross_margin,
+           rule_of_40]
+    valuation: ev_sales
+    profitability_expected: false
+  drug_discovery:
+    industry_hints: [biotechnology, drug discovery]
+    opportunities: [drug_discovery, genomics_precision]
+    kpis: [pipeline_stage, cash_runway_quarters, partnership_revenue,
+           catalyst_density]
+    valuation: pipeline_adjusted
+    profitability_expected: false
+  research_tools:
+    industry_hints: [research services, life sciences tools]
+    opportunities: [research_tools, drug_discovery]
+    kpis: [license_revenue, backlog, renewal_rate]
+    valuation: ev_sales
+    profitability_expected: false
+  cro_services:
+    industry_hints: [contract research, cro]
+    opportunities: [trial_optimization, admin_agents]
+    kpis: [book_to_bill, backlog_conversion, utilization]
+    valuation: ev_ebitda
+    profitability_expected: true
+  data_analytics:
+    industry_hints: [health data, analytics, information services]
+    opportunities: [data_platforms, clinical_decision]
+    kpis: [license_growth, data_moat_breadth, churn]
+    valuation: ev_sales
+    profitability_expected: false
+
+unclassified:
+  kpis: []
+  valuation: ev_sales
+  profitability_expected: true   # conservative default
+
+# ------------------------------------------------------------------
+# Moat criteria — a company does NOT score moat for 'using AI'.
+# Advantage must trace to one of these mechanisms (evidence-tagged
+# in the product record).
+# ------------------------------------------------------------------
+moat_mechanisms:
+  proprietary_data:     "unique clinical/operational data competitors can't license"
+  workflow_integration: "embedded in the care/procedure workflow — ripping it out costs the customer"
+  regulatory_moat:      "FDA/clearance/reimbursement barriers competitors must re-earn"
+  installed_base:       "physical footprint with switching + service economics"
+  ip_patents:           "defensible patents/trade secrets"
+  switching_costs:      "contractual or training lock-in"
+  distribution:         "channel access competitors lack"
+  # 'uses_ai' alone is NOT a mechanism — model access is rented
+
+# ------------------------------------------------------------------
+# Hard-risk gates — evaluated before any score or recommendation.
+# A gate fires → exit_review/invalidation flag regardless of score.
+# ------------------------------------------------------------------
+risk_gates:
+  severe_financing:      "cash runway < 4 quarters with negative FCF (pre-profit models)"
+  dilution_critical:     "share count growth > 15%/yr while unprofitable"
+  regulatory_block:      "loss of clearance/reimbursement on a revenue-bearing product"
+  clinical_failure:      "primary endpoint miss on the thesis-carrying pipeline"
+  thesis_invalidation:   "named evidence condition met — see thesis_doc"
+
+# ------------------------------------------------------------------
+# Scoring overrides per model — business_strength weights that don't
+# punish a drug developer for lacking profitability.
+# ------------------------------------------------------------------
+model_weight_overrides:
+  drug_discovery:
+    margin_trajectory: 0
+    cash_resilience: 25        # runway is THE metric
+    capital_discipline: 5      # dilution still counts, less
+  diagnostics:
+    margin_trajectory: 10
+    rev_growth_quality: 25
+
+# ------------------------------------------------------------------
+# Catalyst types — the events this sector's theses turn on. Used by
+# news/competitive intel to classify materiality and by the policy
+# to define upgrade/downgrade triggers.
+# ------------------------------------------------------------------
+catalyst_types:
+  regulatory:
+    events: [fda_clearance, adcomm, reimbursement_decision, label_expansion]
+    materiality: high      # re-rates approved-product TAM directly
+  clinical:
+    events: [readout, enrollment_complete, endpoint_met, endpoint_missed]
+    materiality: high      # thesis-carrying for pipeline models
+  commercial:
+    events: [product_launch, customer_win, partnership, contract_award,
+           backlog_step_change]
+    materiality: medium
+  competitive:
+    events: [competitor_launch, competitor_clearance, pricing_pressure,
+             share_loss_evidence]
+    materiality: medium
+  capital:
+    events: [raise, buyback, ma_announcement, dilutive_offering]
+    materiality: medium
+  governance:
+    events: [ceo_change, restatement, guidance_withdrawal]
+    materiality: high      # credibility events hit commitment scoring

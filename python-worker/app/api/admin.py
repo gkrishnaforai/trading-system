@@ -3,6 +3,7 @@ Admin API endpoints for trading system
 Clean version with signal generation and storage
 """
 
+import asyncio
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks
@@ -2025,6 +2026,37 @@ async def refresh_earnings_calendar(request: EarningsCalendarRefreshRequest):
         return {"success": True, "result": res}
     except Exception as e:
         logger.error(f"Failed to refresh earnings calendar: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/research/{symbol}")
+async def run_research(symbol: str, sector: str = "healthcare"):
+    """Run the research engine for one symbol — deterministic
+    evidence (quarters, products, commitments) → versioned scores →
+    skeptical review → recommendation → journaled to research_runs."""
+    try:
+        from app.research import run as research_run
+        report = await asyncio.to_thread(
+            research_run.run, symbol.upper(), sector)
+        return {"success": True, "report": report}
+    except Exception as e:
+        logger.error(f"research run {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/research/{symbol}/latest")
+async def research_latest(symbol: str, days: int = 90):
+    """Recent research_runs rows for a symbol — the thesis trail."""
+    try:
+        rows = db.execute_query(
+            "SELECT as_of, business_model, ai_tailwind_score,"
+            " business_strength, recommendation, rules_version"
+            " FROM research_runs WHERE symbol=:s"
+            " AND as_of >= CURRENT_DATE - :d"
+            " ORDER BY as_of DESC LIMIT 30",
+            {"s": symbol.upper(), "d": days})
+        return {"success": True, "runs": rows}
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 

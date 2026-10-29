@@ -1,0 +1,92 @@
+# Business Strength & Progress Score — v1 (weights per spec)
+# ===========================================================
+# Is the business itself getting stronger — independent of AI story.
+# Model-specific weight overrides live in the sector yaml
+# (model_weight_overrides) — a drug developer isn't punished for
+# lacking profitability.
+version: 1
+
+components:
+  # ---- 20% revenue growth & quality --------------------------------
+  rev_growth_quality:
+    weight: 20
+    bands:
+      - {if: {rev_growth_gte: 0.20, rev_accel_gt: 0}, score: 90,
+         note: "fast AND accelerating"}
+      - {if: {rev_growth_gte: 0.12}, score: 75}
+      - {if: {rev_growth_gte: 0.05}, score: 55}
+      - {if: {rev_growth_gte: 0}, score: 40}
+      - {if: {rev_growth_lt: 0}, score: 15, note: "shrinking"}
+      - {default: 30}
+
+  # ---- 15% margin trajectory & operating leverage ------------------
+  margin_trajectory:
+    weight: 15
+    bands:
+      - {if: {om_now_gte: 0.20, fcf_margin_gte: 0.15}, score: 90}
+      - {if: {om_now_gte: 0.10}, score: 70}
+      - {if: {om_now_gte: 0}, score: 50,
+         note: "profitable, thin"}
+      - {if: {fcf_margin_gte: 0}, score: 40,
+         note: "cash-positive at least"}
+      - {if: {om_now_lt: -0.30}, score: 10,
+         note: "deep operating losses"}
+      - {default: 25}
+
+  # ---- 15% cash flow, runway & resilience --------------------------
+  cash_resilience:
+    weight: 15
+    bands:
+      - {if: {fcf_ttm_gt: 0, nde_lt: 1.5}, score: 90,
+         note: "self-funding, unlevered"}
+      - {if: {fcf_ttm_gt: 0}, score: 70}
+      - {if: {runway_quarters_gte: 8}, score: 55,
+         note: "2y+ runway"}
+      - {if: {runway_quarters_gte: 4}, score: 35}
+      - {if: {runway_quarters_lt: 4}, score: 10,
+         note: "financing needed soon"}
+      - {default: 30}
+
+  # ---- 15% estimate revisions & guidance execution -----------------
+  estimate_guidance:
+    weight: 15
+    bands:
+      - {if: {est_revision_pct_gte: 0.05}, score: 85,
+         note: "street chasing upward"}
+      - {if: {est_revision_pct_gte: 0}, score: 65}
+      - {if: {driver_cuts_gte: 1}, score: 25,
+         note: "management walking commitments back"}
+      - {if: {est_revision_pct_lt: -0.03}, score: 20}
+      - {default: 45}
+
+  # ---- 15% product adoption & commercial validation ----------------
+  adoption_validation:
+    weight: 15
+    bands:
+      - {if: {rev_products_gte: 2}, score: 85}
+      - {if: {rev_products_gte: 1}, score: 70}
+      - {if: {rollout_products_gte: 1}, score: 50}
+      - {if: {products_mapped_gte: 1}, score: 30}
+      - {default: 20}
+
+  # ---- 10% competitive position & execution ------------------------
+  competitive_execution:
+    weight: 10
+    bands:
+      - {if: {gq_score_gte: 75}, score: 85}
+      - {if: {gq_score_gte: 60}, score: 65}
+      - {if: {gq_score_gte: 40}, score: 50}
+      - {default: 35}
+
+  # ---- 10% capital allocation & dilution discipline ----------------
+  capital_discipline:
+    weight: 10
+    bands:
+      - {if: {dilution_pct_lt: 0.02}, score: 85,
+         note: "share count stable"}
+      - {if: {dilution_pct_lt: 0.05}, score: 65}
+      - {if: {dilution_pct_lt: 0.10}, score: 45}
+      - {if: {dilution_pct_gte: 0.15, fcf_ttm_lt: 0}, score: 5,
+         note: "diluting while burning — hard-risk territory"}
+      - {if: {dilution_pct_gte: 0.10}, score: 25}
+      - {default: 50}
