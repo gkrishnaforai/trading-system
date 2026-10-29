@@ -176,14 +176,12 @@ def fmp_fill_actuals(sym: str, day) -> bool:
         from app.providers.financial_modeling_prep.client import (
             FinancialModelingPrepClient)
         rows = FinancialModelingPrepClient.from_settings() \
-            .get_earnings_calendar(symbols=[sym],
-                                   from_date=str(day),
-                                   to_date=str(day))
+            .get_earnings_report(sym)
     except Exception as exc:
         logger.debug("fmp actuals %s %s: %s", sym, day, exc)
         return False
     for r in rows or []:
-        if str(r.get("symbol") or "").upper() != sym:
+        if str(r.get("date") or "") != str(day):
             continue
         act = r.get("epsActual")
         if act is None:
