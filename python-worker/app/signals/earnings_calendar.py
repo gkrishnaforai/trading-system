@@ -161,6 +161,62 @@ def _sync_earnings_events(sym: str, tk,
             logger.debug("earnings_data cleanup %s: %s", sym, exc)
 
 
+def fmp_fill_actuals(sym: str, day) -> bool:
+    """FMP earnings-calendar fallback — same-day actuals the yahoo
+    index hasn't listed yet (yahoo can lag hours-to-overnight on
+    print day; FMP's calendar fills actuals faster). Only fills NULL
+    actuals — once yahoo syncs its row stays authoritative, and the
+    COALESCE order means an fmp-sourced actual is never overwritten
+    by a worse read, only by yahoo's real value.
+
+    Returns True when an actual landed."""
+    from app.database import db
+    sym = sym.upper()
+    try:
+        from app.providers.financial_modeling_prep.client import (
+            FinancialModelingPrepClient)
+        rows = FinancialModelingPrepClient.from_settings() \
+            .get_earnings_calendar(symbols=[sym],
+                                   from_date=str(day),
+                                   to_date=str(day))
+    except Exception as exc:
+        logger.debug("fmp actuals %s %s: %s", sym, day, exc)
+        return False
+    for r in rows or []:
+        if str(r.get("symbol") or "").upper() != sym:
+            continue
+        act = r.get("epsActual")
+        if act is None:
+            continue
+        try:
+            db.execute_update(
+                "INSERT INTO earnings_data (stock_symbol,"
+                " earnings_date, eps_estimate, eps_actual,"
+                " revenue_estimate, revenue_actual,"
+                " surprise_percentage, source) VALUES"
+                " (:s,:d,:est,:act,:rest,:ract,:surp,'fmp')"
+                " ON CONFLICT (stock_symbol, earnings_date)"
+                " DO UPDATE SET"
+                " eps_actual=COALESCE(earnings_data.eps_actual,"
+                "   EXCLUDED.eps_actual),"
+                " revenue_actual=COALESCE(earnings_data.revenue_actual,"
+                "   EXCLUDED.revenue_actual),"
+                " surprise_percentage=COALESCE("
+                "   earnings_data.surprise_percentage,"
+                "   EXCLUDED.surprise_percentage),"
+                " updated_at=now()",
+                {"s": sym, "d": day,
+                 "est": r.get("epsEstimated"),
+                 "act": act,
+                 "rest": r.get("revenueEstimated"),
+                 "ract": r.get("revenueActual"),
+                 "surp": r.get("surprisePercentage")})
+            return True
+        except Exception as exc:
+            logger.debug("fmp actuals upsert %s %s: %s", sym, day, exc)
+    return False
+
+
 def refresh_earnings_calendar(sym: str) -> dict:
     """Refresh one symbol's earnings calendar. Called from
     compute_flywheel so every existing refresh path (board evals, LEAPS

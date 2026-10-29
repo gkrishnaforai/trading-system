@@ -289,6 +289,14 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
         logger.debug("earnings_watch refresh %s: %s", sym, exc)
     pr = _print(sym, today)
     if not pr or pr.get("eps_actual") is None:
+        # yahoo can lag hours on print day — try the FMP calendar's
+        # same-day actuals before declaring the print still owed
+        try:
+            if earnings_calendar.fmp_fill_actuals(sym, today):
+                pr = _print(sym, today)
+        except Exception as exc:
+            logger.debug("fmp fallback %s: %s", sym, exc)
+    if not pr or pr.get("eps_actual") is None:
         # print not out yet (or no actuals feed) — leave for next poll.
         # Fall back to the indexed estimate — the calendar knows the
         # consensus even when the pending row hasn't synced yet.

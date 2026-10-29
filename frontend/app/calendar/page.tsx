@@ -66,9 +66,11 @@ function SevDot({ sev }: { sev?: string }) {
 function EarningsLine({
   r,
   cap,
+  pending,
 }: {
   r: EarningsRow
   cap?: { verdict?: string | null; drivers?: any[]; detail?: any } | null
+  pending?: boolean
 }) {
   const verdict = cap?.verdict
   // the scheduled job's review of this print — thesis transition,
@@ -121,6 +123,11 @@ function EarningsLine({
               }`}
           >
             {verdict}
+          </span>
+        )}
+        {!verdict && pending && (
+          <span className="ml-2 rounded-full border border-hairline px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-wider text-faint">
+            pending
           </span>
         )}
         {drv && (
@@ -401,7 +408,8 @@ export default async function CalendarPage({
           <div className="space-y-1 pt-4">
             {selMacro.map((e, i) => <MacroLine key={i} e={e} detailed />)}
             {selEarn.map((r, i) => (
-              <EarningsLine key={i} r={r} cap={verdictFor(r)} />
+              <EarningsLine key={i} r={r} cap={verdictFor(r)}
+                        pending={String(r.earnings_date ?? '').slice(0, 10) === todayStr} />
             ))}
           </div>
         )}
@@ -436,7 +444,8 @@ export default async function CalendarPage({
                   <div className={`space-y-1 ${extreme ? 'border-l-2 border-defensive/60 pl-3' : ''}`}>
                     {macros.map((e, i) => <MacroLine key={i} e={e} detailed />)}
                     {earns.map((r, i) => (
-                      <EarningsLine key={i} r={r} cap={verdictFor(r)} />
+                      <EarningsLine key={i} r={r} cap={verdictFor(r)}
+                        pending={String(r.earnings_date ?? '').slice(0, 10) === todayStr} />
                     ))}
                   </div>
                 </div>
@@ -469,7 +478,8 @@ export default async function CalendarPage({
                 </div>
                 <div className="space-y-1">
                   {(earnByDay.get(day) ?? []).map((r, i) => (
-                    <EarningsLine key={i} r={r} cap={verdictFor(r)} />
+                    <EarningsLine key={i} r={r} cap={verdictFor(r)}
+                        pending={String(r.earnings_date ?? '').slice(0, 10) === todayStr} />
                   ))}
                 </div>
               </div>
