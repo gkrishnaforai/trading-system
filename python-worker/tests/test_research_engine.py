@@ -73,7 +73,7 @@ class TestScoring:
         assert a["rules_version"].startswith("ai_tailwind@")
 
     def test_score_bounds_and_weights_sum_100(self):
-        for kind in ("ai_tailwind", "business_strength"):
+        for kind in ("ai_tailwind", "business_strength", "quality"):
             spec = scores._spec(kind)
             total = sum(c["weight"]
                         for c in spec["components"].values())

@@ -54,11 +54,18 @@ def run(sym: str, sector: str = "healthcare",
         "bstrength": None,
         "hard_gate": False,
         "thesis_status": _thesis(sym)})
+    # quality dims need trend reads + the commitment record
+    ctx.update({k: qt.get(k) for k in
+                ("rev_yoy", "rev_qoq", "fcf_conversion",
+                 "margin_trend")})
+    ctx["commit_tracked"] = cred.get("tracked")
+    ctx["commit_negative"] = cred.get("negative")
     overrides = (sectors.load(sector)
                  .get("model_weight_overrides", {}).get(model) or {})
 
     tw = scores.evaluate(sym, "ai_tailwind", ctx)
     bs = scores.evaluate(sym, "business_strength", ctx, overrides)
+    qt_score = scores.evaluate(sym, "quality", ctx)
     ctx["ai_tailwind"], ctx["bstrength"] = tw["score"], bs["score"]
     gates = _hard_gates(ctx, mcfg)
     ctx["hard_gate"] = bool(gates)
@@ -69,7 +76,8 @@ def run(sym: str, sector: str = "healthcare",
                 "trends": qt, "products": prod["products"],
                 "commitments": commits, "credibility": cred,
                 "scores": {"ai_tailwind": tw,
-                           "business_strength": bs},
+                           "business_strength": bs,
+                           "quality": qt_score},
                 "gates": gates, "recommendation": rec}
     ch = challenge.run(sym, evidence)
     evidence["challenge"] = ch
@@ -77,7 +85,8 @@ def run(sym: str, sector: str = "healthcare",
     report = {
         "symbol": sym, "sector": sector, "business_model": model,
         "scores": {"ai_tailwind": tw["score"],
-                   "business_strength": bs["score"]},
+                   "business_strength": bs["score"],
+                   "quality": qt_score["score"]},
         "recommendation": rec,
         "hard_gates": gates,
         "quarters": qs, "trends": qt,
@@ -87,10 +96,13 @@ def run(sym: str, sector: str = "healthcare",
         "challenge": ch["findings"],
         "coverage": {"tailwind": tw["coverage"],
                      "strength": bs["coverage"],
+                     "quality": qt_score["coverage"],
                      "missing": sorted(set(
-                         tw["missing"] + bs["missing"]))},
+                         tw["missing"] + bs["missing"]
+                         + qt_score["missing"]))},
         "rules_version": {"scores": [tw["rules_version"],
-                                    bs["rules_version"]],
+                                    bs["rules_version"],
+                                    qt_score["rules_version"]],
                           "policy": rec["rules_version"]}}
     try:
         db.execute_update(
@@ -107,8 +119,8 @@ def run(sym: str, sector: str = "healthcare",
             {"s": sym, "d": as_of, "sec": sector, "m": model,
              "tw": tw["score"], "bs": bs["score"],
              "rec": rec["action"],
-             "sc": json.dumps({"tailwind": tw, "strength": bs},
-                              default=str),
+             "sc": json.dumps({"tailwind": tw, "strength": bs,
+                               "quality": qt_score}, default=str),
              "rp": json.dumps(report, default=str),
              "rv": report["rules_version"]["policy"]})
     except Exception as exc:

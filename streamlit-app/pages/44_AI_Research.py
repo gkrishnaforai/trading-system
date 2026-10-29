@@ -130,6 +130,7 @@ if detail:
             st.caption("missing inputs: " + ", ".join(miss[:14]))
 
         # ---- score components — the 'why' -------------------------
+        qual = sc.get("quality") or {}
         left, right = st.columns(2)
         for col, (label, comp_owner) in zip(
                 (left, right),
@@ -147,6 +148,21 @@ if detail:
                     ]).sort_values("weight", ascending=False)
                     st.dataframe(cdf, hide_index=True,
                                  use_container_width=True)
+
+        # ---- quality — 10-dimension panel (/10) --------------------
+        qcomps = qual.get("components") or {}
+        if qcomps:
+            st.markdown(f"**Quality — {round((qual.get('score') or 0) / 10, 1)}/10**"
+                        " — 10 deterministic dimensions")
+            qdf = pd.DataFrame([
+                {"dimension": k.replace("_", " "),
+                 "score": (v.get("score") or 0) / 10,
+                 "reasoning": v.get("note") or ""}
+                for k, v in qcomps.items()])
+            st.dataframe(qdf, hide_index=True, use_container_width=True,
+                         column_config={
+                             "score": st.column_config.ProgressColumn(
+                                 min_value=0, max_value=10, format="%.1f")})
 
         # ---- products ----------------------------------------------
         prods = rep.get("products") or []

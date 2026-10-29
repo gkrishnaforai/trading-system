@@ -373,11 +373,28 @@ export type ResearchRun = {
       coverage?: number
       components?: Record<string, { score?: number; weight?: number; note?: string | null }>
     }
+    quality?: {
+      score?: number
+      coverage?: number
+      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+    }
   }
   report?: {
     products?: { name?: string; stage?: string; moat?: string[]; why?: string }[]
     challenge?: { question?: string; finding?: string; severity?: string }[]
     hard_gates?: string[]
+    quarters?: {
+      period_end?: string
+      filing_date?: string | null
+      revenue?: { value?: number | null }
+      gross_margin?: { value?: number | null }
+      op_margin?: { value?: number | null }
+      net_income?: { value?: number | null }
+      free_cf?: { value?: number | null }
+      cash?: { value?: number | null }
+      total_debt?: { value?: number | null }
+      shares_diluted?: { value?: number | null }
+    }[]
   }
 }
 

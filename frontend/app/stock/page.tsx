@@ -764,6 +764,11 @@ async function StockCore({ sym }: { sym: string }) {
         <ResearchSection sym={sym} />
       </Suspense>
 
+      {/* Quality metrics — 10 scored dimensions, expandable 'why' */}
+      <Suspense fallback={null}>
+        <QualitySection sym={sym} />
+      </Suspense>
+
       {/* readiness lanes */}
       {readiness && (
         <section className="mt-2 rounded-xl border border-hairline bg-card px-5 py-4">
@@ -1338,6 +1343,142 @@ async function ResearchSection({ sym }: { sym: string }) {
           coverage {(tw.coverage * 100).toFixed(0)}%
           {run.rules_version && ` · ${run.rules_version}`}
         </p>
+      )}
+    </section>
+  )
+}
+
+/** Quality metrics — 10 deterministic dimensions from the journaled
+ *  research run, each expandable to its band reasoning. Plus the
+ *  multi-quarter financial history the scores are computed on.
+ *  Native <details> = zero-JS expand. Same fetch as ResearchSection
+ *  (Next dedupes). */
+async function QualitySection({ sym }: { sym: string }) {
+  const res = await api.researchReport(sym).catch(() => null)
+  const run = res?.run
+  const q = run?.scores?.quality
+  if (!q || q.score == null) return null
+  const overall = q.score / 10
+  const verdict =
+    overall >= 8 ? 'Excellent quality with significant strengths'
+      : overall >= 6.5 ? 'Good quality — strengths outweigh gaps'
+        : overall >= 5 ? 'Average quality — mixed evidence'
+          : 'Weak quality — material concerns'
+  const qTone = (v: number) =>
+    v >= 8 ? 'text-aggressive' : v >= 6 ? 'text-ink'
+      : v >= 4 ? 'text-caution' : 'text-defensive'
+  const barTone = (v: number) =>
+    v >= 8 ? 'bg-aggressive/70' : v >= 6 ? 'bg-accent/60'
+      : v >= 4 ? 'bg-caution/70' : 'bg-defensive/70'
+  const comps = Object.entries(q.components ?? {})
+  const qs = (run?.report?.quarters ?? []).slice(0, 8)
+  const maxRev = Math.max(
+    ...qs.map((x) => Math.abs(x.revenue?.value ?? 0)), 1)
+
+  return (
+    <section className="mt-2 rounded-xl border border-hairline bg-card px-5 py-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+          Quality metrics
+        </span>
+        <Link href="/research" className="text-[11px] text-faint hover:text-accent">
+          research →
+        </Link>
+      </div>
+      <p className="pt-1 text-xs text-faint">
+        Deterministic scoring across {comps.length} dimensions — click any
+        metric for the band reasoning. Scores are evidence reads, not
+        LLM sentiment.
+      </p>
+
+      {/* overall */}
+      <div className="pt-4 flex items-baseline gap-4">
+        <div className={`font-mono text-3xl font-semibold ${qTone(overall)}`}>
+          {overall.toFixed(1)}
+        </div>
+        <div>
+          <div className="text-sm text-ink">{verdict}</div>
+          {/* segment bar */}
+          <div className="mt-1.5 flex h-1.5 w-48 gap-px overflow-hidden rounded">
+            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
+              <div
+                key={i}
+                className={`flex-1 ${overall >= i + 1 ? barTone(overall)
+                    : overall > i ? barTone(overall) + ' opacity-60'
+                      : 'bg-hairline/50'}`}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* dimension tiles */}
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {comps.map(([k, c]) => {
+          const v = (c?.score ?? 0) / 10
+          return (
+            <details
+              key={k}
+              className="group rounded-lg border border-hairline bg-canvas/40 px-3 py-2.5"
+            >
+              <summary className="cursor-pointer list-none">
+                <div className="text-[10px] uppercase tracking-wider text-faint">
+                  {k.replace(/_/g, ' ')}
+                </div>
+                <div className={`pt-0.5 font-mono text-lg font-semibold ${qTone(v)}`}>
+                  {v.toFixed(1)}
+                </div>
+                <div className="mt-1 h-1 rounded bg-hairline/40">
+                  <div
+                    className={`h-1 rounded ${barTone(v)}`}
+                    style={{ width: `${Math.min(100, v * 10)}%` }}
+                  />
+                </div>
+              </summary>
+              <p className="mt-2 border-t border-hairline/60 pt-2 text-[11px] leading-relaxed text-muted">
+                {c?.note ?? 'no band matched'}
+              </p>
+            </details>
+          )
+        })}
+      </div>
+
+      {/* quarterly history — the inputs the dims scored */}
+      {qs.length > 0 && (
+        <div className="mt-4 border-t border-hairline/60 pt-3">
+          <div className="text-[10px] uppercase tracking-wider text-faint">
+            quarterly history — last {qs.length} prints
+          </div>
+          <div className="mt-2 space-y-1">
+            {qs.map((x) => {
+              const rev = x.revenue?.value
+              const fcf = x.free_cf?.value
+              const w = rev != null ? Math.abs(rev) / maxRev * 100 : 0
+              return (
+                <div key={x.period_end}
+                  className="flex items-center gap-3 text-[11px]">
+                  <span className="w-16 font-mono text-faint">
+                    {String(x.period_end ?? '').slice(2, 7)}
+                  </span>
+                  <div className="flex h-2.5 flex-1 gap-px">
+                    <div className="rounded-sm bg-accent/40"
+                      style={{ width: `${w}%` }} />
+                  </div>
+                  <span className="w-20 text-right font-mono text-ink">
+                    {rev != null ? `$${(rev / 1e9).toFixed(2)}B` : '—'}
+                  </span>
+                  <span className={`w-20 text-right font-mono ${fcf != null && fcf < 0 ? 'text-defensive' : 'text-muted'}`}>
+                    {fcf != null ? `F ${(fcf / 1e9).toFixed(2)}B` : '—'}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          <div className="pt-2 text-[10px] text-faint">
+            revenue (bars) · FCF (right) · reported values from
+            fundamental_quarterly
+          </div>
+        </div>
       )}
     </section>
   )
