@@ -331,6 +331,54 @@ export const api = {
   intraday: () => get<IntradayTape>('/intraday'),
   readiness: () => get<ReadinessBoard>('/readiness'),
   correctionAlarms: () => get<CorrectionAlarms>('/correction-alarms'),
+  researchBoard: (sector = 'healthcare') =>
+    getRaw<{ success?: boolean; sector?: string; rows?: ResearchRow[] }>(
+      `/admin/research/board?sector=${encodeURIComponent(sector)}`,
+    ),
+  researchReport: (sym: string) =>
+    getRaw<{ success?: boolean; run?: ResearchRun | null }>(
+      `/admin/research/${encodeURIComponent(sym)}`,
+    ),
+}
+
+export type ResearchRow = {
+  symbol: string
+  name?: string | null
+  industry?: string | null
+  business_model?: string | null
+  ai_tailwind?: number | null
+  business_strength?: number | null
+  recommendation?: string | null
+  best_product?: { name?: string; stage?: string; moats?: string[] } | null
+  product_score?: number
+  as_of?: string | null
+}
+
+export type ResearchRun = {
+  as_of?: string
+  business_model?: string | null
+  ai_tailwind_score?: number | null
+  business_strength?: number | null
+  recommendation?: string | null
+  rules_version?: string | null
+  scores?: {
+    tailwind?: {
+      score?: number
+      coverage?: number
+      capped?: string | null
+      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+    }
+    strength?: {
+      score?: number
+      coverage?: number
+      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+    }
+  }
+  report?: {
+    products?: { name?: string; stage?: string; moat?: string[]; why?: string }[]
+    challenge?: { question?: string; finding?: string; severity?: string }[]
+    hard_gates?: string[]
+  }
 }
 
 export type ReadinessRow = {

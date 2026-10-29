@@ -2029,6 +2029,96 @@ async def refresh_earnings_calendar(request: EarningsCalendarRefreshRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_STAGE_RANK = {"revenue": 20, "rollout": 15, "partnership": 10,
+               "pipeline": 5, "aspiration": 2}
+
+
+def _best_product(report: dict) -> tuple:
+    """Strongest product = stage rank ×3 + moat breadth (max 40) —
+    a marketed product with 2 moat mechanisms beats a pipeline
+    product with 4. Deterministic, from the journaled report."""
+    prods = (report or {}).get("products") or []
+    best, bscore = None, 0
+    for p in prods:
+        moats = p.get("moat")
+        if moats is None:
+            ev = p.get("evidence") or {}
+            moats = ev.get("moat") or [] if isinstance(ev, dict) else []
+        sc = _STAGE_RANK.get(p.get("stage"), 0) * 3 + \
+            min(len(moats), 4) * 10
+        if sc > bscore:
+            best, bscore = p, sc
+    if not best:
+        return None, 0
+    return {"name": best.get("name"), "stage": best.get("stage"),
+            "moats": moats}, bscore
+
+
+@router.get("/research/board")
+async def research_board(sector: str = "healthcare", limit: int = 300):
+    """Sector stock list ranked by AI Tailwind score, then best-product
+    strength. Unscored symbols sink to the bottom (NULLS LAST) — a
+    missing run is 'not yet researched', not zero."""
+    try:
+        pat = f"%{sector.lower()}%"
+        rows = db.execute_query(
+            "SELECT s.symbol, s.company_name, s.industry, s.sector,"
+            " r.as_of, r.business_model, r.ai_tailwind_score,"
+            " r.business_strength, r.recommendation, r.report"
+            " FROM stocks s"
+            " LEFT JOIN LATERAL ("
+            "   SELECT * FROM research_runs rr WHERE rr.symbol=s.symbol"
+            "   ORDER BY rr.as_of DESC, rr.id DESC LIMIT 1"
+            " ) r ON true"
+            " WHERE LOWER(COALESCE(s.sector,'')) LIKE :pat"
+            " ORDER BY r.ai_tailwind_score DESC NULLS LAST, s.symbol"
+            " LIMIT :lim",
+            {"pat": pat, "lim": limit})
+        out = []
+        for r in rows:
+            rep = r.get("report") or {}
+            if isinstance(rep, str):
+                rep = json.loads(rep)
+            bp, pscore = _best_product(rep)
+            out.append({
+                "symbol": r["symbol"], "name": r["company_name"],
+                "industry": r["industry"],
+                "business_model": r.get("business_model"),
+                "ai_tailwind": r.get("ai_tailwind_score"),
+                "business_strength": r.get("business_strength"),
+                "recommendation": r.get("recommendation"),
+                "best_product": bp, "product_score": pscore,
+                "as_of": str(r["as_of"]) if r.get("as_of") else None})
+        out.sort(key=lambda x: (-(x["ai_tailwind"] or -1),
+                                -x["product_score"], x["symbol"]))
+        return {"success": True, "sector": sector, "rows": out}
+    except Exception as e:
+        logger.error(f"research board: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/research/{symbol}")
+async def research_report(symbol: str):
+    """Latest journaled research run — scores + component 'why' +
+    products + challenge findings."""
+    try:
+        r = db.execute_query(
+            "SELECT as_of, sector, business_model, ai_tailwind_score,"
+            " business_strength, recommendation, scores, report,"
+            " rules_version FROM research_runs WHERE symbol=:s"
+            " ORDER BY as_of DESC, id DESC LIMIT 1",
+            {"s": symbol.upper()})
+        if not r:
+            return {"success": True, "run": None}
+        row = r[0]
+        for k in ("scores", "report"):
+            if isinstance(row.get(k), str):
+                row[k] = json.loads(row[k])
+        return {"success": True, "run": row}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/research/{symbol}")
 async def run_research(symbol: str, sector: str = "healthcare"):
     """Run the research engine for one symbol — deterministic

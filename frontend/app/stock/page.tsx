@@ -759,6 +759,11 @@ async function StockCore({ sym }: { sym: string }) {
         </section>
       )}
 
+      {/* AI research — journaled tailwind score + why, streams in */}
+      <Suspense fallback={null}>
+        <ResearchSection sym={sym} />
+      </Suspense>
+
       {/* readiness lanes */}
       {readiness && (
         <section className="mt-2 rounded-xl border border-hairline bg-card px-5 py-4">
@@ -1232,6 +1237,109 @@ async function StockCore({ sym }: { sym: string }) {
         <span className="font-mono">{sym}</span>
       </footer>
     </main>
+  )
+}
+
+/** AI research — journaled tailwind/strength scores with the
+ *  component-level 'why'. Own fetch, streams in; null when the
+ *  symbol hasn't been researched. */
+async function ResearchSection({ sym }: { sym: string }) {
+  const res = await api.researchReport(sym).catch(() => null)
+  const run = res?.run
+  if (!run) return null
+  const tw = run.scores?.tailwind
+  const bs = run.scores?.strength
+  const comps = Object.entries(tw?.components ?? {})
+    .sort((a, b) => (b[1]?.weight ?? 0) - (a[1]?.weight ?? 0))
+    .filter(([, c]) => c?.note)
+  const products = run.report?.products ?? []
+  const gates = run.report?.hard_gates ?? []
+  const tone = (v?: number | null) =>
+    v == null ? 'text-faint'
+      : v >= 70 ? 'text-aggressive' : v >= 50 ? 'text-caution' : 'text-defensive'
+  return (
+    <section className="mt-2 rounded-xl border border-hairline bg-card px-5 py-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+          AI research
+        </span>
+        <div className="flex items-baseline gap-3">
+          {run.as_of && <Fresh date={String(run.as_of)} />}
+          <Link href="/research" className="text-[11px] text-faint hover:text-accent">
+            board →
+          </Link>
+        </div>
+      </div>
+
+      <div className="pt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2">
+        <div>
+          <div className={`font-mono text-2xl font-semibold ${tone(run.ai_tailwind_score)}`}>
+            {run.ai_tailwind_score != null ? Number(run.ai_tailwind_score).toFixed(0) : '—'}
+          </div>
+          <div className="text-[10px] uppercase tracking-wider text-faint">
+            AI tailwind
+          </div>
+        </div>
+        <div>
+          <div className={`font-mono text-2xl font-semibold ${tone(run.business_strength)}`}>
+            {run.business_strength != null ? Number(run.business_strength).toFixed(0) : '—'}
+          </div>
+          <div className="text-[10px] uppercase tracking-wider text-faint">
+            business strength
+          </div>
+        </div>
+        {run.recommendation && (
+          <div className="ml-auto">
+            <span className="rounded-full border border-hairline px-3 py-1 text-xs font-medium text-ink">
+              {String(run.recommendation).replace(/_/g, ' ')}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {tw?.capped && (
+        <p className="pt-2 text-xs text-caution">capped — {tw.capped}</p>
+      )}
+      {gates.length > 0 && (
+        <p className="pt-2 text-xs text-defensive">
+          hard gates: {gates.join(', ').replace(/_/g, ' ')}
+        </p>
+      )}
+
+      {/* the why — top-weighted component verdicts */}
+      {comps.length > 0 && (
+        <ul className="pt-3 space-y-1 text-xs text-muted leading-relaxed">
+          {comps.slice(0, 6).map(([k, c]) => (
+            <li key={k}>
+              <span className="text-faint">{k.replace(/_/g, ' ')}</span>
+              <span className="font-mono text-ink"> {c?.score}</span>
+              <span className="text-faint">/{c?.weight}</span>
+              {c?.note && <span> — {c.note}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {products.length > 0 && (
+        <div className="pt-3 border-t border-hairline/60 mt-3 flex flex-wrap gap-1.5">
+          {products.slice(0, 8).map((p, i) => (
+            <span key={i}
+              className="rounded border border-hairline px-2 py-0.5 text-[10.5px] text-muted"
+              title={p.why ?? ''}>
+              {p.name}
+              {p.stage && <span className="text-faint"> · {p.stage}</span>}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {tw?.coverage != null && (
+        <p className="pt-3 text-[10px] text-faint">
+          coverage {(tw.coverage * 100).toFixed(0)}%
+          {run.rules_version && ` · ${run.rules_version}`}
+        </p>
+      )}
+    </section>
   )
 }
 
