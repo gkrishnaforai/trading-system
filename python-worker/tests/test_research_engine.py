@@ -107,35 +107,128 @@ class TestScoring:
         assert over["score"] != base["score"]
 
 
-class TestPolicy:
-    def test_hard_gate_outranks_score(self):
-        ctx = _isrg_ctx()
-        ctx.update({"ai_tailwind": 95, "bstrength": 90,
-                    "hard_gate": True})
-        assert policy.evaluate(ctx)["action"] == "exit_review"
+class TestUnknownEvidence:
+    """The ARM review's core fix: missing evidence is UNKNOWN —
+    excluded and coverage-dropping, never a silent zero."""
 
-    def test_broken_thesis_is_exit(self):
+    def test_missing_input_unknown_not_zero(self):
+        # exposed_rev_growth missing → product_growth unmeasurable →
+        # unknown (excluded), not the old 0/25
+        ctx = {"model": "connectivity_silicon",
+               "exposed_rev_growth": None, "nextgen_stage_rank": 4,
+               "products_mapped": 3,
+               "dw_reviewed": True, "dw_total": 4, "dw_production": 2,
+               "dw_pipeline": 2, "dw_customers": 3,
+               "dw_conversion": 0.5, "top1_pct": 0.30,
+               "margin_trend": "improving", "om_now": 0.35,
+               "rev_products": 2, "pipeline_products": 1}
+        r = scores.evaluate("ARM", "ai_infra_architecture", ctx)
+        pg = r["components"]["product_growth"]
+        assert pg["unknown"] and pg["score"] is None
+        # total renormalizes over answered weight — a 0 isn't
+        # averaged in, so the score isn't dragged down by thin data
+        assert r["score"] > 60
+        assert r["coverage"] < 1.0
+        assert "product_growth" in r["unknown_components"]
+
+    def test_no_product_map_marks_components_unknown(self):
+        ctx = _isrg_ctx()
+        ctx.update({"products_mapped": 0, "moat_mechs": 0,
+                    "rev_products": 0, "pipeline_products": 0,
+                    "rollout_products": 0})
+        r = scores.evaluate("ARM", "ai_tailwind", ctx)
+        for comp in ("product_differentiation", "moat",
+                     "adoption_monetization"):
+            assert r["components"][comp].get("unknown"), comp
+        # runway still answers — emerging_growth is a real evidence
+        # channel (forward-growth flag), not missing data
+        assert r["components"]["runway_expansion"]["score"] == 50
+        assert r["coverage"] < 0.7
+
+    def test_products_mapped_no_moat_is_a_real_score(self):
+        # mapped products with zero moat mechanisms → confirmed-low,
+        # not unknown — absence IS the evidence here
+        ctx = _isrg_ctx()
+        ctx.update({"moat_mechs": 0})
+        r = scores.evaluate("X", "ai_tailwind", ctx)
+        assert r["components"]["moat"]["score"] == 15
+        assert not r["components"]["moat"].get("unknown")
+
+    def test_dw_unreviewed_unknown_vs_examined_zero(self):
+        ctx = {"model": "ip_licensing",
+               "exposed_rev_growth": 0.2, "nextgen_stage_rank": 4,
+               "products_mapped": 3, "top1_pct": 0.20,
+               "margin_trend": "improving", "om_now": 0.40,
+               "rev_products": 2, "pipeline_products": 1}
+        # never examined → unknown
+        r1 = scores.evaluate("ARM", "ai_infra_architecture",
+                             dict(ctx, dw_reviewed=False, dw_total=0))
+        assert r1["components"]["design_wins"].get("unknown")
+        # examined, none found → confirmed-low 10
+        r2 = scores.evaluate("ARM", "ai_infra_architecture",
+                             dict(ctx, dw_reviewed=True, dw_total=0,
+                                  dw_production=0, dw_pipeline=0,
+                                  dw_customers=0, dw_conversion=None))
+        dw = r2["components"]["design_wins"]
+        assert dw["score"] == 10 and not dw.get("unknown")
+
+
+class TestPolicy:
+    def test_hard_gate_is_exit_risk(self):
+        # risk gates are not thesis failure — exit_risk, not exit_thesis
         ctx = _isrg_ctx()
         ctx.update({"ai_tailwind": 95, "bstrength": 90,
-                    "thesis_status": "broken"})
-        assert policy.evaluate(ctx)["action"] == "exit_review"
+                    "hard_gate": True, "evidence_coverage": 1.0})
+        assert policy.evaluate(ctx)["action"] == "exit_risk"
+
+    def test_broken_thesis_is_exit_thesis(self):
+        ctx = _isrg_ctx()
+        ctx.update({"ai_tailwind": 95, "bstrength": 90,
+                    "thesis_status": "broken",
+                    "evidence_coverage": 1.0})
+        assert policy.evaluate(ctx)["action"] == "exit_thesis"
 
     def test_strong_profile_accumulates(self):
         ctx = _isrg_ctx()
-        ctx.update({"ai_tailwind": 80, "bstrength": 75})
+        ctx.update({"ai_tailwind": 80, "bstrength": 75,
+                    "evidence_coverage": 1.0})
         assert policy.evaluate(ctx)["action"] == "accumulate_candidate"
 
-    def test_no_evidence_researches_not_acts(self):
+    def test_no_product_map_is_incomplete_not_exit(self):
+        # missing coverage can never trigger an exit — the ARM case
         ctx = {k: None for k in _isrg_ctx()}
         ctx.update({"thesis_status": None, "hard_gate": False,
-                    "products_mapped": 0})
-        assert policy.evaluate(ctx)["action"] == "research"
+                    "products_mapped": 0,
+                    "evidence_coverage": 0.3})
+        r = policy.evaluate(ctx)
+        assert r["action"] == "research_incomplete"
+        assert "exit" not in r["action"]
 
-    def test_dilution_burner_exits(self):
+    def test_thin_coverage_blocks_conviction(self):
+        # high scores on 40% coverage → research_incomplete, not accumulate
+        ctx = _isrg_ctx()
+        ctx.update({"ai_tailwind": 80, "bstrength": 75,
+                    "products_mapped": 2,
+                    "evidence_coverage": 0.4})
+        assert policy.evaluate(ctx)["action"] == "research_incomplete"
+
+    def test_hold_review_plus_incomplete_flag(self):
+        # ARM pattern: thesis intact, thin coverage →
+        # HOLD_REVIEW + research_incomplete flag
+        ctx = _isrg_ctx()
+        ctx.update({"ai_tailwind": 40, "bstrength": 62,
+                    "products_mapped": 3,
+                    "evidence_coverage": 0.6})
+        r = policy.evaluate(ctx)
+        assert r["action"] == "hold_review"
+        assert "research_incomplete" in r["flags"]
+
+    def test_dilution_burner_is_exit_risk(self):
         ctx = _isrg_ctx()
         ctx.update({"ai_tailwind": 70, "bstrength": 60,
-                    "dilution_pct": 0.20, "fcf_ttm": -1e8})
-        assert policy.evaluate(ctx)["action"] == "exit_review"
+                    "dilution_pct": 0.20, "fcf_ttm": -1e8,
+                    "evidence_coverage": 1.0})
+        assert policy.evaluate(ctx)["action"] == "exit_risk"
 
 
 class TestSectorConfig:
@@ -188,6 +281,16 @@ class TestAiInfraSector:
     def test_sector_routing(self):
         assert sectors.sector_for_symbol("CRDO") == "ai_infra"
         assert sectors.sector_for_symbol("NVDA") == "ai_infra"
+
+    def test_arm_is_ip_licensing_not_merchant_silicon(self):
+        # ARM's economics are royalty+license — its segments are
+        # "Royalties"/"License", its next-gen layer is cpu IP
+        assert sectors.classify_model("ARM", "ai_infra") \
+            == "ip_licensing"
+        m = sectors.model_cfg("ip_licensing", "ai_infra")
+        assert any("royalt" in t or "licens" in t
+                   for t in m["exposure_terms"])
+        assert "cpu" in m["nextgen_layers"]
 
     def test_arch_spec_weights_sum_100(self):
         spec = scores._spec("ai_infra_architecture")

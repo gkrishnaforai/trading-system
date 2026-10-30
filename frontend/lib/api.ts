@@ -370,39 +370,39 @@ export type ResearchRun = {
       score?: number
       coverage?: number
       capped?: string | null
-      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+      components?: Record<string, { score?: number | null; weight?: number; note?: string | null; unknown?: boolean }>
     }
     strength?: {
       score?: number
       coverage?: number
-      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+      components?: Record<string, { score?: number | null; weight?: number; note?: string | null; unknown?: boolean }>
     }
     quality?: {
       score?: number
       coverage?: number
-      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+      components?: Record<string, { score?: number | null; weight?: number; note?: string | null; unknown?: boolean }>
     }
     ai_infra_architecture?: {
       score?: number
       coverage?: number
       capped?: string | null
-      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+      components?: Record<string, { score?: number | null; weight?: number; note?: string | null; unknown?: boolean }>
     }
     future_demand_capture?: {
       score?: number
       coverage?: number
       capped?: string | null
-      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+      components?: Record<string, { score?: number | null; weight?: number; note?: string | null; unknown?: boolean }>
     }
     valuation_opportunity?: {
       score?: number
       coverage?: number
-      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+      components?: Record<string, { score?: number | null; weight?: number; note?: string | null; unknown?: boolean }>
     }
     technical_entry?: {
       score?: number
       coverage?: number
-      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+      components?: Record<string, { score?: number | null; weight?: number; note?: string | null; unknown?: boolean }>
     }
   }
   report?: {
@@ -419,6 +419,9 @@ export type ResearchRun = {
     } | null
     challenge?: { question?: string; finding?: string; severity?: string }[]
     hard_gates?: string[]
+    evidence_coverage?: number | null
+    evidence_state?: string | null
+    recommendation?: { action?: string; note?: string | null; flags?: string[] }
     quarters?: {
       period_end?: string
       filing_date?: string | null

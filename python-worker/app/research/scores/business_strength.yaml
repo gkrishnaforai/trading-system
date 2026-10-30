@@ -4,7 +4,7 @@
 # Model-specific weight overrides live in the sector yaml
 # (model_weight_overrides) — a drug developer isn't punished for
 # lacking profitability.
-version: 1
+version: 2
 
 components:
   # ---- 20% revenue growth & quality --------------------------------
@@ -67,6 +67,8 @@ components:
       - {if: {rev_products_gte: 1}, score: 70}
       - {if: {rollout_products_gte: 1}, score: 50}
       - {if: {products_mapped_gte: 1}, score: 30}
+      - {if: {products_mapped: 0}, unknown: true,
+         note: "no product map — adoption unevaluated"}
       - {default: 20}
 
   # ---- 10% competitive position & execution ------------------------

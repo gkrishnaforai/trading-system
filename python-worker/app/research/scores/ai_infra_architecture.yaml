@@ -1,4 +1,6 @@
-# AI-infra architecture score — v1
+# AI-infra architecture score — v2
+# v2: unexamined ≠ absent — dw_reviewed=false and products_mapped=0
+# produce UNKNOWN components (excluded, coverage drops), not zeros.
 # =================================
 # "Is this company supplying the part of the AI architecture that's
 # growing, and are design wins turning into revenue?" Weights per the
@@ -10,7 +12,7 @@
 # 0..5 mapped from product_initiatives stage vocabulary.
 # Missing inputs fail bands closed and land in the missing log —
 # undisclosed segment revenue is never a zero.
-version: 1
+version: 2
 
 components:
 
@@ -33,6 +35,8 @@ components:
   arch_exposure:                        # weight 20 — position in the
     weight: 20                          # next-gen transition (stage ladder)
     bands:
+      - {if: {products_mapped: 0}, unknown: true,
+         note: "no product map — architecture exposure unevaluated"}
       - {if: {nextgen_stage_rank_gte: 5}, score: 100,
          note: "material recurring next-gen revenue"}
       - {if: {nextgen_stage_rank: 4}, score: 80,
@@ -49,6 +53,8 @@ components:
   design_wins:                          # weight 20 — wins that became
     weight: 20                          # production revenue
     bands:
+      - {if: {dw_reviewed: false}, unknown: true,
+         note: "design-win lifecycle unexamined — no evidence yet"}
       - {if: {dw_production_gte: 3, dw_conversion_gte: 0.6}, score: 100,
          note: "multiple wins converting at scale"}
       - {if: {dw_production_gte: 2}, score: 80,
@@ -59,8 +65,8 @@ components:
          note: "announced wins, unproven conversion"}
       - {if: {dw_pipeline_gte: 1}, score: 25,
          note: "single announced win"}
-      - {if: {dw_total: 0}, score: 10,
-         note: "no journaled design wins"}
+      - {if: {dw_total: 0, dw_reviewed: true}, score: 10,
+         note: "examined — no wins found"}
 
   customer_quality:                     # weight 10 — breadth vs
     weight: 10                          # concentration (concentrated = worse)

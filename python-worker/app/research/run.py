@@ -81,9 +81,9 @@ def run(sym: str, sector: Optional[str] = None,
     # where the config asks for it (design wins, segment obs)
     wins = []
     if cfg.get("design_wins") or in_fdce:
-        wins = design_wins.review(sym, cfg.get("label", sector),
-                                  prod["products"])
-        ctx.update(design_wins.stats(wins))
+        wins, dw_reviewed = design_wins.review(
+            sym, cfg.get("label", sector), prod["products"])
+        ctx.update(design_wins.stats(wins, reviewed=dw_reviewed))
     if cfg.get("segment_extraction"):
         observations.review(sym, cfg.get("label", sector))
         rev_ttm = sum(q["revenue"]["value"] for q in qs[:4]
@@ -132,10 +132,27 @@ def run(sym: str, sector: Optional[str] = None,
     bs = evals.get("business_strength") or {}
     ctx["ai_tailwind"], ctx["bstrength"] = \
         tw.get("score"), bs.get("score")
+    # evidence coverage — share of component weight that produced a
+    # real band evaluation across the EVIDENCE-layer scores only
+    # (quality/valuation/technical are financial-data driven and
+    # always near-full; including them would mask thin research).
+    # Feeds the policy's research_incomplete gate and the journaled
+    # evidence_state — missing coverage can never cause an exit.
+    _EVIDENCE_SCORES = ("ai_tailwind", "business_strength",
+                        "ai_infra_architecture",
+                        "future_demand_capture")
+    covs = [evals[n]["coverage"] for n in _EVIDENCE_SCORES
+            if n in evals and evals[n].get("coverage") is not None]
+    ctx["evidence_coverage"] = round(sum(covs) / len(covs), 2) \
+        if covs else 0.0
     gates = _hard_gates(ctx, mcfg)
     ctx["hard_gate"] = bool(gates)
 
     rec = policy.evaluate(ctx)
+    evidence_state = ("sufficient" if ctx["evidence_coverage"] >= 0.75
+                      else "partial"
+                      if ctx["evidence_coverage"] >= 0.5
+                      else "incomplete")
 
     evidence = {"model": model, "ctx": ctx, "quarters": qs,
                 "trends": qt, "products": prod["products"],
@@ -163,6 +180,8 @@ def run(sym: str, sector: Optional[str] = None,
         "coverage": {**{n: e["coverage"] for n, e in
                         evals.items()},
                      "missing": all_missing},
+        "evidence_coverage": ctx["evidence_coverage"],
+        "evidence_state": evidence_state,
         "rules_version": {"scores": [e["rules_version"]
                                     for e in evals.values()],
                           "policy": rec["rules_version"],

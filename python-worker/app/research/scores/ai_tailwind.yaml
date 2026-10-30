@@ -1,11 +1,13 @@
-# AI Tailwind Score — v1 (weights per spec)
+# AI Tailwind Score — v2 (weights per spec)
+# v2: products_mapped=0 → component UNKNOWN (excluded, coverage
+# drops) — an empty product map is unexamined, not scored-zero.
 # ==========================================
 # Measures the company's ability to benefit from structural AI
 # adoption — NOT whether the stock is cheap. Every component scores
 # 0-100 via ordered bands; first matching band wins. Inputs are
 # deterministic ctx fields; missing inputs score via `missing`
 # default (0) and land in the missing log — never vacuous-true.
-version: 1
+version: 2
 
 components:
   # ---- 15% structural industry opportunity -------------------------
@@ -37,7 +39,8 @@ components:
          note: "one real mechanism"}
       - {if: {products_mapped_gte: 1}, score: 35,
          note: "products exist, moat unproven"}
-      - {default: 10, note: "no product map"}
+      - {if: {products_mapped: 0}, unknown: true,
+         note: "no product map — differentiation unevaluated"}
 
   # ---- 15% measurable customer value -------------------------------
   customer_value_evidence:
@@ -49,6 +52,9 @@ components:
       - {if: {rev_growth_gte: 0.15}, score: 55,
          note: "value showing up in the numbers"}
       - {if: {products_mapped_gte: 1}, score: 30}
+      - {if: {products_mapped: 0, rev_growth_is: null},
+         unknown: true,
+         note: "no product map and no growth data — unevaluated"}
       - {default: 10}
 
   # ---- 15% commercial adoption & monetization ----------------------
@@ -62,7 +68,8 @@ components:
          note: "commercial rollout, pre-scale"}
       - {if: {products_mapped_gte: 1}, score: 25,
          note: "pipeline only"}
-      - {default: 10}
+      - {if: {products_mapped: 0}, unknown: true,
+         note: "no product map — adoption unevaluated"}
 
   # ---- 15% proprietary data / workflow / moat ----------------------
   moat:
@@ -71,7 +78,10 @@ components:
       - {if: {moat_mechs_gte: 3}, score: 90}
       - {if: {moat_mechs_gte: 2}, score: 70}
       - {if: {moat_mechs_gte: 1}, score: 50}
-      - {default: 15, note: "rented capability, no moat"}
+      - {if: {products_mapped: 0}, unknown: true,
+         note: "no product map — moat unevaluated"}
+      - {default: 15,
+         note: "products mapped — no moat mechanisms journaled"}
 
   # ---- 10% competitive positioning & value capture -----------------
   competitive_positioning:
@@ -93,6 +103,8 @@ components:
       - {if: {pipeline_products_gte: 1}, score: 60}
       - {if: {emerging_growth: true}, score: 50,
          note: "forward-growth flag on"}
+      - {if: {products_mapped: 0}, unknown: true,
+         note: "no product map — runway unevaluated"}
       - {default: 25}
 
 # ------------------------------------------------------------------

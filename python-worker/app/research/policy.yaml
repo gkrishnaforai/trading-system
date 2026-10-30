@@ -1,17 +1,22 @@
-# Research recommendation policy — v1
+# Research recommendation policy — v2
 # ====================================
-# First-match-wins, ordered hard-gates → exit → trim → accumulate →
-# starter → watch → hold → research. Research-stage actions only —
-# no order semantics, these feed the human's review list.
-version: 1
+# v2: decision states split per the evidence model —
+#   exit_thesis        fundamentals/competitive position deteriorated
+#   exit_risk          valuation/financial/portfolio risk needs action
+#   research_incomplete  insufficient evidence to evaluate (NOT an exit)
+#   hold_review        thesis intact but valuation/entry unattractive
+# Missing research coverage can never produce an exit: exits require
+# journaled negative evidence (thesis status, hard gates, dilution).
+# First-match-wins; flags append orthogonal states on top.
+version: 2
 
 rules:
-  # ---- hard-risk gates first — score can never outrank them --------
-  - {action: exit_review, when: {thesis_status: "broken"},
-     note: "thesis broken — score irrelevant"}
-  - {action: exit_review, when: {hard_gate: true},
-     note: "hard-risk gate fired (financing/regulatory/clinical)"}
-  - {action: exit_review,
+  # ---- exits — split by WHAT is wrong -------------------------------
+  - {action: exit_thesis, when: {thesis_status: "broken"},
+     note: "thesis broken — fundamentals/competitive deteriorated"}
+  - {action: exit_risk, when: {hard_gate: true},
+     note: "hard-risk gate fired (financing/dilution/concentration)"}
+  - {action: exit_risk,
      when: {dilution_pct_gte: 0.15, fcf_ttm_lt: 0},
      note: "diluting while burning"}
 
@@ -22,6 +27,14 @@ rules:
   - {action: trim_candidate,
      when: {driver_cuts_gte: 2, bstrength_lt: 45},
      note: "repeated commitment cuts + weak business"}
+
+  # ---- evidence gate — cannot act on what we cannot see -------------
+  - {action: research_incomplete,
+     when: {products_mapped: 0},
+     note: "no product map — gather evidence before judging"}
+  - {action: research_incomplete,
+     when: {evidence_coverage_lt: 0.45},
+     note: "less than half the spec evaluated — coverage too thin"}
 
   # ---- conviction — the tailwind case, gated by quality ------------
   - {action: accumulate_candidate,
@@ -38,11 +51,17 @@ rules:
   # ---- middle — real but unproven / priced / thin coverage ---------
   - {action: watch, when: {ai_tailwind_gte: 50},
      note: "tailwind plausible — needs evidence or better entry"}
-  - {action: hold, when: {bstrength_gte: 55},
-     note: "sound business, no tailwind edge"}
+  - {action: hold_review, when: {bstrength_gte: 55},
+     note: "thesis intact — valuation/entry unattractive or thin evidence"}
 
   - {action: research, default: true,
      note: "insufficient evidence — research, don't act"}
+
+# Orthogonal states — appended to the action, never replacing it.
+# ARM pattern: action=hold_review + flag=research_incomplete.
+flags:
+  - {flag: research_incomplete,
+     when: {evidence_coverage_lt: 0.65}}
 
 groups:
   on_track_states: [on_track, improving, unknown]

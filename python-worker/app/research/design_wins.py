@@ -106,22 +106,29 @@ def _extract(sym: str, label: str, evidence: str) -> list[dict]:
 
 
 def review(sym: str, label: str = "AI infrastructure",
-           products: Optional[list] = None) -> list[dict]:
+           products: Optional[list] = None) -> tuple[list[dict], bool]:
     """Claims + products → upsert design_wins. Existing rows win on
     stage conflict — a confirmed-production win is never downgraded
-    by a weaker new extraction (monotone lifecycle)."""
+    by a weaker new extraction (monotone lifecycle).
+
+    Returns (rows, reviewed): reviewed=True means the lifecycle was
+    actually examined — claims or product evidence existed for the
+    extractor, or journaled wins are already on file. reviewed=False
+    means "no evidence to examine" — a downstream dw_total=0 is then
+    UNKNOWN, not confirmed-absence."""
     from app.database import db
     sym = sym.upper()
     claims = _claims(sym)
-    if not claims:
-        return _existing(sym)
+    existing = _existing(sym)
+    if not claims and not products:
+        return existing, bool(existing)
     evidence = json.dumps(
         {"products": products or [],
          "claims": [{"type": c.get("type"), "text": c.get("text"),
                      "quote": c.get("quote")} for c in claims]},
         default=str)[:12000]
     existing = {(w["customer"].lower(), w["product"].lower()): w
-                for w in _existing(sym)}
+                for w in existing}
     for w in _extract(sym, label, evidence):
         key = (w["customer"].lower(), w["product"].lower())
         prior = existing.get(key)
@@ -148,19 +155,23 @@ def review(sym: str, label: str = "AI infrastructure",
                                   "source": "research_extract"})})
         except Exception as exc:
             logger.debug("design_wins upsert %s: %s", sym, exc)
-    return _existing(sym)
+    return _existing(sym), True
 
 
-def stats(rows: list[dict]) -> dict[str, Any]:
+def stats(rows: list[dict], reviewed: bool = True
+          ) -> dict[str, Any]:
     """Deterministic counters the architecture score consumes.
     conversion = share of journaled wins that reached production+ —
-    the spec's design_win_to_revenue_conversion."""
+    the spec's design_win_to_revenue_conversion. `reviewed` = the
+    lifecycle was actually examined (claims/products/on-file wins);
+    a 0 total is then confirmed-absence, not unexamined."""
     prod = [w for w in rows
             if _STAGE_RANK.get(w.get("stage") or "", 0)
             >= _STAGE_RANK["production"]
             or w.get("revenue_confirmed")]
     total = len(rows)
     return {
+        "dw_reviewed": reviewed,
         "dw_total": total,
         "dw_production": len(prod),
         "dw_pipeline": total - len(prod),

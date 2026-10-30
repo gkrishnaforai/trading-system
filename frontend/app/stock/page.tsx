@@ -1390,6 +1390,17 @@ async function ResearchSection({ sym }: { sym: string }) {
           hard gates: {gates.join(', ').replace(/_/g, ' ')}
         </p>
       )}
+      {run.report?.evidence_state && run.report.evidence_state !== 'sufficient' && (
+        <p className="pt-2 text-xs text-caution">
+          evidence {run.report.evidence_state}
+          {run.report.evidence_coverage != null && (
+            <span className="text-faint"> — {Math.round(run.report.evidence_coverage * 100)}% of spec evaluated</span>
+          )}
+          {run.report.recommendation?.flags?.includes('research_incomplete') && (
+            <span className="text-faint"> · research incomplete</span>
+          )}
+        </p>
+      )}
 
       {/* the why — top-weighted component verdicts */}
       {comps.length > 0 && (
@@ -1397,9 +1408,17 @@ async function ResearchSection({ sym }: { sym: string }) {
           {comps.slice(0, 6).map(([k, c]) => (
             <li key={k}>
               <span className="text-faint">{k.replace(/_/g, ' ')}</span>
-              <span className="font-mono text-ink"> {c?.score}</span>
-              <span className="text-faint">/{c?.weight}</span>
-              {c?.note && <span> — {c.note}</span>}
+              {c?.unknown || c?.score == null ? (
+                <span className="font-mono text-faint"> —/{c?.weight}</span>
+              ) : (
+                <>
+                  <span className="font-mono text-ink">
+                    {' '}{(((c.score ?? 0) * (c.weight ?? 0)) / 100).toFixed(1)}
+                  </span>
+                  <span className="text-faint">/{c?.weight}</span>
+                </>
+              )}
+              {c?.note && <span className={c?.unknown ? 'text-faint' : ''}> — {c.note}</span>}
             </li>
           ))}
         </ul>

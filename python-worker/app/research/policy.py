@@ -29,10 +29,17 @@ def evaluate(ctx: dict) -> dict:
     spec = _spec()
     groups = spec.get("groups") or {}
     missing: list = []
+    flags: list = []
+    for f in spec.get("flags") or []:
+        matched, log = _eval_when(ctx, f.get("when") or {}, groups)
+        missing.extend(log.get("missing") or [])
+        if matched:
+            flags.append(f["flag"])
     for rule in spec.get("rules") or []:
         if rule.get("default"):
             return {"action": rule["action"],
                     "note": rule.get("note"),
+                    "flags": flags,
                     "rules_version": f"research@{spec.get('version')}",
                     "missing": sorted(set(missing))}
         matched, log = _eval_when(ctx, rule.get("when") or {}, groups)
@@ -40,8 +47,9 @@ def evaluate(ctx: dict) -> dict:
         if matched:
             return {"action": rule["action"],
                     "note": rule.get("note"),
+                    "flags": flags,
                     "rules_version": f"research@{spec.get('version')}",
                     "missing": sorted(set(missing))}
-    return {"action": "research",
+    return {"action": "research", "flags": flags,
             "rules_version": f"research@{spec.get('version')}",
             "missing": sorted(set(missing))}

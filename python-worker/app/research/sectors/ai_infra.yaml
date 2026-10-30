@@ -41,7 +41,7 @@ symbol_map:
   NVDA: compute_accelerator
   AMD:  compute_accelerator
   INTC: compute_accelerator
-  ARM:  compute_accelerator
+  ARM:  ip_licensing
   QCOM: compute_accelerator
   AVGO: networking_silicon
   MRVL: networking_silicon
@@ -96,6 +96,8 @@ layers:
   transceiver:       "optical transceivers/modules (800G, 1.6T)"
   laser:             "lasers / optical components"
   gpu:               "GPU / accelerator"
+  cpu:               "CPU / processor IP (Neoverse, Grace, EPYC)"
+  edge_compute:      "edge/embedded AI compute"
   asic_accelerator:  "custom ASIC / XPU"
   hbm:               "high-bandwidth memory"
   dram:              "DRAM"
@@ -146,9 +148,23 @@ business_models:
     opportunities: [gpu, asic_accelerator]
     exposure_terms: [data center, compute, gpu, client, gaming,
                      embedded, accelerator]
-    nextgen_layers: [gpu, asic_accelerator, hbm]
+    nextgen_layers: [gpu, asic_accelerator, hbm, cpu]
     kpis: [dc_revenue_growth, ecosystem_share, supply_secured,
            gross_margin]
+    valuation: ev_ebitda
+    profitability_expected: true
+  # IP licensing (ARM) — royalty+license economics, not merchant
+  # silicon. Segments are "Royalties"/"License and other"; the CPU
+  # IP itself IS the next-gen layer (AGI CPU, Neoverse, CSS).
+  ip_licensing:
+    industry_hints: [semiconductor, intellectual property,
+                     processor ip]
+    opportunities: [cpu, asic_accelerator]
+    exposure_terms: [royalt, licens, data center, compute,
+                     automotive, iot]
+    nextgen_layers: [cpu, asic_accelerator, gpu]
+    kpis: [royalty_growth, license_wins, ecosystem_share,
+           royalty_rate, oem_breadth]
     valuation: ev_ebitda
     profitability_expected: true
   networking_silicon:

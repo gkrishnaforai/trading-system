@@ -121,8 +121,11 @@ if detail:
         m[3].metric("model", (run.get("business_model") or "—")
                     .replace("_", " "))
         cov = (rep.get("coverage") or {})
-        m[4].metric("coverage",
-                    f"{int(round(100 * (cov.get('tailwind') or 0)))}%")
+        ev_cov = rep.get("evidence_coverage")
+        m[4].metric("evidence",
+                    (rep.get("evidence_state") or "—")
+                    + (f" {int(round(100 * ev_cov))}%"
+                       if ev_cov is not None else ""))
         m[5].metric("as of", str(run.get("as_of") or "—"))
 
         # ---- FDCE — four-score row --------------------------------

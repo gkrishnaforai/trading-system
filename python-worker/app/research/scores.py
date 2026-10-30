@@ -130,26 +130,51 @@ def _weights(spec: dict, overrides: dict) -> dict[str, float]:
 def evaluate(sym: str, name: str, ctx: dict,
              overrides: Optional[dict] = None) -> dict:
     """One score spec → component breakdown + weighted total +
-    confidence. `name` = ai_tailwind | business_strength."""
+    coverage. `name` = ai_tailwind | business_strength | ...
+
+    Evidence contract: a component that cannot be evaluated is
+    UNKNOWN — never a silent zero. Bands may declare `unknown:
+    true` explicitly (e.g. "no product map" is not "no moat");
+    a component whose bands all fail after touching missing inputs
+    is unknown too. Unknown components are excluded from the
+    weighted total, which renormalizes over the answered weight —
+    the score reflects the evidence that exists, and `coverage`
+    (answered-weight share) says how much of the spec that was."""
     spec = _spec(name)
     weights = _weights(spec, overrides or {})
     missing: list = []
     comps = {}
     for comp, cfg in (spec.get("components") or {}).items():
-        sc, note = None, None
+        sc, note, unk = None, None, False
+        n_missing_before = len(missing)
         for band in cfg.get("bands") or []:
             if "default" in band:
                 sc, note = band["default"], band.get("note")
                 continue
             if _cond(ctx, band.get("if") or {}, missing, {}):
-                sc, note = band["score"], band.get("note")
+                if band.get("unknown"):
+                    # explicit unknown beats any default applied
+                    # earlier in the list
+                    sc, note, unk = None, band.get("note"), True
+                else:
+                    sc, note = band["score"], band.get("note")
                 break
-        if sc is None:
-            sc, note = 0, "no band matched"
+        if sc is None and not unk:
+            unk = True
+            note = ("insufficient evidence: "
+                    + ",".join(sorted(set(
+                        missing[n_missing_before:]))[:4])
+                    if len(missing) > n_missing_before
+                    else "no band matched")
         comps[comp] = {"score": sc, "weight": round(
-            weights.get(comp, 0), 1), "note": note}
-    total = sum(c["score"] * c["weight"] / 100
-                for c in comps.values())
+            weights.get(comp, 0), 1), "note": note,
+            **({"unknown": True} if unk else {})}
+    answered_w = sum(c["weight"] for c in comps.values()
+                     if not c.get("unknown"))
+    total_w = sum(c["weight"] for c in comps.values())
+    total = (sum(c["score"] * c["weight"]
+                 for c in comps.values() if not c.get("unknown"))
+             / answered_w if answered_w > 0 else None)
     # caps — semantic limits no component sum can override. E.g. a
     # company with no AI linkage can't post a high *tailwind* score
     # just because its moat is strong; the cap is journaled.
@@ -158,17 +183,15 @@ def evaluate(sym: str, name: str, ctx: dict,
     for cap in spec.get("caps") or []:
         matched, _log = _eval_when(ctx, cap.get("when") or {}, {})
         missing.extend(_log.get("missing") or [])
-        if matched and total > cap["cap"]:
+        if matched and total is not None and total > cap["cap"]:
             total, capped = cap["cap"], cap.get("note")
             break
-    # coverage = share of weighted components whose band evaluation
-    # touched no missing inputs — approximated by missing count vs
-    # ctx fields used. Simple and auditable.
-    n_missing = len(set(missing))
-    coverage = max(0.0, 1.0 - 0.1 * n_missing)
-    return {"score": round(total, 1),
+    return {"score": round(total, 1) if total is not None else None,
             "components": comps,
             "capped": capped,
             "missing": sorted(set(missing)),
-            "coverage": round(coverage, 2),
+            "unknown_components": sorted(
+                k for k, c in comps.items() if c.get("unknown")),
+            "coverage": round(answered_w / total_w, 2)
+            if total_w else None,
             "rules_version": f"{name}@{spec.get('version', 0)}"}
