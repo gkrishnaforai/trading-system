@@ -35,7 +35,8 @@ def _safe(fn, default=None):
 
 # ---------------------------------------------------------- controls
 c1, c2, c3 = st.columns([2, 2, 4])
-sector = c1.selectbox("sector", ["healthcare", "ai_infra"], index=0)
+sector = c1.selectbox(
+    "sector", ["healthcare", "ai_infra", "fdce"], index=0)
 board = _safe(lambda: client.get("admin/research/board",
                                  params={"sector": sector}) or {})
 rows = (board or {}).get("rows") or []
@@ -75,6 +76,10 @@ else:
         "model": (r.get("business_model") or "").replace("_", " "),
         "AI tailwind": r.get("ai_tailwind"),
         "biz strength": r.get("business_strength"),
+        "FDCS": r.get("fdcs"),
+        "ECS": r.get("ecs"),
+        "transition": r.get("transition_net"),
+        "horizon": r.get("horizon"),
         "best product": (r.get("best_product") or {}).get("name"),
         "stage": (r.get("best_product") or {}).get("stage"),
         "moats": len((r.get("best_product") or {}).get("moats") or []),
@@ -119,6 +124,31 @@ if detail:
         m[4].metric("coverage",
                     f"{int(round(100 * (cov.get('tailwind') or 0)))}%")
         m[5].metric("as of", str(run.get("as_of") or "—"))
+
+        # ---- FDCE — four-score row --------------------------------
+        fd = (rep.get("fdce") or {})
+        if fd:
+            fdcs_v = ((sc.get("future_demand_capture") or {})
+                      .get("score"))
+            f = st.columns(5)
+            f[0].metric("FDCS", fdcs_v)
+            f[1].metric("adjusted",
+                        fd.get("adjusted_fdcs") or "—")
+            f[2].metric("ECS",
+                        (fd.get("ecs") or {}).get("ecs") or "—")
+            f[3].metric("transition",
+                        (fd.get("transitions") or {})
+                        .get("net") or "—")
+            f[4].metric("horizon",
+                        (fd.get("horizon") or {})
+                        .get("dominant_horizon") or "—")
+            ecs_d = fd.get("ecs") or {}
+            st.caption(
+                f"evidence: {ecs_d.get('highest_evidence_stage') or '—'}"
+                f" · production exposure "
+                f"{ecs_d.get('production_exposure_pct') or '—'}"
+                f" · roadmap exposure "
+                f"{ecs_d.get('roadmap_exposure_pct') or '—'}")
 
         if tw.get("capped"):
             st.warning(f"score capped — {tw['capped']}")

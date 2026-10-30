@@ -1,0 +1,46 @@
+# Valuation Opportunity — v1
+# ==========================
+# "Is the market underestimating future earnings?" — INDEPENDENT of
+# capability. A 90 FDCS at a 200x price scores low here; that is the
+# point of the four-score split. All inputs journaled (flywheel).
+version: 1
+
+components:
+
+  repricing_gap:                        # 45 — expectation gap: what
+    weight: 45                          # the price already assumes
+    bands:
+      - {if: {gap_score_gte: 70}, score: 100,
+         note: "large underpricing vs forward estimates"}
+      - {if: {gap_score_gte: 50}, score: 75,
+         note: "meaningful reprice headroom"}
+      - {if: {gap_score_gte: 30}, score: 50,
+         note: "modest reprice headroom"}
+      - {if: {gap_score_lt: 30}, score: 25,
+         note: "growth largely priced in"}
+
+  forward_multiple:                     # 30 — fwd PE vs the growth
+    weight: 30                          # it buys
+    bands:
+      - {if: {fwd_pe_lte: 25, rev_growth_gte: 0.15}, score: 100,
+         note: "growth at a value multiple"}
+      - {if: {fwd_pe_lte: 35}, score: 70,
+         note: "reasonable multiple"}
+      - {if: {fwd_pe_lte: 55}, score: 45,
+         note: "full multiple — execution must hold"}
+      - {if: {fwd_pe_gt: 55}, score: 15,
+         note: "priced for perfection"}
+      - {if: {fwd_pe_lte: 0}, score: 20,
+         note: "negative earnings — multiple meaningless"}
+
+  revision_tailwind:                    # 25 — is the Street moving
+    weight: 25                          # estimates the right way
+    bands:
+      - {if: {est_revision_pct_gte: 0.05}, score: 100,
+         note: "estimates moving up hard"}
+      - {if: {est_revision_pct_gte: 0}, score: 70,
+         note: "revisions positive"}
+      - {if: {est_revision_pct_gt: -0.05}, score: 45,
+         note: "revisions drifting down"}
+      - {if: {est_revision_pct_lte: -0.05}, score: 15,
+         note: "estimates being cut"}

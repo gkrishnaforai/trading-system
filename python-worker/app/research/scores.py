@@ -77,12 +77,16 @@ def _ctx(sym: str, model: str, quarter_trends: dict,
         c["gq_score"] = None
     try:
         r = db.execute_query(
-            "SELECT emerging_growth FROM stocks WHERE symbol=:s",
+            "SELECT emerging_growth, momentum_state FROM stocks"
+            " WHERE symbol=:s",
             {"s": sym})
         c["emerging_growth"] = bool(r[0]["emerging_growth"]) \
             if r and r[0]["emerging_growth"] is not None else None
+        c["momentum_state"] = r[0].get("momentum_state") \
+            if r else None
     except Exception:
         c["emerging_growth"] = None
+        c["momentum_state"] = None
     try:
         r = db.execute_query(
             "SELECT top1_pct FROM symbol_customer_conc"

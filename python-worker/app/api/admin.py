@@ -2060,8 +2060,12 @@ async def research_board(sector: str = "healthcare", limit: int = 300):
     strength. Unscored symbols sink to the bottom (NULLS LAST) — a
     missing run is 'not yet researched', not zero."""
     try:
-        from app.research import sectors as _sec
-        syms = _sec.universe(sector)
+        if sector == "fdce":
+            from app.research import fdce as _fd
+            syms = sorted(_fd.universe().keys())
+        else:
+            from app.research import sectors as _sec
+            syms = _sec.universe(sector)
         if not syms:
             return {"success": True, "sector": sector, "rows": []}
         rows = db.execute_query(
@@ -2083,6 +2087,8 @@ async def research_board(sector: str = "healthcare", limit: int = 300):
             if isinstance(rep, str):
                 rep = json.loads(rep)
             bp, pscore = _best_product(rep)
+            sc = rep.get("scores") or {}
+            fd = rep.get("fdce") or {}
             out.append({
                 "symbol": r["symbol"], "name": r["company_name"],
                 "industry": r["industry"],
@@ -2091,9 +2097,19 @@ async def research_board(sector: str = "healthcare", limit: int = 300):
                 "business_strength": r.get("business_strength"),
                 "recommendation": r.get("recommendation"),
                 "best_product": bp, "product_score": pscore,
+                "fdcs": sc.get("future_demand_capture"),
+                "ecs": (fd.get("ecs") or {}).get("ecs"),
+                "transition_net": (fd.get("transitions") or {})
+                                  .get("net"),
+                "horizon": (fd.get("horizon") or {})
+                           .get("dominant_horizon"),
                 "as_of": str(r["as_of"]) if r.get("as_of") else None})
-        out.sort(key=lambda x: (-(x["ai_tailwind"] or -1),
-                                -x["product_score"], x["symbol"]))
+        if sector == "fdce":
+            out.sort(key=lambda x: (-(x["fdcs"] or -1),
+                                    -(x["ecs"] or -1), x["symbol"]))
+        else:
+            out.sort(key=lambda x: (-(x["ai_tailwind"] or -1),
+                                    -x["product_score"], x["symbol"]))
         return {"success": True, "sector": sector, "rows": out}
     except Exception as e:
         logger.error(f"research board: {e}")

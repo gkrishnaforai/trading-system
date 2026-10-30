@@ -66,13 +66,21 @@ def _claims(sym: str, limit: int = 30) -> list[dict]:
 
 def _extract(sym: str, label: str, evidence: str,
              moat_vocab: list,
-             layer_vocab: Optional[list] = None) -> list[dict]:
+             layer_vocab: Optional[list] = None,
+             with_importance: bool = False) -> list[dict]:
     """Bounded LLM product extraction. Strict JSON, verbatim-grounded
     quotes, null over invention — same provenance contract as
     ai_research and the earnings narrative. `layer_vocab` (sectors
-    that define architecture layers) adds a product→layer tag."""
+    that define architecture layers) adds a product→layer tag.
+    `with_importance` adds strategic_importance (0-100, evidence-
+    grounded — a classification input, never a fabricated revenue
+    share)."""
     layer_field = (f", \"layer\": one of {layer_vocab}|null"
                    if layer_vocab else "")
+    imp_field = (", \"strategic_importance\": int 0-100|null, "
+                 "\"revenue_share_pct\": number|null (ONLY if "
+                 "evidence states it — never estimate)"
+                 if with_importance else "")
     try:
         from litellm import completion
         from app.config import settings
@@ -88,7 +96,7 @@ def _extract(sym: str, label: str, evidence: str,
                  "\"pipeline\"|\"aspiration\", \"ai_use\": str|null, "
                  "\"moat\": [mechanisms], \"why_it_matters\": str, "
                  "\"quote\": verbatim evidence substring|null"
-                 f"{layer_field}" + "}]}. "
+                 f"{layer_field}{imp_field}" + "}]}. "
                  f"Allowed moat mechanisms ONLY: {moat_vocab}. "
                  "'uses AI' is NOT a moat — a mechanism means "
                  "proprietary data, workflow lock-in, regulatory "
@@ -116,6 +124,17 @@ def _extract(sym: str, label: str, evidence: str,
                 "layer": (str(p["layer"]) if layer_vocab
                           and p.get("layer") in layer_vocab
                           else None),
+                "strategic_importance": (
+                    max(0, min(int(p["strategic_importance"]), 100))
+                    if with_importance
+                    and isinstance(p.get("strategic_importance"),
+                                   (int, float)) else None),
+                "revenue_share_pct": (
+                    float(p["revenue_share_pct"]) if with_importance
+                    and isinstance(p.get("revenue_share_pct"),
+                                   (int, float))
+                    and p["revenue_share_pct"] is not None
+                    else None),
                 "why": str(p.get("why_it_matters") or "")[:200],
                 "quote": str(p.get("quote") or "")[:300] or None,
                 "synthetic": True})
@@ -125,15 +144,22 @@ def _extract(sym: str, label: str, evidence: str,
         return []
 
 
-def map_products(sym: str, sector: str = "healthcare") -> dict:
+def map_products(sym: str, sector: str = "healthcare",
+                 extra_layers: Optional[list] = None,
+                 with_importance: bool = False) -> dict:
     """Existing initiatives + bounded extraction → canonical product
-    set + the counts the scorer consumes."""
+    set + the counts the scorer consumes. `extra_layers` merges a
+    second layer vocabulary (the FDCE domain map) into the tagging
+    space; `with_importance` asks the extractor for strategic
+    importance + grounded revenue share."""
     from app.database import db
     from app.research import sectors
     sym = sym.upper()
     cfg = sectors.load(sector)
     moat_vocab = list((cfg.get("moat_mechanisms") or {}).keys())
-    layer_vocab = list((cfg.get("layers") or {}).keys()) or None
+    layer_vocab = sorted(set(
+        list((cfg.get("layers") or {}).keys())
+        + list(extra_layers or []))) or None
     existing = _existing(sym)
     claims = _claims(sym)
     profile = {}
@@ -151,7 +177,7 @@ def map_products(sym: str, sector: str = "healthcare") -> dict:
                      "quote": c.get("quote")} for c in claims]},
         default=str)[:12000]
     extracted = _extract(sym, cfg.get("label", sector), evidence,
-                         moat_vocab, layer_vocab)
+                         moat_vocab, layer_vocab, with_importance)
     # merge: existing rows win on name collision (human/curated beats
     # synthetic); new synthetic rows upsert as stage='pipeline'+
     seen = {str(p["name"]).lower() for p in existing}
@@ -173,6 +199,10 @@ def map_products(sym: str, sector: str = "healthcare") -> dict:
                  "e": json.dumps({"ai_use": p["ai_use"],
                                   "moat": p["moat"],
                                   "layer": p.get("layer"),
+                                  "strategic_importance":
+                                      p.get("strategic_importance"),
+                                  "revenue_share_pct":
+                                      p.get("revenue_share_pct"),
                                   "why": p["why"],
                                   "quote": p["quote"],
                                   "source": "research_extract"})})

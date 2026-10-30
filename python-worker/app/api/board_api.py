@@ -704,12 +704,24 @@ async def _j_research() -> dict:
     from app.research import sectors
     from app.database import db
     todo = []
+    seen = set()
     n_syms = 0
     fresh = {r["symbol"] for r in db.execute_query(
         "SELECT symbol FROM research_runs WHERE as_of=CURRENT_DATE")}
     for sector, syms in sectors.all_universes().items():
         n_syms += len(syms)
-        todo += [(s, sector) for s in syms if s not in fresh]
+        for s in syms:
+            if s not in fresh and s not in seen:
+                seen.add(s)
+                todo.append((s, sector))
+    # FDCE-only names (PLTR, NOW, SYM…) — not in any sector universe;
+    # run() routes their sector and layers the domain eval on top
+    from app.research import fdce
+    for s in fdce.universe():
+        if s not in fresh and s not in seen:
+            seen.add(s)
+            n_syms += 1
+            todo.append((s, sectors.sector_for_symbol(s)))
     done, errs = [], []
     for s, sector in todo:
         try:

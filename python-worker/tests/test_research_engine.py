@@ -6,7 +6,7 @@ hard-gate precedence, quarter math, sector config.
 """
 import pytest
 
-from app.research import (design_wins, observations, policy,
+from app.research import (design_wins, fdce, observations, policy,
                           quarter, scores, sectors)
 
 
@@ -246,3 +246,100 @@ class TestExposure:
     def test_no_terms_no_score(self):
         out = observations.exposure("X", [])
         assert out["exposed_rev_growth"] is None
+
+
+def _p(name, layer, stage, si=None, moat=None, rev=None):
+    """FDCE product fixture — weight = revenue share if disclosed,
+    else strategic importance; never inferred."""
+    return {"name": name, "layer": layer, "stage": stage,
+            "strategic_importance": si, "revenue_share_pct": rev,
+            "moat": moat or [], "synthetic": True}
+
+
+class TestFdce:
+    def test_registry_loads(self):
+        cfg = fdce.load()
+        assert len(cfg["domains"]) == 12
+        assert fdce.in_universe("CRDO") and fdce.in_universe("PLTR")
+        assert not fdce.in_universe("JNJ")
+        assert cfg["transitions"] and cfg["universe"]
+
+    def test_weighted_exposure_not_membership(self):
+        # one minor product vs a core business — different exposure
+        minor = fdce.domain_exposure(
+            [_p("side gig", "laser", "pipeline", si=10)])
+        core = fdce.domain_exposure(
+            [_p("transceivers", "transceiver", "revenue", si=90),
+             _p("CPO engines", "cpo", "production", si=70)])
+        assert minor["connectivity"]["weight"] < \
+            core["connectivity"]["weight"]
+        assert "connectivity" in core
+
+    def test_ecs_roadmap_cant_masquerade(self):
+        # 1 E5 product + 3 E1 roadmap products (equal weight) →
+        # honest mid ECS, high roadmap share — not "mature"
+        prods = [_p("core", "gpu", "revenue", si=25),
+                 _p("fut1", "cpo", "aspiration", si=25),
+                 _p("fut2", "hbm", "aspiration", si=25),
+                 _p("fut3", "lidar_radar", "aspiration", si=25)]
+        e = fdce.ecs(prods)
+        assert e["highest_evidence_stage"].startswith("E5")
+        assert e["roadmap_exposure_pct"] == pytest.approx(0.75)
+        # mean E = (5+1+1+1)/4 = 2.0; synthetic rows carry conf=0.5
+        # → ECS = 2.0 × 0.5 × 20 = 20 — a roadmap majority cannot
+        # borrow the E5 product's maturity
+        assert e["ecs"] == pytest.approx(20, abs=1)
+        # curated/verified evidence (conf=1) doubles it — same book
+        for p in prods:
+            p["confidence"] = 0.9
+        assert fdce.ecs(prods)["ecs"] == pytest.approx(36, abs=1)
+
+    def test_transition_product_level_both_signs(self):
+        # NVDA-shaped: gpu at_risk + nic/platform gains → mixed
+        prods = [_p("GPU systems", "gpu", "revenue", si=80),
+                 _p("Spectrum-X fabric", "switch_silicon", "revenue",
+                    si=40)]
+        t = fdce.transition_exposure(prods)
+        classes = {h["classification"] for h in t["items"]}
+        assert "at_risk" in classes
+        assert ("direct_beneficiary" in classes
+                or "indirect_beneficiary" in classes)
+        assert t["net"] == "mixed"
+
+    def test_fdcs_deterministic_and_caps(self):
+        ctx = {"model": "connectivity_silicon", "demand_score": 85,
+               "bottleneck_mechs": 2, "nextgen_stage_rank": 4,
+               "moat_mechs": 3, "dw_total": 3, "dw_production": 2,
+               "dw_pipeline": 1, "dw_conversion": 0.67,
+               "rev_products": 2, "top1_pct": 0.30,
+               "margin_trend": "improving", "om_now": 0.3,
+               "fcf_ttm": 1e9, "dilution_pct": 0.01,
+               "domain_count": 2}
+        r1 = scores.evaluate("CRDO", "future_demand_capture", ctx)
+        r2 = scores.evaluate("CRDO", "future_demand_capture", ctx)
+        assert r1["score"] == r2["score"] and r1["score"] >= 75
+        # spec safeguards: no production → conversion capped at 35
+        r3 = scores.evaluate("X", "future_demand_capture",
+                             dict(ctx, dw_production=0,
+                                  rev_products=0))
+        assert r3["components"]["commercial_conversion"]["score"] \
+            <= 35
+        # no moat → competitive advantage capped at 40
+        r4 = scores.evaluate("X", "future_demand_capture",
+                             dict(ctx, moat_mechs=0,
+                                  bottleneck_mechs=0))
+        assert r4["components"]["competitive_advantage"]["score"] \
+            <= 40
+
+    def test_adjusted_fdcs_clipped(self):
+        assert fdce.adjusted_fdcs(90, -30) == 60
+        assert fdce.adjusted_fdcs(95, 20) == 100
+        assert fdce.adjusted_fdcs(None, 5) is None
+
+    def test_disruption_flags(self):
+        prods = [_p("workflow agent", "orchestration", "revenue",
+                    si=60)]
+        d = fdce.disruption(prods, set(), 0.55, {"items": []})
+        assert d["open_source_commoditization_risk"] == "elevated"
+        assert d["customer_concentration_risk"] == "high"
+        assert d["replication_difficulty"] == "low"

@@ -1,0 +1,255 @@
+# Future Demand Capture — domain registry v1
+# ===========================================
+# The demand-side map: what the market will NEED (domains), who CAN
+# supply it (layers → products), who CAPTURES the economics (FDCS).
+# Need / Capability / Capture stay separate scores — domain heat
+# never inflates a weak supplier's capability.
+#
+# d = domain opportunity seeds {growth, bottleneck, adoption,
+# time_to_scale, strategic} — 0-100, versioned with the file (the
+# PIT journal records domains@version on every run). The demand
+# formula D_d = .30G+.25B+.20A+.15T+.10S is applied in fdce.py.
+version: 1
+
+label: "Future Demand Capture"
+
+# ------------------------------------------------------------------
+# Universe — symbols the FDCE evaluates, with primary/secondary
+# domain assignment. Overlaps sector universes freely: a symbol
+# runs its sector engine AND its domain eval in the same run.
+# ------------------------------------------------------------------
+universe:
+  NVDA: {primary: [compute], secondary: [autonomy, robotics]}
+  AMD:  {primary: [compute], secondary: [edge_infra]}
+  ARM:  {primary: [compute], secondary: [edge_infra]}
+  INTC: {primary: [compute], secondary: [semicap]}
+  QCOM: {primary: [compute, edge_infra], secondary: [autonomy]}
+  AVGO: {primary: [compute, connectivity], secondary: []}
+  MRVL: {primary: [connectivity, compute], secondary: []}
+  CRDO: {primary: [connectivity], secondary: []}
+  ALAB: {primary: [connectivity], secondary: []}
+  LITE: {primary: [connectivity], secondary: []}
+  COHR: {primary: [connectivity], secondary: [semicap]}
+  CIEN: {primary: [connectivity], secondary: []}
+  FN:   {primary: [connectivity], secondary: []}
+  GLW:  {primary: [connectivity], secondary: []}
+  APH:  {primary: [connectivity, power_thermal], secondary: []}
+  TEL:  {primary: [connectivity, power_thermal], secondary: []}
+  CSCO: {primary: [connectivity], secondary: [security]}
+  MU:   {primary: [memory], secondary: []}
+  WDC:  {primary: [memory], secondary: []}
+  STX:  {primary: [memory], secondary: []}
+  TSM:  {primary: [semicap], secondary: []}
+  ASX:  {primary: [semicap], secondary: []}
+  AMKR: {primary: [semicap], secondary: []}
+  ASML: {primary: [semicap], secondary: []}
+  LRCX: {primary: [semicap], secondary: []}
+  AMAT: {primary: [semicap], secondary: []}
+  KLAC: {primary: [semicap], secondary: []}
+  VRT:  {primary: [power_thermal], secondary: []}
+  ETN:  {primary: [power_thermal, energy], secondary: []}
+  NVT:  {primary: [power_thermal], secondary: []}
+  HUBB: {primary: [power_thermal], secondary: []}
+  EMR:  {primary: [power_thermal], secondary: [robotics]}
+  MPWR: {primary: [power_thermal, compute], secondary: []}
+  ON:   {primary: [power_thermal], secondary: [autonomy]}
+  TXN:  {primary: [edge_infra, power_thermal], secondary: []}
+  TT:   {primary: [power_thermal], secondary: []}
+  CARR: {primary: [power_thermal], secondary: []}
+  JCI:  {primary: [power_thermal], secondary: []}
+  MOD:  {primary: [power_thermal], secondary: []}
+  FIX:  {primary: [power_thermal], secondary: []}
+  IESC: {primary: [power_thermal], secondary: []}
+  GEV:  {primary: [energy], secondary: [power_thermal]}
+  CEG:  {primary: [energy], secondary: []}
+  VST:  {primary: [energy], secondary: []}
+  TLN:  {primary: [energy], secondary: []}
+  PWR:  {primary: [energy], secondary: []}
+  CMI:  {primary: [energy], secondary: []}
+  CAT:  {primary: [energy], secondary: []}
+  GNRC: {primary: [energy], secondary: []}
+  SMCI: {primary: [compute], secondary: [power_thermal]}
+  DELL: {primary: [compute], secondary: [edge_infra]}
+  HPE:  {primary: [compute, connectivity], secondary: []}
+  CLS:  {primary: [compute], secondary: []}
+  PLTR: {primary: [agentic_sw], secondary: []}
+  NOW:  {primary: [agentic_sw], secondary: []}
+  SNOW: {primary: [agentic_sw], secondary: []}
+  DDOG: {primary: [agentic_sw, security], secondary: []}
+  CRWD: {primary: [security], secondary: []}
+  PANW: {primary: [security], secondary: []}
+  RBRK: {primary: [security], secondary: []}
+  SYM:  {primary: [robotics], secondary: []}
+  TER:  {primary: [robotics], secondary: [semicap]}
+  ISRG: {primary: [robotics], secondary: [app_infra]}
+  TSLA: {primary: [autonomy, robotics], secondary: [energy]}
+  MBLY: {primary: [autonomy], secondary: []}
+
+# Names the discovery surface may flag — shown as suggestions,
+# never auto-scored into the universe
+expansion_candidates:
+  [NBIS, IREN, CRWV, APLD, POET, VIAV, NXT, OKLO, SMR, RKLB, ASTS,
+   IONQ, RGTI, QBTS, LUMN, VRTX, ARMK, HLX, GRID, DDOG2]
+
+# ------------------------------------------------------------------
+# The 12 demand domains + layers each contains. A product tagged to
+# one of a domain's layers is exposed to that domain — exposure is
+# WEIGHTED (revenue_contribution or strategic_importance), never
+# equal membership.
+# ------------------------------------------------------------------
+domains:
+  compute:
+    label: "Compute & accelerators"
+    layers: [gpu, asic_accelerator, cpu, edge_compute, server,
+             rack_integration]
+    horizon: "0-18m"
+    d: {growth: 90, bottleneck: 70, adoption: 90, time_to_scale: 90,
+        strategic: 90}
+  connectivity:
+    label: "Connectivity & optical"
+    layers: [aec_copper, retimer_fabric, optical_dsp,
+             silicon_photonics, cpo, transceiver, laser,
+             switch_silicon, nic_dpu]
+    horizon: "0-18m"
+    d: {growth: 92, bottleneck: 80, adoption: 85, time_to_scale: 88,
+        strategic: 80}
+  memory:
+    label: "Memory & storage"
+    layers: [hbm, dram, nand, cxl_memory, storage_media]
+    horizon: "0-18m"
+    d: {growth: 85, bottleneck: 85, adoption: 88, time_to_scale: 90,
+        strategic: 75}
+  semicap:
+    label: "Semiconductor manufacturing"
+    layers: [foundry, litho, deposition, inspection,
+             packaging_osat, substrate]
+    horizon: "0-18m"
+    d: {growth: 78, bottleneck: 88, adoption: 90, time_to_scale: 92,
+        strategic: 85}
+  power_thermal:
+    label: "Power delivery & cooling"
+    layers: [power_supply, ups, liquid_cooling, air_cooling,
+             busbar, interconnect_power]
+    horizon: "0-18m"
+    d: {growth: 88, bottleneck: 85, adoption: 88, time_to_scale: 90,
+        strategic: 80}
+  energy:
+    label: "Energy generation & grid"
+    layers: [turbine, generator, nuclear, renewables, grid_storage,
+             grid_equipment]
+    horizon: "18-36m"
+    d: {growth: 80, bottleneck: 82, adoption: 82, time_to_scale: 78,
+        strategic: 78}
+  robotics:
+    label: "Robotics & automation"
+    layers: [actuators, motion_control, industrial_robots,
+             warehouse_auto, robot_platform, surgical_robot]
+    horizon: "3-5y"
+    d: {growth: 82, bottleneck: 72, adoption: 68, time_to_scale: 55,
+        strategic: 82}
+  autonomy:
+    label: "Autonomous systems"
+    layers: [perception, vehicle_compute, lidar_radar, autonomy_sw,
+             drones]
+    horizon: "3-5y"
+    d: {growth: 80, bottleneck: 70, adoption: 65, time_to_scale: 52,
+        strategic: 80}
+  agentic_sw:
+    label: "Agentic software"
+    layers: [orchestration, inference_platform, observability,
+             workflow_exec, agent_identity]
+    horizon: "18-36m"
+    d: {growth: 90, bottleneck: 55, adoption: 80, time_to_scale: 82,
+        strategic: 85}
+  security:
+    label: "Security & trust"
+    layers: [ai_security, data_governance, iam, endpoint_cloud]
+    horizon: "18-36m"
+    d: {growth: 82, bottleneck: 60, adoption: 82, time_to_scale: 80,
+        strategic: 82}
+  edge_infra:
+    label: "Edge & physical infrastructure"
+    layers: [edge_ai, industrial_sensors, embedded_compute,
+             rt_control]
+    horizon: "18-36m"
+    d: {growth: 75, bottleneck: 58, adoption: 72, time_to_scale: 72,
+        strategic: 72}
+  app_infra:
+    label: "New application infrastructure"
+    layers: [drug_discovery_sw, simulation, sci_computing,
+             healthcare_auto]
+    horizon: "3-5y"
+    d: {growth: 78, bottleneck: 55, adoption: 65, time_to_scale: 55,
+        strategic: 78}
+
+watchlist_vectors:
+  [quantum_compute, space_infra, advanced_battery,
+   photonics_compute, synthetic_data, sci_instruments]
+
+# ------------------------------------------------------------------
+# Transition registry — product-LEVEL, four classifications:
+# gains_direct → direct_beneficiary, gains_indirect → indirect,
+# loses_displaced → displaced, loses_at_risk → at_risk. A company
+# can hold both + and − exposures across its products.
+# confidence scales the transition-adjusted view.
+# ------------------------------------------------------------------
+transitions:
+  - id: gpu_to_custom_asic
+    label: "GPU clusters → custom ASICs"
+    gains_direct: [asic_accelerator, packaging_osat]
+    gains_indirect: [foundry, hbm, aec_copper, transceiver,
+                     switch_silicon, dram]
+    loses_at_risk: [gpu]
+    loses_displaced: []
+    confidence: 0.7
+  - id: copper_to_optical
+    label: "Copper → optical interconnects"
+    gains_direct: [cpo, transceiver, laser, optical_dsp,
+                   silicon_photonics]
+    gains_indirect: [packaging_osat, switch_silicon]
+    loses_at_risk: [aec_copper]
+    loses_displaced: []
+    confidence: 0.65
+  - id: air_to_liquid_cooling
+    label: "AI racks → liquid cooling"
+    gains_direct: [liquid_cooling]
+    gains_indirect: [power_supply, busbar]
+    loses_at_risk: [air_cooling]
+    loses_displaced: []
+    confidence: 0.8
+  - id: agentic_cpu_workloads
+    label: "Agentic AI → CPU/orchestration work"
+    gains_direct: [cpu, asic_accelerator]
+    gains_indirect: [hbm, dram, nic_dpu, embedded_compute]
+    loses_at_risk: []
+    loses_displaced: []
+    confidence: 0.6
+  - id: inference_cost_pressure
+    label: "Inference economics → efficient custom compute"
+    gains_direct: [asic_accelerator, edge_compute]
+    gains_indirect: [cpu, dram, inference_platform]
+    loses_at_risk: [gpu]
+    loses_displaced: []
+    confidence: 0.6
+  - id: robotics_general_env
+    label: "Robots → general environments"
+    gains_direct: [actuators, motion_control, perception, edge_ai,
+                   robot_platform]
+    gains_indirect: [vehicle_compute, embedded_compute]
+    loses_at_risk: []
+    loses_displaced: []
+    confidence: 0.5
+  - id: agentic_enterprise
+    label: "AI agents → enterprise workflow execution"
+    gains_direct: [orchestration, workflow_exec, agent_identity]
+    gains_indirect: [observability, data_governance, iam]
+    loses_at_risk: []
+    loses_displaced: []
+    confidence: 0.6
+  - id: cpo_expansion
+    label: "CPO adoption → photonics packaging"
+    gains_direct: [cpo, silicon_photonics, laser]
+    gains_indirect: [packaging_osat, optical_dsp]
+    loses_at_risk: [transceiver]
+    loses_displaced: []
+    confidence: 0.55

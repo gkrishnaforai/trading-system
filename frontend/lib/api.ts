@@ -351,6 +351,10 @@ export type ResearchRow = {
   recommendation?: string | null
   best_product?: { name?: string; stage?: string; moats?: string[] } | null
   product_score?: number
+  fdcs?: number | null
+  ecs?: number | null
+  transition_net?: string | null
+  horizon?: string | null
   as_of?: string | null
 }
 
@@ -384,11 +388,35 @@ export type ResearchRun = {
       capped?: string | null
       components?: Record<string, { score?: number; weight?: number; note?: string | null }>
     }
+    future_demand_capture?: {
+      score?: number
+      coverage?: number
+      capped?: string | null
+      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+    }
+    valuation_opportunity?: {
+      score?: number
+      coverage?: number
+      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+    }
+    technical_entry?: {
+      score?: number
+      coverage?: number
+      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+    }
   }
   report?: {
     sector?: string
     products?: { name?: string; stage?: string; moat?: string[]; layer?: string | null; why?: string }[]
     design_wins?: { customer?: string; product?: string; stage?: string; revenue_confirmed?: boolean }[]
+    fdce?: {
+      domain_exposure?: Record<string, { weight?: number; products?: string[]; horizon?: string; d_score?: number }>
+      ecs?: { ecs?: number | null; highest_evidence_stage?: string; production_exposure_pct?: number | null; roadmap_exposure_pct?: number | null }
+      transitions?: { net?: string; adjusted_delta?: number; items?: { transition?: string; product?: string; classification?: string }[] }
+      adjusted_fdcs?: number | null
+      horizon?: { dominant_domain?: string; dominant_horizon?: string }
+      rules_version?: string
+    } | null
     challenge?: { question?: string; finding?: string; severity?: string }[]
     hard_gates?: string[]
     quarters?: {

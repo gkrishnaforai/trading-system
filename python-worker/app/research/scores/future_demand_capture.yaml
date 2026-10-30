@@ -1,0 +1,119 @@
+# Future Demand Capture Score (FDCS) — v1
+# ========================================
+# "Can this company capture future demand?" — capability only, no
+# valuation (that lives in valuation_opportunity). Weights per the
+# spec: demand 15 / bottleneck 15 / capability 20 / advantage 15 /
+# conversion 15 / economics 15 / adaptability 5.
+#
+# Safeguards are FIRST-MATCH bands (component caps):
+#   no production evidence      → conversion ≤ 35
+#   no defensible moat          → advantage ≤ 40
+#   weak economics + dilution   → econ capture ≤ 35
+# Missing product evidence lowers ECS/coverage, not the capability
+# band — spec rule E.
+version: 1
+
+components:
+
+  future_demand:                        # 15 — how fast the served
+    weight: 15                          # domains grow (D_d-weighted)
+    bands:
+      - {if: {demand_score_gte: 80}, score: 100,
+         note: "exposed to top-quartile demand domains"}
+      - {if: {demand_score_gte: 65}, score: 75,
+         note: "strong domain tailwinds"}
+      - {if: {demand_score_gte: 50}, score: 55,
+         note: "moderate domain growth"}
+      - {if: {demand_score_gte: 30}, score: 35,
+         note: "weak domain growth"}
+      - {if: {demand_score_lt: 30}, score: 15,
+         note: "exposed domains are cold"}
+
+  bottleneck_criticality:               # 15 — essential/scarce/hard
+    weight: 15                          # to bypass
+    bands:
+      - {if: {bottleneck_mechs_gte: 2}, score: 100,
+         note: "multiple bottleneck mechanisms — qual locks, capacity"}
+      - {if: {bottleneck_mechs_gte: 1}, score: 65,
+         note: "one bottleneck mechanism"}
+      - {if: {moat_mechs_gte: 1}, score: 45,
+         note: "moat exists but not bottleneck-grade"}
+      - {if: {moat_mechs: 0}, score: 20,
+         note: "no moat mechanisms — easily bypassed"}
+
+  technical_capability:                 # 20 — can it meet future
+    weight: 20                          # performance requirements
+    bands:
+      - {if: {nextgen_stage_rank_gte: 5}, score: 100,
+         note: "next-gen already revenue-producing"}
+      - {if: {nextgen_stage_rank: 4}, score: 80,
+         note: "next-gen in production"}
+      - {if: {nextgen_stage_rank: 3}, score: 60,
+         note: "next-gen in qualification"}
+      - {if: {nextgen_stage_rank: 2}, score: 40,
+         note: "next-gen sampling/pipeline"}
+      - {if: {products_mapped_gte: 1}, score: 30,
+         note: "products mapped, early stages"}
+      - {if: {products_mapped: 0}, score: 10,
+         note: "no product evidence"}
+
+  competitive_advantage:                # 15 — CAP: no defensible
+    weight: 15                          # moat → ≤40 (spec safeguard)
+    bands:
+      - {if: {moat_mechs: 0}, score: 40,
+         note: "capped — no defensible moat mechanism"}
+      - {if: {moat_mechs_gte: 3}, score: 100,
+         note: "deep multi-mechanism moat"}
+      - {if: {moat_mechs_gte: 2}, score: 80,
+         note: "two defensible mechanisms"}
+      - {if: {moat_mechs_gte: 1}, score: 60,
+         note: "single mechanism"}
+
+  commercial_conversion:                # 15 — CAP: no production
+    weight: 15                          # evidence → ≤35
+    bands:
+      - {if: {dw_production: 0, rev_products: 0}, score: 35,
+         note: "capped — no production evidence"}
+      - {if: {dw_production_gte: 3, dw_conversion_gte: 0.6}, score: 100,
+         note: "wins converting at scale"}
+      - {if: {dw_production_gte: 2}, score: 80,
+         note: "2+ wins in production"}
+      - {if: {dw_production_gte: 1}, score: 65,
+         note: "confirmed production win"}
+      - {if: {rev_products_gte: 2}, score: 60,
+         note: "revenue products, unlogged wins"}
+      - {if: {dw_pipeline_gte: 1}, score: 45,
+         note: "announced wins pending conversion"}
+      - {if: {rev_products_gte: 1}, score: 50,
+         note: "revenue exists, conversion untracked"}
+
+  economic_value_capture:               # 15 — CAP: weak economics +
+    weight: 15                          # material dilution → ≤35
+    bands:
+      - {if: {fcf_ttm_lt: 0, dilution_pct_gte: 0.10}, score: 35,
+         note: "capped — burning cash while diluting"}
+      - {if: {margin_trend: "improving", om_now_gte: 0.25}, score: 100,
+         note: "elite economics, improving"}
+      - {if: {margin_trend: "improving"}, score: 75,
+         note: "economics improving"}
+      - {if: {om_now_gte: 0.15}, score: 60,
+         note: "decent economics"}
+      - {if: {margin_trend: "flat"}, score: 45,
+         note: "economics flat"}
+      - {if: {margin_trend: "declining"}, score: 25,
+         note: "economics eroding"}
+
+  strategic_adaptability:               # 5 — survives architecture
+    weight: 5                           # change (domain breadth)
+    bands:
+      - {if: {domain_count_gte: 3}, score: 100,
+         note: "multi-domain exposure — architecture-agnostic"}
+      - {if: {domain_count: 2}, score: 70,
+         note: "two-domain reach"}
+      - {if: {domain_count: 1}, score: 40,
+         note: "single-domain bet"}
+
+caps:
+  - when: {top1_pct_gte: 0.60}
+    cap: 60
+    note: "single-customer dependence caps demand capture"

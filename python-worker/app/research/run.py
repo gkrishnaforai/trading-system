@@ -14,8 +14,8 @@ from datetime import date
 from typing import Optional
 
 from app.research import (challenge, commitments, design_wins,
-                          observations, policy, products, quarter,
-                          scores, sectors)
+                          fdce, observations, policy, products,
+                          quarter, scores, sectors)
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +53,13 @@ def run(sym: str, sector: Optional[str] = None,
     model = sectors.classify_model(sym, sector)
     mcfg = sectors.model_cfg(model, sector)
 
+    in_fdce = fdce.in_universe(sym)
     qs = quarter.quarters(sym)
     qt = quarter.trends(qs)
-    prod = products.map_products(sym, sector)
+    prod = products.map_products(
+        sym, sector,
+        extra_layers=fdce.all_domain_layers() if in_fdce else None,
+        with_importance=in_fdce)
     commits = commitments.review(sym)
     cred = commitments.credibility(commits)
 
@@ -76,7 +80,7 @@ def run(sym: str, sector: Optional[str] = None,
     # sector-declared evidence layers — bounded extraction only
     # where the config asks for it (design wins, segment obs)
     wins = []
-    if cfg.get("design_wins"):
+    if cfg.get("design_wins") or in_fdce:
         wins = design_wins.review(sym, cfg.get("label", sector),
                                   prod["products"])
         ctx.update(design_wins.stats(wins))
@@ -91,6 +95,19 @@ def run(sym: str, sector: Optional[str] = None,
                     ("exposed_rev_growth", "exposed_rev_mix")})
         ctx["exposed_segments"] = exp["exposed_segments"]
 
+    # FDCE — cross-sector layer: domain exposure, ECS, transitions,
+    # disruption. Feeds ctx fields the FDCS/valuation/technical
+    # yamls consume; journaled wholesale into report['fdce'].
+    fdce_block = None
+    if in_fdce:
+        fdce_block = fdce.build(sym, prod["products"], wins, ctx)
+        ctx.update(fdce_block["ctx"])
+        # FDCE's domain-layer rank fills in for sector modules that
+        # don't declare nextgen_layers (fdce-only names like PLTR)
+        if not ctx.get("nextgen_stage_rank"):
+            ctx["nextgen_stage_rank"] = \
+                fdce_block["ctx"]["nextgen_stage_rank_fdce"]
+
     overrides = (cfg.get("model_weight_overrides", {})
                  .get(model) or {})
 
@@ -102,6 +119,15 @@ def run(sym: str, sector: Optional[str] = None,
                                        "quality"):
         ov = overrides if sname == "business_strength" else None
         evals[sname] = scores.evaluate(sym, sname, ctx, ov)
+    if in_fdce:
+        for sname in ("future_demand_capture",
+                      "valuation_opportunity",
+                      "technical_entry"):
+            evals[sname] = scores.evaluate(sym, sname, ctx)
+        if fdce_block is not None:
+            fdce_block["adjusted_fdcs"] = fdce.adjusted_fdcs(
+                evals["future_demand_capture"]["score"],
+                fdce_block["transitions"]["adjusted_delta"])
     tw = evals.get("ai_tailwind") or {}
     bs = evals.get("business_strength") or {}
     ctx["ai_tailwind"], ctx["bstrength"] = \
@@ -133,12 +159,15 @@ def run(sym: str, sector: Optional[str] = None,
         "moat_mechanisms": prod["moat_mechanisms"],
         "commitments": commits, "credibility": cred,
         "challenge": ch["findings"],
+        "fdce": fdce_block,
         "coverage": {**{n: e["coverage"] for n, e in
                         evals.items()},
                      "missing": all_missing},
         "rules_version": {"scores": [e["rules_version"]
                                     for e in evals.values()],
-                          "policy": rec["rules_version"]}}
+                          "policy": rec["rules_version"],
+                          **({"domains": fdce.registry_version()}
+                             if in_fdce else {})}}
     try:
         db.execute_update(
             "INSERT INTO research_runs (symbol, as_of, sector,"

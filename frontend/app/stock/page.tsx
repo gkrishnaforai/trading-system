@@ -1255,6 +1255,10 @@ async function ResearchSection({ sym }: { sym: string }) {
   const tw = run.scores?.tailwind
   const bs = run.scores?.strength
   const arch = run.scores?.ai_infra_architecture
+  const fdcs = run.scores?.future_demand_capture
+  const val = run.scores?.valuation_opportunity
+  const tech = run.scores?.technical_entry
+  const fd = run.report?.fdce
   const wins = run.report?.design_wins ?? []
   const comps = [
     ...Object.entries(tw?.components ?? {}),
@@ -1308,6 +1312,36 @@ async function ResearchSection({ sym }: { sym: string }) {
             </div>
           </div>
         )}
+        {fdcs?.score != null && (
+          <div>
+            <div className={`font-mono text-2xl font-semibold ${tone(fdcs.score)}`}>
+              {Number(fdcs.score).toFixed(0)}
+            </div>
+            <div className="text-[10px] uppercase tracking-wider text-faint">
+              FDCS
+            </div>
+          </div>
+        )}
+        {val?.score != null && (
+          <div>
+            <div className={`font-mono text-2xl font-semibold ${tone(val.score)}`}>
+              {Number(val.score).toFixed(0)}
+            </div>
+            <div className="text-[10px] uppercase tracking-wider text-faint">
+              valuation
+            </div>
+          </div>
+        )}
+        {tech?.score != null && (
+          <div>
+            <div className={`font-mono text-2xl font-semibold ${tone(tech.score)}`}>
+              {Number(tech.score).toFixed(0)}
+            </div>
+            <div className="text-[10px] uppercase tracking-wider text-faint">
+              technical
+            </div>
+          </div>
+        )}
         {run.recommendation && (
           <div className="ml-auto">
             <span className="rounded-full border border-hairline px-3 py-1 text-xs font-medium text-ink">
@@ -1322,6 +1356,34 @@ async function ResearchSection({ sym }: { sym: string }) {
       )}
       {arch?.capped && (
         <p className="pt-2 text-xs text-caution">architecture capped — {arch.capped}</p>
+      )}
+      {fdcs?.capped && (
+        <p className="pt-2 text-xs text-caution">fdcs capped — {fdcs.capped}</p>
+      )}
+      {fd && (fd.ecs?.ecs != null || fd.transitions?.net) && (
+        <p className="pt-2 text-xs text-muted">
+          {fd.ecs?.ecs != null && (
+            <>evidence confidence <span className="font-mono text-ink">{fd.ecs.ecs.toFixed(0)}</span>
+              {fd.ecs.highest_evidence_stage && (
+                <span className="text-faint"> · {fd.ecs.highest_evidence_stage}</span>
+              )}</>
+          )}
+          {fd.transitions?.net && fd.transitions.net !== 'uncertain' && (
+            <span className="text-faint">
+              {' '}· transition <span className={
+                fd.transitions.net === 'positive' ? 'text-aggressive'
+                  : fd.transitions.net === 'negative' ? 'text-defensive'
+                    : 'text-caution'
+              }>{fd.transitions.net}</span>
+            </span>
+          )}
+          {fd.adjusted_fdcs != null && fdcs?.score != null
+            && Math.abs(fd.adjusted_fdcs - fdcs.score) >= 1 && (
+              <span className="text-faint">
+                {' '}· transition-adjusted FDCS <span className="font-mono">{fd.adjusted_fdcs.toFixed(0)}</span>
+              </span>
+            )}
+        </p>
       )}
       {gates.length > 0 && (
         <p className="pt-2 text-xs text-defensive">
@@ -1361,8 +1423,8 @@ async function ResearchSection({ sym }: { sym: string }) {
           {wins.slice(0, 8).map((w, i) => (
             <span key={i}
               className={`rounded px-2 py-0.5 text-[10.5px] ${w.revenue_confirmed || w.stage === 'production' || w.stage === 'scaling'
-                  ? 'border border-aggressive/40 text-aggressive'
-                  : 'border border-hairline text-muted'}`}>
+                ? 'border border-aggressive/40 text-aggressive'
+                : 'border border-hairline text-muted'}`}>
               {w.customer}
               {w.product && <span className="text-faint"> · {w.product}</span>}
               {w.stage && <span className="text-faint"> · {w.stage}</span>}

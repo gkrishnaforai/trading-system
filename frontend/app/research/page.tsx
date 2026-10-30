@@ -28,8 +28,10 @@ function RecChip({ rec }: { rec?: string | null }) {
   )
 }
 
-function Row({ r, i }: { r: ResearchRow; i: number }) {
+function Row({ r, i, fdce }: { r: ResearchRow; i: number; fdce?: boolean }) {
   const bp = r.best_product
+  const main = fdce ? r.fdcs : r.ai_tailwind
+  const sub = fdce ? r.ecs : r.business_strength
   return (
     <div className="flex items-baseline gap-4 border-b border-hairline px-1 py-2.5 text-sm last:border-0">
       <span className="w-6 text-right font-mono text-[11px] text-faint">
@@ -64,11 +66,19 @@ function Row({ r, i }: { r: ResearchRow; i: number }) {
           <span className="text-faint">—</span>
         )}
       </span>
-      <span className={`w-12 text-right font-mono text-sm font-semibold ${scoreTone(r.ai_tailwind)}`}>
-        {r.ai_tailwind != null ? Number(r.ai_tailwind).toFixed(0) : '—'}
+      {fdce && (
+        <span className="hidden w-24 text-right sm:flex sm:items-baseline sm:justify-end sm:gap-1">
+          <TransitionChip net={r.transition_net} />
+          {r.horizon && (
+            <span className="text-[10px] text-faint">{r.horizon}</span>
+          )}
+        </span>
+      )}
+      <span className={`w-12 text-right font-mono text-sm font-semibold ${scoreTone(main)}`}>
+        {main != null ? Number(main).toFixed(0) : '—'}
       </span>
-      <span className={`hidden w-12 text-right font-mono text-xs sm:block ${scoreTone(r.business_strength)}`}>
-        {r.business_strength != null ? Number(r.business_strength).toFixed(0) : '—'}
+      <span className={`hidden w-12 text-right font-mono text-xs sm:block ${scoreTone(sub)}`}>
+        {sub != null ? Number(sub).toFixed(0) : '—'}
       </span>
       <span className="w-32 text-right">
         {r.recommendation
@@ -88,6 +98,22 @@ const SECTORS: Record<string, { label: string; blurb: string }> = {
     label: 'AI infrastructure',
     blurb: 'AI-infrastructure names — connectivity, optical, compute, memory, power & cooling — ranked by AI Tailwind Score, then by strongest product. The architecture score tracks whether design wins are converting to revenue.',
   },
+  fdce: {
+    label: 'future demand',
+    blurb: 'Future demand capture — which companies supply tomorrow\'s bottlenecked capabilities, ranked FDCS → evidence confidence. Transition shows architecture-shift exposure; a positive tech position can still be a poor stock — check quality/valuation on the stock page.',
+  },
+}
+
+function TransitionChip({ net }: { net?: string | null }) {
+  if (!net || net === 'uncertain') return null
+  const tone = net === 'positive' ? 'bg-aggressive/15 text-aggressive'
+    : net === 'negative' ? 'bg-defensive/15 text-defensive'
+      : 'bg-caution/15 text-caution'
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${tone}`}>
+      {net}
+    </span>
+  )
 }
 
 export default async function ResearchPage({
@@ -97,10 +123,13 @@ export default async function ResearchPage({
 }) {
   const { sector = 'healthcare' } = await searchParams
   const sec = SECTORS[sector] ? sector : 'healthcare'
+  const isFdce = sec === 'fdce'
   const res = await api.researchBoard(sec).catch(() => null)
   const rows = res?.rows ?? []
-  const scored = rows.filter((r) => r.ai_tailwind != null)
-  const unscored = rows.filter((r) => r.ai_tailwind == null)
+  const scored = rows.filter((r) =>
+    isFdce ? r.fdcs != null : r.ai_tailwind != null)
+  const unscored = rows.filter((r) =>
+    isFdce ? r.fdcs == null : r.ai_tailwind == null)
 
   return (
     <main className="mx-auto max-w-4xl px-5 pb-20">
@@ -143,13 +172,14 @@ export default async function ResearchPage({
         <span className="w-6" />
         <span className="flex-1">company</span>
         <span className="hidden min-w-[180px] max-w-[240px] sm:block">best product</span>
-        <span className="w-12 text-right">AI</span>
-        <span className="hidden w-12 text-right sm:block">biz</span>
+        {isFdce && <span className="hidden w-24 text-right sm:block">transition</span>}
+        <span className="w-12 text-right">{isFdce ? 'FDCS' : 'AI'}</span>
+        <span className="hidden w-12 text-right sm:block">{isFdce ? 'ECS' : 'biz'}</span>
         <span className="w-32 text-right">stance</span>
       </div>
 
       <section className="rounded-xl border border-hairline bg-card px-3 py-1">
-        {scored.map((r, i) => <Row key={r.symbol} r={r} i={i} />)}
+        {scored.map((r, i) => <Row key={r.symbol} r={r} i={i} fdce={isFdce} />)}
         {scored.length === 0 && (
           <p className="px-1 py-6 text-sm text-faint">
             No research runs yet — trigger via POST /admin/research/{'{symbol}'}.
