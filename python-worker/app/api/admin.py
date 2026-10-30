@@ -2060,7 +2060,10 @@ async def research_board(sector: str = "healthcare", limit: int = 300):
     strength. Unscored symbols sink to the bottom (NULLS LAST) — a
     missing run is 'not yet researched', not zero."""
     try:
-        pat = f"%{sector.lower()}%"
+        from app.research import sectors as _sec
+        syms = _sec.universe(sector)
+        if not syms:
+            return {"success": True, "sector": sector, "rows": []}
         rows = db.execute_query(
             "SELECT s.symbol, s.company_name, s.industry, s.sector,"
             " r.as_of, r.business_model, r.ai_tailwind_score,"
@@ -2070,10 +2073,10 @@ async def research_board(sector: str = "healthcare", limit: int = 300):
             "   SELECT * FROM research_runs rr WHERE rr.symbol=s.symbol"
             "   ORDER BY rr.as_of DESC, rr.id DESC LIMIT 1"
             " ) r ON true"
-            " WHERE LOWER(COALESCE(s.sector,'')) LIKE :pat"
+            " WHERE s.symbol = ANY(:syms)"
             " ORDER BY r.ai_tailwind_score DESC NULLS LAST, s.symbol"
             " LIMIT :lim",
-            {"pat": pat, "lim": limit})
+            {"syms": syms, "lim": limit})
         out = []
         for r in rows:
             rep = r.get("report") or {}
@@ -2120,14 +2123,15 @@ async def research_report(symbol: str):
 
 
 @router.post("/research/{symbol}")
-async def run_research(symbol: str, sector: str = "healthcare"):
+async def run_research(symbol: str, sector: str = ""):
     """Run the research engine for one symbol — deterministic
     evidence (quarters, products, commitments) → versioned scores →
-    skeptical review → recommendation → journaled to research_runs."""
+    skeptical review → recommendation → journaled to research_runs.
+    `sector` empty = auto-route via the sector yaml universe map."""
     try:
         from app.research import run as research_run
         report = await asyncio.to_thread(
-            research_run.run, symbol.upper(), sector)
+            research_run.run, symbol.upper(), sector or None)
         return {"success": True, "report": report}
     except Exception as e:
         logger.error(f"research run {symbol}: {e}")

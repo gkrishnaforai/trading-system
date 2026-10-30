@@ -6,7 +6,8 @@ hard-gate precedence, quarter math, sector config.
 """
 import pytest
 
-from app.research import policy, quarter, scores, sectors
+from app.research import (design_wins, observations, policy,
+                          quarter, scores, sectors)
 
 
 def _q(rev, om, shares, fcf=6e8, cash=8e9, debt=6e9):
@@ -158,3 +159,90 @@ class TestSectorConfig:
         # unclassified is the honest bucket, not a forced fit
         row = {"industry": "Drug Manufacturers"}
         assert sectors.classify_model("Y", row=row) == "unclassified"
+
+
+class TestAiInfraSector:
+    def test_loads_complete(self):
+        cfg = sectors.load("ai_infra")
+        for k in ("universe", "symbol_map", "layers",
+                  "business_models", "moat_mechanisms",
+                  "risk_gates", "catalyst_types", "scores"):
+            assert k in cfg, k
+        assert "ai_infra_architecture" in cfg["scores"]
+
+    def test_symbol_map_beats_industry_text(self):
+        # CRDO is connectivity silicon by curated map — industry
+        # text never decides the module
+        row = {"industry": "Semiconductors"}
+        assert sectors.classify_model(
+            "CRDO", "ai_infra", row=row) == "connectivity_silicon"
+        assert sectors.classify_model(
+            "GEV", "ai_infra", row={"industry": "Utilities"}) \
+            == "power_gen"
+
+    def test_universe_is_explicit(self):
+        u = sectors.universe("ai_infra")
+        for s in ("CRDO", "LITE", "COHR", "ALAB", "NVDA", "GEV"):
+            assert s in u
+
+    def test_sector_routing(self):
+        assert sectors.sector_for_symbol("CRDO") == "ai_infra"
+        assert sectors.sector_for_symbol("NVDA") == "ai_infra"
+
+    def test_arch_spec_weights_sum_100(self):
+        spec = scores._spec("ai_infra_architecture")
+        total = sum(c.get("weight", 0) for c in
+                    spec["components"].values())
+        assert total == 100
+
+    def test_arch_score_ladder_and_caps(self):
+        # production-converted wins + growing exposed segment → high
+        ctx = {"model": "connectivity_silicon",
+               "exposed_rev_growth": 0.6, "nextgen_stage_rank": 4,
+               "dw_total": 4, "dw_production": 2,
+               "dw_pipeline": 2, "dw_customers": 3,
+               "dw_conversion": 0.5, "top1_pct": 0.30,
+               "margin_trend": "improving", "om_now": 0.35,
+               "rev_products": 2, "pipeline_products": 1}
+        r = scores.evaluate("CRDO", "ai_infra_architecture", ctx)
+        assert 75 <= r["score"] <= 95
+        # spec discipline: no production wins → cap, regardless of
+        # everything else scoring well
+        ctx2 = dict(ctx, dw_production=0, dw_total=2,
+                    dw_conversion=None, top1_pct=None)
+        r2 = scores.evaluate("CRDO", "ai_infra_architecture", ctx2)
+        assert r2["score"] <= 60 and r2["capped"]
+        # single-customer dependence caps independently
+        ctx3 = dict(ctx, top1_pct=0.65)
+        r3 = scores.evaluate("CRDO", "ai_infra_architecture", ctx3)
+        assert r3["score"] <= 55 and r3["capped"]
+
+
+class TestDesignWins:
+    def test_conversion_math(self):
+        rows = [{"customer": "AWS", "product": "AEC",
+                 "stage": "production",
+                 "revenue_confirmed": True},
+                {"customer": "GCP", "product": "optical DSP",
+                 "stage": "scaling"},
+                {"customer": "Azure", "product": "retimer",
+                 "stage": "qualification"}]
+        s = design_wins.stats(rows)
+        assert s["dw_total"] == 3 and s["dw_production"] == 2
+        assert s["dw_pipeline"] == 1 and s["dw_customers"] == 3
+        assert s["dw_conversion"] == pytest.approx(2 / 3, abs=0.01)
+
+    def test_revenue_confirmed_counts_as_production(self):
+        rows = [{"customer": "Meta", "product": "AEC",
+                 "stage": "announced", "revenue_confirmed": True}]
+        assert design_wins.stats(rows)["dw_production"] == 1
+
+    def test_empty_is_none_not_zero(self):
+        s = design_wins.stats([])
+        assert s["dw_total"] == 0 and s["dw_conversion"] is None
+
+
+class TestExposure:
+    def test_no_terms_no_score(self):
+        out = observations.exposure("X", [])
+        assert out["exposed_rev_growth"] is None

@@ -378,9 +378,17 @@ export type ResearchRun = {
       coverage?: number
       components?: Record<string, { score?: number; weight?: number; note?: string | null }>
     }
+    ai_infra_architecture?: {
+      score?: number
+      coverage?: number
+      capped?: string | null
+      components?: Record<string, { score?: number; weight?: number; note?: string | null }>
+    }
   }
   report?: {
-    products?: { name?: string; stage?: string; moat?: string[]; why?: string }[]
+    sector?: string
+    products?: { name?: string; stage?: string; moat?: string[]; layer?: string | null; why?: string }[]
+    design_wins?: { customer?: string; product?: string; stage?: string; revenue_confirmed?: boolean }[]
     challenge?: { question?: string; finding?: string; severity?: string }[]
     hard_gates?: string[]
     quarters?: {

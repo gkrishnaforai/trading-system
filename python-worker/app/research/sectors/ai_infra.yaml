@@ -1,0 +1,292 @@
+# AI Infrastructure sector configuration — v1
+# ============================================
+# Second sector module — the engine stays generic; all AI-infra
+# knowledge lives here. Modules = hardware business models; symbol_map
+# assigns explicitly (a stock's industry text should never decide
+# whether CRDO is connectivity or optical).
+version: 1
+
+sector: ai_infra
+label: "AI Infrastructure"
+
+# ------------------------------------------------------------------
+# Universe — explicit symbol list. stocks.sector says "Technology"/
+# "Industrials" for these names; a LIKE filter can't find them.
+# ------------------------------------------------------------------
+universe:
+  symbols: [CRDO, ALAB, CBRS,
+            LITE, COHR, FN, GLW, CIEN,
+            NVDA, AMD, INTC, ARM, QCOM,
+            AVGO, MRVL, ANET, CSCO,
+            MU, WDC, STX,
+            SMCI, DELL, HPE, CLS,
+            VRT, ETN, NVT, HUBB, EMR, MPWR, ON, TXN, APH, TEL,
+            TT, CARR, JCI, MOD, FIX, IESC,
+            GEV, CEG, VST, TLN, CMI, CAT, GNRC, PWR,
+            TSM, AMKR]
+
+# ------------------------------------------------------------------
+# symbol → module — curated assignment wins over industry hints.
+# A name not listed falls back to keyword match, then unclassified.
+# ------------------------------------------------------------------
+symbol_map:
+  CRDO: connectivity_silicon
+  ALAB: connectivity_silicon
+  CBRS: connectivity_silicon      # as provided — verify ticker
+  LITE: optical_photonics
+  COHR: optical_photonics
+  FN:   optical_photonics
+  GLW:  optical_photonics
+  CIEN: optical_photonics
+  NVDA: compute_accelerator
+  AMD:  compute_accelerator
+  INTC: compute_accelerator
+  ARM:  compute_accelerator
+  QCOM: compute_accelerator
+  AVGO: networking_silicon
+  MRVL: networking_silicon
+  ANET: networking_silicon
+  CSCO: networking_silicon
+  MU:   memory_storage
+  WDC:  memory_storage
+  STX:  memory_storage
+  SMCI: server_oem
+  DELL: server_oem
+  HPE:  server_oem
+  CLS:  server_oem
+  VRT:  power_delivery
+  ETN:  power_delivery
+  NVT:  power_delivery
+  HUBB: power_delivery
+  EMR:  power_delivery
+  MPWR: power_delivery
+  ON:   power_delivery
+  TXN:  power_delivery
+  APH:  power_delivery
+  TEL:  power_delivery
+  TT:   thermal_cooling
+  CARR: thermal_cooling
+  JCI:  thermal_cooling
+  MOD:  thermal_cooling
+  FIX:  thermal_cooling
+  IESC: thermal_cooling
+  GEV:  power_gen
+  CEG:  power_gen
+  VST:  power_gen
+  TLN:  power_gen
+  CMI:  power_gen
+  CAT:  power_gen
+  GNRC: power_gen
+  PWR:  power_gen
+  TSM:  foundry_osat
+  AMKR: foundry_osat
+
+# ------------------------------------------------------------------
+# Architecture layers — where in the AI-infra stack a product sits.
+# The product extractor tags each product to one of these; modules
+# declare which layers are their *next-gen* exposure (the transition
+# bet — CPO/1.6T for optical, AEC-gen for connectivity, HBM for memory).
+# ------------------------------------------------------------------
+layers:
+  aec_copper:        "active electrical cable / copper connectivity"
+  retimer_fabric:    "PCIe/CXL retimers and fabric switches"
+  optical_dsp:       "optical DSP / PAM4 silicon"
+  silicon_photonics: "silicon photonics platforms"
+  cpo:               "co-packaged optics"
+  transceiver:       "optical transceivers/modules (800G, 1.6T)"
+  laser:             "lasers / optical components"
+  gpu:               "GPU / accelerator"
+  asic_accelerator:  "custom ASIC / XPU"
+  hbm:               "high-bandwidth memory"
+  dram:              "DRAM"
+  nand:              "NAND / storage media"
+  switch_silicon:    "switch/routing silicon"
+  nic_dpu:           "NIC / DPU / SmartNIC"
+  power_supply:      "power supplies / rectification / busbar"
+  ups:               "UPS / backup power systems"
+  liquid_cooling:    "liquid / direct-to-chip cooling"
+  air_cooling:       "HVAC / air-side thermal"
+  generator:         "generators / gensets"
+  turbine:           "turbines / grid generation"
+  grid_equipment:    "transformers, switchgear, grid hardware"
+  server:            "servers / racks / integrated systems"
+  foundry:           "wafer foundry"
+  packaging_osat:    "advanced packaging / OSAT"
+
+# ------------------------------------------------------------------
+# Business models — same contract as healthcare: industry_hints are
+# the fallback when symbol_map has no entry.
+# exposure_terms → company_segments name matching (deterministic
+# revenue growth/mix calc); nextgen_layers → the architecture score's
+# transition-exposure ladder.
+# ------------------------------------------------------------------
+business_models:
+  connectivity_silicon:
+    industry_hints: [semiconductor, connectivity, serdes, pci]
+    opportunities: [aec_copper, retimer_fabric, optical_dsp]
+    exposure_terms: [connectivity, aec, retimer, serdes, pci, cxl]
+    nextgen_layers: [aec_copper, retimer_fabric, cpo, optical_dsp]
+    kpis: [design_wins, segment_revenue_growth, hyperscaler_mix,
+           gross_margin]
+    valuation: ev_ebitda
+    profitability_expected: true
+  optical_photonics:
+    industry_hints: [optical, photonics, laser, fiber]
+    opportunities: [optical_dsp, silicon_photonics, cpo, transceiver,
+                    laser]
+    exposure_terms: [optical, photonics, laser, datacom, transceiver,
+                     industrial tech]
+    nextgen_layers: [cpo, silicon_photonics, transceiver, laser]
+    kpis: [optical_revenue_growth, optical_mix, cpo_stage,
+           design_wins, gross_margin]
+    valuation: ev_ebitda
+    profitability_expected: true
+  compute_accelerator:
+    industry_hints: [semiconductor, processors, gpu]
+    opportunities: [gpu, asic_accelerator]
+    exposure_terms: [data center, compute, gpu, client, gaming,
+                     embedded, accelerator]
+    nextgen_layers: [gpu, asic_accelerator, hbm]
+    kpis: [dc_revenue_growth, ecosystem_share, supply_secured,
+           gross_margin]
+    valuation: ev_ebitda
+    profitability_expected: true
+  networking_silicon:
+    industry_hints: [semiconductor, networking, communications]
+    opportunities: [switch_silicon, nic_dpu, asic_accelerator]
+    exposure_terms: [networking, switch, broadband, semiconductor
+                     solutions, infrastructure]
+    nextgen_layers: [switch_silicon, nic_dpu, asic_accelerator]
+    kpis: [networking_rev_growth, asic_wins, backlog, gross_margin]
+    valuation: ev_ebitda
+    profitability_expected: true
+  memory_storage:
+    industry_hints: [memory, storage, semiconductor]
+    opportunities: [hbm, dram, nand]
+    exposure_terms: [memory, dram, nand, hbm, storage, cloud]
+    nextgen_layers: [hbm, dram]
+    kpis: [hbm_share, bit_growth, asp_trend, cycle_position]
+    valuation: ev_ebitda
+    profitability_expected: true
+  server_oem:
+    industry_hints: [computer hardware, servers, it services]
+    opportunities: [server]
+    exposure_terms: [server, systems, infrastructure, isg, compute]
+    nextgen_layers: [server, liquid_cooling]
+    kpis: [ai_server_backlog, isg_growth, attach_services]
+    valuation: ev_ebitda
+    profitability_expected: true
+  power_delivery:
+    industry_hints: [electrical, power management, connectors,
+                     specialty industrial]
+    opportunities: [power_supply, ups, grid_equipment]
+    exposure_terms: [electrical, power, energy, connectivity,
+                     industrial]
+    nextgen_layers: [power_supply, ups, liquid_cooling]
+    kpis: [data_center_orders, backlog_conversion, electrical_growth]
+    valuation: ev_ebitda
+    profitability_expected: true
+  thermal_cooling:
+    industry_hints: [hvac, building products, climate, heating,
+                     refrigeration, construction]
+    opportunities: [air_cooling, liquid_cooling]
+    exposure_terms: [climate, hvac, commercial, refrigeration,
+                     thermal, transport]
+    nextgen_layers: [liquid_cooling]
+    kpis: [dc_orders, liquid_share, commercial_hvac_growth]
+    valuation: ev_ebitda
+    profitability_expected: true
+  power_gen:
+    industry_hints: [utility, power generation, industrial machinery,
+                     oil gas equipment]
+    opportunities: [generator, turbine, grid_equipment]
+    exposure_terms: [power, energy, electric, gas, nuclear,
+                     renewables, grid]
+    nextgen_layers: [turbine, generator, grid_equipment]
+    kpis: [backlog_years, capacity_pricing, grid_orders, margin_mix]
+    valuation: ev_ebitda
+    profitability_expected: true
+  foundry_osat:
+    industry_hints: [semiconductor foundry, semiconductor equipment]
+    opportunities: [foundry, packaging_osat]
+    exposure_terms: [foundry, wafer, packaging, hpc]
+    nextgen_layers: [foundry, packaging_osat]
+    kpis: [leading_node_mix, cowos_capacity, hpc_rev_share]
+    valuation: ev_ebitda
+    profitability_expected: true
+
+unclassified:
+  kpis: []
+  valuation: ev_sales
+  profitability_expected: true
+
+# ------------------------------------------------------------------
+# Moat mechanisms — hardware vocabulary. 'uses AI' is still not a
+# moat; neither is 'mentions CPO'.
+# ------------------------------------------------------------------
+moat_mechanisms:
+  design_win_lock:          "qualified into the customer platform — requalification cycles lock rivals out for product generations"
+  hyperscaler_qualification: "passed hyperscaler qual — multi-year supply relationship"
+  process_technology:       "manufacturing/process edge — photonics, materials, yield"
+  ip_patents:               "defensible patents/trade secrets"
+  ecosystem_lockin:         "software/developer ecosystem the silicon rides on"
+  installed_base:           "deployed footprint with service/spares economics"
+  scale_economics:          "volume/yield cost advantage"
+  capacity_reservation:     "scarce supply secured — CoWoS, HBM, laser capacity"
+  switching_costs:          "contractual or integration lock-in"
+
+# ------------------------------------------------------------------
+# Hard-risk gates — evaluated before scores. customer_concentration
+# is DETERMINISTIC via symbol_customer_conc.top1_pct.
+# ------------------------------------------------------------------
+risk_gates:
+  customer_concentration: "top customer > 35% of revenue — a single qual loss is thesis-breaking"
+  technology_displacement: "architecture shift bypasses the product line (copper→optical, CPO→linear)"
+  capacity_execution:     "qualified wins that can't ship — revenue never converts"
+  cyclical_inventory:     "channel inventory build → order air-pocket"
+  thesis_invalidation:    "named evidence condition met — see thesis_doc"
+
+# ------------------------------------------------------------------
+# Scores for this sector — quality + the architecture-exposure score
+# on top of the shared tailwind/strength pair.
+# ------------------------------------------------------------------
+scores: [ai_tailwind, business_strength, quality,
+         ai_infra_architecture]
+
+# design-win lifecycle + segment-revenue extraction run for this
+# sector only (bounded LLM passes — don't spend them on names that
+# don't need them)
+design_wins: true
+segment_extraction: true
+
+model_weight_overrides:
+  power_gen:
+    margin_trajectory: 10
+    rev_growth_quality: 15
+  foundry_osat:
+    margin_trajectory: 15
+
+catalyst_types:
+  design_win:
+    events: [platform_qualification, hyperscaler_win, socket_win,
+             architecture_design_in]
+    materiality: high       # the lifecycle starts here
+  product_cycle:
+    events: [next_gen_launch, sampling, qual_complete,
+             production_ramp]
+    materiality: high
+  commercial:
+    events: [supply_agreement, backlog_step_change,
+             capacity_expansion, pricing_renewal]
+    materiality: medium
+  competitive:
+    events: [competitor_socket_win, share_loss_evidence,
+             technology_pivot]
+    materiality: high       # displacement risk is the bear case
+  capital:
+    events: [raise, buyback, ma_announcement, dilutive_offering,
+             capex_step_change]
+    materiality: medium
+  governance:
+    events: [ceo_change, restatement, guidance_withdrawal]
+    materiality: high

@@ -35,8 +35,13 @@ def classify_model(sym: str, sector: str = "healthcare",
     """Industry-keyword match → business model. The model gates the
     KPI framework and weight overrides — a drug developer is never
     scored on device economics. `row` (industry/sector/company_name)
-    is injectable for tests and callers that already have it."""
+    is injectable for tests and callers that already have it.
+    A curated `symbol_map` entry wins over keyword matching — the
+    module is too structural to leave to industry text."""
     cfg = load(sector)
+    mapped = (cfg.get("symbol_map") or {}).get(sym.upper())
+    if mapped:
+        return mapped
     if row is None:
         from app.database import db
         try:
@@ -62,3 +67,66 @@ def model_cfg(model: str, sector: str = "healthcare") -> dict:
     cfg = load(sector)
     return cfg.get("business_models", {}).get(
         model, cfg.get("unclassified", {}))
+
+
+def _all_sector_files() -> list[str]:
+    return [p.stem for p in _SECTORS_DIR.glob("*.yaml")]
+
+
+def universe(sector: str = "healthcare") -> list[str]:
+    """The symbol set a sector researches. `symbols:` in yaml is
+    explicit; `sector_match:` resolves via stocks.sector LIKE.
+    Fail-closed to [] on DB errors."""
+    cfg = load(sector)
+    u = cfg.get("universe") or {}
+    if u.get("symbols"):
+        return sorted({str(s).upper() for s in u["symbols"]})
+    match = str(u.get("sector_match") or sector)
+    from app.database import db
+    try:
+        return sorted(r["symbol"] for r in db.execute_query(
+            "SELECT symbol FROM stocks"
+            " WHERE LOWER(COALESCE(sector,'')) LIKE :p",
+            {"p": f"%{match.lower()}%"}))
+    except Exception as exc:
+        logger.debug("universe %s: %s", sector, exc)
+        return []
+
+
+def all_universes() -> dict[str, list[str]]:
+    """Every configured sector → its symbol list."""
+    return {s: universe(s) for s in _all_sector_files()}
+
+
+def sector_for_symbol(sym: str, row: Optional[dict] = None) -> str:
+    """Route a symbol to its sector module. Explicit yaml `symbols:`
+    membership wins; otherwise stocks.sector text vs each yaml's
+    sector_match. Default 'healthcare' preserves prior callers."""
+    sym = sym.upper()
+    explicit = []
+    matched = []
+    for s in _all_sector_files():
+        cfg = load(s)
+        u = cfg.get("universe") or {}
+        if u.get("symbols"):
+            if sym in {str(x).upper() for x in u["symbols"]}:
+                explicit.append(s)
+        else:
+            matched.append((s, u.get("sector_match") or s))
+    if explicit:
+        return explicit[0]
+    if matched:
+        if row is None:
+            from app.database import db
+            try:
+                rows = db.execute_query(
+                    "SELECT sector FROM stocks WHERE symbol=:s",
+                    {"s": sym})
+                row = rows[0] if rows else {}
+            except Exception:
+                row = {}
+        sec = str((row or {}).get("sector") or "").lower()
+        for s, m in matched:
+            if m and str(m).lower() in sec:
+                return s
+    return "healthcare"

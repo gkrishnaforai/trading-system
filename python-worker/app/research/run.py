@@ -13,10 +13,16 @@ import logging
 from datetime import date
 from typing import Optional
 
-from app.research import (challenge, commitments, policy, products,
-                          quarter, scores, sectors)
+from app.research import (challenge, commitments, design_wins,
+                          observations, policy, products, quarter,
+                          scores, sectors)
 
 logger = logging.getLogger(__name__)
+
+# scores jsonb keys — historical names preserved for the frontend;
+# new spec names serialize under their own name
+_SCORE_KEY = {"ai_tailwind": "tailwind",
+              "business_strength": "strength"}
 
 
 def _hard_gates(ctx: dict, model_cfg: dict) -> list[str]:
@@ -30,14 +36,19 @@ def _hard_gates(ctx: dict, model_cfg: dict) -> list[str]:
     dil = ctx.get("dilution_pct")
     if dil is not None and dil >= 0.15 and (fcf or 0) < 0:
         gates.append("dilution_critical")
+    top1 = ctx.get("top1_pct")
+    if top1 is not None and top1 >= 0.35:
+        gates.append("customer_concentration")
     return gates
 
 
-def run(sym: str, sector: str = "healthcare",
+def run(sym: str, sector: Optional[str] = None,
         as_of: Optional[date] = None) -> dict:
     from app.database import db
     sym = sym.upper()
     as_of = as_of or date.today()
+    sector = sector or sectors.sector_for_symbol(sym)
+    cfg = sectors.load(sector)
 
     model = sectors.classify_model(sym, sector)
     mcfg = sectors.model_cfg(model, sector)
@@ -48,7 +59,8 @@ def run(sym: str, sector: str = "healthcare",
     commits = commitments.review(sym)
     cred = commitments.credibility(commits)
 
-    ctx = scores._ctx(sym, model, qt, prod["counts"], commits)
+    ctx = scores._ctx(sym, model, qt, prod["counts"], commits,
+                      sector)
     ctx.update({
         "ai_tailwind": None,       # filled post-eval for policy
         "bstrength": None,
@@ -60,13 +72,40 @@ def run(sym: str, sector: str = "healthcare",
                  "margin_trend")})
     ctx["commit_tracked"] = cred.get("tracked")
     ctx["commit_negative"] = cred.get("negative")
-    overrides = (sectors.load(sector)
-                 .get("model_weight_overrides", {}).get(model) or {})
 
-    tw = scores.evaluate(sym, "ai_tailwind", ctx)
-    bs = scores.evaluate(sym, "business_strength", ctx, overrides)
-    qt_score = scores.evaluate(sym, "quality", ctx)
-    ctx["ai_tailwind"], ctx["bstrength"] = tw["score"], bs["score"]
+    # sector-declared evidence layers — bounded extraction only
+    # where the config asks for it (design wins, segment obs)
+    wins = []
+    if cfg.get("design_wins"):
+        wins = design_wins.review(sym, cfg.get("label", sector),
+                                  prod["products"])
+        ctx.update(design_wins.stats(wins))
+    if cfg.get("segment_extraction"):
+        observations.review(sym, cfg.get("label", sector))
+        rev_ttm = sum(q["revenue"]["value"] for q in qs[:4]
+                      if q["revenue"]["value"] is not None) or None
+        exp = observations.exposure(
+            sym, mcfg.get("exposure_terms") or [],
+            total_rev=rev_ttm)
+        ctx.update({k: exp[k] for k in
+                    ("exposed_rev_growth", "exposed_rev_mix")})
+        ctx["exposed_segments"] = exp["exposed_segments"]
+
+    overrides = (cfg.get("model_weight_overrides", {})
+                 .get(model) or {})
+
+    # score list is sector-declared — healthcare: tailwind/strength/
+    # quality; ai_infra adds the architecture score
+    evals = {}
+    for sname in cfg.get("scores") or ("ai_tailwind",
+                                       "business_strength",
+                                       "quality"):
+        ov = overrides if sname == "business_strength" else None
+        evals[sname] = scores.evaluate(sym, sname, ctx, ov)
+    tw = evals.get("ai_tailwind") or {}
+    bs = evals.get("business_strength") or {}
+    ctx["ai_tailwind"], ctx["bstrength"] = \
+        tw.get("score"), bs.get("score")
     gates = _hard_gates(ctx, mcfg)
     ctx["hard_gate"] = bool(gates)
 
@@ -74,35 +113,31 @@ def run(sym: str, sector: str = "healthcare",
 
     evidence = {"model": model, "ctx": ctx, "quarters": qs,
                 "trends": qt, "products": prod["products"],
+                "design_wins": wins,
                 "commitments": commits, "credibility": cred,
-                "scores": {"ai_tailwind": tw,
-                           "business_strength": bs,
-                           "quality": qt_score},
+                "scores": evals,
                 "gates": gates, "recommendation": rec}
     ch = challenge.run(sym, evidence)
     evidence["challenge"] = ch
 
+    all_missing = sorted({m for e in evals.values()
+                          for m in e.get("missing") or []})
     report = {
         "symbol": sym, "sector": sector, "business_model": model,
-        "scores": {"ai_tailwind": tw["score"],
-                   "business_strength": bs["score"],
-                   "quality": qt_score["score"]},
+        "scores": {n: e["score"] for n, e in evals.items()},
         "recommendation": rec,
         "hard_gates": gates,
         "quarters": qs, "trends": qt,
         "products": prod["products"],
+        "design_wins": wins,
         "moat_mechanisms": prod["moat_mechanisms"],
         "commitments": commits, "credibility": cred,
         "challenge": ch["findings"],
-        "coverage": {"tailwind": tw["coverage"],
-                     "strength": bs["coverage"],
-                     "quality": qt_score["coverage"],
-                     "missing": sorted(set(
-                         tw["missing"] + bs["missing"]
-                         + qt_score["missing"]))},
-        "rules_version": {"scores": [tw["rules_version"],
-                                    bs["rules_version"],
-                                    qt_score["rules_version"]],
+        "coverage": {**{n: e["coverage"] for n, e in
+                        evals.items()},
+                     "missing": all_missing},
+        "rules_version": {"scores": [e["rules_version"]
+                                    for e in evals.values()],
                           "policy": rec["rules_version"]}}
     try:
         db.execute_update(
@@ -117,10 +152,11 @@ def run(sym: str, sector: str = "healthcare",
             " recommendation=EXCLUDED.recommendation,"
             " scores=EXCLUDED.scores, report=EXCLUDED.report",
             {"s": sym, "d": as_of, "sec": sector, "m": model,
-             "tw": tw["score"], "bs": bs["score"],
+             "tw": tw.get("score"), "bs": bs.get("score"),
              "rec": rec["action"],
-             "sc": json.dumps({"tailwind": tw, "strength": bs,
-                               "quality": qt_score}, default=str),
+             "sc": json.dumps(
+                 {_SCORE_KEY.get(n, n): e for n, e in
+                  evals.items()}, default=str),
              "rp": json.dumps(report, default=str),
              "rv": report["rules_version"]["policy"]})
     except Exception as exc:

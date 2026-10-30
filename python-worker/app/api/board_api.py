@@ -701,21 +701,23 @@ async def _j_research() -> dict:
     research_runs. Same-day runs are skipped (event-triggered, not
     every-tick): rerun happens on next day's tick or a manual POST."""
     from app.research import run as research_run
+    from app.research import sectors
     from app.database import db
-    syms = [r["symbol"] for r in db.execute_query(
-        "SELECT symbol FROM stocks"
-        " WHERE LOWER(COALESCE(sector,'')) LIKE '%health%'")]
+    todo = []
+    n_syms = 0
     fresh = {r["symbol"] for r in db.execute_query(
         "SELECT symbol FROM research_runs WHERE as_of=CURRENT_DATE")}
-    todo = [s for s in syms if s not in fresh]
+    for sector, syms in sectors.all_universes().items():
+        n_syms += len(syms)
+        todo += [(s, sector) for s in syms if s not in fresh]
     done, errs = [], []
-    for s in todo:
+    for s, sector in todo:
         try:
-            await asyncio.to_thread(research_run.run, s)
+            await asyncio.to_thread(research_run.run, s, sector)
             done.append(s)
         except Exception as exc:
             errs.append(f"{s}: {str(exc)[:80]}")
-    return {"ran": len(done), "skipped_fresh": len(syms) - len(todo),
+    return {"ran": len(done), "skipped_fresh": n_syms - len(todo),
             "errors": errs[:10], "symbols": done}
 
 

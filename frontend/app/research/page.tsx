@@ -79,8 +79,25 @@ function Row({ r, i }: { r: ResearchRow; i: number }) {
   )
 }
 
-export default async function ResearchPage() {
-  const res = await api.researchBoard().catch(() => null)
+const SECTORS: Record<string, { label: string; blurb: string }> = {
+  healthcare: {
+    label: 'healthcare',
+    blurb: 'Healthcare names ranked by AI Tailwind Score — evidence that AI adoption creates durable economic value, then by strongest product (stage × moat breadth).',
+  },
+  ai_infra: {
+    label: 'AI infrastructure',
+    blurb: 'AI-infrastructure names — connectivity, optical, compute, memory, power & cooling — ranked by AI Tailwind Score, then by strongest product. The architecture score tracks whether design wins are converting to revenue.',
+  },
+}
+
+export default async function ResearchPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sector?: string }>
+}) {
+  const { sector = 'healthcare' } = await searchParams
+  const sec = SECTORS[sector] ? sector : 'healthcare'
+  const res = await api.researchBoard(sec).catch(() => null)
   const rows = res?.rows ?? []
   const scored = rows.filter((r) => r.ai_tailwind != null)
   const unscored = rows.filter((r) => r.ai_tailwind == null)
@@ -94,12 +111,24 @@ export default async function ResearchPage() {
           </Link>
         </div>
         <h1 className="font-semibold text-display text-ink">AI research</h1>
+        <nav className="flex gap-2 pt-3">
+          {Object.entries(SECTORS).map(([k, v]) => (
+            <Link
+              key={k}
+              href={`/research?sector=${k}`}
+              className={`rounded-full border px-3 py-1 text-xs transition-colors ${k === sec
+                ? 'border-accent bg-accent/10 text-accent'
+                : 'border-hairline text-muted hover:text-ink'
+                }`}
+            >
+              {v.label}
+            </Link>
+          ))}
+        </nav>
         <p className="pt-2 max-w-2xl text-sm leading-relaxed text-muted">
-          Healthcare names ranked by AI Tailwind Score — evidence that AI
-          adoption creates durable economic value, then by strongest
-          product (stage × moat breadth). A high score means tailwind
-          exposure, not a cheap stock — the recommendation column is
-          the gated decision.
+          {SECTORS[sec].blurb}{' '}
+          A high score means tailwind exposure, not a cheap stock — the
+          recommendation column is the gated decision.
         </p>
         <div className="pt-3 flex flex-wrap gap-x-6 gap-y-1 pb-3 text-[10px] uppercase tracking-[0.18em] text-faint">
           <span>{scored.length} scored</span>
@@ -131,7 +160,7 @@ export default async function ResearchPage() {
       {unscored.length > 0 && (
         <details className="mt-6">
           <summary className="cursor-pointer text-xs text-faint">
-            {unscored.length} healthcare names not yet researched
+            {unscored.length} {SECTORS[sec].label} names not yet researched
           </summary>
           <div className="mt-2 flex flex-wrap gap-2">
             {unscored.map((r) => (

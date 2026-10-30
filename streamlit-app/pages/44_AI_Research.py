@@ -35,7 +35,7 @@ def _safe(fn, default=None):
 
 # ---------------------------------------------------------- controls
 c1, c2, c3 = st.columns([2, 2, 4])
-sector = c1.selectbox("sector", ["healthcare"], index=0)
+sector = c1.selectbox("sector", ["healthcare", "ai_infra"], index=0)
 board = _safe(lambda: client.get("admin/research/board",
                                  params={"sector": sector}) or {})
 rows = (board or {}).get("rows") or []
@@ -67,7 +67,7 @@ c3.caption(f"{len(scored)} scored · {len(rows) - len(scored)} "
 # ------------------------------------------------------------- board
 st.subheader("Board — tailwind-ranked")
 if not rows:
-    st.info("No healthcare names in stocks yet, or board fetch failed.")
+    st.info(f"No {sector} names in stocks yet, or board fetch failed.")
 else:
     df = pd.DataFrame([{
         "symbol": r["symbol"],
@@ -163,6 +163,35 @@ if detail:
                          column_config={
                              "score": st.column_config.ProgressColumn(
                                  min_value=0, max_value=10, format="%.1f")})
+
+        # ---- architecture score (ai_infra) -------------------------
+        arch = sc.get("ai_infra_architecture") or {}
+        acomps = arch.get("components") or {}
+        if acomps:
+            st.markdown(f"**Architecture exposure — "
+                        f"{arch.get('score') or '—'}/100**")
+            if arch.get("capped"):
+                st.warning(f"architecture capped — {arch['capped']}")
+            adf = pd.DataFrame([
+                {"component": k.replace("_", " "),
+                 "score": v.get("score"),
+                 "weight": v.get("weight"),
+                 "reasoning": v.get("note") or ""}
+                for k, v in acomps.items()
+            ]).sort_values("weight", ascending=False)
+            st.dataframe(adf, hide_index=True, use_container_width=True)
+
+        # ---- design wins -------------------------------------------
+        wins = rep.get("design_wins") or []
+        if wins:
+            st.markdown("**Design wins — lifecycle**")
+            st.dataframe(pd.DataFrame([{
+                "customer": w.get("customer"),
+                "product": w.get("product"),
+                "stage": w.get("stage"),
+                "revenue": "✓" if w.get("revenue_confirmed") else "—",
+            } for w in wins]), hide_index=True,
+                use_container_width=True)
 
         # ---- products ----------------------------------------------
         prods = rep.get("products") or []

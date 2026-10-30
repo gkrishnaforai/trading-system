@@ -1,0 +1,107 @@
+# AI-infra architecture score — v1
+# =================================
+# "Is this company supplying the part of the AI architecture that's
+# growing, and are design wins turning into revenue?" Weights per the
+# spec: growth 25 / transition exposure 20 / design wins 20 /
+# customer quality 10 / margin 15 / diversification 10.
+#
+# Stage ladder (their scale): none→10, announced→25, sampling→40,
+# qualification→60, production→80, scaling→100 — ctx.nextgen_stage_rank
+# 0..5 mapped from product_initiatives stage vocabulary.
+# Missing inputs fail bands closed and land in the missing log —
+# undisclosed segment revenue is never a zero.
+version: 1
+
+components:
+
+  product_growth:                       # weight 25 — growth in the
+    weight: 25                          # exposed segments (company_segments)
+    bands:
+      - {if: {exposed_rev_growth_gte: 1.0}, score: 100,
+         note: "exposed segment >2x YoY"}
+      - {if: {exposed_rev_growth_gte: 0.5}, score: 85,
+         note: "exposed segment >50% YoY"}
+      - {if: {exposed_rev_growth_gte: 0.25}, score: 70,
+         note: "exposed segment >25% YoY"}
+      - {if: {exposed_rev_growth_gte: 0.10}, score: 50,
+         note: "exposed segment growing"}
+      - {if: {exposed_rev_growth_gte: 0}, score: 30,
+         note: "exposed segment flat"}
+      - {if: {exposed_rev_growth_lt: 0}, score: 15,
+         note: "exposed segment declining"}
+
+  arch_exposure:                        # weight 20 — position in the
+    weight: 20                          # next-gen transition (stage ladder)
+    bands:
+      - {if: {nextgen_stage_rank_gte: 5}, score: 100,
+         note: "material recurring next-gen revenue"}
+      - {if: {nextgen_stage_rank: 4}, score: 80,
+         note: "production shipment"}
+      - {if: {nextgen_stage_rank: 3}, score: 60,
+         note: "customer qualification"}
+      - {if: {nextgen_stage_rank: 2}, score: 40,
+         note: "customer sampling"}
+      - {if: {nextgen_stage_rank: 1}, score: 25,
+         note: "product announced"}
+      - {if: {nextgen_stage_rank: 0}, score: 10,
+         note: "research/positioning only"}
+
+  design_wins:                          # weight 20 — wins that became
+    weight: 20                          # production revenue
+    bands:
+      - {if: {dw_production_gte: 3, dw_conversion_gte: 0.6}, score: 100,
+         note: "multiple wins converting at scale"}
+      - {if: {dw_production_gte: 2}, score: 80,
+         note: "2+ wins in production"}
+      - {if: {dw_production_gte: 1}, score: 60,
+         note: "confirmed production win"}
+      - {if: {dw_pipeline_gte: 2}, score: 40,
+         note: "announced wins, unproven conversion"}
+      - {if: {dw_pipeline_gte: 1}, score: 25,
+         note: "single announced win"}
+      - {if: {dw_total: 0}, score: 10,
+         note: "no journaled design wins"}
+
+  customer_quality:                     # weight 10 — breadth vs
+    weight: 10                          # concentration (concentrated = worse)
+    bands:
+      - {if: {top1_pct_lt: 0.25, dw_customers_gte: 2}, score: 100,
+         note: "broad base, multiple named customers"}
+      - {if: {top1_pct_lt: 0.35}, score: 70,
+         note: "moderate concentration"}
+      - {if: {top1_pct_lt: 0.50}, score: 45,
+         note: "heavy single-customer weight"}
+      - {if: {top1_pct_gte: 0.50}, score: 20,
+         note: "single-customer dependence"}
+
+  margin_trajectory:                    # weight 15 — growth creating
+    weight: 15                          # economic value
+    bands:
+      - {if: {margin_trend: "improving", om_now_gte: 0.30}, score: 100,
+         note: "elite margins still expanding"}
+      - {if: {margin_trend: "improving"}, score: 75,
+         note: "margins expanding"}
+      - {if: {margin_trend: "flat"}, score: 50,
+         note: "margins holding"}
+      - {if: {margin_trend: "declining"}, score: 25,
+         note: "growth diluting margins"}
+
+  diversification:                      # weight 10 — multiple engines,
+    weight: 10                          # not one product bet
+    bands:
+      - {if: {rev_products_gte: 3}, score: 100,
+         note: "3+ revenue products"}
+      - {if: {rev_products_gte: 2}, score: 75,
+         note: "second engine live"}
+      - {if: {rev_products_gte: 1}, score: 45,
+         note: "single revenue engine"}
+      - {if: {rev_products: 0, pipeline_products_gte: 1}, score: 20,
+         note: "pipeline only"}
+
+caps:
+  - when: {top1_pct_gte: 0.60}
+    cap: 55
+    note: "single-customer dependence — architecture score capped"
+  - when: {dw_production: 0}
+    cap: 60
+    note: "no production-converted design wins — pipeline claims only"

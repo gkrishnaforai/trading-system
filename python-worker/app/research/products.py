@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 _STAGES = ("revenue", "rollout", "partnership", "pipeline",
            "aspiration")
+# stage → the architecture-score ladder: announced=1, sampling=2,
+# qualification=3, production=4, scaling=5
+_STAGE_RANK = {"aspiration": 1, "pipeline": 2, "partnership": 3,
+               "rollout": 4, "revenue": 5}
 
 
 def _existing(sym: str) -> list[dict]:
@@ -60,11 +64,15 @@ def _claims(sym: str, limit: int = 30) -> list[dict]:
     return out
 
 
-def _extract(sym: str, sector: str, evidence: str,
-             moat_vocab: list) -> list[dict]:
+def _extract(sym: str, label: str, evidence: str,
+             moat_vocab: list,
+             layer_vocab: Optional[list] = None) -> list[dict]:
     """Bounded LLM product extraction. Strict JSON, verbatim-grounded
     quotes, null over invention — same provenance contract as
-    ai_research and the earnings narrative."""
+    ai_research and the earnings narrative. `layer_vocab` (sectors
+    that define architecture layers) adds a product→layer tag."""
+    layer_field = (f", \"layer\": one of {layer_vocab}|null"
+                   if layer_vocab else "")
     try:
         from litellm import completion
         from app.config import settings
@@ -73,13 +81,14 @@ def _extract(sym: str, sector: str, evidence: str,
             model=mdl, temperature=0.1, max_tokens=1400, timeout=60,
             messages=[
                 {"role": "system", "content":
-                 "You map a healthcare company's products/platforms "
+                 f"You map a {label} company's products/platforms "
                  "for an AI-tailwind research engine. Return STRICT "
                  "JSON only: {\"products\": [{\"name\": str, "
                  "\"stage\": \"revenue\"|\"rollout\"|\"partnership\"|"
                  "\"pipeline\"|\"aspiration\", \"ai_use\": str|null, "
                  "\"moat\": [mechanisms], \"why_it_matters\": str, "
-                 "\"quote\": verbatim evidence substring|null}]}. "
+                 "\"quote\": verbatim evidence substring|null"
+                 f"{layer_field}" + "}]}. "
                  f"Allowed moat mechanisms ONLY: {moat_vocab}. "
                  "'uses AI' is NOT a moat — a mechanism means "
                  "proprietary data, workflow lock-in, regulatory "
@@ -104,6 +113,9 @@ def _extract(sym: str, sector: str, evidence: str,
                            if p.get("ai_use") else None),
                 "moat": [m for m in (p.get("moat") or [])
                          if m in moat_vocab],
+                "layer": (str(p["layer"]) if layer_vocab
+                          and p.get("layer") in layer_vocab
+                          else None),
                 "why": str(p.get("why_it_matters") or "")[:200],
                 "quote": str(p.get("quote") or "")[:300] or None,
                 "synthetic": True})
@@ -121,6 +133,7 @@ def map_products(sym: str, sector: str = "healthcare") -> dict:
     sym = sym.upper()
     cfg = sectors.load(sector)
     moat_vocab = list((cfg.get("moat_mechanisms") or {}).keys())
+    layer_vocab = list((cfg.get("layers") or {}).keys()) or None
     existing = _existing(sym)
     claims = _claims(sym)
     profile = {}
@@ -137,7 +150,8 @@ def map_products(sym: str, sector: str = "healthcare") -> dict:
          "claims": [{"type": c.get("type"), "text": c.get("text"),
                      "quote": c.get("quote")} for c in claims]},
         default=str)[:12000]
-    extracted = _extract(sym, sector, evidence, moat_vocab)
+    extracted = _extract(sym, cfg.get("label", sector), evidence,
+                         moat_vocab, layer_vocab)
     # merge: existing rows win on name collision (human/curated beats
     # synthetic); new synthetic rows upsert as stage='pipeline'+
     seen = {str(p["name"]).lower() for p in existing}
@@ -158,6 +172,7 @@ def map_products(sym: str, sector: str = "healthcare") -> dict:
                  "c": 0.5,
                  "e": json.dumps({"ai_use": p["ai_use"],
                                   "moat": p["moat"],
+                                  "layer": p.get("layer"),
                                   "why": p["why"],
                                   "quote": p["quote"],
                                   "source": "research_extract"})})
@@ -187,5 +202,26 @@ def map_products(sym: str, sector: str = "healthcare") -> dict:
                                  in ("pipeline", "partnership",
                                      "aspiration")),
         "moat_mechs": len(mechs)}
+    # next-gen transition exposure — max stage rank among products
+    # tagged to the module's nextgen_layers (layers vocabulary is
+    # sector-config; a sector without layers gets no rank field)
+    model = sectors.classify_model(sym, sector)
+    ng_layers = set(sectors.model_cfg(model, sector)
+                    .get("nextgen_layers") or [])
+    if ng_layers:
+        def _lay(p):
+            if p.get("layer"):
+                return p["layer"]
+            ev = p.get("evidence") or {}
+            if isinstance(ev, str):
+                try:
+                    ev = json.loads(ev)
+                except Exception:
+                    ev = {}
+            return ev.get("layer")
+        ng = [p for p in prods if _lay(p) in ng_layers]
+        counts["nextgen_stage_rank"] = max(
+            (_STAGE_RANK.get(p.get("stage"), 0) for p in ng),
+            default=0)
     return {"products": prods, "counts": counts,
             "moat_mechanisms": sorted(mechs)}

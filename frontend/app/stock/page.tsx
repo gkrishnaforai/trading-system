@@ -1254,7 +1254,12 @@ async function ResearchSection({ sym }: { sym: string }) {
   if (!run) return null
   const tw = run.scores?.tailwind
   const bs = run.scores?.strength
-  const comps = Object.entries(tw?.components ?? {})
+  const arch = run.scores?.ai_infra_architecture
+  const wins = run.report?.design_wins ?? []
+  const comps = [
+    ...Object.entries(tw?.components ?? {}),
+    ...Object.entries(arch?.components ?? {}),
+  ]
     .sort((a, b) => (b[1]?.weight ?? 0) - (a[1]?.weight ?? 0))
     .filter(([, c]) => c?.note)
   const products = run.report?.products ?? []
@@ -1293,6 +1298,16 @@ async function ResearchSection({ sym }: { sym: string }) {
             business strength
           </div>
         </div>
+        {arch?.score != null && (
+          <div>
+            <div className={`font-mono text-2xl font-semibold ${tone(arch.score)}`}>
+              {Number(arch.score).toFixed(0)}
+            </div>
+            <div className="text-[10px] uppercase tracking-wider text-faint">
+              architecture
+            </div>
+          </div>
+        )}
         {run.recommendation && (
           <div className="ml-auto">
             <span className="rounded-full border border-hairline px-3 py-1 text-xs font-medium text-ink">
@@ -1304,6 +1319,9 @@ async function ResearchSection({ sym }: { sym: string }) {
 
       {tw?.capped && (
         <p className="pt-2 text-xs text-caution">capped — {tw.capped}</p>
+      )}
+      {arch?.capped && (
+        <p className="pt-2 text-xs text-caution">architecture capped — {arch.capped}</p>
       )}
       {gates.length > 0 && (
         <p className="pt-2 text-xs text-defensive">
@@ -1333,6 +1351,21 @@ async function ResearchSection({ sym }: { sym: string }) {
               title={p.why ?? ''}>
               {p.name}
               {p.stage && <span className="text-faint"> · {p.stage}</span>}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {wins.length > 0 && (
+        <div className="pt-3 border-t border-hairline/60 mt-3 flex flex-wrap gap-1.5">
+          {wins.slice(0, 8).map((w, i) => (
+            <span key={i}
+              className={`rounded px-2 py-0.5 text-[10.5px] ${w.revenue_confirmed || w.stage === 'production' || w.stage === 'scaling'
+                  ? 'border border-aggressive/40 text-aggressive'
+                  : 'border border-hairline text-muted'}`}>
+              {w.customer}
+              {w.product && <span className="text-faint"> · {w.product}</span>}
+              {w.stage && <span className="text-faint"> · {w.stage}</span>}
             </span>
           ))}
         </div>
@@ -1404,8 +1437,8 @@ async function QualitySection({ sym }: { sym: string }) {
               <div
                 key={i}
                 className={`flex-1 ${overall >= i + 1 ? barTone(overall)
-                    : overall > i ? barTone(overall) + ' opacity-60'
-                      : 'bg-hairline/50'}`}
+                  : overall > i ? barTone(overall) + ' opacity-60'
+                    : 'bg-hairline/50'}`}
               />
             ))}
           </div>

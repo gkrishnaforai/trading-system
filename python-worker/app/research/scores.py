@@ -40,7 +40,8 @@ def _f(v) -> Optional[float]:
 
 
 def _ctx(sym: str, model: str, quarter_trends: dict,
-         product_counts: dict, commit_rows: list) -> dict:
+         product_counts: dict, commit_rows: list,
+         sector: str = "healthcare") -> dict:
     """Assemble the scoring context from journaled signals —
     every field traces to a stored row."""
     from app.database import db
@@ -82,11 +83,18 @@ def _ctx(sym: str, model: str, quarter_trends: dict,
             if r and r[0]["emerging_growth"] is not None else None
     except Exception:
         c["emerging_growth"] = None
+    try:
+        r = db.execute_query(
+            "SELECT top1_pct FROM symbol_customer_conc"
+            " WHERE symbol=:s", {"s": sym})
+        c["top1_pct"] = _f(r[0]["top1_pct"]) if r else None
+    except Exception:
+        c["top1_pct"] = None
     # sector opportunity tag — classified model with a mapped
     # opportunity space
     from app.research import sectors
     c["opportunity_tagged"] = bool(
-        sectors.model_cfg(model).get("opportunities")) \
+        sectors.model_cfg(model, sector).get("opportunities")) \
         if model != "unclassified" else False
     # product + driver evidence counts
     c.update(product_counts)

@@ -7,6 +7,12 @@ version: 1
 
 sector: healthcare
 
+# Universe resolution — names where stocks.sector carries the
+# sector text (the explicit-symbols form is for sectors like
+# ai_infra whose names span unrelated stock sectors).
+universe:
+  sector_match: health
+
 # ------------------------------------------------------------------
 # Opportunity taxonomy — where AI is structurally changing healthcare
 # ------------------------------------------------------------------
