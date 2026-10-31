@@ -905,6 +905,12 @@ async function StockCore({ sym }: { sym: string }) {
               {' — context, not the blend'}
             </p>
           )}
+          {/* product-ramp view — journaled initiatives' bucket-
+              expected incremental revenue vs fwd rev. Shown NEXT
+              to analyst FV, never blended into it. */}
+          <Suspense fallback={null}>
+            <PipelineFvLine sym={sym} />
+          </Suspense>
         </section>
       )}
 
@@ -1298,12 +1304,53 @@ function DeltaLine({ d }: { d: ResearchDelta }) {
   )
 }
 
+/** Product-ramp-implied growth shown beside (never inside) the
+ *  analyst fair value — the 'what if the pipeline converts' number
+ *  the FV scenarios deliberately don't include. Own fetch of the
+ *  same research endpoint; deduped with ResearchSection's call. */
+async function PipelineFvLine({ sym }: { sym: string }) {
+  const res = await api.researchReport(sym).catch(() => null)
+  const g = res?.growth
+  if (!g?.n_initiatives) return null
+  const hasUplift = (g.uplift_fy1 ?? 0) > 0 || (g.uplift_fy3 ?? 0) > 0
+  return (
+    <p className="pt-2 text-xs text-muted border-t border-hairline/60 mt-3">
+      <span className="text-faint">pipeline view (not in FV)</span>
+      {hasUplift ? (
+        <>
+          {g.uplift_fy1 != null && g.uplift_fy1 > 0 && (
+            <> · FY+1 <span className="font-mono text-ink">+{moneyShort(g.uplift_fy1)}</span></>
+          )}
+          {g.uplift_fy3 != null && g.uplift_fy3 > 0 && (
+            <> · FY+3 <span className="font-mono text-ink">+{moneyShort(g.uplift_fy3)}</span></>
+          )}
+          {g.uplift_ratio_fy3 != null && (
+            <span className="text-faint">
+              {' '}({(g.uplift_ratio_fy3 * 100).toFixed(0)}% of fwd rev{g.fwd_rev_avg != null ? ` ${moneyShort(g.fwd_rev_avg)}` : ''})
+            </span>
+          )}
+        </>
+      ) : (
+        <span className="text-faint">
+          {' '}· {g.n_initiatives} initiatives mapped, no revenue buckets journaled yet
+        </span>
+      )}
+      {g.tier && (
+        <span className={`ml-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${g.tier === 'material' ? 'bg-aggressive/15 text-aggressive'
+          : g.tier === 'emerging' ? 'bg-caution/15 text-caution'
+            : 'bg-hairline/40 text-faint'}`}>
+          {g.tier}
+        </span>
+      )}
+    </p>
+  )
+}
+
 async function ResearchSection({ sym }: { sym: string }) {
   const res = await api.researchReport(sym).catch(() => null)
   const run = res?.run
   if (!run) return null
   const delta = res?.delta ?? null
-  const growth = res?.growth ?? null
   const tw = run.scores?.tailwind
   const bs = run.scores?.strength
   const arch = run.scores?.ai_infra_architecture
@@ -1456,30 +1503,6 @@ async function ResearchSection({ sym }: { sym: string }) {
 
       {/* run-vs-run delta — what this pass actually changed */}
       {delta?.prev_as_of && <DeltaLine d={delta} />}
-
-      {/* product-pipeline → growth projection (bucket-expected
-          incremental revenue vs forward estimates) */}
-      {growth && growth.n_initiatives != null && growth.n_initiatives > 0 && (
-        <p className="pt-2 text-xs text-muted">
-          <span className="text-faint">pipeline → growth</span>
-          {growth.uplift_fy1 != null && growth.uplift_fy1 > 0 && (
-            <> · FY+1 <span className="font-mono text-ink">+{moneyShort(growth.uplift_fy1)}</span></>
-          )}
-          {growth.uplift_fy3 != null && growth.uplift_fy3 > 0 && (
-            <> · FY+3 <span className="font-mono text-ink">+{moneyShort(growth.uplift_fy3)}</span></>
-          )}
-          {growth.uplift_ratio_fy3 != null && (
-            <span className="text-faint"> ({(growth.uplift_ratio_fy3 * 100).toFixed(0)}% of fwd rev)</span>
-          )}
-          {growth.tier && (
-            <span className={`ml-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${growth.tier === 'material' ? 'bg-aggressive/15 text-aggressive'
-              : growth.tier === 'emerging' ? 'bg-caution/15 text-caution'
-                : 'bg-hairline/40 text-faint'}`}>
-              {growth.tier}
-            </span>
-          )}
-        </p>
-      )}
 
       {/* the why — top-weighted component verdicts */}
       {comps.length > 0 && (
