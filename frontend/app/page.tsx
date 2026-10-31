@@ -128,6 +128,17 @@ export default async function RegimePage() {
   const drivers = Array.isArray(evidence?.drivers)
     ? (evidence!.drivers as unknown[]).map(String)
     : []
+  // market permissions — the mechanical gate (size multiplier,
+  // breakout/dip restrictions) + deterministic notes explaining WHY
+  // it tightened (independent families firing, deterioration, thin
+  // coverage). Distinct from verdict.rules, which are label verbs.
+  const permissions =
+    evidence && typeof evidence.permissions === 'object' && evidence.permissions !== null
+      ? (evidence.permissions as Record<string, unknown>)
+      : null
+  const permNotes = Array.isArray(permissions?.notes)
+    ? (permissions!.notes as unknown[]).map(String)
+    : []
   const confX =
     buckets && typeof buckets._confirmation === 'object' && buckets._confirmation !== null
       ? (buckets._confirmation as Record<string, unknown>)
@@ -417,6 +428,51 @@ export default async function RegimePage() {
                 )}
               </div>
             )}
+
+          {/* posture — the mechanical permission gate. Restrictions
+              show only when active; the notes say WHY it tightened
+              (independent families firing, deterioration slope, thin
+              evidence) — not the label verbs in verdict.rules */}
+          {permissions && (
+            <div className="pt-3 space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+                  posture
+                </span>
+                {typeof permissions.size_multiplier === 'number' && (
+                  <span
+                    className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono ${Number(permissions.size_multiplier) < 1
+                        ? 'border-caution/40 text-caution'
+                        : 'border-hairline text-muted'
+                      }`}
+                  >
+                    size ×{Number(permissions.size_multiplier).toFixed(2)}
+                  </span>
+                )}
+                {permissions.breakout_buying != null &&
+                  permissions.breakout_buying !== 'allowed' && (
+                    <span className="rounded-full border border-caution/40 px-2.5 py-0.5 text-[11px] font-mono text-caution">
+                      breakouts {String(permissions.breakout_buying)}
+                    </span>
+                  )}
+                {permissions.dip_buying === false && (
+                  <span className="rounded-full border border-defensive/40 px-2.5 py-0.5 text-[11px] font-mono text-defensive">
+                    dip-buying off
+                  </span>
+                )}
+                {permissions.aggressive_long === false && (
+                  <span className="rounded-full border border-hairline px-2.5 py-0.5 text-[11px] font-mono text-muted">
+                    no aggressive adds
+                  </span>
+                )}
+              </div>
+              {permNotes.map((n, i) => (
+                <p key={i} className="text-[11px] leading-relaxed text-muted">
+                  · {n}
+                </p>
+              ))}
+            </div>
+          )}
 
           {/* cross-asset confirmation — do other markets underwrite
               the equity move? journaled votes per asset */}
