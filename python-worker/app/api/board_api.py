@@ -522,17 +522,26 @@ async def _j_fund_snapshots():
     symbols = await _tracked_symbols()
     ok = failed = 0
     errs = []
-    for sym in symbols:
-        try:
-            res = await asyncio.to_thread(
-                mgr.refresh_data, sym, dtypes, RefreshMode.SCHEDULED, False)
-            if res.total_successful > 0:
-                ok += 1
-            else:
+    # bounded fan-out — ~3k symbols × 8 dtypes serially was the
+    # timeout; 6 workers respects FMP rate budgets, cuts wall ~6x
+    sem = asyncio.Semaphore(6)
+
+    async def _one(sym: str):
+        nonlocal ok, failed
+        async with sem:
+            try:
+                res = await asyncio.to_thread(
+                    mgr.refresh_data, sym, dtypes,
+                    RefreshMode.SCHEDULED, False)
+                if res.total_successful > 0:
+                    ok += 1
+                else:
+                    failed += 1
+            except Exception as exc:
                 failed += 1
-        except Exception as exc:
-            failed += 1
-            errs.append(f"{sym}: {exc}")
+                errs.append(f"{sym}: {exc}")
+
+    await asyncio.gather(*(_one(s) for s in symbols))
     return {"symbols": len(symbols), "ok": ok, "failed": failed,
             "errors": errs[:10]}
 
@@ -723,12 +732,20 @@ async def _j_research() -> dict:
             n_syms += 1
             todo.append((s, sectors.sector_for_symbol(s)))
     done, errs = [], []
-    for s, sector in todo:
-        try:
-            await asyncio.to_thread(research_run.run, s, sector)
-            done.append(s)
-        except Exception as exc:
-            errs.append(f"{s}: {str(exc)[:80]}")
+    # bounded fan-out — the book is a few hundred names; serial was
+    # the 25m-timeout failure mode. 6 workers keeps provider/LLM
+    # rate budgets intact while cutting wall time ~6x.
+    sem = asyncio.Semaphore(6)
+
+    async def _one(s: str, sector: str):
+        async with sem:
+            try:
+                await asyncio.to_thread(research_run.run, s, sector)
+                done.append(s)
+            except Exception as exc:
+                errs.append(f"{s}: {str(exc)[:80]}")
+
+    await asyncio.gather(*(_one(s, sec) for s, sec in todo))
     return {"ran": len(done), "skipped_fresh": n_syms - len(todo),
             "errors": errs[:10], "symbols": done}
 
@@ -973,7 +990,7 @@ _JOB_TIMEOUT = {
     "swing-scan": 15 * 60, "alerts": 15 * 60, "focus-scan": 10 * 60,
     "after-hours": 8 * 60, "pt-watch": 8 * 60,
     "custodian": 10 * 60, "momentum": 8 * 60, "flywheel": 50 * 60,
-    "macro-snapshot": 3 * 60, "fund-snapshots": 90 * 60,
+    "macro-snapshot": 3 * 60, "fund-snapshots": 120 * 60,
     "fund-flags": 8 * 60, "outcomes": 8 * 60, "leaps-mark": 5 * 60,
     "regime": 5 * 60, "pilot": 8 * 60, "daily-calls": 5 * 60,
     "daily-puts": 5 * 60, "spec-incubator": 3 * 60,
@@ -986,7 +1003,7 @@ _JOB_TIMEOUT = {
     "weekly-review": 15 * 60,
     "thesis-check": 40 * 60, "tier-sync": 5 * 60,
     "read-through": 8 * 60, "earnings-watch": 8 * 60,
-    "research": 25 * 60,
+    "research": 90 * 60,
     "selloff": 5 * 60,
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "intraday-tape": 3 * 60, "correction-alarms": 3 * 60,

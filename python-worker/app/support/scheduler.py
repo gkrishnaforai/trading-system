@@ -79,16 +79,27 @@ def _missed_slot(expr: str, last_run, now: datetime,
     return False
 
 
+_MAX_CONCURRENT = 4      # fired jobs are I/O-heavy; cap the box,
+                         # overflow queues into next-tick catch-up
+
+
 async def tick(now: datetime | None = None) -> dict[str, Any]:
     """One dispatcher cycle (~1/min): fire enabled+due jobs whose
     dependencies have clean recent runs. 'Due' = scheduled now OR a
     slot was missed since the last run (catch-up — the system being
-    off at 22:00 doesn't lose the night's work)."""
+    off at 22:00 doesn't lose the night's work).
+
+    At most _MAX_CONCURRENT jobs run at once — priority order
+    (lowest first) picks who goes now; the rest are skipped with
+    'queued' and the catch-up leg refires them on a later tick."""
     import asyncio
     from app.database import db
     from app.api.board_api import JOBS, _jobs, _run_job, _run_all
 
     now = now or datetime.now(timezone.utc)
+    # in-flight count is read once — jobs fired this tick haven't
+    # marked running yet, so track our own fires alongside
+    in_flight = sum(1 for s in _jobs.values() if s.get("running"))
     rows = db.execute_query(
         "SELECT * FROM job_definitions WHERE enabled AND cron IS NOT NULL"
         " ORDER BY priority")          # lower fires first when due
@@ -132,8 +143,12 @@ async def tick(now: datetime | None = None) -> dict[str, Any]:
         if unmet:
             skipped.append(f"{name} waiting on {unmet}")
             continue
+        if in_flight >= _MAX_CONCURRENT:
+            skipped.append(f"{name} queued (busy)")
+            continue
         asyncio.create_task(
             _run_all() if r["kind"] == "box" else _run_job(name))
+        in_flight += 1
         fired.append(f"{name}(catchup)" if due_catchup else name)
     return {"fired": fired, "skipped": skipped,
             "at": now.isoformat(timespec="seconds")}
