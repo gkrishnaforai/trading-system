@@ -15,6 +15,7 @@ from typing import Optional
 
 from app.research import (challenge, commitments, design_wins,
                           fdce, news_scan, observations, policy,
+                          relationships,
                           products, quarter, scores, sectors)
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,18 @@ def run(sym: str, sector: Optional[str] = None,
         wins, dw_reviewed = design_wins.review(
             sym, cfg.get("label", sector), prod["products"])
         ctx.update(design_wins.stats(wins, reviewed=dw_reviewed))
+
+    # relationship extraction — same claims stream as design_wins
+    # (doc_analyses), journaled as reviewer_status='extracted'
+    # candidates. Replay runs skip it: a PIT snapshot may only read
+    # the ledger as it stood, never mint new edges.
+    rel_stats = None
+    if in_fdce and as_of == date.today():
+        try:
+            rel_stats = relationships.extract(
+                sym, design_wins._claims(sym))
+        except Exception as exc:
+            logger.info("relationship extract %s: %s", sym, exc)
     if cfg.get("segment_extraction"):
         observations.review(sym, cfg.get("label", sector))
         rev_ttm = sum(q["revenue"]["value"] for q in qs[:4]
@@ -113,7 +126,8 @@ def run(sym: str, sector: Optional[str] = None,
     # yamls consume; journaled wholesale into report['fdce'].
     fdce_block = None
     if in_fdce:
-        fdce_block = fdce.build(sym, prod["products"], wins, ctx)
+        fdce_block = fdce.build(sym, prod["products"], wins, ctx,
+                                as_of=as_of)
         ctx.update(fdce_block["ctx"])
         # FDCE's domain-layer rank fills in for sector modules that
         # don't declare nextgen_layers (fdce-only names like PLTR)
@@ -196,6 +210,7 @@ def run(sym: str, sector: Optional[str] = None,
         "evidence_coverage": ctx["evidence_coverage"],
         "evidence_state": evidence_state,
         **({"news_scan": news_stats} if news_stats else {}),
+        **({"relationship_extract": rel_stats} if rel_stats else {}),
         "rules_version": {"scores": [e["rules_version"]
                                     for e in evals.values()],
                           "policy": rec["rules_version"],

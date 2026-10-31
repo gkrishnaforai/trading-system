@@ -350,9 +350,14 @@ def horizon_view(exposure: dict[str, dict],
 
 
 def build(sym: str, products: list[dict], wins: list[dict],
-          ctx: dict) -> dict[str, Any]:
+          ctx: dict, as_of: Optional[str] = None) -> dict[str, Any]:
     """Assemble the fdce block: exposure → ECS → transitions →
-    disruption → horizon + the ctx fields the FDCS yaml consumes."""
+    disruption → horizon + the ctx fields the FDCS yaml consumes.
+
+    `relationships` rides along as a SEPARATE journaled block — it
+    is deliberately kept out of ctx so no score yaml (FDCS included)
+    can consume it. Relationship evidence informs durability and
+    diversification; it never changes what the company can build."""
     u = universe().get(sym.upper()) or {}
     wins_by_product = {str(w.get("product") or "").lower(): w
                        for w in (wins or [])}
@@ -403,6 +408,7 @@ def build(sym: str, products: list[dict], wins: list[dict],
         "transitions": trans,
         "disruption": dis,
         "horizon": hv,
+        "relationships": _relationship_block(sym, as_of),
         "ctx": {
             "demand_score": demand_score(exp),
             "bottleneck_mechs": len(mechs & _BOTTLENECK_MECHS),
@@ -416,6 +422,17 @@ def build(sym: str, products: list[dict], wins: list[dict],
             "trans_delta": trans["adjusted_delta"],
         },
         "rules_version": registry_version()}
+
+
+def _relationship_block(sym: str, as_of: Optional[str]) -> dict:
+    """Fail-soft wrapper — a missing ledger never breaks FDCE."""
+    try:
+        from app.research import relationships
+        return relationships.summarize(
+            sym, str(as_of) if as_of else None)
+    except Exception as exc:
+        logger.debug("fdce relationships %s: %s", sym, exc)
+        return {"relationship_status": "no_data", "edges": []}
 
 
 def adjusted_fdcs(fdcs: Optional[float],

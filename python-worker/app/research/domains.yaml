@@ -9,7 +9,7 @@
 # time_to_scale, strategic} — 0-100, versioned with the file (the
 # PIT journal records domains@version on every run). The demand
 # formula D_d = .30G+.25B+.20A+.15T+.10S is applied in fdce.py.
-version: 1
+version: 2
 
 label: "Future Demand Capture"
 
@@ -68,6 +68,22 @@ universe:
   CMI:  {primary: [energy], secondary: []}
   CAT:  {primary: [energy], secondary: []}
   GNRC: {primary: [energy], secondary: []}
+  # power-supply-chain extension — upstream OEM components, grid,
+  # controls, materials. Universe names are the provider's US
+  # listing: IFNNY is the ADR (IFX is the German listing — not the
+  # same instrument), ABB is the NYSE ADR.
+  POWL: {primary: [power_thermal], secondary: [energy]}
+  WWD:  {primary: [energy], secondary: [power_thermal]}
+  PH:   {primary: [power_thermal], secondary: []}
+  ABB:  {primary: [power_thermal, energy], secondary: []}
+  IFNNY: {primary: [power_thermal, semicap], secondary: []}
+  ATI:  {primary: [materials], secondary: [energy]}
+  CRS:  {primary: [materials], secondary: []}
+  NUE:  {primary: [materials], secondary: []}
+  CMC:  {primary: [materials], secondary: []}
+  FCX:  {primary: [materials], secondary: []}
+  SCCO: {primary: [materials], secondary: []}
+  ALB:  {primary: [materials], secondary: [energy]}
   SMCI: {primary: [compute], secondary: [power_thermal]}
   DELL: {primary: [compute], secondary: [edge_infra]}
   HPE:  {primary: [compute, connectivity], secondary: []}
@@ -129,14 +145,16 @@ domains:
   power_thermal:
     label: "Power delivery & cooling"
     layers: [power_supply, ups, liquid_cooling, air_cooling,
-             busbar, interconnect_power]
+             busbar, interconnect_power,
+             mv_switchgear, fluid_handling, high_voltage_connectors,
+             busway_distribution, thermal_heat_exchangers, power_semis]
     horizon: "0-18m"
     d: {growth: 88, bottleneck: 85, adoption: 88, time_to_scale: 90,
         strategic: 80}
   energy:
     label: "Energy generation & grid"
     layers: [turbine, generator, nuclear, renewables, grid_storage,
-             grid_equipment]
+             grid_equipment, grid_components, turbine_controls]
     horizon: "18-36m"
     d: {growth: 80, bottleneck: 82, adoption: 82, time_to_scale: 78,
         strategic: 78}
@@ -181,6 +199,16 @@ domains:
     horizon: "3-5y"
     d: {growth: 78, bottleneck: 55, adoption: 65, time_to_scale: 55,
         strategic: 78}
+  materials:
+    label: "Materials & commodity inputs"
+    layers: [specialty_alloys, copper_materials, electrical_steel,
+             battery_minerals]
+    horizon: "18-36m"
+    # diffuse beneficiary — demand rises with grid/DC construction
+    # but value capture is diluted across suppliers; never let a
+    # strong D score imply a confirmed OEM supply relationship
+    d: {growth: 72, bottleneck: 70, adoption: 82, time_to_scale: 80,
+        strategic: 72}
 
 watchlist_vectors:
   [quantum_compute, space_infra, advanced_battery,

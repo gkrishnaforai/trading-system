@@ -383,7 +383,7 @@ def _p(name, layer, stage, si=None, moat=None, rev=None):
 class TestFdce:
     def test_registry_loads(self):
         cfg = fdce.load()
-        assert len(cfg["domains"]) == 12
+        assert len(cfg["domains"]) == 13   # +materials (v2)
         assert fdce.in_universe("CRDO") and fdce.in_universe("PLTR")
         assert not fdce.in_universe("JNJ")
         assert cfg["transitions"] and cfg["universe"]
@@ -621,3 +621,183 @@ class TestLiquidityEngine:
         assert st["equity_transmission"] == "strong"
         assert st["liquidity_direction"] == "improving"
         assert st["impulses"]["fed"] == "unknown"
+
+
+class TestRelationships:
+    """Spec §3/§7 regression cases — confidential disclosure never
+    mints identities, lifecycle is separate from type, PIT versions
+    don't leak, missing evidence is unknown-not-negative."""
+
+    def _mod_confidential(self):
+        return {"relationship_id": "rel_mod_dc_cooling",
+                "from_symbol": "MOD", "to_symbol": None,
+                "to_entity_type": "confidential_customer",
+                "to_display_label": "confidential_data_center_customers",
+                "relationship_type": "commercial_supply",
+                "relationship_subtype": "customer_confidential",
+                "product_id": "data_center_cooling",
+                "evidence_stage": 4, "evidence_confidence": 85,
+                "customer_disclosure": "confidential",
+                "aggregate_customer_count": 3,
+                "economic_materiality": "meaningful",
+                "lifecycle_status": "active",
+                "reviewer_status": "approved", "recorded_at": "2026-06-01",
+                "id": 1, "as_of_date": "2026-06-01"}
+
+    def _wwd_pair(self):
+        divest = {"relationship_id": "rel_wwd_gev_divest",
+                  "from_symbol": "WWD", "to_symbol": "GEV",
+                  "relationship_type": "asset_transfer",
+                  "relationship_subtype": "divested",
+                  "customer_disclosure": "not_applicable",
+                  "economic_materiality": "material",
+                  "lifecycle_status": "divested",
+                  "reviewer_status": "approved",
+                  "recorded_at": "2024-06-01", "id": 2,
+                  "evidence_confidence": 95}
+        supply = {"relationship_id": "rel_wwd_gev_customer",
+                  "from_symbol": "WWD", "to_symbol": "GEV",
+                  "relationship_type": "commercial_supply",
+                  "relationship_subtype": "customer_named",
+                  "customer_disclosure": "named",
+                  "economic_materiality": "material",
+                  "lifecycle_status": "active",
+                  "reviewer_status": "approved",
+                  "recorded_at": "2025-11-15", "id": 3,
+                  "evidence_confidence": 90}
+        return divest, supply
+
+    def test_mod_confidential_three_never_named(self):
+        from app.research import relationships as rel
+        s = rel._summarize("MOD", [self._mod_confidential()])
+        assert s["named_customer_count"] == 0
+        assert s["confidential_customer_count"] == 1
+        # the aggregate-3 is ONE edge — not three invented OEMs
+        assert s["verified_relationship_count"] == 1
+        edge_symbols = {e.get("label") for e in s["edges"]}
+        assert all("VRT" not in e and "GEV" not in e
+                   and "ETN" not in e for e in edge_symbols)
+
+    def test_wwd_divest_does_not_erase_commercial_tie(self):
+        from app.research import relationships as rel
+        divest, supply = self._wwd_pair()
+        s = rel._summarize("WWD", [divest, supply])
+        life = {e["relationship_id"]: e["lifecycle"]
+                for e in s["edges"]}
+        assert life["rel_wwd_gev_divest"] == "divested"
+        assert life["rel_wwd_gev_customer"] == "active"
+        # live verified count is the commercial edge only
+        assert s["verified_relationship_count"] == 1
+        assert s["named_customer_count"] == 1
+
+    def test_prolec_ownership_only_after_completion(self):
+        from app.research import relationships as rel
+        pending = {"relationship_id": "rel_gev_prolec",
+                   "from_symbol": "GEV", "to_symbol": "PROLEC",
+                   "relationship_type": "acquisition",
+                   "relationship_subtype": "acquisition_pending",
+                   "lifecycle_status": "pending",
+                   "customer_disclosure": "not_applicable",
+                   "reviewer_status": "approved",
+                   "recorded_at": "2025-11-01", "id": 4,
+                   "evidence_confidence": 95}
+        owned = dict(pending, relationship_type="ownership",
+                     relationship_subtype="owned",
+                     lifecycle_status="completed",
+                     valid_from="2026-02-01",
+                     recorded_at="2026-02-10", id=5)
+        # earlier knowledge set → pending, NOT ownership
+        s1 = rel._summarize("GEV", rel._resolve([pending]))
+        assert {e["type"] for e in s1["edges"]} == {"acquisition"}
+        # newer version wins → ownership appears
+        s2 = rel._summarize("GEV",
+                            rel._resolve([pending, owned]))
+        assert {e["type"] for e in s2["edges"]} == {"ownership"}
+
+    def test_trench_pending_is_not_ownership(self):
+        from app.research import relationships as rel
+        edge = {"relationship_id": "rel_gev_trench",
+                "from_symbol": "GEV", "to_symbol": "TRENCH",
+                "relationship_type": "acquisition",
+                "relationship_subtype": "acquisition_pending",
+                "lifecycle_status": "pending",
+                "customer_disclosure": "not_applicable",
+                "reviewer_status": "approved",
+                "recorded_at": "2026-10-15", "id": 6,
+                "evidence_confidence": 95}
+        s = rel._summarize("GEV", [edge])
+        assert all(e["type"] != "ownership" for e in s["edges"])
+        assert s["edges"][0]["lifecycle"] == "pending"
+
+    def test_fcx_commodity_is_exposure_not_supply(self):
+        from app.research import relationships as rel
+        edge = {"relationship_id": "rel_fcx_copper",
+                "from_symbol": "FCX", "to_symbol": None,
+                "to_entity_type": "customer_group",
+                "relationship_type": "commodity_exposure",
+                "relationship_subtype": "commodity",
+                "customer_disclosure": "not_applicable",
+                "lifecycle_status": "active",
+                "reviewer_status": "approved",
+                "recorded_at": "2026-01-01", "id": 7}
+        s = rel._summarize("FCX", [edge])
+        assert s["relationship_status"] == "industry_exposure_only"
+        assert s["verified_relationship_count"] == 0
+        assert s["named_customer_count"] == 0
+
+    def test_aph_capability_does_not_imply_oem_customers(self):
+        from app.research import relationships as rel
+        edge = {"relationship_id": "rel_aph_interconnect",
+                "from_symbol": "APH", "to_symbol": None,
+                "to_entity_type": "customer_group",
+                "relationship_type": "industry_exposure",
+                "relationship_subtype": "industry_exposure",
+                "customer_disclosure": "not_applicable",
+                "lifecycle_status": "active",
+                "reviewer_status": "approved",
+                "recorded_at": "2026-01-01", "id": 8}
+        s = rel._summarize("APH", [edge])
+        assert s["verified_relationship_count"] == 0
+        assert s["named_customer_count"] == 0
+        assert s["relationship_status"] == "industry_exposure_only"
+
+    def test_missing_evidence_is_no_data_not_negative(self):
+        from app.research import relationships as rel
+        s = rel._summarize("POWL", [])
+        assert s["relationship_status"] == "no_data"
+        assert s["relationship_confidence"] is None
+        assert s["relationship_coverage"] == 0.0
+
+    def test_stale_lifecycle_dropped_not_current(self):
+        from app.research import relationships as rel
+        old_active = {"relationship_id": "rel_x",
+                      "from_symbol": "POWL", "to_symbol": "ETN",
+                      "relationship_type": "commercial_supply",
+                      "customer_disclosure": "named",
+                      "lifecycle_status": "active",
+                      "reviewer_status": "approved",
+                      "recorded_at": "2024-01-01", "id": 9}
+        terminated = dict(old_active, lifecycle_status="terminated",
+                          recorded_at="2025-01-01", id=10)
+        # newer version says terminated → edge gone, not "current"
+        assert rel._resolve([old_active, terminated]) == []
+        s = rel._summarize("POWL",
+                           rel._resolve([old_active, terminated]))
+        assert s["relationship_status"] == "no_data"
+
+    def test_type_and_status_are_independent(self):
+        from app.research import relationships as rel
+        divest, supply = self._wwd_pair()
+        s = rel._summarize("WWD", [divest, supply])
+        pairs = {(e["type"], e["lifecycle"]) for e in s["edges"]}
+        # same counterparty, independent type×lifecycle cells
+        assert ("asset_transfer", "divested") in pairs
+        assert ("commercial_supply", "active") in pairs
+
+    def test_unreviewed_extractor_edge_is_partial(self):
+        from app.research import relationships as rel
+        edge = dict(self._mod_confidential(),
+                    reviewer_status="extracted")
+        s = rel._summarize("MOD", [edge])
+        assert s["verified_relationship_count"] == 0
+        assert s["relationship_coverage"] == 0.0
