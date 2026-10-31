@@ -9,13 +9,19 @@ version: 1
 #                    GMV, utilization live in slides, not XBRL; resolve
 #                    to the latest extracted value or 'unknown')
 # ops: >,>=,<,<=, improving (vs ~90d fundamental_snapshots), positive
-# `hard: true` on a metric = its failure breaks the hypothesis, not
-# just dents it. `vetoes` cap the overall thesis status regardless of
-# other greens (credit quality invalidating loan growth is the model
-# case — a veto beats a count of passes). A veto fires ONLY on its own
-# `when` evidence — {hypothesis: <id>} fires when that hypothesis is
-# deteriorating/broken; {metrics: [...]} fires when ALL conditions
-# evaluate true. Unknown evidence never fires a veto.
+# `hard: true` on a metric = the hypothesis's load-bearing leg — its
+# failure is material, but NOT instantly thesis-breaking: streak 1 =
+# deteriorating, ≥2 consecutive prints = severely_deteriorating, ≥2
+# with another leg failing = broken (persistence + corroboration).
+# `criticality: optional` on a hypothesis = a failed side-bet — its
+# worst outcome caps the symbol at deteriorating, never broken.
+# `vetoes` cap the overall thesis status regardless of other greens.
+# `cap: broken` + `fatal: true` = a catastrophic condition (insolvency
+# pattern, no-runway) that bypasses the persistence ladder entirely.
+# A veto fires ONLY on its own `when` evidence — {hypothesis: <id>}
+# fires when that hypothesis is deteriorating/broken; {metrics: [...]}
+# fires when ALL conditions evaluate true. Unknown evidence never
+# fires a veto.
 
 symbols:                      # pilot map — explicit overrides first
   NBIS:  ai_compute
@@ -68,6 +74,13 @@ archetypes:
           - {source: flywheel, name: fcf_ttm, op: "improving"}
           - {source: flywheel, name: net_debt_ebitda, op: "<=", target: 6.0}
         valuation_impact: "dilution/financing risk is THE bear case"
+      - id: strategic_segment
+        stage: signal
+        criticality: optional
+        label: "AI/data-center segment is accelerating on its own"
+        metrics:
+          - {source: doc, name: data_center_growth}
+          - {source: doc, name: segment_growth}
     vetoes:
       - id: split_or_issuance
         flag: "share-count step >1.3x — verify dilution vs split basis"
@@ -75,6 +88,14 @@ archetypes:
         when:
           metrics:
             - {source: sec, name: shares_step_ratio, op: ">=", target: 1.3}
+      - id: financing_break
+        flag: "burning cash at >8x leverage — can't fund the buildout"
+        cap: broken
+        fatal: true
+        when:
+          metrics:
+            - {source: flywheel, name: fcf_ttm, op: "<", target: 0}
+            - {source: flywheel, name: net_debt_ebitda, op: ">", target: 8.0}
 
   saas:
     label: "SaaS — durable subscription growth converting to
@@ -97,11 +118,22 @@ archetypes:
           - {source: flywheel, name: eps_rep_growth, op: ">=", target: 0.0}
       - id: organic_share
         stage: signal
+        criticality: optional
         label: "Growth is organic, not bought"
         metrics:
           - {source: flywheel, name: acq_rev_pct, op: "<=", target: 0.10}
           - {source: doc, name: organic_growth}
         failure_condition: "acq spend >10% of revenue with no organic disclosure"
+    vetoes:
+      - id: shrinking_and_burning
+        flag: "revenue declining while FCF is negative — the growth
+               thesis and the funding leg both failed"
+        cap: broken
+        fatal: true
+        when:
+          metrics:
+            - {source: flywheel, name: rev_growth, op: "<", target: 0}
+            - {source: flywheel, name: fcf_ttm, op: "<", target: 0}
 
   semis:
     label: "Semis / AI connectivity — design wins convert to shipments
@@ -121,8 +153,17 @@ archetypes:
         failure_condition: "gross margin eroding >3pts while growth slows"
       - id: backlog_real
         stage: signal
+        criticality: optional
         metrics:
           - {source: sec, name: rpo_yoy, op: ">=", target: -0.10}
+      - id: product_segment
+        stage: signal
+        criticality: optional
+        label: "Strategic product segment accelerating on its own —
+            consolidated growth can mask the leg that matters"
+        metrics:
+          - {source: doc, name: product_revenue_growth}
+          - {source: doc, name: segment_growth}
 
   marketplace:
     label: "Marketplace — more transactions at held or improving
@@ -145,6 +186,7 @@ archetypes:
         failure_condition: "opex growing faster than revenue two quarters running"
       - id: street_follows
         stage: signal
+        criticality: optional
         metrics:
           - {source: flywheel, name: est_revision_pct, op: ">=", target: -0.02}
 
@@ -185,6 +227,7 @@ archetypes:
           - {source: flywheel, name: beat_streak, op: ">=", target: 1}
       - id: forward_turns
         stage: conversion
+        criticality: optional
         label: "Street starts revising up before results print"
         metrics:
           - {source: flywheel, name: est_revision_pct, op: ">=", target: -0.02}
@@ -196,7 +239,8 @@ archetypes:
     vetoes:
       - id: no_cash_no_time
         flag: "FCF negative + shrinking revenue = no runway for the turn"
-        cap: deteriorating
+        cap: broken
+        fatal: true
         when:
           metrics:
             - {source: flywheel, name: rev_growth, op: "<", target: 0}
@@ -217,3 +261,13 @@ archetypes:
         metrics:
           - {source: flywheel, name: fcf_margin, op: ">=", target: 0.0}
           - {source: flywheel, name: est_revision_pct, op: ">=", target: -0.02}
+    vetoes:
+      - id: financing_break
+        flag: "revenue declining AND burning cash at >8x leverage — "
+        cap: broken
+        fatal: true
+        when:
+          metrics:
+            - {source: flywheel, name: rev_growth, op: "<", target: 0}
+            - {source: flywheel, name: fcf_ttm, op: "<", target: 0}
+            - {source: flywheel, name: net_debt_ebitda, op: ">", target: 8.0}

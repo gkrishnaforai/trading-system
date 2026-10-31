@@ -9,12 +9,27 @@ row so the existing check_watches() grader and review surfaces stay
 the single journal — no parallel tracker.
 
 Status vocabulary (controlled, per the design):
-  on_track     all checks pass
-  improving    evidence moving the right way (pass + evidence mix)
-  mixed        some pass, some weaken
-  deteriorating a check failed
-  broken       a `hard` check failed / failure_condition met
-  unknown      data missing — never treated as neutral or positive
+  on_track               all checks pass
+  improving              evidence moving the right way (pass + evidence mix)
+  mixed                  some pass, some weaken
+  deteriorating          a check failed
+  severely_deteriorating a CORE hypothesis's hard check failed — the
+                         load-bearing operating requirement is missing,
+                         triggering review rather than impairment
+  broken                 structural impairment — a hard check failed
+                         across ≥2 DISTINCT reporting periods WITH
+                         corroboration, or a fatal veto fired. One bad
+                         print can never break a thesis.
+  unknown                data missing — never treated as neutral or positive
+
+Failure semantics:
+  - hard check fail, 1st period    → hypothesis deteriorating (warning)
+  - hard check fail, ≥2 periods    → severely_deteriorating
+  - hard fail ≥2 + corroboration   → broken (another leg failing too)
+  - hypothesis criticality: 'core' failures can break the symbol;
+    'optional' failures cap the symbol at deteriorating, never broken
+  - recovery: a broken status can't heal while the broken leg still
+    fails; once healed it sits in a 30d review window before improving
 """
 from __future__ import annotations
 
@@ -39,10 +54,19 @@ _TREND_OF = {
     "gm_now": "gm_slope",
 }
 
-_RANK = {"broken": 0, "deteriorating": 1, "mixed": 2, "improving": 3,
-         "on_track": 4, "unknown": -1}
+_RANK = {"broken": 0, "severely_deteriorating": 1, "deteriorating": 2,
+         "mixed": 3, "improving": 4, "on_track": 5, "unknown": -1}
 _SCORE = {"on_track": 2, "improving": 1, "mixed": 0, "unknown": 0,
-          "deteriorating": -1, "broken": -2}
+          "deteriorating": -1, "severely_deteriorating": -2,
+          "broken": -2}
+
+# a value change <30d after the streak last moved is a data refresh,
+# not a new print — fundamentals publish ~quarterly
+_MIN_PERIOD_GAP_DAYS = 30
+# below this share of answered core checks no full grade is claimed
+_CORE_COVERAGE_BAR = 0.70
+# days a healed break stays capped at 'deteriorating' under review
+_RECOVERY_REVIEW_DAYS = 30
 
 
 def _cfg() -> dict:
@@ -158,11 +182,57 @@ def _check(fly: dict, sec: dict, sym: str, m: dict) -> dict:
             "note": f"{name} {v:+.3f} vs {op} {target}"}
 
 
+def _periods(c: dict, prev: dict) -> None:
+    """Consecutive-PRINT bookkeeping on a check — a hard leg must fail
+    across distinct reporting periods to escalate; nightly re-evals of
+    the same print don't count. 'New period' = the observed value
+    changed AND ≥_MIN_PERIOD_GAP_DAYS since the streak last moved:
+    fundamentals print quarterly, intra-quarter jitter isn't evidence.
+    State rides on the check dict inside the hypotheses JSONB — the
+    existing journal is the memory, no schema needed."""
+    st = c.get("status")
+    pf, pp = prev.get("fail_streak") or 0, prev.get("pass_streak") or 0
+    sa = prev.get("streak_at")
+    if st not in ("pass", "fail"):
+        c.update(fail_streak=pf, pass_streak=pp, streak_at=sa)
+        return
+    v, pv = c.get("value"), prev.get("value")
+    new_period = v is not None and (pv is None or v != pv)
+    if new_period and sa:
+        try:
+            new_period = (date.today() - date.fromisoformat(
+                str(sa)[:10])).days >= _MIN_PERIOD_GAP_DAYS
+        except Exception:
+            new_period = True
+    if not prev:
+        new_period = True
+    today = date.today().isoformat()
+    if st == "fail":
+        c.update(fail_streak=(pf + 1) if new_period else max(pf, 1),
+                 pass_streak=0, streak_at=today if new_period else sa)
+    else:
+        c.update(fail_streak=0,
+                 pass_streak=(pp + 1) if new_period else max(pp, 1),
+                 streak_at=today if new_period else sa)
+
+
 def _hyp_status(checks: list[dict], hards: set) -> str:
+    """Persistence ladder — the reviewer-mandated semantics:
+    hard-fail streak 1 → deteriorating (warning), streak ≥2 →
+    severely_deteriorating, streak ≥2 WITH corroboration (a second leg
+    also failing) → broken. A single print never breaks a leg."""
     sts = [c["status"] for c in checks]
-    if any(s == "fail" and checks[i]["metric"] in hards
-           for i, s in enumerate(sts)):
-        return "broken"
+    hard_fail = [c for c in checks
+                 if c["status"] == "fail" and c.get("hard")]
+    if hard_fail:
+        worst = max(c.get("fail_streak") or 1 for c in hard_fail)
+        corroborated = len(hard_fail) > 1 or any(
+            c["status"] == "fail" and not c.get("hard") for c in checks)
+        if worst >= 2 and corroborated:
+            return "broken"
+        if worst >= 2:
+            return "severely_deteriorating"
+        return "deteriorating"
     if any(s == "fail" for s in sts):
         return "deteriorating"
     if all(s in ("pass", "evidence") for s in sts) \
@@ -173,8 +243,41 @@ def _hyp_status(checks: list[dict], hards: set) -> str:
     return "unknown"
 
 
+def _rollup_status(hyps: list[dict], score: int) -> str:
+    """Hypothesis statuses → symbol status. Only a broken CORE leg
+    breaks the thesis; a core hard-fail at any streak is severe
+    (review, not impairment); broken optional legs cap the symbol at
+    deteriorating — a failed side-bet isn't structural impairment."""
+    if not hyps or all(h["status"] == "unknown" for h in hyps):
+        return "unknown"
+    core = [h for h in hyps if h.get("criticality") != "optional"]
+    if any(h["status"] == "broken" for h in core):
+        return "broken"
+    if any(h.get("hard_fail") for h in core):
+        return "severely_deteriorating"
+    base = ("on_track" if score >= 4 else "improving" if score >= 1
+            else "deteriorating" if score <= -2 else "mixed")
+    if _RANK[base] > _RANK["deteriorating"] and any(
+            h["status"] in ("broken", "severely_deteriorating")
+            for h in hyps):
+        return "deteriorating"
+    return base
+
+
+def _core_coverage(hyps: list[dict]) -> float:
+    """Share of CORE checks that produced real evidence — unknown is
+    absent data, never a soft answer."""
+    checks = [c for h in hyps if h.get("criticality") != "optional"
+              for c in (h.get("checks") or [])]
+    if not checks:
+        return 0.0
+    return round(sum(1 for c in checks if c.get("status") != "unknown")
+                 / len(checks), 2)
+
+
 def evaluate(sym: str) -> dict:
     """Full archetype-scoped thesis evaluation → persist + watch sync."""
+    import json
     from app.database import db
     sym = sym.upper()
     st = db.execute_query(
@@ -185,6 +288,25 @@ def evaluate(sym: str) -> dict:
     primary, secondary = archs[0], (archs[1] if len(archs) > 1 else None)
     fly, sec = _flywheel(sym), _sec(sym)
 
+    # previous state loads FIRST — streak bookkeeping, delta tracking
+    # and recovery hysteresis all read it
+    prev = db.execute_query(
+        "SELECT status, hypotheses, status_since, detail"
+        " FROM symbol_thesis WHERE symbol=:s", {"s": sym})
+    prev = dict(prev[0]) if prev else {}
+    prev_status = prev.get("status")
+    prev_hyps = prev.get("hypotheses")
+    if isinstance(prev_hyps, str):
+        prev_hyps = json.loads(prev_hyps)
+    prev_detail = prev.get("detail") or {}
+    if isinstance(prev_detail, str):
+        prev_detail = json.loads(prev_detail)
+    prev_check = {}
+    for ph in (prev_hyps or []):
+        for c in (ph.get("checks") or []):
+            prev_check[(ph.get("archetype"), ph.get("id"),
+                        c.get("metric"))] = c
+
     hyps, vetoes_fired, unresolved = [], [], []
     cfg = _cfg()
     for arch in archs:
@@ -194,8 +316,13 @@ def evaluate(sym: str) -> dict:
                      if m.get("hard")}
             checks = [_check(fly, sec, sym, m)
                       for m in h.get("metrics", [])]
+            for c in checks:
+                c["hard"] = c["metric"] in hards
+                _periods(c, prev_check.get(
+                    (arch, h["id"], c["metric"])) or {})
             status = _hyp_status(checks, hards)
-            if status in ("unknown", "deteriorating", "broken"):
+            if status in ("unknown", "deteriorating",
+                          "severely_deteriorating", "broken"):
                 unresolved.append(
                     f"{h['id']}: {status} — "
                     + "; ".join(c["note"] for c in checks
@@ -203,7 +330,10 @@ def evaluate(sym: str) -> dict:
             hyps.append({"id": h["id"], "archetype": arch,
                          "stage": h.get("stage"),
                          "label": h.get("label"), "status": status,
-                         "hard": bool(h.get("hard_thesis")),
+                         "criticality": h.get("criticality") or "core",
+                         "hard_fail": any(
+                             c["status"] == "fail" and c.get("hard")
+                             for c in checks),
                          "checks": checks,
                          "failure_condition": h.get("failure_condition"),
                          "valuation_impact": h.get("valuation_impact")})
@@ -218,7 +348,9 @@ def evaluate(sym: str) -> dict:
                 tgt = next((hp for hp in hyps
                             if hp["id"] == w["hypothesis"]
                             and hp["archetype"] == arch), None)
-                if tgt and tgt["status"] in ("deteriorating", "broken"):
+                if tgt and tgt["status"] in ("deteriorating",
+                                             "severely_deteriorating",
+                                             "broken"):
                     fired = f"{w['hypothesis']}={tgt['status']}"
             elif w.get("metrics"):
                 vcs = [_check(fly, sec, sym, m) for m in w["metrics"]]
@@ -227,37 +359,85 @@ def evaluate(sym: str) -> dict:
             if fired:
                 vetoes_fired.append({"id": v["id"], "cap": v["cap"],
                                      "flag": v["flag"],
+                                     "fatal": bool(v.get("fatal")),
                                      "evidence": fired})
 
     score = sum(_SCORE[h["status"]] for h in hyps)
-    hard_broken = any(h["status"] == "broken" and h.get("hard")
-                      for h in hyps)
-    if not hyps:
-        status = "unknown"
-    elif hard_broken or any(h["status"] == "broken" for h in hyps):
-        status = "broken"
-    elif all(h["status"] == "unknown" for h in hyps):
-        status = "unknown"
-    elif score >= 4:
-        status = "on_track"
-    elif score >= 1:
-        status = "improving"
-    elif score <= -2:
-        status = "deteriorating"
-    else:
-        status = "mixed"
+    status = _rollup_status(hyps, score)
     for v in vetoes_fired:
         if _RANK.get(v["cap"], 4) < _RANK.get(status, 4):
             status = v["cap"]
-    # an unverifiable hard thesis (e.g. lender credit quality with no
+    # an unverifiable core thesis (e.g. lender credit quality with no
     # extracted data yet) can't claim on_track — cap at improving
     if _RANK[status] > _RANK["improving"] and any(
-            h["status"] == "unknown" and h.get("hard") for h in hyps):
+            h["status"] == "unknown" and h.get("criticality") == "core"
+            for h in hyps):
         status = "improving"
 
+    core_cov = _core_coverage(hyps)
     detail = {"unresolved": unresolved[:6],
               "archetype_label": ((cfg.get("archetypes") or {})
-                                  .get(primary) or {}).get("label")}
+                                  .get(primary) or {}).get("label"),
+              "evidence": {"core_coverage": core_cov,
+                           "tier": "assessed" if core_cov
+                           >= _CORE_COVERAGE_BAR else "provisional"}}
+    # thin core coverage can't claim a confident on_track either
+    if core_cov < _CORE_COVERAGE_BAR \
+            and _RANK[status] > _RANK["improving"]:
+        status = "improving"
+
+    # --- recovery hysteresis ------------------------------------------
+    # broken must not heal on one eval: the leg that broke has to
+    # actually PASS again, then survive a review window capped at
+    # 'deteriorating' before the status can climb back. broken_legs is
+    # journaled so the window keeps its reference legs across evals.
+    today_str = date.today().isoformat()
+    rec = (prev_detail.get("recovery") or {}) \
+        if isinstance(prev_detail.get("recovery"), dict) else {}
+    if status == "broken":
+        rec = {}
+        detail["broken_at"] = \
+            prev_detail.get("broken_at") or today_str
+        detail["broken_legs"] = [
+            f"{h['archetype']}:{h['id']}" for h in hyps
+            if h["status"] == "broken"
+            and h.get("criticality") == "core"]
+    elif prev_status == "broken" or rec.get("under_review"):
+        legs = prev_detail.get("broken_legs") or []
+        prev_broken_keys = {tuple(k.split(":", 1)) for k in legs} \
+            if legs else {
+                (h.get("archetype"), h.get("id"))
+                for h in (prev_hyps or [])
+                if h.get("status") == "broken"}
+        cur = {(h["archetype"], h["id"]): h for h in hyps}
+        still_failing = any(
+            c["status"] == "fail"
+            for k in prev_broken_keys if k in cur
+            for c in cur[k].get("checks") or [] if c.get("hard"))
+        fatal_now = any(v.get("cap") == "broken" for v in vetoes_fired)
+        if still_failing or fatal_now:
+            # greens elsewhere can't heal a leg that's still failing
+            status = "broken"
+            detail["broken_at"] = \
+                prev_detail.get("broken_at") or today_str
+            detail["broken_legs"] = legs
+        else:
+            since = rec.get("since") or today_str
+            try:
+                probated = (date.today() - date.fromisoformat(
+                    str(since)[:10])).days >= _RECOVERY_REVIEW_DAYS
+            except Exception:
+                probated = False
+            if probated:
+                rec = {}
+                detail["recovered_at"] = today_str
+            else:
+                rec = {"under_review": True, "since": since}
+                detail["broken_legs"] = legs
+                if _RANK[status] > _RANK["deteriorating"]:
+                    status = "deteriorating"
+    if rec:
+        detail["recovery"] = rec
     # standing driver commitments — management's forward numbers
     # (SMCI raised FY27 Q1 revenue +28% while trailing legs show
     # decel). Evidence, never a grade — surfaced so a deteriorating
@@ -276,11 +456,6 @@ def evaluate(sym: str) -> dict:
     # vs deteriorating vs continuing); hyp_changes names WHICH legs
     # moved so the UI can say "credit_quality: unknown→on_track —
     # confirmed" rather than just "up".
-    prev = db.execute_query(
-        "SELECT status, hypotheses, status_since FROM symbol_thesis"
-        " WHERE symbol=:s", {"s": sym})
-    prev = dict(prev[0]) if prev else {}
-    prev_status = prev.get("status")
     if not prev_status:
         status_dir, status_since = "new", date.today().isoformat()
     else:
@@ -289,10 +464,6 @@ def evaluate(sym: str) -> dict:
         status_since = (date.today().isoformat() if status_dir != "flat"
                         else (prev.get("status_since")
                               or date.today().isoformat()))
-    prev_hyps = prev.get("hypotheses")
-    if isinstance(prev_hyps, str):
-        import json as _json
-        prev_hyps = _json.loads(prev_hyps)
     prev_hyp = {(h.get("archetype"), h.get("id")): h.get("status")
                 for h in (prev_hyps or [])}
     hyp_changes = [{"id": h["id"], "archetype": h["archetype"],
@@ -311,7 +482,6 @@ def evaluate(sym: str) -> dict:
            "status_since": status_since, "hyp_changes": hyp_changes,
            "vetoes": vetoes_fired or None, "detail": detail,
            "as_of": date.today().isoformat()}
-    import json
     db.execute_update(
         "INSERT INTO symbol_thesis (symbol, archetype, secondary,"
         " hypotheses, status, score, prev_status, status_dir,"
@@ -474,6 +644,9 @@ _METRIC_LABEL = {
     "provisions": "loan-loss provisions",
     "contracted_revenue": "contracted revenue",
     "organic_growth": "disclosed organic growth",
+    "data_center_growth": "data-center growth",
+    "segment_growth": "strategic-segment growth",
+    "product_revenue_growth": "product-revenue growth",
 }
 
 
@@ -528,6 +701,9 @@ def stance_for(status: str, fv_upside_pct: Optional[float],
     an |upside| outside ±75% is model-blind, not 'cheap'/'pricey'."""
     if status == "broken":
         return "Avoid — thesis broken"
+    if status == "severely_deteriorating":
+        return ("Reduce / under review — a core thesis leg failed; "
+                "persistent failure breaks it")
     if status == "deteriorating":
         return "Reduce / no new adds — legs moving against the thesis"
     if status == "unknown":
@@ -586,10 +762,11 @@ def build_report(t: dict, fv_upside_pct: Optional[float] = None,
             elif any(c.get("status") == "evidence" for c in checks):
                 line += " — supporting evidence extracted"
             likes.append(line)
-        elif st == "broken":
+        elif st in ("broken", "severely_deteriorating"):
             why = (_check_line(failing[0]) if failing
                    else (h.get("failure_condition") or "hard check failed"))
-            confirm.append(f"{label} — broken: {why}")
+            tag = "broken" if st == "broken" else "severe"
+            confirm.append(f"{label} — {tag}: {why}")
         elif st == "deteriorating":
             why = (_check_line(failing[0]) if failing
                    else (h.get("failure_condition") or ""))
@@ -615,8 +792,11 @@ def build_report(t: dict, fv_upside_pct: Optional[float] = None,
             confirm.append(f"Guide {met} {per} cut"
                            + (f" {dp:.0%}" if dp is not None else "")
                            + " — management's own number, not ours")
+    det = t.get("detail") or {}
     return {"stance": stance_for(str(t.get("status") or "unknown"),
                                  fv_upside_pct, mom_state),
             "likes": likes[:6], "confirm": confirm[:6],
             "status": t.get("status"), "dir": t.get("status_dir"),
-            "archetype": t.get("archetype")}
+            "archetype": t.get("archetype"),
+            "evidence": det.get("evidence"),
+            "recovery": det.get("recovery")}

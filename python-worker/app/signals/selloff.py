@@ -175,6 +175,7 @@ def _classify(d: dict) -> tuple[str, str]:
         return ("structural_impairment",
                 "reject — the business itself is impaired")
     if (rev_bad or d["fund_state"] in ("deteriorating", "pressured")
+            or d["thesis"] == "severely_deteriorating"
             or (d.get("last_surprise") is not None
                 and d["last_surprise"] < -8)):
         return ("fundamental_repricing",
@@ -234,6 +235,7 @@ def _score(d: dict) -> dict:
         pts += (4 if d["est_rev"] > 2 else 3 if d["est_rev"] > -2
                 else 0 if d["est_rev"] > -5 else -5)
     pts += {"on_track": 4, "improving": 3, "mixed": 1.5,
+            "severely_deteriorating": 0,
             "unknown": 0.5}.get(d["thesis"] or "unknown", 0)
     if d.get("beats") is not None:
         pts += min(max(d["beats"], 0), 2)
@@ -302,6 +304,9 @@ def _gates(d: dict) -> list[str]:
     g = []
     if d["thesis"] == "broken":
         g.append("thesis broken — structural impairment, not a dip")
+    if d["thesis"] == "severely_deteriorating":
+        g.append("core thesis leg failed — under review, "
+                 "not a confirmed dip")
     if (d["fund_state"] in ("deteriorating", "declining")
             and (d.get("est_rev") or 0) < -2):
         g.append("fundamentals deteriorating + estimates falling — "

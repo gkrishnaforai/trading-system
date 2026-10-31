@@ -13,7 +13,11 @@ export type Thesis = {
   status_since?: string
   score?: number
   hyp_changes?: ThesisChange[]
-  detail?: { unresolved?: string[] }
+  detail?: {
+    unresolved?: string[]
+    evidence?: { core_coverage?: number; tier?: string }
+    recovery?: { under_review?: boolean; since?: string }
+  }
   report?: {
     stance?: string
     likes?: string[]
@@ -29,6 +33,7 @@ const STATUS_TONE: Record<string, string> = {
   improving: 'text-aggressive',
   mixed: 'text-caution',
   deteriorating: 'text-defensive',
+  severely_deteriorating: 'text-defensive',
   broken: 'text-defensive',
   unknown: 'text-muted',
 }
@@ -38,6 +43,7 @@ const DOT: Record<string, string> = {
   improving: 'bg-aggressive',
   mixed: 'bg-caution',
   deteriorating: 'bg-defensive',
+  severely_deteriorating: 'bg-defensive',
   broken: 'bg-defensive',
   unknown: 'bg-faint',
 }
@@ -61,6 +67,14 @@ function title(t: Thesis): string {
   if (unr?.length) {
     lines.push('', 'unresolved:')
     for (const u of unr.slice(0, 4)) lines.push(`· ${u}`)
+  }
+  const rec = t.detail?.recovery
+  if (rec?.under_review) {
+    lines.push('', `recovery under review since ${rec.since ?? '?'}`)
+  }
+  const ev = t.detail?.evidence
+  if (ev?.tier === 'provisional' && ev.core_coverage != null) {
+    lines.push('', `evidence provisional — ${Math.round(ev.core_coverage * 100)}% of core checks answered`)
   }
   return lines.join('\n')
 }

@@ -244,7 +244,8 @@ def _csp(funds: Optional[float], th: dict, iv: dict) -> list[dict]:
         if iv_hv is None or iv_hv < 1.0:
             continue                          # premium not paying
         t = th.get(sym) or {}
-        if t.get("status") in ("broken", "deteriorating"):
+        if t.get("status") in ("broken", "severely_deteriorating",
+                               "deteriorating"):
             continue                          # never sell puts on a
         # broken thesis — assignment risk is the point of the trade
         # "potential to come back": fundamentals must be improving and

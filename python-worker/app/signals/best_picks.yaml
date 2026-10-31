@@ -152,7 +152,8 @@ ctx:
   hard_risk_active: annotation — gq hard-risk flags present
   risk_unverifiable: annotation — critical gq inputs missing (missing
                    # evidence of risk is NOT evidence of safety)
-  thesis:          symbol_thesis.status             # on_track|improving|mixed|deteriorating|broken
+  thesis:          symbol_thesis.status             # on_track|improving|mixed|deteriorating|
+                   #   severely_deteriorating|broken
   thesis_dir:      symbol_thesis.status_dir         # up|down|flat
   last_print:      earnings_watch.latest verdict    # improving|mixed|deteriorating|—
   future_score:    conviction_snapshots.future_score (latest)
@@ -485,6 +486,10 @@ long_term:
     - name: thesis_broken
       when: {thesis_in: [broken]}
       why: "thesis broken — permanent-impairment risk, not a dip"
+    - name: thesis_severe
+      when: {thesis_in: [severely_deteriorating]}
+      why: "a core thesis leg failed — under review, verify before
+            committing capital"
     - name: fund_failing
       when: {fund_in: fund_fail}
       why: "fundamentals {fund} — a dip WITH cause is a trap"
@@ -735,6 +740,10 @@ compounder_3_5y:
     - name: thesis_broken
       when: {thesis_in: [broken]}
       why: "thesis broken — a 5y hold needs a live thesis"
+    - name: thesis_severe
+      when: {thesis_in: [severely_deteriorating]}
+      why: "core thesis leg failed, under review — a 5y hold needs a
+            resolved thesis"
     - name: fund_failing
       when: {fund_in: fund_fail}
       why: "fundamentals {fund}"

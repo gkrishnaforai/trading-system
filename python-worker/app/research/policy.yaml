@@ -22,6 +22,10 @@ rules:
 
   # ---- deterioration — business degrading, not just expensive ------
   - {action: trim_candidate,
+     when: {thesis_status: "severely_deteriorating"},
+     note: "a core thesis leg failed — reduce/review, not exit;
+            persistent failure breaks the thesis"}
+  - {action: trim_candidate,
      when: {thesis_status: "deteriorating"},
      note: "thesis deteriorating on evidence"}
   - {action: trim_candidate,

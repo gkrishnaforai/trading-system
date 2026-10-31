@@ -350,12 +350,14 @@ def _verdict(c: dict, a: dict) -> tuple[str, float, list[str]]:
 
     # thesis layer — the archetype-scoped "is the upside case
     # progressing" read; a broken standing thesis is a hard leg, not a
-    # caution (a hypothesis's hard check failed by definition)
+    # caution (persistent hard-check failure, by definition)
     th = c.get("thesis") or {}
     if th.get("status") in ("on_track", "improving"):
         add(1, f"thesis {th['status']}")
     elif th.get("status") == "deteriorating":
         add(-1, "thesis deteriorating")
+    elif th.get("status") == "severely_deteriorating":
+        add(-1.5, "core thesis leg failed — under review")
     elif th.get("status") == "broken":
         add(-2, "thesis broken")
         flags.append("standing thesis broken — a hard check failed")
