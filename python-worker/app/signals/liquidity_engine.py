@@ -92,6 +92,24 @@ def _nfci() -> Optional[int]:
     return 20
 
 
+# HY spread LEVEL bands (percent) — the anchor the change signal
+# lacks: 3.3% widening off 3.0 is noise, 6%+ is stress at any delta.
+_HY_LEVEL = [(3.0, 85), (3.5, 75), (4.0, 65), (5.0, 45), (6.0, 30)]
+
+# RRPONTSYD in $B — below this the facility is effectively empty:
+# nothing left to drain OR release, so tiny changes are noise.
+_RRP_DEPLETED_B = 75.0
+
+
+def _hy_level(v: Optional[float]) -> Optional[int]:
+    if v is None:
+        return None
+    for thr, sc in _HY_LEVEL:
+        if v <= thr:
+            return sc
+    return 15
+
+
 def _equity_legs() -> dict[str, Any]:
     """Transmission proxies — NOT fund flows (no FRED feed): universe
     breadth internals + semiconductor/growth relative strength vs
@@ -136,13 +154,20 @@ def _equity_score(legs: dict) -> tuple[Optional[int], Optional[int]]:
         if isinstance(bs, (int, float)) else None
     # relative-strength → score: +3% vs SPY = leadership = 85
     vals = [v for v in rel.values() if isinstance(v, (int, float))]
-    flow = None
+    flow, character = None, None
     if vals:
+        pos = sum(1 for v in vals if v > 0)
+        character = ("broad_inflows" if pos == len(vals) else
+                     "broad_outflows" if pos == 0 else "rotation")
         m = sum(vals) / len(vals)
         flow = 90 if m >= 0.03 else 75 if m >= 0.01 else \
             60 if m >= 0 else 40 if m >= -0.01 else \
             25 if m >= -0.03 else 10
-    return flow, bs_score
+        if character == "rotation":
+            # mixed leadership = repositioning, not money leaving —
+            # tech-led strength vs broad weakness floors the read
+            flow = max(flow, 40)
+    return flow, bs_score, character
 
 
 def evaluate() -> dict[str, Any]:
@@ -152,21 +177,37 @@ def evaluate() -> dict[str, Any]:
     for name, w, sid, back, inv in _COMPONENTS:
         pts = _fred_series(sid, days=220)
         chg = _pct_chg(pts, back)
+        comp = {"name": name, "weight": w, "series": sid,
+                "chg_pct": round(chg, 4) if chg is not None else None,
+                "score": _band(chg, inv)}
         if pts:
-            obs_dates[sid] = str(pts[-1][0])
-        comps.append({"name": name, "weight": w, "series": sid,
-                      "chg_pct": round(chg, 4) if chg is not None
-                      else None,
-                      "score": _band(chg, inv)})
+            comp["obs"] = str(pts[-1][0])
+            comp["obs_age"] = (date.today() - pts[-1][0]).days
+            obs_dates[sid] = comp["obs"]
+        if name == "credit_conditions" and pts:
+            # level-anchored: a modest widening off a tight base is
+            # not stress — level 60% / change 40%
+            lvl = _hy_level(pts[-1][1])
+            if lvl is not None and comp["score"] is not None:
+                comp["score"] = round(0.6 * lvl + 0.4 * comp["score"])
+                comp["level"] = round(pts[-1][1], 2)
+        if name == "reverse_repo" and pts \
+                and pts[-1][1] < _RRP_DEPLETED_B:
+            # facility near-empty — nothing left to drain or release;
+            # tiny changes around zero are noise, not contraction
+            comp["score"] = 40
+            comp["note"] = "facility depleted"
+        comps.append(comp)
     nfci = _nfci()
     comps.append({"name": "financial_conditions", "weight": 0,
                   "series": "NFCI", "score": nfci,
                   "note": "level, part of credit leg"})
     legs = _equity_legs()
-    flow_sc, breadth_sc = _equity_score(legs)
+    flow_sc, breadth_sc, flow_char = _equity_score(legs)
     comps.append({"name": "equity_flows_proxy", "weight": 15,
                   "series": "SMH/QQQ/IWM vs SPY",
                   "score": flow_sc,
+                  "note": flow_char,
                   "rel_1m": legs.get("rel_1m")})
     comps.append({"name": "market_breadth", "weight": 10,
                   "series": "universe internals",
@@ -234,7 +275,16 @@ def evaluate() -> dict[str, Any]:
                 "equity_flows": impulse("equity_flows_proxy")},
             "liquidity_direction": direction,
             "equity_transmission": transmission,
+            "flow_character": flow_char,
             "obs_dates": obs_dates,
+            # fetch-age ≠ data-age: snapshot may be 0d old while the
+            # underlying prints are days apart (weekly H.4.1 cadence)
+            "data_window": {
+                "newest": max(obs_dates.values()) if obs_dates else None,
+                "oldest": min(obs_dates.values()) if obs_dates else None,
+                "oldest_age_days": max(
+                    (c.get("obs_age") or 0 for c in comps), default=0),
+            },
             "breadth": legs.get("breadth") or {}}
 
 

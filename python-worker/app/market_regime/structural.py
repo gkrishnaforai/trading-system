@@ -128,6 +128,8 @@ def read() -> dict[str, Any]:
                     "impulses": liq.get("impulses"),
                     "components": liq.get("components"),
                     "context": liq.get("context"),
+                    "data_window": liq.get("data_window"),
+                    "flow_character": liq.get("flow_character"),
                 }
         except Exception:
             pass

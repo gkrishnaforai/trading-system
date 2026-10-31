@@ -676,7 +676,14 @@ export default async function RegimePage() {
               Liquidity &amp; flows
             </div>
             <span className="font-mono text-[11px] text-faint">
-              {liq.age_days != null && `${String(liq.age_days)}d old`}
+              {liq.age_days != null && `snap ${String(liq.age_days)}d`}
+              {(() => {
+                const dw = liq.data_window as Record<string, unknown> | undefined
+                return typeof dw?.oldest_age_days === 'number' &&
+                  (dw.oldest_age_days as number) > 0
+                  ? ` · oldest obs ${dw.oldest_age_days}d`
+                  : ''
+              })()}
               {typeof liq.coverage === 'number' &&
                 ` · ${Math.round((liq.coverage as number) * 100)}% feeds`}
             </span>
@@ -731,10 +738,14 @@ export default async function RegimePage() {
           {liqComps.length > 0 && (
             <div className="pt-4 grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2">
               {liqComps.map((c) => (
-                <div key={String(c.name)} className="flex items-baseline gap-1.5">
+                <div key={String(c.name)} className="flex items-baseline gap-1.5"
+                  title={[c.series, c.note, c.obs ? `obs ${c.obs}` : null]
+                    .filter(Boolean).join(' · ') || undefined}>
                   <span className={`h-2 w-2 shrink-0 rounded-full ${liqDot(Number(c.score))}`} />
                   <span className="text-[11px] text-muted">
                     {String(c.name).replace(/_/g, ' ')}
+                    {c.note != null &&
+                      <span className="text-faint"> · {String(c.note)}</span>}
                   </span>
                   <span className="ml-auto font-mono text-[11px] text-ink">
                     {String(c.score)}
