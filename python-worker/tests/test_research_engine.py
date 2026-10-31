@@ -254,6 +254,26 @@ class TestSectorConfig:
         row = {"industry": "Drug Manufacturers"}
         assert sectors.classify_model("Y", row=row) == "unclassified"
 
+    def test_no_yaml_bool_word_symbols(self):
+        """Bare ON/NO/YES/OFF parse as YAML booleans — an unquoted
+        ticker key silently becomes True, which crashed the book run
+        ('bool' has no .upper). Guard every universe + symbol_map."""
+        for s in sectors._all_sector_files():
+            u = (sectors.load(s).get("universe") or {})
+            syms = u.get("symbols") or []
+            assert all(isinstance(x, str) for x in syms), \
+                f"{s}: non-string symbol in universe.symbols"
+            smap = sectors.load(s).get("symbol_map") or {}
+            assert all(isinstance(k, str) for k in smap), \
+                f"{s}: non-string key in symbol_map"
+        u = fdce.universe()
+        assert all(isinstance(k, str) for k in u), \
+            "domains.yaml: non-string universe key — quote it"
+        # and the real ticker actually routes, not 'TRUE'
+        assert "ON" in u or "ON" in (sectors.load("ai_infra")
+                                     .get("universe") or {}
+                                     ).get("symbols", [])
+
 
 class TestAiInfraSector:
     def test_loads_complete(self):

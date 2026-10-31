@@ -85,7 +85,13 @@ def universe(sector: str = "healthcare") -> list[str]:
     if u.get("tracked"):
         return _tracked_universe(sector)
     if u.get("symbols"):
-        return sorted({str(s).upper() for s in u["symbols"]})
+        bad = [s for s in u["symbols"] if not isinstance(s, str)]
+        if bad:
+            logger.warning("%s universe has non-string symbols %s — "
+                           "quote them (YAML reads bare ON/NO/YES as "
+                           "booleans)", sector, bad)
+        return sorted({str(s).upper() for s in u["symbols"]
+                       if isinstance(s, str)})
     match = str(u.get("sector_match") or sector)
     from app.database import db
     try:
@@ -140,7 +146,8 @@ def sector_for_symbol(sym: str, row: Optional[dict] = None) -> str:
         if u.get("tracked"):
             continue
         if u.get("symbols"):
-            if sym in {str(x).upper() for x in u["symbols"]}:
+            if sym in {str(x).upper() for x in u["symbols"]
+                       if isinstance(x, str)}:
                 explicit.append(s)
         else:
             matched.append((s, u.get("sector_match") or s))

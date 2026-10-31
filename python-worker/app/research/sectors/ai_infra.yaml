@@ -20,7 +20,7 @@ universe:
             AVGO, MRVL, ANET, CSCO,
             MU, WDC, STX,
             SMCI, DELL, HPE, CLS,
-            VRT, ETN, NVT, HUBB, EMR, MPWR, ON, TXN, APH, TEL,
+            VRT, ETN, NVT, HUBB, EMR, MPWR, 'ON', TXN, APH, TEL,
             TT, CARR, JCI, MOD, FIX, IESC,
             GEV, CEG, VST, TLN, CMI, CAT, GNRC, PWR,
             TSM, AMKR]
@@ -60,7 +60,7 @@ symbol_map:
   HUBB: power_delivery
   EMR:  power_delivery
   MPWR: power_delivery
-  ON:   power_delivery
+  'ON': power_delivery
   TXN:  power_delivery
   APH:  power_delivery
   TEL:  power_delivery

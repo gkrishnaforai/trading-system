@@ -52,7 +52,7 @@ universe:
   HUBB: {primary: [power_thermal], secondary: []}
   EMR:  {primary: [power_thermal], secondary: [robotics]}
   MPWR: {primary: [power_thermal, compute], secondary: []}
-  ON:   {primary: [power_thermal], secondary: [autonomy]}
+  'ON': {primary: [power_thermal], secondary: [autonomy]}
   TXN:  {primary: [edge_infra, power_thermal], secondary: []}
   TT:   {primary: [power_thermal], secondary: []}
   CARR: {primary: [power_thermal], secondary: []}

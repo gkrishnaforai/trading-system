@@ -59,7 +59,16 @@ def registry_version() -> str:
 
 
 def universe() -> dict[str, dict]:
-    return load().get("universe") or {}
+    # YAML bool-word tickers ('ON', 'OFF', 'NO'…) parse as booleans —
+    # a stray unquoted key must degrade loudly, not crash the whole
+    # book pass with "bool has no .upper()"
+    u = load().get("universe") or {}
+    bad = [k for k in u if not isinstance(k, str)]
+    if bad:
+        logger.warning("fdce universe has non-string keys %s — quote "
+                       "them in domains.yaml", bad)
+        u = {k: v for k, v in u.items() if isinstance(k, str)}
+    return u
 
 
 def in_universe(sym: str) -> bool:
