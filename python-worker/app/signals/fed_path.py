@@ -39,7 +39,7 @@ def spec() -> dict:
 
 def rules_version() -> str:
     from app.signals.pulse_engine import spec_version
-    return spec_version("fed_path")
+    return spec_version("fed_path", _SPEC_PATH, spec())
 
 
 # ------------------------------------------------------------------
