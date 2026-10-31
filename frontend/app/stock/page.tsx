@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { api } from '@/lib/api'
+import { api, type ResearchDelta } from '@/lib/api'
 import { Suspense, type ReactNode } from 'react'
 import { Chip, Gate, Kv, Section, Stat, fmtShort } from '@/components/regime'
 import { FundPanel, TapePanel } from '@/components/panels'
@@ -18,6 +18,14 @@ function num(v: unknown) {
 function money(v: unknown, dec = 2) {
   const n = Number(v)
   return Number.isFinite(n) ? `$${n.toFixed(dec)}` : '—'
+}
+
+function moneyShort(v: unknown) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  const a = Math.abs(n)
+  return a >= 1e9 ? `$${(n / 1e9).toFixed(2)}B`
+    : a >= 1e6 ? `$${(n / 1e6).toFixed(0)}M` : `$${n.toFixed(0)}`
 }
 
 function pct(v: unknown, dec = 1) {
@@ -1248,10 +1256,54 @@ async function StockCore({ sym }: { sym: string }) {
 /** AI research — journaled tailwind/strength scores with the
  *  component-level 'why'. Own fetch, streams in; null when the
  *  symbol hasn't been researched. */
+const _SCORE_LABEL: Record<string, string> = {
+  tailwind: 'AI', strength: 'biz', quality: 'quality',
+  ai_infra_architecture: 'arch', future_demand_capture: 'FDCS',
+  valuation_opportunity: 'val', technical_entry: 'tech',
+}
+
+function DeltaLine({ d }: { d: ResearchDelta }) {
+  const diffs = Object.entries(d.score_diffs ?? {})
+  const news = d.news_scan
+  if (!diffs.length && !d.new_products?.length && !d.new_wins?.length
+    && !d.rec_change && !(news?.analyzed)) return null
+  return (
+    <p className="pt-2 text-xs text-muted">
+      <span className="text-faint">Δ vs {d.prev_as_of}</span>
+      {diffs.map(([k, v]) => (
+        <span key={k}>
+          {' '}· {_SCORE_LABEL[k] ?? k}{' '}
+          <span className={`font-mono ${v > 0 ? 'text-aggressive' : 'text-defensive'}`}>
+            {v > 0 ? '+' : ''}{v}
+          </span>
+        </span>
+      ))}
+      {(d.new_products?.length ?? 0) > 0 && (
+        <span> · <span className="text-aggressive">+{d.new_products!.length} products</span>
+          <span className="text-faint"> ({d.new_products!.slice(0, 3).join(', ')})</span></span>
+      )}
+      {(d.new_wins?.length ?? 0) > 0 && (
+        <span> · <span className="text-aggressive">+{d.new_wins!.length} wins</span>
+          <span className="text-faint"> ({d.new_wins!.slice(0, 3).join(', ')})</span></span>
+      )}
+      {d.rec_change && (
+        <span> · stance <span className="text-ink">{d.rec_change.from}→{d.rec_change.to}</span></span>
+      )}
+      {(news?.analyzed ?? 0) > 0 && (
+        <span className="text-faint">
+          {' '}· {news!.analyzed} articles → {news!.claims ?? 0} claims
+        </span>
+      )}
+    </p>
+  )
+}
+
 async function ResearchSection({ sym }: { sym: string }) {
   const res = await api.researchReport(sym).catch(() => null)
   const run = res?.run
   if (!run) return null
+  const delta = res?.delta ?? null
+  const growth = res?.growth ?? null
   const tw = run.scores?.tailwind
   const bs = run.scores?.strength
   const arch = run.scores?.ai_infra_architecture
@@ -1398,6 +1450,33 @@ async function ResearchSection({ sym }: { sym: string }) {
           )}
           {run.report.recommendation?.flags?.includes('research_incomplete') && (
             <span className="text-faint"> · research incomplete</span>
+          )}
+        </p>
+      )}
+
+      {/* run-vs-run delta — what this pass actually changed */}
+      {delta?.prev_as_of && <DeltaLine d={delta} />}
+
+      {/* product-pipeline → growth projection (bucket-expected
+          incremental revenue vs forward estimates) */}
+      {growth && growth.n_initiatives != null && growth.n_initiatives > 0 && (
+        <p className="pt-2 text-xs text-muted">
+          <span className="text-faint">pipeline → growth</span>
+          {growth.uplift_fy1 != null && growth.uplift_fy1 > 0 && (
+            <> · FY+1 <span className="font-mono text-ink">+{moneyShort(growth.uplift_fy1)}</span></>
+          )}
+          {growth.uplift_fy3 != null && growth.uplift_fy3 > 0 && (
+            <> · FY+3 <span className="font-mono text-ink">+{moneyShort(growth.uplift_fy3)}</span></>
+          )}
+          {growth.uplift_ratio_fy3 != null && (
+            <span className="text-faint"> ({(growth.uplift_ratio_fy3 * 100).toFixed(0)}% of fwd rev)</span>
+          )}
+          {growth.tier && (
+            <span className={`ml-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${growth.tier === 'material' ? 'bg-aggressive/15 text-aggressive'
+              : growth.tier === 'emerging' ? 'bg-caution/15 text-caution'
+                : 'bg-hairline/40 text-faint'}`}>
+              {growth.tier}
+            </span>
           )}
         </p>
       )}

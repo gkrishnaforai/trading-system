@@ -537,3 +537,34 @@ class TestNewsScan:
         assert st["skipped_stale"] == 1
         assert calls == ["https://x/1"]
         assert st["analyzed"] == 1
+
+
+class TestRunDelta:
+    def _run(self, tw=40, bs=60, prods=("a", "b"),
+             wins=("Cust1",), rec="hold_review", news=None):
+        return {"as_of": "2026-01-10",
+                "scores": {"tailwind": {"score": tw},
+                           "strength": {"score": bs}},
+                "report": {"products": [{"name": n} for n in prods],
+                           "design_wins": [{"customer": c}
+                                           for c in wins],
+                           "recommendation": {"action": rec},
+                           "news_scan": news}}
+
+    def test_first_run_no_delta(self):
+        from app.research import delta
+        assert delta.compute(self._run(), None) == {}
+
+    def test_score_moves_and_new_evidence(self):
+        from app.research import delta
+        cur = self._run(tw=54, prods=("a", "b", "agi_cpu"),
+                        wins=("Cust1", "Cust2"), rec="watch",
+                        news={"analyzed": 3, "claims": 9})
+        d = delta.compute(cur, self._run())
+        assert d["score_diffs"]["tailwind"] == 14
+        assert "strength" not in d["score_diffs"]   # unchanged → absent
+        assert d["new_products"] == ["agi_cpu"]
+        assert d["new_wins"] == ["Cust2"]
+        assert d["rec_change"] == {"from": "hold_review", "to": "watch"}
+        assert d["news_scan"]["analyzed"] == 3
+        assert d["prev_as_of"] == "2026-01-10"

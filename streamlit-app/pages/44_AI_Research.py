@@ -104,8 +104,8 @@ detail = st.selectbox("symbol", [""] + [r["symbol"] for r in rows],
                       format_func=lambda s: s or "pick…",
                       key="detail")
 if detail:
-    run = _safe(lambda: (client.get(f"admin/research/{detail}") or {})
-                        .get("run"))
+    resp = _safe(lambda: client.get(f"admin/research/{detail}") or {})
+    run = (resp or {}).get("run")
     if not run:
         st.info(f"{detail}: no research run yet — run it above.")
     else:
@@ -127,6 +127,46 @@ if detail:
                     + (f" {int(round(100 * ev_cov))}%"
                        if ev_cov is not None else ""))
         m[5].metric("as of", str(run.get("as_of") or "—"))
+
+        # ---- run-vs-run delta + pipeline growth ------------------
+        d = (resp or {}).get("delta") or {}
+        diffs = d.get("score_diffs") or {}
+        bits = []
+        for k, v in diffs.items():
+            bits.append(f"{k} {'+' if v > 0 else ''}{v:g}")
+        for n, label in ((d.get("new_products"), "products"),
+                         (d.get("new_wins"), "wins")):
+            if n:
+                bits.append(f"+{len(n)} {label} "
+                            f"({', '.join(map(str, n[:3]))})")
+        if d.get("rec_change"):
+            rc = d["rec_change"]
+            bits.append(f"stance {rc.get('from')}→{rc.get('to')}")
+        ns = d.get("news_scan") or {}
+        if ns.get("analyzed"):
+            bits.append(f"{ns['analyzed']} articles → "
+                        f"{ns.get('claims', 0)} claims")
+        if bits:
+            st.caption(f"Δ vs {d.get('prev_as_of')}: " + " · ".join(bits))
+        g = (resp or {}).get("growth") or {}
+        if g.get("n_initiatives"):
+            def _usd(v):
+                if v is None:
+                    return "—"
+                a = abs(v)
+                return (f"${v / 1e9:.2f}B" if a >= 1e9
+                        else f"${v / 1e6:.0f}M" if a >= 1e6
+                        else f"${v:.0f}")
+            ratio = g.get("uplift_ratio_fy3")
+            st.caption(
+                "pipeline → growth"
+                + (f" · FY+1 {_usd(g.get('uplift_fy1'))}"
+                   if g.get("uplift_fy1") else "")
+                + (f" · FY+3 {_usd(g.get('uplift_fy3'))}"
+                   if g.get("uplift_fy3") else "")
+                + (f" ({100 * ratio:.0f}% of fwd rev)"
+                   if ratio is not None else "")
+                + (f" · {g['tier']}" if g.get("tier") else ""))
 
         # ---- FDCE — four-score row --------------------------------
         fd = (rep.get("fdce") or {})

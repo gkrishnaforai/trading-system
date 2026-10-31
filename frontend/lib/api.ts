@@ -336,9 +336,12 @@ export const api = {
       `/admin/research/board?sector=${encodeURIComponent(sector)}`,
     ),
   researchReport: (sym: string) =>
-    getRaw<{ success?: boolean; run?: ResearchRun | null }>(
-      `/admin/research/${encodeURIComponent(sym)}`,
-    ),
+    getRaw<{
+      success?: boolean
+      run?: ResearchRun | null
+      delta?: ResearchDelta | null
+      growth?: GrowthUplift | null
+    }>(`/admin/research/${encodeURIComponent(sym)}`),
 }
 
 export type ResearchRow = {
@@ -356,6 +359,28 @@ export type ResearchRow = {
   transition_net?: string | null
   horizon?: string | null
   as_of?: string | null
+}
+
+export type ResearchDelta = {
+  prev_as_of?: string
+  score_diffs?: Record<string, number>
+  new_products?: string[]
+  new_wins?: string[]
+  rec_change?: { from?: string; to?: string } | null
+  news_scan?: {
+    fetched?: number; analyzed?: number; claims?: number
+    skipped_seen?: number; skipped_noise?: number
+    skipped_stale?: number
+  } | null
+}
+
+export type GrowthUplift = {
+  uplift_fy1?: number | null
+  uplift_fy3?: number | null
+  uplift_ratio_fy3?: number | null
+  tier?: string | null
+  n_initiatives?: number
+  fwd_rev_avg?: number | null
 }
 
 export type ResearchRun = {

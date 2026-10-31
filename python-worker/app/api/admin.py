@@ -2119,21 +2119,33 @@ async def research_board(sector: str = "healthcare", limit: int = 300):
 @router.get("/research/{symbol}")
 async def research_report(symbol: str):
     """Latest journaled research run — scores + component 'why' +
-    products + challenge findings."""
+    products + challenge findings — plus the run-vs-run delta
+    (what changed vs the previous pass) and the product-pipeline
+    growth projection (forward_growth uplift) that shows whether
+    the new evidence changes the revenue trajectory."""
     try:
         r = db.execute_query(
             "SELECT as_of, sector, business_model, ai_tailwind_score,"
             " business_strength, recommendation, scores, report,"
             " rules_version FROM research_runs WHERE symbol=:s"
-            " ORDER BY as_of DESC, id DESC LIMIT 1",
+            " ORDER BY as_of DESC, id DESC LIMIT 2",
             {"s": symbol.upper()})
         if not r:
             return {"success": True, "run": None}
-        row = r[0]
-        for k in ("scores", "report"):
-            if isinstance(row.get(k), str):
-                row[k] = json.loads(row[k])
-        return {"success": True, "run": row}
+        for row in r:
+            for k in ("scores", "report"):
+                if isinstance(row.get(k), str):
+                    row[k] = json.loads(row[k])
+        from app.research import delta as _delta
+        from app.signals import forward_growth as _fg
+        try:
+            growth = _fg.compute_uplift(symbol.upper())
+        except Exception:
+            growth = None
+        return {"success": True, "run": r[0],
+                "delta": _delta.compute(r[0], r[1] if len(r) > 1
+                                        else None),
+                "growth": growth}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
