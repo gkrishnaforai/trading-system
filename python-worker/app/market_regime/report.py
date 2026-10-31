@@ -53,6 +53,16 @@ def format_regime(regime: MarketRegime,
     confirms = "\n\n".join(
         _checklist(name.replace("_", " ").upper(), signals)
         for name, signals in regime.confirmation_signals.items())
+    fam_line = ""
+    bear_fams = (regime.confirmation_families or {}).get("bearish") or {}
+    if bear_fams:
+        firing = [k for k, v in bear_fams.items() if v.get("firing")]
+        fam_line = (f"\n  INDEPENDENT FAMILIES: {len(firing)}/"
+                    f"{len(bear_fams)} firing"
+                    + (f" ({', '.join(firing)})" if firing else "")
+                    + " — flat signal counts can double-count "
+                    "correlated tells")
+    confirms += fam_line
 
     perms = ""
     if regime.market_permissions:

@@ -361,6 +361,8 @@ def _compose_rules(
 
     direction, condition = _DIRECTION_CONDITION[regime]
     confirmations = derive_confirmations(snapshot)
+    families = confirmations.get("families") or {}
+    flat = {k: v for k, v in confirmations.items() if k != "families"}
     return MarketRegime(
         regime=regime,
         secondary_regime=secondary,
@@ -374,7 +376,8 @@ def _compose_rules(
         change_components=facts.scores,
         transition_probabilities=_transition_probs(
             regime, facts.deterioration_score),
-        confirmation_signals=confirmations,
+        confirmation_signals=flat,
+        confirmation_families=families,
         market_permissions=derive_permissions(
             regime, facts, snapshot, confirmations),
         rules_regime=regime,

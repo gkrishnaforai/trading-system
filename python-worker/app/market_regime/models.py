@@ -265,6 +265,8 @@ class MarketRegime(BaseModel):
     change_components: Dict[str, float] = Field(default_factory=dict)
     transition_probabilities: Dict[str, float] = Field(default_factory=dict)
     confirmation_signals: Dict[str, Dict[str, bool]] = Field(default_factory=dict)
+    # independence-rolled families — one vote per evidence source
+    confirmation_families: Dict[str, Any] = Field(default_factory=dict)
     market_permissions: Optional[MarketPermissions] = None
     rules_regime: Optional[RegimeLabel] = None   # deterministic composite
     regime_overridden: bool = False              # LLM disagreed with rules

@@ -80,16 +80,28 @@ def derive_permissions(
             p["dip_buying"] = False
             notes.append("severe deterioration — dip buying suspended")
 
-    # checklist grew 9 → 13 keys (persistence/absorption/VIX-spike/
-    # rates-level) — 6/13 keeps the ~56%-of-signals bar the 5/9 set
-    bearish_met = sum(
-        1 for v in (confirmations or {}).get("bearish_transition", {}).values()
-        if v)
-    if bearish_met >= 7:
-        p["size_multiplier"] *= 0.75
-        p["breakout_buying"] = "avoid"
-        notes.append(f"{bearish_met} bearish confirmations met — "
-                     "breakouts avoided")
+    # independent-confirmation bar: count firing FAMILIES, not flat
+    # signals — 4 SPY trend tells + 3 breadth reads reaching 7/15 was
+    # only ~2 real phenomena. >=3 families requires genuine diversity.
+    # Flat-count fallback for journal rows predating the family rollup.
+    bear_fams = ((confirmations or {}).get("families") or {}) \
+        .get("bearish") or {}
+    firing = sorted(k for k, v in bear_fams.items() if v.get("firing"))
+    if bear_fams:
+        if len(firing) >= 3:
+            p["size_multiplier"] *= 0.75
+            p["breakout_buying"] = "avoid"
+            notes.append(f"{len(firing)} independent families firing "
+                         f"({', '.join(firing)}) — breakouts avoided")
+    else:
+        bearish_met = sum(
+            1 for v in (confirmations or {})
+            .get("bearish_transition", {}).values() if v)
+        if bearish_met >= 7:
+            p["size_multiplier"] *= 0.75
+            p["breakout_buying"] = "avoid"
+            notes.append(f"{bearish_met} bearish confirmations met — "
+                         "breakouts avoided")
 
     # conservative bias on missing data
     if facts.breadth == "unknown" or (

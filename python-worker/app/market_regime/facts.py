@@ -479,14 +479,36 @@ def derive_facts(snap: MarketSnapshot,
     )
 
 
+def _family_rollup(signals: list) -> tuple:
+    """(family, name, met) rows → (flat name→met dict, family rollup).
+
+    Signals derived from one underlying series (all four SPY trend
+    tells, all three breadth reads) are ONE independent observation —
+    counting them separately overstates how confirmed a transition
+    is. A family 'fires' when any member fires; permission tightening
+    counts firing families, not individual signals.
+    """
+    flat: Dict[str, bool] = {}
+    fams: Dict[str, dict] = {}
+    for fam, name, met in signals:
+        flat[name] = bool(met)
+        f = fams.setdefault(fam, {"met": 0, "total": 0})
+        f["total"] += 1
+        f["met"] += int(bool(met))
+    for f in fams.values():
+        f["firing"] = f["met"] > 0
+    return flat, fams
+
+
 def derive_confirmations(snap: MarketSnapshot,
                          structural: Optional[dict] = None
-                         ) -> Dict[str, Dict[str, bool]]:
+                         ) -> Dict[str, Any]:
     """Actionable checklist — what would confirm a regime transition.
 
-    Deterministic: each signal is a boolean evaluated from the snapshot.
-    Reported to downstream agents as met/unmet so they can watch for the
-    specific evidence that would flip the regime.
+    Deterministic: each signal is evaluated once as (family, name,
+    met) and projected to both the flat checklist and the rolled-up
+    independent families. Every signal defaults to NOT firing on
+    missing data — absent evidence is never counted as fired.
     """
     t, m, b, v, p, s = (snap.trend, snap.momentum, snap.breadth,
                         snap.volatility, snap.participation, snap.structure)
@@ -503,37 +525,47 @@ def derive_confirmations(snap: MarketSnapshot,
                     and st_fred["overall"] < 40
                     and (st_fred.get("age_days") or 0) <= 10)
 
-    bearish = {
-        "SPY loses SMA50": t.above_sma50 is False,
-        "SMA50 turns down": (t.sma50_slope or 0) < 0,
-        "SPY below 20EMA 3+ days": (t.days_below_ema20 or 0) >= 3,
-        "closes near day lows": (m.close_loc_3d or 1) < 0.35,
-        "breadth < 40%": (b.pct_above_sma50 or 100) < 40,
-        "new lows > new highs": b.new_lows > b.new_highs,
-        "down-volume > up-volume": (b.up_volume_ratio or 1) < 0.5,
-        "VIX > 20": (v.vix or 0) > 20,
-        "VIX jumps in a day": (v.vix_chg_1d or 0) >= 2.5,
-        "10Y ≥5.30%": (tnx.value if tnx else None) is not None
-                      and tnx.value >= 5.30,
-        "QQQ loses SMA50": s.qqq_above_sma50 is False,
-        "semis make lower low": s.soxx_higher_low is False,
-        "SPY >3% off 20d high": (s.dist_from_20d_high or 0) < -0.03,
-        "structural: capex slowdown act-level": st_cx in ("act",
-                                                         "confirmed"),
-        "structural: FRED macro weak": bool(st_fred_weak),
-    }
-    bullish = {
-        "SPY reclaims EMA20": (t.dist_ema20 or -1) > 0,
-        "dips absorbed at close": (m.close_loc_3d or 0) >= 0.60,
-        "breadth > 55%": (b.pct_above_sma50 or 0) > 55,
-        "RSI > 50": (m.rsi14 or 0) > 50,
-        "up-volume expands": (b.up_volume_ratio or 0) > 0.55,
-        "QQQ leads SPY (5d)": (p.rel_strength_5d.get("QQQ") or -1) > 0,
-        "semis stabilize (ret5 > 0)": (s.soxx_ret5 or -1) > 0,
-        "10Y falls": (tnx.delta5d if tnx else None) is not None
-                     and tnx.delta5d < 0,
-        "10Y <5.20%": (tnx.value if tnx else None) is not None
-                      and tnx.value < 5.20,
-        "higher low confirmed": s.spy_higher_low is True,
-    }
-    return {"bearish_transition": bearish, "bullish_recovery": bullish}
+    bear_flat, bear_fams = _family_rollup([
+        ("trend",      "SPY loses SMA50",          t.above_sma50 is False),
+        ("trend",      "SMA50 turns down",         (t.sma50_slope or 0) < 0),
+        ("trend",      "SPY below 20EMA 3+ days",
+         (t.days_below_ema20 or 0) >= 3),
+        ("trend",      "SPY >3% off 20d high",
+         (s.dist_from_20d_high or 0) < -0.03),
+        ("momentum",   "closes near day lows",     (m.close_loc_3d or 1) < 0.35),
+        ("breadth",    "breadth < 40%",            (b.pct_above_sma50 or 100) < 40),
+        ("breadth",    "new lows > new highs",     b.new_lows > b.new_highs),
+        ("breadth",    "down-volume > up-volume",
+         (b.up_volume_ratio or 1) < 0.5),
+        ("volatility", "VIX > 20",                 (v.vix or 0) > 20),
+        ("volatility", "VIX jumps in a day",       (v.vix_chg_1d or 0) >= 2.5),
+        ("macro",      "10Y ≥5.30%",               tnx is not None
+                                                   and tnx.value is not None
+                                                   and tnx.value >= 5.30),
+        ("leadership", "QQQ loses SMA50",          s.qqq_above_sma50 is False),
+        ("leadership", "semis make lower low",     s.soxx_higher_low is False),
+        ("structural", "capex slowdown act-level",
+         st_cx in ("act", "confirmed")),
+        ("macro",      "structural: FRED macro weak", bool(st_fred_weak)),
+    ])
+    bull_flat, bull_fams = _family_rollup([
+        ("trend",      "SPY reclaims EMA20",       (t.dist_ema20 or -1) > 0),
+        ("trend",      "higher low confirmed",     s.spy_higher_low is True),
+        ("momentum",   "dips absorbed at close",   (m.close_loc_3d or 0) >= 0.60),
+        ("momentum",   "RSI > 50",                 (m.rsi14 or 0) > 50),
+        ("breadth",    "breadth > 55%",            (b.pct_above_sma50 or 0) > 55),
+        ("breadth",    "up-volume expands",        (b.up_volume_ratio or 0) > 0.55),
+        ("leadership", "QQQ leads SPY (5d)",
+         (p.rel_strength_5d.get("QQQ") or -1) > 0),
+        ("leadership", "semis stabilize (ret5 > 0)",
+         (s.soxx_ret5 or -1) > 0),
+        ("macro",      "10Y falls",                tnx is not None
+                                                   and tnx.delta5d is not None
+                                                   and tnx.delta5d < 0),
+        ("macro",      "10Y <5.20%",               tnx is not None
+                                                   and tnx.value is not None
+                                                   and tnx.value < 5.20),
+    ])
+    return {"bearish_transition": bear_flat,
+            "bullish_recovery": bull_flat,
+            "families": {"bearish": bear_fams, "bullish": bull_fams}}
