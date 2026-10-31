@@ -109,6 +109,28 @@ def read() -> dict[str, Any]:
         except Exception:
             pass
 
+        try:                                # liquidity — money flow
+            from app.signals import liquidity_engine
+            liq = liquidity_engine.read()
+            if liq:
+                out["liquidity"] = {
+                    "as_of": liq.get("as_of"),
+                    "age_days": liq.get("age_days"),
+                    "liquidity_score": liq.get("liquidity_score"),
+                    "band": liq.get("band"),
+                    "coverage": liq.get("coverage"),
+                    "liquidity_direction":
+                        liq.get("liquidity_direction"),
+                    "liquidity_acceleration":
+                        liq.get("liquidity_acceleration"),
+                    "equity_transmission":
+                        liq.get("equity_transmission"),
+                    "impulses": liq.get("impulses"),
+                    "components": liq.get("components"),
+                }
+        except Exception:
+            pass
+
         ts = db.execute_query(
             "SELECT symbol, doc_period, role, demand_score, "
             "capex_dir, orders_language, confidence "
@@ -150,4 +172,11 @@ def changes(prev: Optional[dict], cur: dict) -> list[str]:
                            f"{float(cv):.0f}")
         except (TypeError, ValueError):
             continue
+    pl, cl = prev.get("liquidity") or {}, cur.get("liquidity") or {}
+    if cl.get("band") and pl.get("band") and cl["band"] != pl["band"]:
+        out.append(f"liquidity regime moved {pl['band']} → {cl['band']}")
+    if cl.get("equity_transmission") and pl.get("equity_transmission") \
+            and cl["equity_transmission"] != pl["equity_transmission"]:
+        out.append(f"equity transmission {pl['equity_transmission']}"
+                   f" → {cl['equity_transmission']}")
     return out

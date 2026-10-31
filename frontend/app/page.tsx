@@ -73,6 +73,27 @@ export default async function RegimePage() {
     structural && typeof structural.fed === 'object' && structural.fed !== null
       ? (structural.fed as Record<string, unknown>)
       : null
+  const liq =
+    structural && typeof structural.liquidity === 'object' && structural.liquidity !== null
+      ? (structural.liquidity as Record<string, unknown>)
+      : null
+  const liqComps = Array.isArray(liq?.components)
+    ? (liq!.components as Record<string, unknown>[])
+      .filter((c) => typeof c.score === 'number' && (c.weight as number) > 0)
+    : []
+  const liqImpulses = (liq?.impulses ?? {}) as Record<string, string>
+  // green/yellow/red signal per component score — the spec's traffic
+  // light: >=65 expanding (green), 45-64 neutral (yellow), <45
+  // contracting (red)
+  const liqDot = (s: number) =>
+    s >= 65 ? 'bg-aggressive' : s >= 45 ? 'bg-caution' : 'bg-defensive'
+  const liqChipTone = (v?: string) =>
+    ['expanding', 'improving', 'accelerating', 'strong', 'inflows',
+      'easing', 'releasing', 'adding'].includes(v ?? '')
+      ? 'text-aggressive'
+      : ['contracting', 'deteriorating', 'decelerating', 'weak',
+        'outflows', 'tightening', 'absorbing', 'draining'].includes(v ?? '')
+        ? 'text-defensive' : 'text-muted'
   const fedFomc =
     fed && typeof fed.next_fomc === 'object' && fed.next_fomc !== null
       ? (fed.next_fomc as Record<string, unknown>)
@@ -435,7 +456,7 @@ export default async function RegimePage() {
           )}
         </section>
       )}
-      
+
       {/* what's driving it — the deterministic driver lines (index
           composite, breadth divergence, SMA breaks) as bullets, not
           a JSON blob */}
@@ -642,6 +663,103 @@ export default async function RegimePage() {
             </div>
           </section>
         )}
+
+      {/* Liquidity & new-money flow — the transmission chain: Fed BS →
+          TGA/RRP/reserves → credit → equity participation. Answers 'how
+          aggressive can we be', never 'what to buy'. Traffic-light dots
+          per component: green expanding / yellow neutral / red
+          contracting. */}
+      {liq && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="flex items-baseline justify-between">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              Liquidity &amp; flows
+            </div>
+            <span className="font-mono text-[11px] text-faint">
+              {liq.age_days != null && `${String(liq.age_days)}d old`}
+              {typeof liq.coverage === 'number' &&
+                ` · ${Math.round((liq.coverage as number) * 100)}% feeds`}
+            </span>
+          </div>
+          <div className="pt-4 flex items-baseline gap-6">
+            {typeof liq.liquidity_score === 'number' && (
+              <div>
+                <div className={`font-mono text-2xl font-semibold ${(liq.liquidity_score as number) >= 65
+                    ? 'text-aggressive'
+                    : (liq.liquidity_score as number) >= 45
+                      ? 'text-caution' : 'text-defensive'}`}>
+                  {String(liq.liquidity_score)}
+                </div>
+                <div className="text-[10px] uppercase tracking-wider text-faint">
+                  impulse / 100
+                </div>
+              </div>
+            )}
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">
+              {liq.band != null && (
+                <span className="font-mono text-ink">
+                  {String(liq.band).replace(/_/g, ' ')}
+                </span>
+              )}
+              {liq.liquidity_direction != null && (
+                <span>
+                  <span className="text-faint">direction </span>
+                  <span className={liqChipTone(String(liq.liquidity_direction))}>
+                    {String(liq.liquidity_direction)}
+                  </span>
+                </span>
+              )}
+              {liq.liquidity_acceleration != null && (
+                <span>
+                  <span className="text-faint">accel </span>
+                  <span className={liqChipTone(String(liq.liquidity_acceleration))}>
+                    {String(liq.liquidity_acceleration)}
+                  </span>
+                </span>
+              )}
+              {liq.equity_transmission != null && (
+                <span>
+                  <span className="text-faint">→ equities </span>
+                  <span className={liqChipTone(String(liq.equity_transmission))}>
+                    {String(liq.equity_transmission)}
+                  </span>
+                </span>
+              )}
+            </div>
+          </div>
+          {/* component traffic lights */}
+          {liqComps.length > 0 && (
+            <div className="pt-4 grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2">
+              {liqComps.map((c) => (
+                <div key={String(c.name)} className="flex items-baseline gap-1.5">
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${liqDot(Number(c.score))}`} />
+                  <span className="text-[11px] text-muted">
+                    {String(c.name).replace(/_/g, ' ')}
+                  </span>
+                  <span className="ml-auto font-mono text-[11px] text-ink">
+                    {String(c.score)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* impulses — the labeled state per leg */}
+          {Object.keys(liqImpulses).length > 0 && (
+            <div className="pt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+              {Object.entries(liqImpulses).map(([k, v]) => (
+                <span key={k}>
+                  <span className="text-faint">{k.replace(/_/g, ' ')} </span>
+                  <span className={liqChipTone(v)}>{String(v)}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          <p className="pt-3 text-[10px] text-faint">
+            weekly · Fed BS/TGA/RRP/reserves + credit + breadth/semi-strength proxy
+            — supports or caps aggressiveness, never selects names
+          </p>
+        </section>
+      )}
 
       {/* AI capex cycle — the structural leg under the tape regime:
           hyperscaler spend decel → orders → TSM → ASML chain, scored

@@ -5,6 +5,7 @@ spec's critical cases — reproducibility, missing-data fail-closed,
 hard-gate precedence, quarter math, sector config.
 """
 import pytest
+from datetime import date
 
 from app.research import (design_wins, fdce, observations, policy,
                           quarter, scores, sectors)
@@ -568,3 +569,35 @@ class TestRunDelta:
         assert d["rec_change"] == {"from": "hold_review", "to": "watch"}
         assert d["news_scan"]["analyzed"] == 3
         assert d["prev_as_of"] == "2026-01-10"
+
+
+class TestLiquidityEngine:
+    def test_band_calibration(self):
+        from app.signals.liquidity_engine import _band
+        assert _band(0.03, False) == 90      # strong expansion
+        assert _band(-0.03, True) == 90      # TGA/RRP drawdown = release
+        assert _band(0, False) == 60         # flat = neutral
+        assert _band(-0.03, False) == 10     # contraction
+        assert _band(None, False) is None
+
+    def test_missing_series_renormalizes(self, monkeypatch):
+        import app.signals.liquidity_engine as le
+        monkeypatch.setattr(le, "_fred_series",
+                            lambda sid, days=0: [] if sid == "WALCL"
+                            else [(date(2026, 1, 1), 100.0),
+                                  (date(2026, 2, 1), 101.0),
+                                  (date(2026, 3, 1), 102.0),
+                                  (date(2026, 4, 1), 103.0),
+                                  (date(2026, 5, 1), 104.0),
+                                  (date(2026, 6, 1), 105.0)])
+        monkeypatch.setattr(le, "_equity_legs",
+                            lambda: {"rel_1m": {"QQQ": 0.02, "SMH": 0.04},
+                                     "breadth": {"breadth_score": 70,
+                                                 "pct_above_50": 62}})
+        st = le.evaluate()
+        assert st["liquidity_score"] is not None
+        # WALCL missing → its 20 weight excluded; coverage < 1
+        assert st["coverage"] < 1.0
+        assert st["equity_transmission"] == "strong"
+        assert st["liquidity_direction"] == "improving"
+        assert st["impulses"]["fed"] == "unknown"

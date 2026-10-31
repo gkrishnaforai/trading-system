@@ -733,6 +733,16 @@ async def _j_research() -> dict:
             "errors": errs[:10], "symbols": done}
 
 
+async def _j_liquidity() -> dict:
+    """Liquidity & new-money flow monitor — Fed BS/TGA/RRP/reserves +
+    credit conditions + equity-transmission proxies → 0-100 impulse
+    score journaled to liquidity_snapshots. Answers 'is liquidity
+    becoming more supportive AND is it reaching stocks' — informs
+    aggressiveness, never picks names."""
+    from app.signals import liquidity_engine
+    return await asyncio.to_thread(liquidity_engine.run)
+
+
 async def _j_short_data() -> dict:
     """Massive short-data pull → short_interest / short_volume /
     share_float. Staleness-aware and rate-budgeted — the shared key
@@ -926,6 +936,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "intraday-tape": ("Intraday tape classifier", _j_intraday),
     "correction-alarms": ("Correction-alarm engine",
                           _j_correction_alarms),
+    "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
     "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
     "lev-etf-swings": ("3x semis swing detector", _j_lev_swings),
@@ -2231,9 +2242,10 @@ async def morning_regime_report():
         # so a fresh fed_predictions write shows today, not tomorrow
         try:
             import json as _j
-            from app.signals import fed_path
+            from app.signals import fed_path, liquidity_engine
             fed = await asyncio.to_thread(fed_path.read)
-            if fed:
+            liq = await asyncio.to_thread(liquidity_engine.read)
+            if fed or liq:
                 b = t.get("buckets")
                 if isinstance(b, str):
                     b = _j.loads(b)
@@ -2241,7 +2253,10 @@ async def morning_regime_report():
                     st = b.get("structural")
                     if not isinstance(st, dict):
                         st = {}
-                    st["fed"] = fed
+                    if fed:
+                        st["fed"] = fed
+                    if liq:
+                        st["liquidity"] = liq
                     b["structural"] = st
                     t["buckets"] = b
         except Exception:
