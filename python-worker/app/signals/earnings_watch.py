@@ -83,6 +83,14 @@ def due_reporters() -> list[tuple[str, date]]:
             "   AND " + _TIER,
             {"d0": today, "d2": today - timedelta(days=2)}):
         pairs.add((r["symbol"], r["day"]))
+    # 'pending' verdicts — journaled without a basis, not done. The
+    # surprise % can take days to backfill; re-sweep for a week.
+    for r in _q(
+            "SELECT symbol, earnings_date AS day FROM earnings_watch"
+            " WHERE verdict='pending'"
+            "   AND earnings_date BETWEEN :d7 AND :d0",
+            {"d0": today, "d7": today - timedelta(days=7)}):
+        pairs.add((r["symbol"], r["day"]))
     return sorted(pairs, key=lambda p: (p[1], p[0]), reverse=True)
 
 
@@ -268,6 +276,69 @@ def _synthesize(sym: str, detail: dict) -> Optional[str]:
         return None
 
 
+def _surprise_of(pr: dict) -> Optional[float]:
+    """Reported surprise %, or computed from est+actual when the feed
+    leaves it NULL (FMP's calendar often does). Percent units —
+    consistent with the 5pt beat/miss bar in _verdict."""
+    s = _f(pr.get("surprise_percentage"))
+    if s is not None:
+        return s
+    est, act = _f(pr.get("eps_estimate")), _f(pr.get("eps_actual"))
+    if est not in (None, 0) and act is not None:
+        return round((act - est) / abs(est) * 100, 2)
+    return None
+
+
+def _reverdict(sym: str, day: date, row: dict) -> dict:
+    """Re-verdict a journaled 'pending' row. Pending means the basis
+    was missing at capture time (NULL surprise, no thesis transition)
+    — not that no work ran: the doc extract, thesis eval and alert
+    already fired. Only the missing basis is recomputed; a still-
+    basis-less row stays pending and keeps getting swept."""
+    pr = _print(sym, day)
+    if not pr:
+        return {"symbol": sym, "status": "pending_no_print"}
+    before = row.get("thesis_before")
+    after = _thesis_status(sym) or before
+    surp = _surprise_of(pr)
+    rev_est, rev_act = _f(pr.get("revenue_estimate")), \
+        _f(pr.get("revenue_actual"))
+    rev_surp = ((rev_act - rev_est) / abs(rev_est)
+                if rev_est and rev_act is not None else None)
+    drivers = _driver_deltas(sym)
+    det = row.get("detail")
+    det = json.loads(det) if isinstance(det, str) else (det or {})
+    adj_surp = _f((det.get("one_time") or {}).get("adjusted_surprise"))
+    verdict = _verdict(before, after, surp, drivers, adj_surp,
+                       rev_surp)
+    if verdict == "pending":
+        return {"symbol": sym, "status": "still_pending"}
+    det.update({"eps": {"est": _f(pr["eps_estimate"]),
+                        "act": _f(pr["eps_actual"])},
+                "surprise_pct": _f(surp),
+                "rev_est": rev_est, "rev_actual": rev_act,
+                "rev_surprise_pct": (rev_surp * 100
+                                     if rev_surp is not None else None),
+                "thesis": {"before": before, "after": after},
+                "drivers": drivers, "verdict": verdict})
+    _u("UPDATE earnings_watch SET verdict=:v, thesis_after=:ta,"
+       " surprise_pct=:sp, detail=CAST(:de AS jsonb), updated_at=now()"
+       " WHERE symbol=:s AND earnings_date=:d",
+       {"s": sym, "d": day, "v": verdict, "ta": after,
+        "sp": _f(surp), "de": json.dumps(det, default=str)})
+    # the alert journaled "fundamentals pending" — revise it in place
+    # (same fingerprint, no duplicate) now that a verdict exists
+    direction = ("UP" if verdict == "improving" else
+                 "DOWN" if verdict == "deteriorating" else "NEUTRAL")
+    _u("UPDATE alert_items SET direction=:di,"
+       " detail=CAST(:de AS jsonb) WHERE fingerprint=:fp",
+       {"di": direction, "de": json.dumps(det, default=str),
+        "fp": f"earnings_watch:{sym}:{day}"})
+    return {"symbol": sym, "status": "reverdicted",
+            "verdict": verdict, "surprise_pct": _f(surp),
+            "thesis": {"before": before, "after": after}}
+
+
 def check_symbol(sym: str, day: Optional[date] = None) -> dict:
     """One symbol's earnings-day check for `day` (defaults to ET today).
     Idempotent — a journaled row for that print means the work already
@@ -276,9 +347,15 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
     from app.signals import earnings_calendar, earnings_release
     sym = sym.upper()
     today = day or _et_today()
-    if _q("SELECT 1 FROM earnings_watch WHERE symbol=:s"
-          " AND earnings_date=:d", {"s": sym, "d": today}):
+    prev = _q("SELECT verdict, thesis_before, detail"
+              " FROM earnings_watch WHERE symbol=:s"
+              " AND earnings_date=:d", {"s": sym, "d": today})
+    if prev and prev[0].get("verdict") != "pending":
         return {"symbol": sym, "status": "already_journaled"}
+    if prev:
+        # journaled without a basis — re-verdict on whatever evidence
+        # has landed since (surprise % backfills, thesis settles)
+        return _reverdict(sym, today, prev[0])
 
     before = _thesis_status(sym)
     # refetch the calendar — actuals land in earnings_data when the
@@ -322,7 +399,7 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
     except Exception as exc:
         logger.debug("earnings_watch thesis %s: %s", sym, exc)
 
-    surp = pr.get("surprise_percentage")
+    surp = _surprise_of(pr)
     # revenue surprise — computed at read time; the print's rev number
     # backfills from the quarterly income statement as it posts
     rev_est, rev_act = _f(pr.get("revenue_estimate")), \
@@ -495,7 +572,7 @@ def poll() -> dict:
     for sym, day in reporters:
         try:
             res = check_symbol(sym, day)
-            if res["status"] == "journaled":
+            if res["status"] in ("journaled", "reverdicted"):
                 out.append(res)
         except Exception as exc:
             errs.append(f"{sym}: {exc}")
