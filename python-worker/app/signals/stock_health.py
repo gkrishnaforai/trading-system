@@ -208,6 +208,7 @@ def card(sym: str) -> dict[str, Any]:
     fly = db.execute_query(
         "SELECT rev_growth, rev_accel, eps_growth, eps_accel,"
         " beat_streak, est_revision_pct, fwd_pe, gap_score,"
+        " fcf_ttm, fcf_margin,"
         " num_analysts, updated_at FROM symbol_flywheel WHERE symbol=:s",
         {"s": s})
     fly = dict(fly[0]) if fly else {}
@@ -638,6 +639,7 @@ def card(sym: str) -> dict[str, Any]:
             "selloff": _try_selloff(s),
             "thesis": _try_thesis(s, fv_up,
                                   st.get("momentum_state")),
+            "liquidity": _try_liquidity(s, fly),
             "tailwinds": tws, "watches": _try_watches(s),
             "diagnosis": tape_diagnosis.diagnose(
                 s, sector=st.get("sector"),
@@ -889,6 +891,49 @@ def _try_selloff(sym: str) -> dict:
     except Exception:
         pass
     return {}
+
+
+def _liq_sensitivity(fly: dict) -> Optional[str]:
+    """Per-stock exposure to liquidity tightening — the signal is
+    market-wide, sensitivity is per-stock. High-duration names
+    (negative FCF, extreme multiple) take the hit first; self-funding
+    compounders barely feel it. No fundamental evidence → no tier."""
+    try:
+        fcf_t, fcf_m, pe = (fly.get("fcf_ttm"), fly.get("fcf_margin"),
+                            fly.get("fwd_pe"))
+        if fcf_t is None and fcf_m is None and pe is None:
+            return None
+        if fcf_t is not None and float(fcf_t) < 0:
+            return "high"       # cash burn needs external funding
+        if pe is not None and float(pe) >= 40:
+            return "elevated"   # priced for distant cash flows
+        if (fcf_m is not None and float(fcf_m) >= 0.15
+                and pe is not None and float(pe) < 25):
+            return "low"        # self-funding compounder
+        return "moderate"
+    except Exception:
+        return None
+
+
+def _try_liquidity(sym: str, fly: dict) -> dict:
+    """Market-liquidity context for the card — journaled snapshot +
+    this name's sensitivity to it. The same score shows on every
+    card; what differs is how exposed THIS name is. Posture context,
+    never a stock verdict."""
+    try:
+        from app.signals import liquidity_engine
+        liq = liquidity_engine.read()
+        if not liq:
+            return {}
+        return {"score": liq.get("liquidity_score"),
+                "band": liq.get("band"),
+                "direction": liq.get("liquidity_direction"),
+                "transmission": liq.get("equity_transmission"),
+                "as_of": liq.get("as_of"),
+                "age_days": liq.get("age_days"),
+                "sensitivity": _liq_sensitivity(fly)}
+    except Exception:
+        return {}
 
 
 def _try_growth_quality(sym: str) -> dict:

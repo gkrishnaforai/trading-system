@@ -630,6 +630,7 @@ async function StockCore({ sym }: { sym: string }) {
   const review = obj(card.review)
   const readiness = obj(card.readiness)
   const thesis = obj(card.thesis) as import('@/components/thesis-flag').Thesis | null
+  const liquidity = obj(card.liquidity)
   const diagnosis = card.diagnosis
   const selloff = obj(card.selloff)
   const tailwinds = Array.isArray(card.tailwinds) ? card.tailwinds : []
@@ -927,6 +928,34 @@ async function StockCore({ sym }: { sym: string }) {
             </span>
             <span className="flex items-baseline gap-2">
               <ThesisFlag thesis={thesis} />
+              {typeof liquidity?.score === 'number' && (() => {
+                // market-level context + this name's sensitivity —
+                // posture, never a verdict on this stock
+                const band = String(liquidity.band ?? '')
+                const tone = ['strong_expansion', 'expansion'].includes(band)
+                  ? 'text-aggressive'
+                  : band === 'neutral' ? 'text-caution' : 'text-defensive'
+                const dot = ['strong_expansion', 'expansion'].includes(band)
+                  ? 'bg-aggressive'
+                  : band === 'neutral' ? 'bg-caution' : 'bg-defensive'
+                const tip = [
+                  `market liquidity ${liquidity.direction ?? '?'}`
+                  + ` · → equities ${liquidity.transmission ?? '?'}`,
+                  liquidity.sensitivity
+                    ? `this name: ${liquidity.sensitivity} sensitivity`
+                    : null,
+                  'posture context — caps aggressiveness, not a verdict',
+                ].filter(Boolean).join('\n')
+                return (
+                  <span title={tip}
+                    className={`inline-flex items-center gap-1.5 rounded-full border border-hairline px-2.5 py-0.5 text-[10px] font-semibold tracking-wider ${tone}`}>
+                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
+                    liq {String(liquidity.score)}
+                    {liquidity.sensitivity != null &&
+                      ` · ${String(liquidity.sensitivity)} sens`}
+                  </span>
+                )
+              })()}
               {fundamental?.risk != null && (
                 <span className="font-mono text-[11px] text-caution">
                   risk {String(fundamental.risk).replace(/_/g, ' ')}
