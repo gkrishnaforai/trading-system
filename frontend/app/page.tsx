@@ -685,9 +685,9 @@ export default async function RegimePage() {
             {typeof liq.liquidity_score === 'number' && (
               <div>
                 <div className={`font-mono text-2xl font-semibold ${(liq.liquidity_score as number) >= 65
-                    ? 'text-aggressive'
-                    : (liq.liquidity_score as number) >= 45
-                      ? 'text-caution' : 'text-defensive'}`}>
+                  ? 'text-aggressive'
+                  : (liq.liquidity_score as number) >= 45
+                    ? 'text-caution' : 'text-defensive'}`}>
                   {String(liq.liquidity_score)}
                 </div>
                 <div className="text-[10px] uppercase tracking-wider text-faint">
@@ -754,7 +754,19 @@ export default async function RegimePage() {
               ))}
             </div>
           )}
-          <p className="pt-3 text-[10px] text-faint">
+          {/* M2 — context only, deliberately unscored: broad money
+              isn't money allocated to equities */}
+          {typeof (liq.context as Record<string, unknown> | undefined)
+            ?.m2_yoy === 'number' && (
+              <p className="pt-2 text-[10px] text-faint">
+                M2 {((liq.context as Record<string, unknown>).m2_yoy as number) > 0 ? '+' : ''}
+                {String((liq.context as Record<string, unknown>).m2_yoy)}% yoy
+                {(liq.context as Record<string, unknown>).m2_obs != null &&
+                  ` (${String((liq.context as Record<string, unknown>).m2_obs)})`}
+                {' '}· broad money, context — not a scored leg
+              </p>
+            )}
+          <p className="pt-2 text-[10px] text-faint">
             weekly · Fed BS/TGA/RRP/reserves + credit + breadth/semi-strength proxy
             — supports or caps aggressiveness, never selects names
           </p>

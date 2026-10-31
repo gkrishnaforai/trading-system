@@ -206,7 +206,22 @@ def evaluate() -> dict[str, Any]:
     direction = ("improving" if score is not None and score >= 65 else
                  "deteriorating" if score is not None and score <= 44
                  else "neutral")
+
+    # M2 — context only, never scored: broad money supply is not money
+    # allocated to equities (the spec's own warning). Displayed so the
+    # old M2-module read stays visible beside the real decomposition.
+    context = {}
+    try:
+        m2 = _fred_series("M2SL", days=400)
+        m2_yoy = _pct_chg(m2, 12)            # monthly series
+        if m2_yoy is not None:
+            context["m2_yoy"] = round(m2_yoy * 100, 1)
+            context["m2_obs"] = str(m2[-1][0])
+    except Exception:
+        pass
+
     return {"liquidity_score": score, "band": band,
+            "context": context,
             "coverage": coverage,
             "components": comps,
             "impulses": {

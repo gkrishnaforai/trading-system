@@ -127,6 +127,7 @@ def read() -> dict[str, Any]:
                         liq.get("equity_transmission"),
                     "impulses": liq.get("impulses"),
                     "components": liq.get("components"),
+                    "context": liq.get("context"),
                 }
         except Exception:
             pass
