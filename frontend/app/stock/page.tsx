@@ -1518,6 +1518,28 @@ async function ResearchSection({ sym }: { sym: string }) {
           hard gates: {gates.join(', ').replace(/_/g, ' ')}
         </p>
       )}
+      {run.report?.recommendation?.reason && (
+        <div className="pt-2 space-y-0.5 text-xs text-muted leading-relaxed">
+          {run.report.recommendation.reason.meaning && (
+            <p className="text-ink">
+              {run.report.recommendation.reason.meaning}
+            </p>
+          )}
+          {(run.report.recommendation.reason.because ?? []).map((b) => (
+            <p key={b} className="text-faint">· {b.replace(/_/g, ' ')}</p>
+          ))}
+          {(run.report.recommendation.reason.flags ?? []).map((f) => (
+            <p key={f} className="text-faint">· {f.replace(/_/g, ' ')}</p>
+          ))}
+          {run.report.recommendation.reason.closest && (
+            <p className="text-faint">
+              closest: {String(run.report.recommendation.reason.closest.action ?? '').replace(/_/g, ' ')}
+              {' — needs '}
+              {(run.report.recommendation.reason.closest.needs ?? []).join('; ').replace(/_/g, ' ')}
+            </p>
+          )}
+        </div>
+      )}
       {run.report?.evidence_state && run.report.evidence_state !== 'sufficient' && (
         <p className="pt-2 text-xs text-caution">
           evidence {run.report.evidence_state}

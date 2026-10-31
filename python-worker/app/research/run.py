@@ -174,6 +174,7 @@ def run(sym: str, sector: Optional[str] = None,
         if covs else 0.0
     gates = _hard_gates(ctx, mcfg)
     ctx["hard_gate"] = bool(gates)
+    ctx["hard_gate_names"] = gates
 
     rec = policy.evaluate(ctx)
     evidence_state = ("sufficient" if ctx["evidence_coverage"] >= 0.75

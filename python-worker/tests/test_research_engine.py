@@ -232,6 +232,61 @@ class TestPolicy:
         assert policy.evaluate(ctx)["action"] == "exit_risk"
 
 
+class TestStanceReason:
+    """The reason block — the stance must say WHICH evidence crossed
+    WHICH line, and 'research' must name the nearest rung."""
+
+    def test_accumulate_names_each_crossed_threshold(self):
+        ctx = _isrg_ctx()
+        ctx.update({"ai_tailwind": 74, "bstrength": 68,
+                    "evidence_coverage": 1.0})
+        r = policy.evaluate(ctx)
+        assert r["action"] == "accumulate_candidate"
+        because = " ".join(r["reason"]["because"])
+        assert "ai_tailwind 74 ≥ 70" in because
+        assert "bstrength 68 ≥ 60" in because
+        assert "on_track" in because
+        assert r["reason"]["meaning"]
+
+    def test_hard_gate_names_the_gate(self):
+        ctx = _isrg_ctx()
+        ctx.update({"hard_gate": True, "evidence_coverage": 1.0,
+                    "hard_gate_names": ["dilution_critical"]})
+        r = policy.evaluate(ctx)
+        assert r["action"] == "exit_risk"
+        assert "dilution_critical" in " ".join(
+            r["reason"]["because"])
+
+    def test_default_action_explains_nearest_rung(self):
+        ctx = _isrg_ctx()
+        ctx.update({"ai_tailwind": 38, "bstrength": 40,
+                    "products_mapped": 2, "evidence_coverage": 0.6})
+        r = policy.evaluate(ctx)
+        assert r["action"] == "research"
+        assert r["reason"]["because"] == []      # nothing fired
+        c = r["reason"]["closest"]
+        assert c["action"] == "watch"            # lowest rung first
+        assert "ai_tailwind 38 < 50" in " ".join(c["needs"]) \
+            or "ai_tailwind" in " ".join(c["needs"])
+
+    def test_exits_do_not_suggest_upgrades(self):
+        ctx = _isrg_ctx()
+        ctx.update({"thesis_status": "broken",
+                    "evidence_coverage": 1.0})
+        r = policy.evaluate(ctx)
+        assert r["action"] == "exit_thesis"
+        assert "closest" not in r["reason"]
+
+    def test_flag_explains_itself(self):
+        ctx = _isrg_ctx()
+        ctx.update({"ai_tailwind": 40, "bstrength": 62,
+                    "products_mapped": 3, "evidence_coverage": 0.6})
+        r = policy.evaluate(ctx)
+        flag_txt = " ".join(r["reason"]["flags"])
+        assert "research_incomplete" in flag_txt
+        assert "0.6" in flag_txt
+
+
 class TestSectorConfig:
     def test_healthcare_loads_complete(self):
         cfg = sectors.load("healthcare")

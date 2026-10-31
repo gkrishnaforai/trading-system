@@ -446,7 +446,16 @@ export type ResearchRun = {
     hard_gates?: string[]
     evidence_coverage?: number | null
     evidence_state?: string | null
-    recommendation?: { action?: string; note?: string | null; flags?: string[] }
+    recommendation?: {
+      action?: string; note?: string | null; flags?: string[]
+      reason?: {
+        meaning?: string | null
+        because?: string[]
+        flags?: string[]
+        gaps?: string[]
+        closest?: { action?: string; needs?: string[] } | null
+      }
+    }
     quarters?: {
       period_end?: string
       filing_date?: string | null
