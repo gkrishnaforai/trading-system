@@ -14,8 +14,8 @@ from datetime import date
 from typing import Optional
 
 from app.research import (challenge, commitments, design_wins,
-                          fdce, observations, policy, products,
-                          quarter, scores, sectors)
+                          fdce, news_scan, observations, policy,
+                          products, quarter, scores, sectors)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,19 @@ def run(sym: str, sector: Optional[str] = None,
 
     model = sectors.classify_model(sym, sector)
     mcfg = sectors.model_cfg(model, sector)
+
+    # news → claims — sector-declared, bounded. Lands in doc_analyses
+    # BEFORE the extractors read claims, so fresh news feeds the same
+    # evidence hub as filings/pasted docs. Replay runs (as_of past)
+    # skip it — injecting today's headlines into a historical replay
+    # would violate point-in-time reproducibility.
+    news_stats = None
+    nsc = cfg.get("news_scan") or {}
+    if nsc.get("enabled") and as_of == date.today():
+        try:
+            news_stats = news_scan.scan(sym, nsc)
+        except Exception as exc:
+            logger.info("news scan %s: %s", sym, exc)
 
     in_fdce = fdce.in_universe(sym)
     qs = quarter.quarters(sym)
@@ -182,6 +195,7 @@ def run(sym: str, sector: Optional[str] = None,
                      "missing": all_missing},
         "evidence_coverage": ctx["evidence_coverage"],
         "evidence_state": evidence_state,
+        **({"news_scan": news_stats} if news_stats else {}),
         "rules_version": {"scores": [e["rules_version"]
                                     for e in evals.values()],
                           "policy": rec["rules_version"],

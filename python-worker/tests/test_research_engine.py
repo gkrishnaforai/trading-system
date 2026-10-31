@@ -446,3 +446,94 @@ class TestFdce:
         assert d["open_source_commoditization_risk"] == "elevated"
         assert d["customer_concentration_risk"] == "high"
         assert d["replication_difficulty"] == "low"
+
+
+class TestGenericSector:
+    def test_loads_and_self_feeds(self):
+        cfg = sectors.load("generic")
+        assert cfg["universe"]["tracked"]
+        assert cfg["news_scan"]["enabled"]
+        assert cfg["scores"] == ["ai_tailwind", "business_strength",
+                                 "quality"]
+
+    def test_unrouted_symbol_falls_to_generic(self):
+        # not in any curated universe → the book pass, never a
+        # forced sector fit
+        assert sectors.sector_for_symbol(
+            "ZZZZ", row={"sector": "Conglomerates"}) == "generic"
+        # curated membership still wins
+        assert sectors.sector_for_symbol("CRDO") == "ai_infra"
+
+    def test_generic_universe_is_book_minus_curated(self, monkeypatch):
+        import app.research.sectors as S
+        from app.database import db
+
+        def fake_exec(sql, params=None):
+            if "book_symbols" in sql:          # the tracked tier
+                return [{"symbol": s} for s in
+                        ("CRDO", "PLTR", "ZZZZ")]
+            return []                          # sector_match queries
+
+        monkeypatch.setattr(db, "execute_query", fake_exec)
+        u = S.universe("generic")
+        assert "ZZZZ" in u
+        assert "CRDO" not in u                 # claimed by ai_infra
+        assert "PLTR" in u                     # fdce-only → generic run
+
+
+class TestNewsScan:
+    def test_dedupe_and_noise_filter(self, monkeypatch):
+        from app.research import news_scan
+        from app.database import db
+        from app.signals import doc_extract
+        monkeypatch.setattr(
+            db, "execute_query", lambda *a, **k:
+            [{"url": "https://x/seen"}])
+        # fetch fail-open — a provider that raises returns zeros,
+        # never kills the run
+        import app.providers.financial_modeling_prep as fmp
+        class _Boom:
+            def search_stock_news(self, s):
+                raise RuntimeError("no feed")
+        monkeypatch.setattr(fmp, "enhanced_fmp_client", _Boom())
+        assert news_scan.scan("X")["fetched"] == 0
+
+    def test_filters(self, monkeypatch):
+        import app.research.news_scan as ns
+        from app.database import db
+        from app.signals import doc_extract
+        from datetime import date, timedelta
+        recent = (date.today() - timedelta(days=2)).isoformat()
+        items = [
+            {"title": "ARM unveils new AGI CPU for datacenter",
+             "url": "https://x/1", "publishedDate": recent,
+             "text": "body " * 100},
+            {"title": "Why ARM stock is moving today",
+             "url": "https://x/2", "publishedDate": recent},
+            {"title": "ARM Q1 recap", "url": "https://x/seen",
+             "publishedDate": recent, "text": "body " * 100},
+            {"title": "ARM old story", "url": "https://x/3",
+             "publishedDate": "2020-01-01", "text": "b " * 200},
+        ]
+        monkeypatch.setattr(db, "execute_query",
+                            lambda *a, **k: [{"url": "https://x/seen"}])
+
+        class FakeClient:
+            def search_stock_news(self, s):
+                return items
+
+        import app.providers.financial_modeling_prep as fmp
+        monkeypatch.setattr(fmp, "enhanced_fmp_client", FakeClient())
+        calls = []
+
+        def fake_analyze(sym, text="", url="", title=""):
+            calls.append(url)
+            return {"claims": [{"type": "channel"}]}
+
+        monkeypatch.setattr(doc_extract, "analyze", fake_analyze)
+        st = ns.scan("ARM", {"max_articles": 4, "lookback_days": 10})
+        assert st["skipped_noise"] == 1
+        assert st["skipped_seen"] == 1
+        assert st["skipped_stale"] == 1
+        assert calls == ["https://x/1"]
+        assert st["analyzed"] == 1

@@ -1,0 +1,76 @@
+# Generic sector configuration — v1
+# ==================================
+# The whole-book pass: every tracked/book symbol that is not claimed
+# by a curated sector universe gets researched here — product map,
+# revenue-level observations, news→claims ingestion, the shared
+# tailwind/strength/quality scores. Curated sector members keep their
+# sector run (universe() resolves tracked-minus-curated).
+version: 1
+
+sector: generic
+label: "the book"
+
+# Universe resolution — `tracked` resolves to the active coverage
+# tier (book ∪ scan members via symbol_tiers) minus symbols claimed
+# by every other sector's universe. One stock, one run, right sector.
+universe:
+  tracked: true
+
+# No opportunity taxonomy — generic names get the shared scores
+# without a sector-linked structural map. business_models left
+# unclassified: no forced-fit KPI framework for a mixed book.
+business_models: {}
+
+unclassified:
+  kpis: []
+  valuation: ev_sales
+  profitability_expected: true   # conservative default
+
+# ------------------------------------------------------------------
+# Moat mechanisms — the union vocabulary; product extraction tags
+# whichever apply. 'uses AI' is still not a moat.
+# ------------------------------------------------------------------
+moat_mechanisms:
+  design_win_lock:          "qualified into the customer platform — requalification cycles lock rivals out"
+  hyperscaler_qualification: "passed hyperscaler/platform qual — multi-year supply relationship"
+  process_technology:       "manufacturing/process edge — photonics, materials, yield"
+  ip_patents:               "defensible patents/trade secrets"
+  ecosystem_lockin:         "software/developer ecosystem the product rides on"
+  installed_base:           "deployed footprint with service/spares economics"
+  scale_economics:          "volume/cost advantage"
+  capacity_reservation:     "scarce supply secured"
+  switching_costs:          "contractual, regulatory or integration lock-in"
+  proprietary_data:         "unique data competitors can't license"
+  workflow_integration:     "embedded in the customer workflow — ripping it out costs them"
+  regulatory_moat:          "clearance/licensing/reimbursement barriers competitors must re-earn"
+  distribution:             "channel access competitors lack"
+
+# ------------------------------------------------------------------
+# Hard-risk gates — the deterministic subset runs in run.py.
+# ------------------------------------------------------------------
+risk_gates:
+  customer_concentration: "top customer > 35% of revenue — a single loss is thesis-breaking"
+  severe_financing:      "cash runway < 4 quarters with negative FCF (pre-profit models)"
+  dilution_critical:     "share count growth > 15%/yr while unprofitable"
+  thesis_invalidation:   "named evidence condition met — see thesis_doc"
+
+# ------------------------------------------------------------------
+# Shared score set — no sector-specific score on the generic pass.
+# ------------------------------------------------------------------
+scores: [ai_tailwind, business_strength, quality]
+
+# Design-win lifecycle + segment-revenue extraction run here too —
+# 'what is happening at product/revenue level' needs both.
+design_wins: true
+segment_extraction: true
+
+# News → claims ingestion, run inside research (see news_scan.py):
+# pull recent headlines per symbol, journal bounded verbatim-grounded
+# claims into doc_analyses — the same evidence hub filings and pasted
+# docs feed, so every downstream extractor consumes them. Bounded:
+# max_articles caps LLM spend per symbol per run; lookback_days caps
+# staleness; url dedupe makes it incremental, not re-analysis.
+news_scan:
+  enabled: true
+  max_articles: 4
+  lookback_days: 10

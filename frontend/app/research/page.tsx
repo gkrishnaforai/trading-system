@@ -90,6 +90,10 @@ function Row({ r, i, fdce }: { r: ResearchRow; i: number; fdce?: boolean }) {
 }
 
 const SECTORS: Record<string, { label: string; blurb: string }> = {
+  generic: {
+    label: 'the book',
+    blurb: 'Every tracked/book name — weekly pass over products, revenue-level evidence and fresh news claims, ranked by AI Tailwind Score. Sector-curated names (healthcare, AI infra) research under their own taxonomy instead.',
+  },
   healthcare: {
     label: 'healthcare',
     blurb: 'Healthcare names ranked by AI Tailwind Score — evidence that AI adoption creates durable economic value, then by strongest product (stage × moat breadth).',

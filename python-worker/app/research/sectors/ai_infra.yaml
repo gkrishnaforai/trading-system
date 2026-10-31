@@ -306,3 +306,13 @@ catalyst_types:
   governance:
     events: [ceo_change, restatement, guidance_withdrawal]
     materiality: high
+
+# News → claims ingestion inside the research run (news_scan.py):
+# recent headlines → bounded verbatim-grounded claims into
+# doc_analyses — feeds products/design-wins/observations/commitments
+# through their existing claim readers. Dedupe on url makes repeat
+# runs incremental; replay runs skip it (PIT).
+news_scan:
+  enabled: true
+  max_articles: 4
+  lookback_days: 10

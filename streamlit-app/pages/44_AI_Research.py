@@ -36,7 +36,7 @@ def _safe(fn, default=None):
 # ---------------------------------------------------------- controls
 c1, c2, c3 = st.columns([2, 2, 4])
 sector = c1.selectbox(
-    "sector", ["healthcare", "ai_infra", "fdce"], index=0)
+    "sector", ["generic", "healthcare", "ai_infra", "fdce"], index=0)
 board = _safe(lambda: client.get("admin/research/board",
                                  params={"sector": sector}) or {})
 rows = (board or {}).get("rows") or []

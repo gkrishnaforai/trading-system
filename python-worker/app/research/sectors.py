@@ -75,10 +75,15 @@ def _all_sector_files() -> list[str]:
 
 def universe(sector: str = "healthcare") -> list[str]:
     """The symbol set a sector researches. `symbols:` in yaml is
-    explicit; `sector_match:` resolves via stocks.sector LIKE.
-    Fail-closed to [] on DB errors."""
+    explicit; `sector_match:` resolves via stocks.sector LIKE;
+    `tracked:` resolves to the active coverage tier minus symbols
+    claimed by every other sector (the generic whole-book pass —
+    one stock, one run, right sector). Fail-closed to [] on DB
+    errors."""
     cfg = load(sector)
     u = cfg.get("universe") or {}
+    if u.get("tracked"):
+        return _tracked_universe(sector)
     if u.get("symbols"):
         return sorted({str(s).upper() for s in u["symbols"]})
     match = str(u.get("sector_match") or sector)
@@ -93,6 +98,28 @@ def universe(sector: str = "healthcare") -> list[str]:
         return []
 
 
+def _tracked_universe(sector: str) -> list[str]:
+    """Active coverage tier (book ∪ scan members via symbol_tiers)
+    minus every other sector's claimed symbols."""
+    from app.database import db
+    from app.signals import symbol_tiers
+    try:
+        tracked = {str(r["symbol"]).upper() for r in db.execute_query(
+            f"SELECT symbol FROM ({symbol_tiers._active_sql()}) x")}
+    except Exception as exc:
+        logger.debug("tracked universe: %s", exc)
+        return []
+    claimed = set()
+    for s in _all_sector_files():
+        if s == sector:
+            continue
+        other = (load(s).get("universe") or {})
+        if other.get("tracked"):
+            continue
+        claimed.update(universe(s))
+    return sorted(tracked - claimed)
+
+
 def all_universes() -> dict[str, list[str]]:
     """Every configured sector → its symbol list."""
     return {s: universe(s) for s in _all_sector_files()}
@@ -101,13 +128,17 @@ def all_universes() -> dict[str, list[str]]:
 def sector_for_symbol(sym: str, row: Optional[dict] = None) -> str:
     """Route a symbol to its sector module. Explicit yaml `symbols:`
     membership wins; otherwise stocks.sector text vs each yaml's
-    sector_match. Default 'healthcare' preserves prior callers."""
+    sector_match; `tracked` universes never claim a route (they're
+    the residual). Unrouted names fall to 'generic' — the whole-book
+    pass, not a forced sector fit."""
     sym = sym.upper()
     explicit = []
     matched = []
     for s in _all_sector_files():
         cfg = load(s)
         u = cfg.get("universe") or {}
+        if u.get("tracked"):
+            continue
         if u.get("symbols"):
             if sym in {str(x).upper() for x in u["symbols"]}:
                 explicit.append(s)
@@ -129,4 +160,4 @@ def sector_for_symbol(sym: str, row: Optional[dict] = None) -> str:
         for s, m in matched:
             if m and str(m).lower() in sec:
                 return s
-    return "healthcare"
+    return "generic"
