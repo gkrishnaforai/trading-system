@@ -1,0 +1,90 @@
+"""Curated scenario priors + per-theme sensitivity matrix.
+
+12-month macro scenarios — deliberately few and distinct:
+
+  growth_accel_falling_rates   expansion + easing — high-multiple
+                               growth gets both legs
+  growth_sticky_inflation      demand holds, inflation stays hot —
+                               real-asset capex wins, long-duration
+                               multiples compressed
+  moderate_stable              base case — quality growth compounds
+  slowdown_falling_rates       demand weakens, Fed eases into it —
+                               quality/resilience over beta
+  recession_stress             credit event — almost everything
+                               sells; cash-flow resilience is the
+                               only shelter
+
+Sensitivity = expected theme attractiveness 0-100 under that
+scenario (not a return forecast — a ranking input). Curated like
+the metals STRUCTURAL baselines: static, reviewable, and the live
+score shifts only through probabilities, never through price.
+"""
+from __future__ import annotations
+
+SCENARIO_PRIORS = {
+    "growth_accel_falling_rates": 18.0,
+    "growth_sticky_inflation": 22.0,
+    "moderate_stable": 32.0,
+    "slowdown_falling_rates": 18.0,
+    "recession_stress": 10.0,
+}
+
+STAGE_BASE = {"emerging": 55, "inflecting": 80, "mainstream": 62,
+              "exhausted": 30, "watching": 40}
+
+THEME_SENSITIVITY = {
+    "ai_inference": {
+        "growth_accel_falling_rates": 85, "growth_sticky_inflation": 75,
+        "moderate_stable": 78, "slowdown_falling_rates": 45,
+        "recession_stress": 25,
+        "_note": "inference volume structural; semis are cyclical beta",
+    },
+    "ai_optics": {
+        "growth_accel_falling_rates": 88, "growth_sticky_inflation": 70,
+        "moderate_stable": 75, "slowdown_falling_rates": 40,
+        "recession_stress": 20,
+        "_note": "emerging — highest beta of the AI sleeves",
+    },
+    "dc_power_cooling": {
+        "growth_accel_falling_rates": 80, "growth_sticky_inflation": 80,
+        "moderate_stable": 80, "slowdown_falling_rates": 55,
+        "recession_stress": 35,
+        "_note": "MW/rack demand persists through cycles — mandated capex",
+    },
+    "grid_electrification": {
+        "growth_accel_falling_rates": 78, "growth_sticky_inflation": 85,
+        "moderate_stable": 80, "slowdown_falling_rates": 55,
+        "recession_stress": 40,
+        "_note": "backlog-backed grid spend — most scenario-robust",
+    },
+    "hbm_memory": {
+        "growth_accel_falling_rates": 82, "growth_sticky_inflation": 70,
+        "moderate_stable": 72, "slowdown_falling_rates": 38,
+        "recession_stress": 20,
+        "_note": "most cyclical of the AI chain — memory pricing swings",
+    },
+    "robotics_edge": {
+        "growth_accel_falling_rates": 85, "growth_sticky_inflation": 65,
+        "moderate_stable": 70, "slowdown_falling_rates": 45,
+        "recession_stress": 25,
+        "_note": "emerging — earnings conversion still unproven",
+    },
+    "ai_software": {
+        "growth_accel_falling_rates": 88, "growth_sticky_inflation": 72,
+        "moderate_stable": 80, "slowdown_falling_rates": 55,
+        "recession_stress": 30,
+        "_note": "long-duration — loves easing, fears enterprise cuts",
+    },
+    "space_defense": {
+        "growth_accel_falling_rates": 75, "growth_sticky_inflation": 80,
+        "moderate_stable": 78, "slowdown_falling_rates": 60,
+        "recession_stress": 50,
+        "_note": "budgets hold through cycles — most resilient equity theme",
+    },
+    "_default": {
+        "growth_accel_falling_rates": 70, "growth_sticky_inflation": 65,
+        "moderate_stable": 70, "slowdown_falling_rates": 50,
+        "recession_stress": 35,
+        "_note": "generic equity theme",
+    },
+}

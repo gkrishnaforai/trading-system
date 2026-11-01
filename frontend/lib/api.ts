@@ -110,6 +110,39 @@ export type MetalsPulse = {
   } | null
 }
 
+export type ThemeCard = {
+  name?: string
+  stage?: string
+  thesis?: string
+  opportunity?: number | null
+  verdict?: string
+  expected?: number
+  downside?: number
+  robustness?: number
+  dispersion?: number
+  legs?: { name?: string; score?: number; weight?: number; value?: string }[]
+  missing?: string[]
+  index?: {
+    pure_n?: number
+    quality_n?: number
+    ineligible?: string[]
+    top?: { symbol?: string; weight?: number; score?: number }[]
+  }
+  _weights?: {
+    pure?: { weights?: Record<string, number>; n?: number }
+    quality?: { weights?: Record<string, number>; scores?: Record<string, number>; n?: number }
+  }
+}
+
+export type ThemeIntelligence = {
+  today?: {
+    as_of?: string
+    age_days?: number
+    scenario_probs?: Record<string, number>
+    themes?: Record<string, ThemeCard>
+  } | null
+}
+
 export type MacroEvent = {
   title?: string
   name?: string
@@ -328,6 +361,8 @@ export const api = {
   posture: () => get<Posture>('/posture'),
   morningRegime: () => get<MorningRegime>('/morning-regime'),
   metalsPulse: () => get<MetalsPulse>('/metals-pulse'),
+  themeIntelligence: () =>
+    get<ThemeIntelligence>('/theme-intelligence'),
   macroEvents: () =>
     get<{ events?: MacroEvent[] } | MacroEvent[]>('/macro-events'),
   daily: () => get<DailyBoard>('/daily'),

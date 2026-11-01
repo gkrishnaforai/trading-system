@@ -774,6 +774,19 @@ async def _j_metals() -> dict:
                          for k, v in (st.get("metals") or {}).items()}}
 
 
+async def _j_themes() -> dict:
+    """Theme Intelligence — 12m scenario probs × per-theme
+    sensitivity + 6-factor opportunity score (macro/earnings/
+    valuation/demand/momentum/resilience) + capped index weights.
+    Journals theme_intelligence_snapshots + theme_index_membership.
+    Weekly — ranks themes for capital, never picks names."""
+    from app.themes import engine as themes_engine
+    st = await asyncio.to_thread(themes_engine.run)
+    return {"probs": st.get("scenario_probs"),
+            "verdicts": {k: v.get("verdict")
+                         for k, v in (st.get("themes") or {}).items()}}
+
+
 async def _j_short_data() -> dict:
     """Massive short-data pull → short_interest / short_volume /
     share_float. Staleness-aware and rate-budgeted — the shared key
@@ -933,6 +946,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "fund-journal": ("Quarterly fundamentals journal", _j_fund_journal),
     "hedge-universe": ("LEAP-put hedge journal", _j_hedge_universe),
     "conviction":   ("Conviction List", _j_conviction),
+    "themes-pulse": ("Theme Intelligence — opportunity + indices",
+                     _j_themes),
     "theme-review": ("Future theme registry", _j_theme_review),
     "theme-rotation": ("Theme rotation board", _j_theme_rotation),
     "iv-coverage":  ("Daily IV snapshots", _j_iv_coverage),
@@ -2306,6 +2321,18 @@ async def metals_pulse_report():
     latest = await asyncio.to_thread(metals_engine.read)
     if latest is None:
         latest = await asyncio.to_thread(metals_engine.run)
+    return {"today": latest}
+
+
+@router.get("/theme-intelligence")
+async def theme_intelligence_report():
+    """Theme Intelligence — latest journaled dashboard (scenario
+    probabilities + per-theme opportunity/downside/robustness +
+    index weights). Lazy-evals on an empty journal."""
+    from app.themes import engine as themes_engine
+    latest = await asyncio.to_thread(themes_engine.read)
+    if latest is None:
+        latest = await asyncio.to_thread(themes_engine.run)
     return {"today": latest}
 
 
