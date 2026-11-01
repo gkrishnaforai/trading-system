@@ -1136,6 +1136,39 @@ export default async function RegimePage() {
                   {metals.today.macro.drivers.join(' · ')}
                 </p>
               )}
+            {/* the turn — "conditions just formed" banners, the
+                signal that matters for starting accumulation */}
+            {(metals.today.transitions?.macro_flipped ||
+              Object.values(metals.today.transitions?.metals ?? {})
+                .some((t) => t.newly_actionable)) && (
+                <div className="pt-3 flex flex-wrap gap-2">
+                  {metals.today.transitions?.macro_flipped && (
+                    <Chip
+                      label={`regime turned: ${String(
+                        metals.today.transitions.macro_prev,
+                      ).replace(/_/g, ' ')} → ${String(
+                        metals.today.transitions.macro_now,
+                      ).replace(/_/g, ' ')}`}
+                      tone="ok"
+                    />
+                  )}
+                  {Object.entries(
+                    metals.today.transitions?.metals ?? {},
+                  )
+                    .filter(([, t]) => t.newly_actionable)
+                    .map(([k, t]) => (
+                      <Chip
+                        key={k}
+                        label={`${k} newly actionable: ${String(
+                          t.verdict_prev ?? '—',
+                        ).replace(/_/g, ' ')} → ${String(
+                          t.verdict_now ?? '—',
+                        ).replace(/_/g, ' ')}`}
+                        tone="ok"
+                      />
+                    ))}
+                </div>
+              )}
             <div className="pt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
               {Object.entries(metals.today.metals).map(([k, m]) => {
                 const vTone =
@@ -1192,6 +1225,28 @@ export default async function RegimePage() {
                         <span className="text-caution">falling knife</span>
                       )}
                     </div>
+                    {m.reason && (
+                      <p className="pt-2 text-[10px] leading-relaxed text-ink">
+                        {m.reason}
+                      </p>
+                    )}
+                    {/* leg evidence — the actual input values the
+                        score used, not just the number */}
+                    {Array.isArray(m.legs?.fundamental) &&
+                      m.legs.fundamental.length > 0 && (
+                        <div className="pt-1.5 space-y-0.5">
+                          {m.legs.fundamental.slice(0, 4).map((l) => (
+                            <div key={l.name}
+                              className="flex items-baseline gap-1.5 font-mono text-[9px]">
+                              <span className="text-faint w-24 truncate">
+                                {String(l.name ?? '').replace(/_/g, ' ')}
+                              </span>
+                              <span className="text-muted truncate">{l.value}</span>
+                              <span className="ml-auto text-faint">{l.score}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     {m.thesis && (
                       <p className="pt-2 text-[10px] leading-relaxed text-muted">
                         {m.thesis}

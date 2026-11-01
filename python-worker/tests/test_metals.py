@@ -75,45 +75,45 @@ class TestMacroClassification:
 
 class TestFundamentalScore:
     def test_gold_benefits_from_falling_yields(self):
-        f, miss = scoring.fundamental("gold", _bullish_macro())
+        f, miss, _ = scoring.fundamental("gold", _bullish_macro())
         assert f is not None and f >= 65
         assert miss == []
 
     def test_copper_suffers_in_deflation(self):
-        f, _ = scoring.fundamental("copper", _deflationary_macro())
+        f, _, _ = scoring.fundamental("copper", _deflationary_macro())
         assert f is not None and f <= 40
 
     def test_gold_holds_better_than_copper_in_stress(self):
         m = _deflationary_macro()
-        fg, _ = scoring.fundamental("gold", m)
-        fc, _ = scoring.fundamental("copper", m)
+        fg, _, _ = scoring.fundamental("gold", m)
+        fc, _, _ = scoring.fundamental("copper", m)
         # the metals-regime point: same macro, divergent reads —
         # credit stress is a haven bid for gold but recession for Cu
         assert fg > fc
 
     def test_missing_legs_renormalize_and_report(self):
         m = {"real_yield_chg20": -0.15, "dxy_chg20": -1.5}
-        f, miss = scoring.fundamental("gold", m)
+        f, miss, _ = scoring.fundamental("gold", m)
         assert f is not None                    # 3 legs incl. structural
         assert "liquidity" in miss
         assert "credit_haven" in miss
 
     def test_fail_closed_below_coverage(self):
-        f, miss = scoring.fundamental("gold", {})   # only structural (.10)
+        f, miss, _ = scoring.fundamental("gold", {})   # only structural (.10)
         assert f is None                        # <40% weight coverage
 
 
 class TestFearScore:
     def test_deep_discount_high_fear(self):
-        e, _ = scoring.fear(_fear_metrics())
+        e, _, _ = scoring.fear(_fear_metrics())
         assert e is not None and e >= 60
 
     def test_extended_low_fear(self):
-        e, _ = scoring.fear(_extended_metrics())
+        e, _, _ = scoring.fear(_extended_metrics())
         assert e is not None and e <= 20
 
     def test_empty_metrics_none(self):
-        e, miss = scoring.fear({})
+        e, miss, _ = scoring.fear({})
         assert e is None
 
 
@@ -178,3 +178,83 @@ class TestStabilization:
     def test_missing_inputs(self):
         stab, knife = scoring.stabilization({})
         assert stab is None and not knife
+
+
+class TestReasonsAndLegs:
+    def test_fundamental_legs_carry_evidence(self):
+        f, miss, legs = scoring.fundamental("gold", _bullish_macro())
+        names = {l["name"] for l in legs}
+        assert "real_yields" in names and "dollar" in names
+        ry = next(l for l in legs if l["name"] == "real_yields")
+        assert "-0.15" in ry["value"]              # actual input shown
+        assert ry["score"] > 70                    # falling = bullish
+
+    def test_fear_legs_carry_evidence(self):
+        e, _, legs = scoring.fear(_fear_metrics())
+        dd = next(l for l in legs if l["name"] == "drawdown")
+        assert "-22.0%" in dd["value"]
+
+    def test_verdict_reason_shows_values(self):
+        r = scoring.verdict_reason(
+            "gold", "accumulate", 68, 62, "precious_bullish",
+            True, False)
+        assert "68" in r and "62" in r
+        assert "discounted" in r
+
+    def test_knife_reason(self):
+        r = scoring.verdict_reason(
+            "copper", "watch", 65, 75, "neutral", False, True)
+        assert "knife" in r.lower()
+
+
+class TestTransitions:
+    def _snap(self, regime, metals):
+        return {"as_of": "2026-10-30", "macro": {"label": regime},
+                "metals": {k: {"verdict": v, "fundamental": f,
+                               "fear": e}
+                           for k, (v, f, e) in metals.items()}}
+
+    def test_newly_actionable_on_upgrade(self):
+        prev = self._snap("neutral",
+                          {"gold": ("watch", 58, 62)})
+        now = self._snap("precious_bullish",
+                         {"gold": ("accumulate", 68, 65)})
+        t = scoring.transitions(prev, now)
+        assert t["macro_flipped"]
+        assert t["metals"]["gold"]["newly_actionable"]
+
+    def test_fundamental_cross_while_discounted(self):
+        # verdict unchanged at watch→watch is skipped, but a cross
+        # from <60 to ≥60 fundamentals with fear still high flags —
+        # the window opened even if the label hasn't caught up
+        prev = self._snap("neutral",
+                          {"silver": ("watch_starter", 57, 66)})
+        now = self._snap("precious_bullish",
+                         {"silver": ("watch_starter", 63, 66)})
+        t = scoring.transitions(prev, now)
+        assert t["metals"]["silver"]["newly_actionable"]
+
+    def test_quiet_day_no_flags(self):
+        prev = self._snap("neutral", {"gold": ("accumulate", 70, 62)})
+        now = self._snap("neutral", {"gold": ("accumulate", 71, 62)})
+        t = scoring.transitions(prev, now)
+        assert not t["macro_flipped"]
+        assert t["metals"] == {}
+
+    def test_first_run(self):
+        t = scoring.transitions(None, self._snap("neutral", {}))
+        assert t["first_run"]
+
+
+class TestStabilizationV2:
+    def test_rsi_lifting_counts_as_stabilized(self):
+        stab, knife = scoring.stabilization(
+            {"rsi14": 36.0, "rsi14_5ago": 30.0,
+             "ret5": -3.0, "ret20": -8.0, "above_ema20": False})
+        assert stab and not knife            # turn signal, not pause
+
+    def test_ema_reclaim_counts_as_stabilized(self):
+        stab, knife = scoring.stabilization(
+            {"rsi14": 37.0, "rsi14_5ago": 36.5,
+             "ret5": -2.5, "ret20": -6.0, "above_ema20": True})
+        assert stab and not knife

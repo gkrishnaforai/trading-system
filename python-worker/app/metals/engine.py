@@ -18,8 +18,8 @@ import logging
 from datetime import date
 from typing import Any, Optional
 
-from app.market_data.indicators import (closes, pct_from_sma, returns,
-                                        rsi, sma)
+from app.market_data.indicators import (closes, ema, pct_from_sma,
+                                        returns, rsi, sma)
 from app.signals.correction_alarms import _delta, _fred_series
 
 from . import macro as _macro
@@ -85,13 +85,17 @@ def _metrics(bars) -> dict[str, Any]:
     cs = closes(bars)
     hi52 = float(cs.iloc[-252:].max()) if len(cs) >= 2 else None
     lo52 = float(cs.iloc[-252:].min()) if len(cs) >= 2 else None
+    e20 = ema(bars, 20)
     return {
         "price": round(px, 2),
         "off_52w_high_pct":
             round(px / hi52 - 1, 4) if hi52 else None,
         "dist_sma200_pct": pct_from_sma(bars, 200),
         "sma200": sma(bars, 200),
+        "ema20": e20,
+        "above_ema20": (px > e20) if e20 is not None else None,
         "rsi14": rsi(bars, 14),
+        "rsi14_5ago": rsi(bars, 14, offset=5),
         "ret5": _pct_chg_bars(bars, 5),
         "ret20": _pct_chg_bars(bars, 20),
         "ret60": _pct_chg_bars(bars, 60),
@@ -160,8 +164,8 @@ def evaluate() -> dict[str, Any]:
         b = bars.get(metal)
         met = _metrics(b)
         mm = {**m, **met}
-        f, f_miss = _sc.fundamental(metal, mm)
-        e, e_miss = _sc.fear(met)
+        f, f_miss, f_legs = _sc.fundamental(metal, mm)
+        e, e_miss, e_legs = _sc.fear(met)
         stab, knife = _sc.stabilization(met)
         v = _sc.verdict(metal, f, e, reg["label"], stab, knife)
         missing = sorted(set(f_miss + e_miss))
@@ -170,6 +174,9 @@ def evaluate() -> dict[str, Any]:
             "fundamental": f,
             "fear": e,
             "verdict": v,
+            "reason": _sc.verdict_reason(metal, v, f, e, reg["label"],
+                                         stab, knife),
+            "legs": {"fundamental": f_legs, "fear": e_legs},
             "price": met.get("price"),
             "hi_52w": met.get("hi_52w"),
             "lo_52w": met.get("lo_52w"),
@@ -193,11 +200,35 @@ def evaluate() -> dict[str, Any]:
             "metals": metals}
 
 
+def _prev_payload() -> Optional[dict[str, Any]]:
+    """Previous journaled row for transition diffing."""
+    from app.database import db
+    try:
+        rows = db.execute_query(
+            "SELECT as_of, payload FROM metals_snapshots"
+            " WHERE as_of < :d ORDER BY as_of DESC LIMIT 1",
+            {"d": date.today()})
+        if not rows:
+            return None
+        p = rows[0].get("payload")
+        if isinstance(p, str):
+            p = json.loads(p)
+        p = p or {}
+        p["as_of"] = str(rows[0]["as_of"])
+        return p
+    except Exception:                                       # noqa: BLE001
+        return None
+
+
 def run() -> dict[str, Any]:
     """Compute + journal a metals_snapshots row. Daily cadence —
-    FRED series lag a day anyway; futures prices refresh nightly."""
+    FRED series lag a day anyway; futures prices refresh nightly.
+    Diffs against the prior journal row so the payload carries
+    'what just turned', not only 'what is'."""
     from app.database import db
+    prev = _prev_payload()
     st = evaluate()
+    st["transitions"] = _sc.transitions(prev, st)
     try:
         db.execute_update(
             "INSERT INTO metals_snapshots (as_of, macro_regime,"

@@ -64,6 +64,11 @@ export type MetalCard = {
   ret60?: number | null
   falling_knife?: boolean
   stabilized?: boolean | null
+  reason?: string
+  legs?: {
+    fundamental?: { name?: string; score?: number; weight?: number; value?: string }[]
+    fear?: { name?: string; score?: number; weight?: number; value?: string }[]
+  }
   thesis?: string
   recovery_drivers?: string[]
   invalidates_when?: string
@@ -83,6 +88,19 @@ export type MetalsPulse = {
     }
     gs_ratio_pctile?: number | null
     metals?: Record<string, MetalCard>
+    transitions?: {
+      as_of_prev?: string | null
+      macro_prev?: string | null
+      macro_now?: string | null
+      macro_flipped?: boolean
+      first_run?: boolean
+      metals?: Record<string, {
+        verdict_prev?: string | null
+        verdict_now?: string | null
+        newly_actionable?: boolean
+        fundamental_delta?: number | null
+      }>
+    }
   } | null
 }
 
