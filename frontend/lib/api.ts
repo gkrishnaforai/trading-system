@@ -332,7 +332,10 @@ export const api = {
   readiness: () => get<ReadinessBoard>('/readiness'),
   correctionAlarms: () => get<CorrectionAlarms>('/correction-alarms'),
   researchBoard: (sector = 'healthcare') =>
-    getRaw<{ success?: boolean; sector?: string; rows?: ResearchRow[] }>(
+    getRaw<{
+      success?: boolean; sector?: string; rows?: ResearchRow[];
+      llm_tier?: string
+    }>(
       `/admin/research/board?sector=${encodeURIComponent(sector)}`,
     ),
   researchReport: (sym: string) =>
@@ -446,6 +449,7 @@ export type ResearchRun = {
     hard_gates?: string[]
     evidence_coverage?: number | null
     evidence_state?: string | null
+    llm_tier?: string | null
     recommendation?: {
       action?: string; note?: string | null; flags?: string[]
       reason?: {

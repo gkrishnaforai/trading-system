@@ -2058,8 +2058,13 @@ def _best_product(report: dict) -> tuple:
 async def research_board(sector: str = "healthcare", limit: int = 300):
     """Sector stock list ranked by AI Tailwind score, then best-product
     strength. Unscored symbols sink to the bottom (NULLS LAST) — a
-    missing run is 'not yet researched', not zero."""
+    missing run is 'not yet researched', not zero. `llm_tier` reports
+    the extraction tier's CURRENT health — when it's down the whole
+    board reads research_incomplete and that is the tier, not the
+    evidence."""
     try:
+        from app.research import llm_health as _lh
+        llm = _lh.status()
         if sector == "fdce":
             from app.research import fdce as _fd
             syms = sorted(_fd.universe().keys())
@@ -2110,7 +2115,8 @@ async def research_board(sector: str = "healthcare", limit: int = 300):
         else:
             out.sort(key=lambda x: (-(x["ai_tailwind"] or -1),
                                     -x["product_score"], x["symbol"]))
-        return {"success": True, "sector": sector, "rows": out}
+        return {"success": True, "sector": sector, "rows": out,
+                "llm_tier": llm}
     except Exception as e:
         logger.error(f"research board: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -168,6 +168,14 @@ export default async function ResearchPage({
           <span>{unscored.length} awaiting run</span>
           {scored[0]?.as_of && <span>latest {scored[0].as_of}</span>}
         </div>
+        {res?.llm_tier && res.llm_tier !== 'up' && (
+          <p className="mb-3 rounded-lg border border-defensive/40 bg-defensive/10 px-3 py-2 text-xs text-defensive">
+            LLM extraction tier {res.llm_tier} — product/design-win/news
+            extraction is offline, so every run reads research_incomplete.
+            That is the tier, not the evidence; deterministic scores still
+            computed.
+          </p>
+        )}
         <ResearchControls />
       </header>
 

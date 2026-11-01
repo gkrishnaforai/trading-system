@@ -1540,6 +1540,12 @@ async function ResearchSection({ sym }: { sym: string }) {
           )}
         </div>
       )}
+      {run.report?.llm_tier && run.report.llm_tier !== 'up' && (
+        <p className="pt-2 text-xs text-defensive">
+          LLM extraction tier {run.report.llm_tier} at run time —
+          product/win/news evidence was offline, not merely thin
+        </p>
+      )}
       {run.report?.evidence_state && run.report.evidence_state !== 'sufficient' && (
         <p className="pt-2 text-xs text-caution">
           evidence {run.report.evidence_state}

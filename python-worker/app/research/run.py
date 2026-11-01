@@ -14,8 +14,8 @@ from datetime import date
 from typing import Optional
 
 from app.research import (challenge, commitments, design_wins,
-                          fdce, news_scan, observations, policy,
-                          relationships,
+                          fdce, llm_health, news_scan, observations,
+                          policy, relationships,
                           products, quarter, scores, sectors)
 
 logger = logging.getLogger(__name__)
@@ -59,9 +59,17 @@ def run(sym: str, sector: Optional[str] = None,
     # evidence hub as filings/pasted docs. Replay runs (as_of past)
     # skip it — injecting today's headlines into a historical replay
     # would violate point-in-time reproducibility.
+    # LLM tier probe — extraction paths are fail-soft, so a dead
+    # tier looks identical to thin evidence unless we measure it
+    # directly. When it's down we skip the LLM-dependent ingestion
+    # (news claims, relationship extraction) rather than paying a
+    # timeout per candidate; products/design_wins still run — their
+    # extract is fail-fast and existing journaled rows still count.
+    llm = llm_health.status()
     news_stats = None
     nsc = cfg.get("news_scan") or {}
-    if nsc.get("enabled") and as_of == date.today():
+    if (nsc.get("enabled") and as_of == date.today()
+            and llm == "up"):
         try:
             news_stats = news_scan.scan(sym, nsc)
         except Exception as exc:
@@ -104,7 +112,7 @@ def run(sym: str, sector: Optional[str] = None,
     # candidates. Replay runs skip it: a PIT snapshot may only read
     # the ledger as it stood, never mint new edges.
     rel_stats = None
-    if in_fdce and as_of == date.today():
+    if in_fdce and as_of == date.today() and llm == "up":
         try:
             rel_stats = relationships.extract(
                 sym, design_wins._claims(sym))
@@ -210,6 +218,7 @@ def run(sym: str, sector: Optional[str] = None,
                      "missing": all_missing},
         "evidence_coverage": ctx["evidence_coverage"],
         "evidence_state": evidence_state,
+        "llm_tier": llm,
         **({"news_scan": news_stats} if news_stats else {}),
         **({"relationship_extract": rel_stats} if rel_stats else {}),
         "rules_version": {"scores": [e["rules_version"]
