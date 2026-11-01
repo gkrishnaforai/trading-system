@@ -760,6 +760,20 @@ async def _j_liquidity() -> dict:
     return await asyncio.to_thread(liquidity_engine.run)
 
 
+async def _j_metals() -> dict:
+    """Metals Pulse — shared macro metals regime (real yields/DXY/
+    liquidity/credit/growth) + per-metal fundamental & fear scores →
+    accumulate/watch/wait/reduce, journaled to metals_snapshots.
+    Fear-entry engine: discounts are the window, intact structural
+    demand is the thesis. Stage-1 price/FRED legs only; supply-
+    demand legs (COT, inventories, flows) flagged stage-2, not faked."""
+    from app.metals import engine as metals_engine
+    st = await asyncio.to_thread(metals_engine.run)
+    return {"macro": st.get("macro", {}).get("label"),
+            "verdicts": {k: v.get("verdict")
+                         for k, v in (st.get("metals") or {}).items()}}
+
+
 async def _j_short_data() -> dict:
     """Massive short-data pull → short_interest / short_volume /
     share_float. Staleness-aware and rate-budgeted — the shared key
@@ -954,6 +968,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "correction-alarms": ("Correction-alarm engine",
                           _j_correction_alarms),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
+    "metals-pulse": ("Metals Pulse — regime + opportunity", _j_metals),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
     "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
     "lev-etf-swings": ("3x semis swing detector", _j_lev_swings),
@@ -2280,6 +2295,18 @@ async def morning_regime_report():
             pass
     return {"today": t,
             "record": await asyncio.to_thread(morning.record)}
+
+
+@router.get("/metals-pulse")
+async def metals_pulse_report():
+    """Metals Pulse — latest journaled dashboard (macro metals regime +
+    gold/silver/copper scores + verdicts). Lazy-evals on an empty
+    journal so first deploys don't wait for the nightly job."""
+    from app.metals import engine as metals_engine
+    latest = await asyncio.to_thread(metals_engine.read)
+    if latest is None:
+        latest = await asyncio.to_thread(metals_engine.run)
+    return {"today": latest}
 
 
 @router.get("/calls")

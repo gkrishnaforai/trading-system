@@ -36,11 +36,12 @@ function fmtDate(d?: string) {
 }
 
 export default async function RegimePage() {
-  const [posture, morning, tape, alarms] = await Promise.all([
+  const [posture, morning, tape, alarms, metals] = await Promise.all([
     api.posture(),
     api.morningRegime(),
     api.intraday(),
     api.correctionAlarms(),
+    api.metalsPulse(),
   ])
 
   const p = posture ?? {}
@@ -442,8 +443,8 @@ export default async function RegimePage() {
                 {typeof permissions.size_multiplier === 'number' && (
                   <span
                     className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono ${Number(permissions.size_multiplier) < 1
-                        ? 'border-caution/40 text-caution'
-                        : 'border-hairline text-muted'
+                      ? 'border-caution/40 text-caution'
+                      : 'border-hairline text-muted'
                       }`}
                   >
                     size ×{Number(permissions.size_multiplier).toFixed(2)}
@@ -1096,6 +1097,130 @@ export default async function RegimePage() {
           </div>
         </section>
       )}
+
+      {/* Metals pulse — two-layer engine: shared macro metals regime
+          + per-metal fundamental/fear scores. Fear is the entry
+          window; intact structural demand is the thesis. Verdicts are
+          advisory accumulation reads, never orders. */}
+      {metals?.today?.metals &&
+        Object.keys(metals.today.metals).length > 0 && (
+          <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+            <div className="flex items-baseline justify-between">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+                Metals pulse
+              </div>
+              <div className="flex items-baseline gap-3">
+                {metals.today.macro?.label && (
+                  <Chip
+                    label={metals.today.macro.label.replace(/_/g, ' ')}
+                    tone={
+                      metals.today.macro.label === 'precious_bullish' ||
+                        metals.today.macro.label === 'industrial_bullish'
+                        ? 'ok'
+                        : metals.today.macro.label === 'neutral'
+                          ? 'off'
+                          : 'warn'
+                    }
+                  />
+                )}
+                {metals.today.age_days != null && (
+                  <span className="font-mono text-[11px] text-faint">
+                    {metals.today.age_days}d old
+                  </span>
+                )}
+              </div>
+            </div>
+            {Array.isArray(metals.today.macro?.drivers) &&
+              metals.today.macro.drivers.length > 0 && (
+                <p className="pt-2 text-[11px] text-muted">
+                  {metals.today.macro.drivers.join(' · ')}
+                </p>
+              )}
+            <div className="pt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {Object.entries(metals.today.metals).map(([k, m]) => {
+                const vTone =
+                  m.verdict === 'strong_accumulate' ||
+                    m.verdict === 'accumulate'
+                    ? 'text-constructive'
+                    : m.verdict === 'reduce'
+                      ? 'text-defensive'
+                      : 'text-neutral'
+                const pos =
+                  m.hi_52w != null && m.lo_52w != null && m.price != null &&
+                    m.hi_52w > m.lo_52w
+                    ? Math.round(
+                      ((m.price - m.lo_52w) / (m.hi_52w - m.lo_52w)) * 100,
+                    )
+                    : null
+                return (
+                  <div key={k} className="rounded-lg border border-hairline px-4 py-3">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[12px] font-medium uppercase tracking-wider text-ink">
+                        {k}
+                      </span>
+                      <span className={`font-mono text-[12px] ${vTone}`}>
+                        {(m.verdict ?? '—').replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                    <div className="pt-2 flex items-baseline gap-4">
+                      <span className="font-mono text-lg text-ink">
+                        {m.opportunity != null ? m.opportunity : '—'}
+                      </span>
+                      <span className="font-mono text-[10px] text-faint">
+                        fund {m.fundamental ?? '—'} · fear {m.fear ?? '—'}
+                      </span>
+                      {pos != null && (
+                        <span className="ml-auto font-mono text-[10px] text-faint">
+                          {pos}% of 52w range
+                        </span>
+                      )}
+                    </div>
+                    <div className="pt-1 flex items-baseline gap-3 font-mono text-[10px] text-faint">
+                      {m.price != null && <span>{m.price}</span>}
+                      {m.off_52w_high_pct != null && (
+                        <span>
+                          {(m.off_52w_high_pct * 100).toFixed(1)}% off high
+                        </span>
+                      )}
+                      {m.rsi14 != null && (
+                        <span>rsi {Math.round(m.rsi14)}</span>
+                      )}
+                      {k === 'silver' && metals.today?.gs_ratio_pctile != null && (
+                        <span>G/S {Math.round(metals.today.gs_ratio_pctile)}th pctl</span>
+                      )}
+                      {m.falling_knife && (
+                        <span className="text-caution">falling knife</span>
+                      )}
+                    </div>
+                    {m.thesis && (
+                      <p className="pt-2 text-[10px] leading-relaxed text-muted">
+                        {m.thesis}
+                      </p>
+                    )}
+                    {Array.isArray(m.recovery_drivers) &&
+                      m.recovery_drivers.length > 0 && (
+                        <p className="pt-1 text-[10px] text-faint">
+                          reprices on: {m.recovery_drivers[0]}
+                          {m.recovery_drivers.length > 1 &&
+                            ` · ${m.recovery_drivers[1]}`}
+                        </p>
+                      )}
+                    {Array.isArray(m.missing) && m.missing.length > 0 && (
+                      <p className="pt-1 text-[10px] text-faint">
+                        missing: {m.missing.slice(0, 3).join(', ')}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <p className="pt-3 text-[10px] text-faint">
+              nightly · fear entry needs intact fundamentals — supply
+              fundamentals (COT, inventories, ETF flows) pending stage 2,
+              flagged per metal · advisory, never an order
+            </p>
+          </section>
+        )}
 
       {/* expandable depth */}
       <div className="mt-10">

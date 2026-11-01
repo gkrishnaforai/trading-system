@@ -50,6 +50,42 @@ export type MorningRegime = {
   record?: Array<Record<string, unknown>>
 }
 
+export type MetalCard = {
+  opportunity?: number | null
+  fundamental?: number | null
+  fear?: number | null
+  verdict?: string
+  price?: number | null
+  hi_52w?: number | null
+  lo_52w?: number | null
+  off_52w_high_pct?: number | null
+  rsi14?: number | null
+  ret20?: number | null
+  ret60?: number | null
+  falling_knife?: boolean
+  stabilized?: boolean | null
+  thesis?: string
+  recovery_drivers?: string[]
+  invalidates_when?: string
+  missing?: string[]
+  stage2_pending?: string[]
+  price_as_of?: string
+}
+
+export type MetalsPulse = {
+  today?: {
+    as_of?: string
+    age_days?: number
+    macro?: {
+      label?: string
+      drivers?: string[]
+      components?: Record<string, unknown>
+    }
+    gs_ratio_pctile?: number | null
+    metals?: Record<string, MetalCard>
+  } | null
+}
+
 export type MacroEvent = {
   title?: string
   name?: string
@@ -267,6 +303,7 @@ export async function getRaw<T>(
 export const api = {
   posture: () => get<Posture>('/posture'),
   morningRegime: () => get<MorningRegime>('/morning-regime'),
+  metalsPulse: () => get<MetalsPulse>('/metals-pulse'),
   macroEvents: () =>
     get<{ events?: MacroEvent[] } | MacroEvent[]>('/macro-events'),
   daily: () => get<DailyBoard>('/daily'),
