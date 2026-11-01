@@ -88,3 +88,51 @@ THEME_SENSITIVITY = {
         "_note": "generic equity theme",
     },
 }
+
+# Curated one-line "why this name" for pool candidates — the analyst
+# note the tier-based template can't supply. Keyed by symbol; absent
+# symbols fall back to the generated tier note.
+SYMBOL_WHY = {
+    "MYRG":  "T&D construction EPC — grid build-out is contracted "
+             "backlog, not hope",
+    "IESC":  "datacenter + grid electrical integrator — dual exposure "
+             "to both demand legs",
+    "NVEE":  "grid engineering/consulting — upstream signal before "
+             "EPC awards land",
+    "PLPC":  "transmission/distribution hardware — small pure-play, "
+             "thin coverage",
+    "AMBA":  "edge-AI vision SoCs — inference at the edge "
+             "(auto/IoT/security)",
+    "SYNA":  "edge AI SoC + sensing — device-level inference silicon",
+    "CEVA":  "DSP/edge-AI IP licensing — royalty model on edge "
+             "inference volume",
+    "VLN":   "high-speed connectivity for auto/industrial AI — "
+             "speculative link",
+    "AAOI":  "datacenter transceivers — mid-cap optical exposure "
+             "to AI bandwidth",
+    "POET":  "photonic interposer — CPO-adjacent, unproven economics",
+    "LPTH":  "infrared optics — adjacent optical chain, small",
+    "NVTS":  "GaN/SiC power conversion — efficiency layer for DC "
+             "power density",
+    "AEIS":  "precision power for semi/DC — the conversion layer",
+    "POWI":  "high-voltage power ICs — board-level efficiency",
+    "ACLS":  "ion implant incl. SiC — power-device capex adjacency",
+    "SIMO":  "NAND controllers — memory-interface derivative on AI "
+             "storage growth",
+    "ICHR":  "gas/fluid delivery into semi equip — picks-and-shovels",
+    "UCTT":  "ultra-clean subsystems — same leverage, higher beta",
+    "COHU":  "test/handlers — HBM & advanced-package test exposure",
+    "OUST":  "digital lidar — robot/machine-vision perception",
+    "ARBE":  "4D imaging radar — autonomy perception silicon",
+    "INVZ":  "automotive lidar — thin commercial traction",
+    "RR":    "service robots — very speculative, revenue tiny",
+    "GTLB":  "DevOps platform monetizing AI code-gen — real seats",
+    "PATH":  "automation + agentic workflows — enterprise AI plumbing",
+    "AI":    "enterprise AI apps — narrative-rich, execution-thin",
+    "BBAI":  "defense/intel AI analytics — contract-driven, lumpy",
+    "SOUN":  "voice AI — consumer/restaurant demand, unprofitable",
+    "IRDM":  "satcom operator — recurring revenue, less binary",
+    "RDW":   "space infrastructure components — manufacturing spec",
+    "BKSY":  "earth-observation + AI analytics — defense demand",
+    "SPIR":  "satellite data subscription — small, cash-burning",
+}

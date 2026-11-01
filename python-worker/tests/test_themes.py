@@ -173,3 +173,26 @@ class TestPoolAndRoles:
         # the pool is the funnel, not a different standard
         s = index_builder.constituent_score(_member("POOL", bs=85))
         assert s is not None and s > 60
+
+
+class TestAdviceAndWhy:
+    def test_advice_maps_stance_to_target(self):
+        assert index_builder.advice("accumulate_candidate", 0.042) == \
+            "build toward 4.2%"
+        assert index_builder.advice("trim_candidate", 0.05) == \
+            "trim — reduce toward core size"
+        assert index_builder.advice("research_incomplete", 0.0) == \
+            "research — evidence too thin to size"
+        assert index_builder.advice(None, 0.03) == "no stance yet"
+
+    def test_pool_note_curated_why_leads(self):
+        n = index_builder.pool_note(
+            "pure", "x", {"business_strength": 60.0},
+            why="T&D construction EPC — contracted backlog")
+        assert n.startswith("T&D construction EPC")
+        assert "direct theme exposure" in n
+        assert "bs 60" in n
+
+    def test_pool_note_without_why_falls_back(self):
+        n = index_builder.pool_note("speculative", "x", {})
+        assert n.startswith("speculative pure-play")

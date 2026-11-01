@@ -133,6 +133,8 @@ export type ThemeCard = {
       score?: number
       role?: string
       stance?: string | null
+      advice?: string
+      reason?: string
     }[]
   }
   pool?: {
@@ -141,6 +143,11 @@ export type ThemeCard = {
     score?: number | null
     note?: string
     stance?: string | null
+    stance_reason?: {
+      meaning?: string | null
+      because?: string[]
+      gaps?: string[]
+    } | null
     business_strength?: number | null
     fv_upside_pct?: number | null
     est_revision_pct?: number | null

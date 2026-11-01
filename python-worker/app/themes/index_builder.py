@@ -126,9 +126,10 @@ def role(weight: Optional[float], exposure: Optional[str]) -> str:
 
 
 def pool_note(tier: Optional[str], thesis: Optional[str],
-              m: dict) -> str:
-    """Why this name is in the pool + what we'd need to see. Tier
-    drives the expectation frame; live facts append the scorecard."""
+              m: dict, why: Optional[str] = None) -> str:
+    """Why this name is in the pool + what we'd need to see. A
+    curated `why` leads when present; the tier frame still sets the
+    expectation; live facts append the scorecard."""
     base = {
         "pure": "direct theme exposure — expecting the thesis to "
                 "show in revenue mix",
@@ -138,6 +139,8 @@ def pool_note(tier: Optional[str], thesis: Optional[str],
                        "thesis converts; small size only, expecting "
                        "proof of economics before promotion",
     }.get(tier or "", "theme candidate")
+    if why:
+        base = f"{why} — {base.split(' — ')[0]}"
     facts = []
     if m.get("business_strength") is not None:
         facts.append(f"bs {m['business_strength']:.0f}")
@@ -147,3 +150,30 @@ def pool_note(tier: Optional[str], thesis: Optional[str],
         facts.append(f"rev {m['est_revision_pct']:+.0f}%")
     tail = f" ({', '.join(facts)})" if facts else " (no evidence yet)"
     return base + tail
+
+
+# --- sizing advisory — stance → what to do about the sleeve weight --------
+
+_ADVICE = {
+    "accumulate_candidate": "build toward {w}%",
+    "starter_candidate": "scale toward {w}%",
+    "hold_review": "hold ~{w}%",
+    "watch": "hold ~{w}% — watch for better entry",
+    "trim_candidate": "trim — reduce toward core size",
+    "exit_risk": "exit review — hard gate fired",
+    "exit_thesis": "exit review — thesis broken",
+    "research": "research — no position action",
+    "research_incomplete": "research — evidence too thin to size",
+}
+
+
+def advice(stance: Optional[str], weight: Optional[float]) -> str:
+    """Target-weight advisory: the index weight IS the size answer —
+    stance says whether to move toward it, hold it, or leave."""
+    if not stance:
+        return "no stance yet"
+    tmpl = _ADVICE.get(stance)
+    if tmpl is None:
+        return stance.replace("_", " ")
+    w = f"{(weight or 0.0) * 100:.1f}"
+    return tmpl.format(w=w)

@@ -23,6 +23,7 @@ from app.metals.engine import _fred_chg
 from . import index_builder as _ib
 from . import opportunity as _opp
 from . import scenarios as _sc
+from .narratives import SYMBOL_WHY
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +50,29 @@ def _member_facts(symbols: list[str]) -> dict[str, dict]:
     try:
         for r in db.execute_query(
                 "SELECT DISTINCT ON (symbol) symbol,"
-                " ai_tailwind_score, business_strength, recommendation"
+                " ai_tailwind_score, business_strength, recommendation,"
+                " report"
                 " FROM research_runs WHERE symbol=ANY(:s)"
                 " ORDER BY symbol, as_of DESC", {"s": symbols}):
+            rp = r.get("report")
+            if isinstance(rp, str):
+                try:
+                    rp = json.loads(rp)
+                except Exception:                           # noqa: BLE001
+                    rp = {}
+            rec = (rp or {}).get("recommendation") or {}
+            reason = rec.get("reason") or {}
             facts[r["symbol"]].update(
                 ai_tailwind=_f(r.get("ai_tailwind_score")),
                 business_strength=_f(r.get("business_strength")),
-                recommendation=r.get("recommendation"))
+                recommendation=r.get("recommendation"),
+                # the why — matched conditions + missing evidence,
+                # same block the stock page shows under the stance
+                stance_reason={
+                    "meaning": reason.get("meaning") or rec.get("note"),
+                    "because": reason.get("because") or [],
+                    "gaps": reason.get("gaps") or [],
+                })
     except Exception as e:                                  # noqa: BLE001
         logger.debug("themes research facts: %s", e)
     try:
@@ -182,8 +199,10 @@ def evaluate() -> dict[str, Any]:
             pool_rows.append({
                 "symbol": sym, "exposure": tier,
                 "score": _ib.constituent_score(f),
-                "note": _ib.pool_note(tier, t.get("thesis"), f),
+                "note": _ib.pool_note(tier, t.get("thesis"), f,
+                                      SYMBOL_WHY.get(sym)),
                 "stance": f.get("recommendation"),
+                "stance_reason": f.get("stance_reason"),
                 "business_strength": f.get("business_strength"),
                 "fv_upside_pct": f.get("fv_upside_pct"),
                 "est_revision_pct": f.get("est_revision_pct"),
@@ -207,7 +226,13 @@ def evaluate() -> dict[str, Any]:
                                    w, (mmap.get(s) or {})
                                    .get("exposure")),
                                "stance": (mmap.get(s) or {})
-                               .get("recommendation")}
+                               .get("recommendation"),
+                               "advice": _ib.advice(
+                                   (mmap.get(s) or {})
+                                   .get("recommendation"), w),
+                               "reason": ((mmap.get(s) or {})
+                                          .get("stance_reason")
+                                          or {}).get("meaning")}
                               for s, w in idx["quality"]["weights"]
                               .items()]},
             "pool": pool_rows,

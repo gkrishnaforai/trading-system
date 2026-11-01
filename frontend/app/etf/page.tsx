@@ -77,25 +77,37 @@ function EtfBlock({ k, t }: { k: string; t: ThemeCard }) {
           </div>
           {rows.map((r) => (
             <div key={r.symbol}
-              className="grid grid-cols-[3rem_3.5rem_1fr_6.5rem] sm:grid-cols-[3rem_3.5rem_1fr_8rem_6.5rem] gap-x-3 items-baseline py-1 border-t border-hairline/40">
-              <Link
-                href={`/stock?sym=${encodeURIComponent(r.symbol ?? '')}`}
-                className="font-mono text-[11px] text-ink hover:text-accent"
-              >
-                {r.symbol}
-              </Link>
-              <span className="font-mono text-[11px] text-muted text-right">
-                {r.weight != null ? `${(r.weight * 100).toFixed(1)}%` : '—'}
-              </span>
-              <span className="hidden sm:block truncate text-[10px] text-faint">
-                {r.role ?? ''}
-              </span>
-              <span>
-                <StanceChip stance={r.stance} />
-              </span>
-              <span className="hidden sm:block font-mono text-[10px] text-faint text-right">
-                {r.score ?? '—'}
-              </span>
+              className="border-t border-hairline/40 py-1.5">
+              <div className="grid grid-cols-[3rem_3.5rem_1fr_6.5rem] sm:grid-cols-[3rem_3.5rem_1fr_8rem_6.5rem] gap-x-3 items-baseline">
+                <Link
+                  href={`/stock?sym=${encodeURIComponent(r.symbol ?? '')}`}
+                  className="font-mono text-[11px] text-ink hover:text-accent"
+                >
+                  {r.symbol}
+                </Link>
+                <span className="font-mono text-[11px] text-muted text-right">
+                  {r.weight != null ? `${(r.weight * 100).toFixed(1)}%` : '—'}
+                </span>
+                <span className="hidden sm:block truncate text-[10px] text-faint">
+                  {r.role ?? ''}
+                </span>
+                <span>
+                  <StanceChip stance={r.stance} />
+                </span>
+                <span className="hidden sm:block font-mono text-[10px] text-faint text-right">
+                  {r.score ?? '—'}
+                </span>
+              </div>
+              {(r.advice || r.reason) && (
+                <div className="pl-[3rem] pt-0.5 flex flex-wrap gap-x-3 text-[9.5px]">
+                  {r.advice && (
+                    <span className="text-muted">{r.advice}</span>
+                  )}
+                  {r.reason && (
+                    <span className="text-faint truncate">{r.reason}</span>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
