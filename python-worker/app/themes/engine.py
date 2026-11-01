@@ -49,12 +49,13 @@ def _member_facts(symbols: list[str]) -> dict[str, dict]:
     try:
         for r in db.execute_query(
                 "SELECT DISTINCT ON (symbol) symbol,"
-                " ai_tailwind_score, business_strength"
+                " ai_tailwind_score, business_strength, recommendation"
                 " FROM research_runs WHERE symbol=ANY(:s)"
                 " ORDER BY symbol, as_of DESC", {"s": symbols}):
             facts[r["symbol"]].update(
                 ai_tailwind=_f(r.get("ai_tailwind_score")),
-                business_strength=_f(r.get("business_strength")))
+                business_strength=_f(r.get("business_strength")),
+                recommendation=r.get("recommendation"))
     except Exception as e:                                  # noqa: BLE001
         logger.debug("themes research facts: %s", e)
     try:
@@ -145,8 +146,11 @@ def evaluate() -> dict[str, Any]:
     from app.signals.future_themes import registry
     reg = registry()
     members_by_theme = _members(reg)
-    all_syms = sorted({s for ms in members_by_theme.values()
-                       for s in ms})
+    pool_by_theme = {k: set((t.get("pool") or {}).keys())
+                     for k, t in reg.items()}
+    all_syms = sorted(
+        {s for ms in members_by_theme.values() for s in ms}
+        | {s for ps in pool_by_theme.values() for s in ps})
     facts = _member_facts(all_syms)
     spy = facts.pop("__spy__", {})
     probs = _sc.probabilities(_macro_inputs())
@@ -166,6 +170,25 @@ def evaluate() -> dict[str, Any]:
         sc_eval = _sc.evaluate_theme(key, probs)
         opp = _opp.score(key, legs, sc_eval["expected"])
         idx = _ib.build(key, mems)
+        mmap = {m["symbol"]: m for m in mems}
+        # the candidate pool — ranked, noted, never weighted: pool
+        # names earn index membership by promotion, not by count
+        pool_rows = []
+        for sym in sorted(pool_by_theme.get(key, ())):
+            f = dict(facts.get(sym) or {})
+            f["symbol"] = sym
+            tier = (t.get("pool") or {}).get(sym)
+            f["exposure"] = tier
+            pool_rows.append({
+                "symbol": sym, "exposure": tier,
+                "score": _ib.constituent_score(f),
+                "note": _ib.pool_note(tier, t.get("thesis"), f),
+                "stance": f.get("recommendation"),
+                "business_strength": f.get("business_strength"),
+                "fv_upside_pct": f.get("fv_upside_pct"),
+                "est_revision_pct": f.get("est_revision_pct"),
+            })
+        pool_rows.sort(key=lambda r: (r["score"] or -1), reverse=True)
         themes[key] = {
             "name": t.get("name"), "stage": t.get("stage"),
             "thesis": t.get("thesis"),
@@ -176,12 +199,18 @@ def evaluate() -> dict[str, Any]:
             "index": {"pure_n": idx["pure"]["n"],
                       "quality_n": idx["quality"]["n"],
                       "ineligible": idx["ineligible"],
+                      "weights": idx["quality"]["weights"],
                       "top": [{"symbol": s, "weight": w,
                                "score": idx["quality"]
-                               ["scores"].get(s)}
-                              for s, w in list(
-                                  idx["quality"]["weights"]
-                                  .items())[:8]]},
+                               ["scores"].get(s),
+                               "role": _ib.role(
+                                   w, (mmap.get(s) or {})
+                                   .get("exposure")),
+                               "stance": (mmap.get(s) or {})
+                               .get("recommendation")}
+                              for s, w in idx["quality"]["weights"]
+                              .items()]},
+            "pool": pool_rows,
             "_weights": idx,
         }
     return {"as_of": str(date.today()),

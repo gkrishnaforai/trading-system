@@ -65,7 +65,9 @@ FUTURE_THEMES = {
         "stage": "inflecting",
         "members": {"ALAB": "pure", "MRVL": "pure", "ARM": "pure",
                     "QCOM": "derivative", "AVGO": "derivative",
-                    "MU": "derivative", "TSM": "derivative"}},
+                    "MU": "derivative", "TSM": "derivative"},
+        "pool": {"AMBA": "derivative", "SYNA": "derivative",
+                 "CEVA": "speculative", "VLN": "speculative"}},
     "ai_optics": {
         "name": "Optical interconnect / CPO",
         "thesis": "GPU clusters outgrow copper — co-packaged optics "
@@ -73,7 +75,9 @@ FUTURE_THEMES = {
         "stage": "emerging",
         "members": {"COHR": "pure", "LITE": "pure", "FN": "pure",
                     "CIEN": "derivative", "MRVL": "derivative",
-                    "ALAB": "derivative", "AVGO": "derivative"}},
+                    "ALAB": "derivative", "AVGO": "derivative"},
+        "pool": {"AAOI": "derivative",
+                 "POET": "speculative", "LPTH": "speculative"}},
     "dc_power_cooling": {
         "name": "DC power & cooling",
         "thesis": "MW/rack is exploding — liquid cooling, power "
@@ -81,7 +85,9 @@ FUTURE_THEMES = {
         "stage": "inflecting",
         "members": {"VRT": "pure", "MOD": "pure", "TT": "pure",
                     "POWL": "pure", "NVT": "derivative",
-                    "ETN": "derivative", "JCI": "derivative"}},
+                    "ETN": "derivative", "JCI": "derivative"},
+        "pool": {"NVTS": "derivative", "AEIS": "derivative",
+                 "POWI": "derivative"}},
     "grid_electrification": {
         "name": "Grid & electrification",
         "thesis": "AI load + reshoring overload a 50-year-old grid — "
@@ -89,7 +95,9 @@ FUTURE_THEMES = {
                   "of backlog",
         "stage": "inflecting",
         "members": {"PWR": "pure", "GEV": "pure", "ETN": "pure",
-                    "POWL": "derivative", "VRT": "derivative"}},
+                    "POWL": "derivative", "VRT": "derivative"},
+        "pool": {"MYRG": "pure", "IESC": "derivative",
+                 "NVEE": "derivative", "PLPC": "speculative"}},
     "hbm_memory": {
         "name": "HBM & AI memory chain",
         "thesis": "every accelerator ships with more HBM; supply is "
@@ -98,14 +106,19 @@ FUTURE_THEMES = {
         "members": {"MU": "pure", "SNDK": "pure", "WDC": "derivative",
                     "AMAT": "derivative", "LRCX": "derivative",
                     "KLAC": "derivative", "ONTO": "pure",
-                    "CAMT": "pure", "ACMR": "derivative"}},
+                    "CAMT": "pure", "ACMR": "derivative"},
+        "pool": {"ACLS": "derivative", "SIMO": "derivative",
+                 "ICHR": "speculative", "UCTT": "speculative",
+                 "COHU": "speculative"}},
     "robotics_edge": {
         "name": "Robotics & physical AI",
         "thesis": "inference leaves the data center — warehouse "
                   "robots, humanoids, machine vision",
         "stage": "emerging",
         "members": {"SYM": "pure", "SERV": "pure", "ISRG": "pure",
-                    "TER": "derivative", "FANUY": "derivative"}},
+                    "TER": "derivative", "FANUY": "derivative"},
+        "pool": {"OUST": "speculative", "ARBE": "speculative",
+                 "INVZ": "speculative", "RR": "speculative"}},
     "ai_software": {
         "name": "AI software monetization",
         "thesis": "the capex must earn — platforms that convert AI "
@@ -113,14 +126,20 @@ FUTURE_THEMES = {
         "stage": "inflecting",
         "members": {"PLTR": "pure", "RBRK": "pure", "SNOW": "pure",
                     "DDOG": "derivative", "CRWD": "derivative",
-                    "NOW": "derivative", "CRM": "derivative"}},
+                    "NOW": "derivative", "CRM": "derivative"},
+        "pool": {"GTLB": "derivative", "PATH": "derivative",
+                 "AI": "speculative", "BBAI": "speculative",
+                 "SOUN": "speculative"}},
     "space_defense": {
         "name": "Space, launch & defense tech",
         "thesis": "launch costs collapse + defense autonomy budgets "
                   "expand — dual-use demand",
         "stage": "emerging",
         "members": {"RKLB": "pure", "PL": "pure", "LUNR": "pure",
-                    "AVAV": "pure", "KTOS": "derivative"}},
+                    "AVAV": "pure", "KTOS": "derivative"},
+        "pool": {"IRDM": "derivative",
+                 "RDW": "speculative", "BKSY": "speculative",
+                 "SPIR": "speculative"}},
 }
 _STAGE_W = {"emerging": 30, "inflecting": 24, "mainstream": 15,
             "watching": 10}

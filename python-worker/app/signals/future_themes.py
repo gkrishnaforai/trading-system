@@ -65,13 +65,15 @@ def _seed_registry():
     for key, t in FUTURE_THEMES.items():
         db.execute_update(
             "INSERT INTO theme_registry (theme_key, name, thesis,"
-            " stage, status, members, keywords, source)"
+            " stage, status, members, keywords, source, pool)"
             " VALUES (:k,:n,:th,:st,'active',CAST(:m AS jsonb),"
-            " CAST(:kw AS jsonb),'seed')"
-            " ON CONFLICT (theme_key) DO NOTHING",
+            " CAST(:kw AS jsonb),'seed',CAST(:p AS jsonb))"
+            " ON CONFLICT (theme_key) DO UPDATE SET"
+            " pool=EXCLUDED.pool",        # code-seeded pool syncs;
             {"k": key, "n": t["name"], "th": t.get("thesis"),
              "st": t["stage"], "m": json.dumps(t["members"]),
-             "kw": json.dumps(_KEYWORDS.get(key) or [])})
+             "kw": json.dumps(_KEYWORDS.get(key) or []),
+             "p": json.dumps(t.get("pool") or {})})
 
 
 def registry(include_candidates: bool = False) -> dict[str, dict]:
@@ -84,18 +86,22 @@ def registry(include_candidates: bool = False) -> dict[str, dict]:
         status = "('active','candidate')" if include_candidates \
             else "('active')"
         rows = db.execute_query(
-            f"SELECT theme_key, name, thesis, stage, status, members"
-            f" FROM theme_registry WHERE status IN {status}")
+            f"SELECT theme_key, name, thesis, stage, status, members,"
+            f" pool FROM theme_registry WHERE status IN {status}")
         out = {}
         for r in rows:
             mem = r.get("members") or {}
             if isinstance(mem, str):
                 mem = json.loads(mem)
+            pool = r.get("pool") or {}
+            if isinstance(pool, str):
+                pool = json.loads(pool)
             out[r["theme_key"]] = {"name": r["name"],
                                    "thesis": r.get("thesis"),
                                    "stage": r["stage"],
                                    "status": r["status"],
-                                   "members": mem}
+                                   "members": mem,
+                                   "pool": pool}
         if out:
             return out
     except Exception as exc:

@@ -109,3 +109,41 @@ def build(theme_key: str, members: list[dict]) -> dict[str, Any]:
             "quality": {"weights": qual_w, "scores": scored,
                         "n": len(qual_w)},
             "ineligible": [m["symbol"] for m in ineligible]}
+
+
+# --- notes — why this stock is on the list and what we expect --------------
+
+def role(weight: Optional[float], exposure: Optional[str]) -> str:
+    """Index member's job in the sleeve — anchor/core/satellite from
+    weight × tier."""
+    w = weight or 0.0
+    pos = "anchor" if w >= 0.045 else "core" if w >= 0.02 \
+        else "satellite"
+    tier = {"pure": "pure-play", "derivative": "derivative",
+            "speculative": "speculative"}.get(exposure or "",
+                                              "member")
+    return f"{tier} {pos}"
+
+
+def pool_note(tier: Optional[str], thesis: Optional[str],
+              m: dict) -> str:
+    """Why this name is in the pool + what we'd need to see. Tier
+    drives the expectation frame; live facts append the scorecard."""
+    base = {
+        "pure": "direct theme exposure — expecting the thesis to "
+                "show in revenue mix",
+        "derivative": "adjacent exposure — benefits if theme spend "
+                      "broadens; expecting mix shift, not a pure bet",
+        "speculative": "speculative pure-play — binary upside if the "
+                       "thesis converts; small size only, expecting "
+                       "proof of economics before promotion",
+    }.get(tier or "", "theme candidate")
+    facts = []
+    if m.get("business_strength") is not None:
+        facts.append(f"bs {m['business_strength']:.0f}")
+    if m.get("fv_upside_pct") is not None:
+        facts.append(f"upside {m['fv_upside_pct']:+.0f}%")
+    if m.get("est_revision_pct") is not None:
+        facts.append(f"rev {m['est_revision_pct']:+.0f}%")
+    tail = f" ({', '.join(facts)})" if facts else " (no evidence yet)"
+    return base + tail

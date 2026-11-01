@@ -148,3 +148,28 @@ class TestIndexBuilder:
         mems = [_member("AAA"), _member("BBB")]
         idx = index_builder.build("t", mems)
         assert idx["quality"]["n"] == 2       # never padded to 40
+
+
+class TestPoolAndRoles:
+    def test_pool_note_carries_tier_and_facts(self):
+        n = index_builder.pool_note(
+            "speculative", "x", {"business_strength": 45.0,
+                                 "fv_upside_pct": 60.0})
+        assert "speculative" in n and "bs 45" in n and "+60%" in n
+
+    def test_pool_note_no_evidence_honest(self):
+        n = index_builder.pool_note("pure", "x", {})
+        assert "no evidence yet" in n
+
+    def test_role_from_weight_and_tier(self):
+        assert index_builder.role(0.05, "pure") == "pure-play anchor"
+        assert index_builder.role(0.03, "derivative") == \
+            "derivative core"
+        assert index_builder.role(0.008, "speculative") == \
+            "speculative satellite"
+
+    def test_pool_symbols_score_same_as_members(self):
+        # pool names are scored by the same constituent_score —
+        # the pool is the funnel, not a different standard
+        s = index_builder.constituent_score(_member("POOL", bs=85))
+        assert s is not None and s > 60

@@ -113,11 +113,56 @@ function ThemeRow({ k, t }: { k: string; t: ThemeCard }) {
             {t.index.pure_n != null && ` · pure ${t.index.pure_n}`}
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1">
-            {t.index.top.map((c) => (
+            {t.index.top.slice(0, 8).map((c) => (
               <div key={c.symbol} className="flex items-baseline justify-between font-mono text-[11px]">
-                <span className="text-ink">{c.symbol}</span>
+                <span className="text-ink">
+                  {c.symbol}
+                  {c.role && (
+                    <span className="ml-1 text-[8px] text-faint normal-case">
+                      {c.role}
+                    </span>
+                  )}
+                </span>
                 <span className="text-faint">
                   {c.weight != null ? `${(c.weight * 100).toFixed(1)}%` : '—'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* candidate pool — ranked, noted, never weighted. Promotion
+          into the index is a decision, not a count to hit. */}
+      {Array.isArray(t.pool) && t.pool.length > 0 && (
+        <div className="pt-3 border-t border-hairline/60 mt-3">
+          <div className="text-[9px] uppercase tracking-wider text-faint pb-1.5">
+            candidate pool · {t.pool.length} watching
+          </div>
+          <div className="space-y-1">
+            {t.pool.map((c) => (
+              <div key={c.symbol}
+                className="flex items-baseline gap-2 text-[10px]">
+                <span className="font-mono text-ink w-14 shrink-0">
+                  {c.symbol}
+                </span>
+                <span className="font-mono text-faint w-8 shrink-0">
+                  {c.score ?? '—'}
+                </span>
+                {c.exposure && (
+                  <span className={`rounded px-1 py-px text-[8px] uppercase tracking-wider shrink-0 ${
+                    c.exposure === 'pure'
+                      ? 'bg-constructive/15 text-constructive'
+                      : c.exposure === 'speculative'
+                        ? 'bg-caution/15 text-caution'
+                        : 'bg-hairline/60 text-muted'
+                  }`}>
+                    {c.exposure}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1 truncate text-muted"
+                  title={c.note}>
+                  {c.note}
                 </span>
               </div>
             ))}

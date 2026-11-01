@@ -126,8 +126,25 @@ export type ThemeCard = {
     pure_n?: number
     quality_n?: number
     ineligible?: string[]
-    top?: { symbol?: string; weight?: number; score?: number }[]
+    weights?: Record<string, number>
+    top?: {
+      symbol?: string
+      weight?: number
+      score?: number
+      role?: string
+      stance?: string | null
+    }[]
   }
+  pool?: {
+    symbol?: string
+    exposure?: string
+    score?: number | null
+    note?: string
+    stance?: string | null
+    business_strength?: number | null
+    fv_upside_pct?: number | null
+    est_revision_pct?: number | null
+  }[]
   _weights?: {
     pure?: { weights?: Record<string, number>; n?: number }
     quality?: { weights?: Record<string, number>; scores?: Record<string, number>; n?: number }
