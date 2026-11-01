@@ -221,7 +221,7 @@ class TestTransitions:
                          {"gold": ("accumulate", 68, 65)})
         t = scoring.transitions(prev, now)
         assert t["macro_flipped"]
-        assert t["metals"]["gold"]["newly_actionable"]
+        assert t["assets"]["gold"]["newly_actionable"]
 
     def test_fundamental_cross_while_discounted(self):
         # verdict unchanged at watch→watch is skipped, but a cross
@@ -232,14 +232,14 @@ class TestTransitions:
         now = self._snap("precious_bullish",
                          {"silver": ("watch_starter", 63, 66)})
         t = scoring.transitions(prev, now)
-        assert t["metals"]["silver"]["newly_actionable"]
+        assert t["assets"]["silver"]["newly_actionable"]
 
     def test_quiet_day_no_flags(self):
         prev = self._snap("neutral", {"gold": ("accumulate", 70, 62)})
         now = self._snap("neutral", {"gold": ("accumulate", 71, 62)})
         t = scoring.transitions(prev, now)
         assert not t["macro_flipped"]
-        assert t["metals"] == {}
+        assert t["assets"] == {}
 
     def test_first_run(self):
         t = scoring.transitions(None, self._snap("neutral", {}))
@@ -258,3 +258,64 @@ class TestStabilizationV2:
             {"rsi14": 37.0, "rsi14_5ago": 36.5,
              "ret5": -2.5, "ret20": -6.0, "above_ema20": True})
         assert stab and not knife
+
+
+class TestCryptoClass:
+    def test_crypto_label_liquidity_sponge(self):
+        r = macro.classify(_bullish_macro())
+        assert r["crypto_label"] == "liquidity_sponge"
+
+    def test_crypto_label_risk_off(self):
+        r = macro.classify(_deflationary_macro())
+        assert r["crypto_label"] == "risk_off"
+
+    def test_bitcoin_benefits_from_liquidity(self):
+        f, _, legs = scoring.fundamental("bitcoin", _bullish_macro())
+        assert f is not None and f >= 60
+        # liquidity is the dominant leg — the sponge thesis
+        liq = next(l for l in legs if l["name"] == "liquidity")
+        assert liq["weight"] == .30
+
+    def test_credit_stress_hurts_btc_not_helps(self):
+        # the inverted haven leg — same stress that bids gold sells
+        # the liquidity assets
+        m = _deflationary_macro()
+        fb, _, _ = scoring.fundamental("bitcoin", m)
+        fg, _, _ = scoring.fundamental("gold", m)
+        assert fg > fb
+
+    def test_risk_off_reduces_crypto(self):
+        v = scoring.verdict("bitcoin", f=65, e=70, regime="risk_off",
+                            stabilized=True, knife=False)
+        assert v == "reduce"
+
+    def test_liquidity_sponge_allows_accumulate(self):
+        v = scoring.verdict("bitcoin", f=68, e=62,
+                            regime="liquidity_sponge",
+                            stabilized=True, knife=False)
+        assert v == "accumulate"
+
+    def test_vol_scaled_fear_bands(self):
+        # −30% off high is a regime event for gold (fear ~100) but a
+        # routine correction for bitcoin (fear ~60 × .45 leg)
+        m = {"off_52w_high_pct": -0.30, "dist_sma200_pct": -0.20,
+             "rsi14": 32.0}
+        eg, _, _ = scoring.fear(m, "gold")
+        eb, _, _ = scoring.fear(m, "bitcoin")
+        assert eg > eb
+
+    def test_crypto_knife_thresholds_wider(self):
+        # −6%/5d is knife territory for metals, routine for crypto
+        _, k_m = scoring.stabilization(
+            {"rsi14": 30.0, "ret5": -6.0, "ret20": -10.0}, "gold")
+        _, k_c = scoring.stabilization(
+            {"rsi14": 30.0, "ret5": -6.0, "ret20": -10.0}, "bitcoin")
+        assert k_m and not k_c
+
+    def test_solana_thinner_conviction_scores(self):
+        # weakest structural claim — under identical macro it must
+        # not outscore bitcoin
+        m = _bullish_macro()
+        fb, _, _ = scoring.fundamental("bitcoin", m)
+        fs, _, _ = scoring.fundamental("solana", m)
+        assert fs <= fb

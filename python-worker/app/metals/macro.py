@@ -98,8 +98,23 @@ def classify(m: dict[str, Any]) -> dict[str, Any]:
     elif growth_ok and (credit_calm or not credit_stress) and liq_ok:
         label = "industrial_bullish"
 
+    # crypto reads the same inputs through a different lens — it is a
+    # liquidity asset, not a haven. The best crypto regime is metals'
+    # precious_bullish MINUS the credit stress: expansion + soft
+    # dollar + calm credit. Stress alone = risk_off regardless of
+    # what gold is doing.
+    if credit_stress:
+        crypto_label = "risk_off"
+    elif (yields_falling or liq_d == "improving"
+          or (liq_s is not None and liq_s >= 65)) \
+            and not dollar_firm:
+        crypto_label = "liquidity_sponge"
+    else:
+        crypto_label = "neutral"
+
     return {
         "label": label,
+        "crypto_label": crypto_label,
         "drivers": drivers[:6],
         "components": {
             "yields": ("falling" if yields_falling else

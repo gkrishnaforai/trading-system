@@ -1098,16 +1098,19 @@ export default async function RegimePage() {
         </section>
       )}
 
-      {/* Metals pulse — two-layer engine: shared macro metals regime
-          + per-metal fundamental/fear scores. Fear is the entry
-          window; intact structural demand is the thesis. Verdicts are
-          advisory accumulation reads, never orders. */}
-      {metals?.today?.metals &&
-        Object.keys(metals.today.metals).length > 0 && (
+      {/* Assets pulse — two-layer engine: shared macro regime +
+          per-asset fundamental/fear scores. Metals get the precious/
+          industrial read, crypto gets the liquidity-sponge read —
+          same inputs, per-class interpretation. Fear is the entry
+          window; intact structural demand is the thesis. Advisory
+          accumulation reads, never orders. */}
+      {metals?.today && (metals.today.metals || metals.today.crypto) &&
+        (Object.keys(metals.today.metals ?? {}).length +
+          Object.keys(metals.today.crypto ?? {}).length > 0) && (
           <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
             <div className="flex items-baseline justify-between">
               <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
-                Metals pulse
+                Assets pulse
               </div>
               <div className="flex items-baseline gap-3">
                 {metals.today.macro?.label && (
@@ -1118,6 +1121,18 @@ export default async function RegimePage() {
                         metals.today.macro.label === 'industrial_bullish'
                         ? 'ok'
                         : metals.today.macro.label === 'neutral'
+                          ? 'off'
+                          : 'warn'
+                    }
+                  />
+                )}
+                {metals.today.macro?.crypto_label && (
+                  <Chip
+                    label={`crypto: ${metals.today.macro.crypto_label.replace(/_/g, ' ')}`}
+                    tone={
+                      metals.today.macro.crypto_label === 'liquidity_sponge'
+                        ? 'ok'
+                        : metals.today.macro.crypto_label === 'neutral'
                           ? 'off'
                           : 'warn'
                     }
@@ -1139,7 +1154,8 @@ export default async function RegimePage() {
             {/* the turn — "conditions just formed" banners, the
                 signal that matters for starting accumulation */}
             {(metals.today.transitions?.macro_flipped ||
-              Object.values(metals.today.transitions?.metals ?? {})
+              metals.today.transitions?.crypto_label_flipped ||
+              Object.values(metals.today.transitions?.assets ?? {})
                 .some((t) => t.newly_actionable)) && (
                 <div className="pt-3 flex flex-wrap gap-2">
                   {metals.today.transitions?.macro_flipped && (
@@ -1152,8 +1168,18 @@ export default async function RegimePage() {
                       tone="ok"
                     />
                   )}
+                  {metals.today.transitions?.crypto_label_flipped && (
+                    <Chip
+                      label={`crypto regime: ${String(
+                        metals.today.transitions.crypto_label_prev,
+                      ).replace(/_/g, ' ')} → ${String(
+                        metals.today.transitions.crypto_label_now,
+                      ).replace(/_/g, ' ')}`}
+                      tone="ok"
+                    />
+                  )}
                   {Object.entries(
-                    metals.today.transitions?.metals ?? {},
+                    metals.today.transitions?.assets ?? {},
                   )
                     .filter(([, t]) => t.newly_actionable)
                     .map(([k, t]) => (
@@ -1170,7 +1196,10 @@ export default async function RegimePage() {
                 </div>
               )}
             <div className="pt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {Object.entries(metals.today.metals).map(([k, m]) => {
+              {[
+                ...Object.entries(metals.today.metals ?? {}),
+                ...Object.entries(metals.today.crypto ?? {}),
+              ].map(([k, m]) => {
                 const vTone =
                   m.verdict === 'strong_accumulate' ||
                     m.verdict === 'accumulate'
@@ -1190,6 +1219,11 @@ export default async function RegimePage() {
                     <div className="flex items-baseline justify-between">
                       <span className="text-[12px] font-medium uppercase tracking-wider text-ink">
                         {k}
+                        {m.class === 'crypto' && (
+                          <span className="ml-1.5 text-[8px] text-faint normal-case">
+                            crypto
+                          </span>
+                        )}
                       </span>
                       <span className={`font-mono text-[12px] ${vTone}`}>
                         {(m.verdict ?? '—').replace(/_/g, ' ')}
@@ -1271,7 +1305,7 @@ export default async function RegimePage() {
             </div>
             <p className="pt-3 text-[10px] text-faint">
               nightly · fear entry needs intact fundamentals — supply
-              fundamentals (COT, inventories, ETF flows) pending stage 2,
+              fundamentals (COT, inventories, ETF flows, network usage)
               flagged per metal · advisory, never an order
             </p>
           </section>

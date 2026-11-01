@@ -51,6 +51,7 @@ export type MorningRegime = {
 }
 
 export type MetalCard = {
+  class?: string
   opportunity?: number | null
   fundamental?: number | null
   fear?: number | null
@@ -83,18 +84,23 @@ export type MetalsPulse = {
     age_days?: number
     macro?: {
       label?: string
+      crypto_label?: string
       drivers?: string[]
       components?: Record<string, unknown>
     }
     gs_ratio_pctile?: number | null
     metals?: Record<string, MetalCard>
+    crypto?: Record<string, MetalCard>
     transitions?: {
       as_of_prev?: string | null
       macro_prev?: string | null
       macro_now?: string | null
       macro_flipped?: boolean
+      crypto_label_prev?: string | null
+      crypto_label_now?: string | null
+      crypto_label_flipped?: boolean
       first_run?: boolean
-      metals?: Record<string, {
+      assets?: Record<string, {
         verdict_prev?: string | null
         verdict_now?: string | null
         newly_actionable?: boolean

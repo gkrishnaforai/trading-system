@@ -36,6 +36,9 @@ SYMBOLS = {
     "copper": "HG=F",
     "dxy": "DX-Y.NYB",
     "china": "FXI",
+    "bitcoin": "BTC-USD",
+    "ethereum": "ETH-USD",
+    "solana": "SOL-USD",
 }
 
 
@@ -105,12 +108,13 @@ def _metrics(bars) -> dict[str, Any]:
     }
 
 
-def _gs_ratio_pctile(au_bars, ag_bars) -> Optional[float]:
-    """Gold/silver ratio percentile vs its own 1y history — elevated
-    ratio = silver cheap vs gold (mean-reversion value leg)."""
-    if not au_bars or not ag_bars:
+def _ratio_pctile(num_bars, den_bars) -> Optional[float]:
+    """num/den price-ratio percentile vs its own 1y history — G/S
+    elevated = silver cheap vs gold; ETH/BTC low = ether cheap vs
+    bitcoin (relative-value legs)."""
+    if not num_bars or not den_bars:
         return None
-    ac, sc = closes(au_bars), closes(ag_bars)
+    ac, sc = closes(num_bars), closes(den_bars)
     ratio = (ac / sc).dropna()
     if len(ratio) < 120:
         return None
@@ -155,26 +159,36 @@ def evaluate() -> dict[str, Any]:
     m = _macro_inputs(bars)
     reg = _macro.classify(m)
 
-    # silver's relative-value leg needs the live G/S ratio
-    m["gs_ratio_pctile"] = _gs_ratio_pctile(bars.get("gold"),
-                                            bars.get("silver"))
+    # relative-value legs — the live ratio percentiles
+    m["gs_ratio_pctile"] = _ratio_pctile(bars.get("gold"),
+                                         bars.get("silver"))
+    m["eth_btc_pctile"] = _ratio_pctile(bars.get("ethereum"),
+                                        bars.get("bitcoin"))
+    m["sol_btc_pctile"] = _ratio_pctile(bars.get("solana"),
+                                        bars.get("bitcoin"))
 
-    metals: dict[str, Any] = {}
-    for metal in _sc.METALS:
-        b = bars.get(metal)
+    out: dict[str, Any] = {"metals": {}, "crypto": {}}
+    for asset in _sc.ASSETS:
+        cls = _sc.ASSET_CLASS[asset]
+        b = bars.get(asset)
         met = _metrics(b)
         mm = {**m, **met}
-        f, f_miss, f_legs = _sc.fundamental(metal, mm)
-        e, e_miss, e_legs = _sc.fear(met)
-        stab, knife = _sc.stabilization(met)
-        v = _sc.verdict(metal, f, e, reg["label"], stab, knife)
+        f, f_miss, f_legs = _sc.fundamental(asset, mm)
+        e, e_miss, e_legs = _sc.fear(met, asset)
+        stab, knife = _sc.stabilization(met, asset)
+        # each class gets the regime label meant for it — metals see
+        # precious/industrial, crypto sees liquidity_sponge/risk_off
+        label = (reg["crypto_label"] if cls == "crypto"
+                 else reg["label"])
+        v = _sc.verdict(asset, f, e, label, stab, knife)
         missing = sorted(set(f_miss + e_miss))
-        metals[metal] = {
+        out[cls][asset] = {
+            "class": cls,
             "opportunity": _sc.opportunity(f, e),
             "fundamental": f,
             "fear": e,
             "verdict": v,
-            "reason": _sc.verdict_reason(metal, v, f, e, reg["label"],
+            "reason": _sc.verdict_reason(asset, v, f, e, label,
                                          stab, knife),
             "legs": {"fundamental": f_legs, "fear": e_legs},
             "price": met.get("price"),
@@ -186,18 +200,18 @@ def evaluate() -> dict[str, Any]:
             "ret60": met.get("ret60"),
             "falling_knife": knife,
             "stabilized": stab,
-            "thesis": STRUCTURAL[metal]["thesis"],
-            "recovery_drivers": STRUCTURAL[metal]["recovery_drivers"],
-            "invalidates_when": STRUCTURAL[metal]["invalidates_when"],
+            "thesis": STRUCTURAL[asset]["thesis"],
+            "recovery_drivers": STRUCTURAL[asset]["recovery_drivers"],
+            "invalidates_when": STRUCTURAL[asset]["invalidates_when"],
             "missing": missing,
-            "stage2_pending": STAGE2_PENDING,
+            "stage2_pending": STAGE2_PENDING[cls],
             "price_as_of": met.get("as_of"),
         }
     return {"as_of": str(date.today()), "macro": reg,
             "macro_inputs": {k: v for k, v in m.items()
-                             if k != "gs_ratio_pctile"},
+                             if not k.endswith("_pctile")},
             "gs_ratio_pctile": m.get("gs_ratio_pctile"),
-            "metals": metals}
+            **out}
 
 
 def _prev_payload() -> Optional[dict[str, Any]]:

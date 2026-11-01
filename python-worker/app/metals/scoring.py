@@ -21,7 +21,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from .narratives import STRUCTURAL
+from .narratives import (ASSET_CLASS, FEAR_BANDS, KNIFE_BANDS,
+                         STRUCTURAL)
 
 
 def _f(v) -> Optional[float]:
@@ -137,9 +138,65 @@ _FUNDAMENTAL_PARTS = {
          "structural_demand",
          "grid + AI-datacenter power (structural)"),
     ],
+    # --- crypto — liquidity legs dominate (it IS a liquidity asset),
+    # credit_calm replaces gold's credit_haven: stress sells crypto,
+    # it doesn't bid it
+    "bitcoin": lambda m: [
+        (_f(m.get("liquidity_score")), .30, "liquidity",
+         f"liquidity {_v(m, 'liquidity_score', '{:.0f}')}/100"),
+        (_real_yield_score(_f(m.get("real_yield_chg20")),
+                          _f(m.get("real_yield_level"))), .20,
+         "real_yields",
+         f"real yield {_v(m, 'real_yield_chg20')}pt/20d"),
+        (_map(_f(m.get("dxy_chg20")), 2.0, -2.0), .20, "dollar",
+         f"DXY {_v(m, 'dxy_chg20', '{:+.1f}')}%/20d"),
+        (_map(_f(m.get("hy_chg20")), 0.50, -0.20), .15,
+         "credit_calm", f"HY spread {_v(m, 'hy_chg20')}pt/20d"),
+        (float(STRUCTURAL["bitcoin"]["structural_baseline"]), .15,
+         "structural_demand",
+         "halving schedule + ETF bid (structural)"),
+    ],
+    "ethereum": lambda m: [
+        (_f(m.get("liquidity_score")), .25, "liquidity",
+         f"liquidity {_v(m, 'liquidity_score', '{:.0f}')}/100"),
+        (_real_yield_score(_f(m.get("real_yield_chg20")),
+                          _f(m.get("real_yield_level"))), .15,
+         "real_yields",
+         f"real yield {_v(m, 'real_yield_chg20')}pt/20d"),
+        (_map(_f(m.get("dxy_chg20")), 2.0, -2.0), .15, "dollar",
+         f"DXY {_v(m, 'dxy_chg20', '{:+.1f}')}%/20d"),
+        (_map(_f(m.get("hy_chg20")), 0.50, -0.20), .15,
+         "credit_calm", f"HY spread {_v(m, 'hy_chg20')}pt/20d"),
+        (_map(_f(m.get("eth_btc_pctile")), 90.0, 20.0), .15,
+         "eth_btc_ratio",
+         f"ETH/BTC {_v(m, 'eth_btc_pctile', '{:.0f}')}th pctl/1y"),
+        (float(STRUCTURAL["ethereum"]["structural_baseline"]), .15,
+         "structural_demand",
+         "staking + burn + L2 settlement (structural)"),
+    ],
+    "solana": lambda m: [
+        (_f(m.get("liquidity_score")), .25, "liquidity",
+         f"liquidity {_v(m, 'liquidity_score', '{:.0f}')}/100"),
+        (_map(_f(m.get("dxy_chg20")), 2.0, -2.0), .15, "dollar",
+         f"DXY {_v(m, 'dxy_chg20', '{:+.1f}')}%/20d"),
+        (_map(_f(m.get("hy_chg20")), 0.60, -0.20), .20,
+         "credit_calm", f"HY spread {_v(m, 'hy_chg20')}pt/20d"),
+        (_real_yield_score(_f(m.get("real_yield_chg20")),
+                          _f(m.get("real_yield_level"))), .10,
+         "real_yields",
+         f"real yield {_v(m, 'real_yield_chg20')}pt/20d"),
+        (_map(_f(m.get("sol_btc_pctile")), 90.0, 20.0), .10,
+         "sol_btc_ratio",
+         f"SOL/BTC {_v(m, 'sol_btc_pctile', '{:.0f}')}th pctl/1y"),
+        (float(STRUCTURAL["solana"]["structural_baseline"]), .20,
+         "structural_demand",
+         "network usage — weakest claim (structural)"),
+    ],
 }
 
-METALS = list(_FUNDAMENTAL_PARTS)
+ASSETS = list(_FUNDAMENTAL_PARTS)
+METALS = [a for a in ASSETS if ASSET_CLASS[a] == "metals"]
+CRYPTO = [a for a in ASSETS if ASSET_CLASS[a] == "crypto"]
 
 
 def fundamental(metal: str, m: dict[str, Any]
@@ -149,13 +206,15 @@ def fundamental(metal: str, m: dict[str, Any]
 
 # --- fear / entry score ----------------------------------------------------
 
-def fear(m: dict[str, Any]) -> tuple[Optional[int], list[str],
-                                     list[dict]]:
+def fear(m: dict[str, Any], asset: str = "gold"
+         ) -> tuple[Optional[int], list[str], list[dict]]:
     """m keys: off_52w_high_pct (neg), dist_sma200_pct (neg when
-    below), rsi14."""
-    dd = _map(_f(m.get("off_52w_high_pct")), 0.0, -0.30)
+    below), rsi14. Bands are per asset class — a −30% drawdown is a
+    regime event for gold but a routine correction for bitcoin."""
+    dd_band, sma_band = FEAR_BANDS[ASSET_CLASS.get(asset, "metals")]
+    dd = _map(_f(m.get("off_52w_high_pct")), 0.0, -dd_band)
     below = _f(m.get("dist_sma200_pct"))
-    below_pts = _map(below, 0.0, -0.20) if below is not None \
+    below_pts = _map(below, 0.0, -sma_band) if below is not None \
         and below < 0 else (0.0 if below is not None else None)
     rsi_pts = _map(_f(m.get("rsi14")), 50.0, 30.0)
     score, missing, details = _weighted(
@@ -171,7 +230,8 @@ def fear(m: dict[str, Any]) -> tuple[Optional[int], list[str],
     return score, missing, details
 
 
-def stabilization(m: dict[str, Any]) -> tuple[Optional[bool], bool]:
+def stabilization(m: dict[str, Any], asset: str = "gold"
+                  ) -> tuple[Optional[bool], bool]:
     """(stabilized, falling_knife). Knife = deep washout still
     accelerating down — fear alone is never a buy. Stabilization is
     a turn signal, not a pause: RSI lifting off the low, price
@@ -183,8 +243,9 @@ def stabilization(m: dict[str, Any]) -> tuple[Optional[bool], bool]:
     above20 = m.get("above_ema20")
     if rsi is None and r5 is None:
         return None, False
+    k5, k20 = KNIFE_BANDS[ASSET_CLASS.get(asset, "metals")]
     knife = (rsi is not None and rsi < 35
-             and (r5 or 0) < -4.0 and (r20 or 0) < -5.0)
+             and (r5 or 0) < k5 and (r20 or 0) < k20)
     turning_up = ((rsi is not None and rsi5 is not None
                    and rsi - rsi5 >= 3)          # RSI lifting off low
                   or above20 is True)            # reclaimed the 20EMA
@@ -196,15 +257,20 @@ def stabilization(m: dict[str, Any]) -> tuple[Optional[bool], bool]:
 
 # --- verdict ----------------------------------------------------------------
 
-def verdict(metal: str, f: Optional[int], e: Optional[int],
+def verdict(asset: str, f: Optional[int], e: Optional[int],
             regime: str, stabilized: Optional[bool],
             knife: bool) -> str:
     if f is None:
         return "no_score"
-    # macro hard overlay — deflationary risk diagnoses copper/silver
-    # recession, not accumulation
-    if regime == "deflationary_risk" and metal in ("copper", "silver") \
+    # macro hard overlays — deflationary risk diagnoses copper/silver
+    # recession, and crypto's version is risk_off: the same stress
+    # that bids gold sells the liquidity assets first
+    cls = ASSET_CLASS.get(asset, "metals")
+    if regime == "deflationary_risk" and asset in ("copper", "silver") \
             and f < 70:
+        return "reduce"
+    if cls == "crypto" and regime in ("deflationary_risk", "risk_off") \
+            and f < 75:
         return "reduce"
     if knife and f < 75:
         return "watch"            # don't catch a falling knife
@@ -255,6 +321,10 @@ def verdict_reason(metal: str, v: str, f: Optional[int],
                                                        "silver"):
             return (f"{fe} — deflationary-risk regime: demand "
                     "deteriorating under credit stress")
+        if regime in ("risk_off", "deflationary_risk") and \
+                ASSET_CLASS.get(metal) == "crypto":
+            return (f"{fe} — risk-off regime: the liquidity assets "
+                    "sell first; no accumulation until credit calms")
         return f"{fe} — demand case broken"
     return v
 
@@ -279,7 +349,7 @@ def transitions(prev: Optional[dict], now: dict) -> dict[str, Any]:
     metal's fundamental leg crossed actionable while fear is still
     elevated (price hasn't repriced yet)."""
     out: dict[str, Any] = {"as_of_prev": None, "macro_flipped": False,
-                           "metals": {}}
+                           "assets": {}}
     if not prev:
         out["first_run"] = True
         return out
@@ -288,8 +358,16 @@ def transitions(prev: Optional[dict], now: dict) -> dict[str, Any]:
         (now.get("macro") or {}).get("label")
     out["macro_prev"], out["macro_now"] = pl, nl
     out["macro_flipped"] = bool(pl and nl and pl != nl)
+    pl2 = (prev.get("macro") or {}).get("crypto_label")
+    nl2 = (now.get("macro") or {}).get("crypto_label")
+    out["crypto_label_prev"], out["crypto_label_now"] = pl2, nl2
+    out["crypto_label_flipped"] = bool(pl2 and nl2 and pl2 != nl2)
 
-    pm, nm = prev.get("metals") or {}, now.get("metals") or {}
+    def _assets(p):
+        a = dict(p.get("metals") or {})
+        a.update(p.get("crypto") or {})
+        return a
+    pm, nm = _assets(prev), _assets(now)
     for metal, n in nm.items():
         p = pm.get(metal) or {}
         pv, nv = p.get("verdict"), n.get("verdict")
@@ -303,7 +381,7 @@ def transitions(prev: Optional[dict], now: dict) -> dict[str, Any]:
         # fundamentals-just-turned + still-discounted window opening
         if pv == nv and not crossed:
             continue
-        out["metals"][metal] = {
+        out["assets"][metal] = {
             "verdict_prev": pv, "verdict_now": nv,
             "newly_actionable": newly or crossed,
             "fundamental_delta": (f_now - f_prev
