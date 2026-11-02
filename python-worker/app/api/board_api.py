@@ -3145,6 +3145,15 @@ async def earnings_report(symbol: str, date: str | None = None,
     from app.signals import earnings_report as er
     r = await asyncio.to_thread(er.report, symbol.upper(), date,
                                 version)
+    if r is None and not version:
+        # lazy-compose — prints captured before this feature exist as
+        # earnings_data/earnings_watch rows with no report; journal v1
+        # on first read rather than making the user call /rebuild
+        r = await asyncio.to_thread(er.journal, symbol.upper(), date,
+                                    "lazy-read")
+        if r:
+            r = await asyncio.to_thread(er.report, symbol.upper(),
+                                        date, None)
     if r is None:
         raise HTTPException(404, f"no earnings report for {symbol}")
     return r
