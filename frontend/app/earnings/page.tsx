@@ -320,7 +320,7 @@ async function Report({
                       {pct(cp)} vs street
                     </span>
                   )}
-                  {d.quote && (
+                  {d.quote != null && (
                     <span className="w-full text-xs text-faint italic">
                       “{String(d.quote).slice(0, 200)}”
                     </span>
