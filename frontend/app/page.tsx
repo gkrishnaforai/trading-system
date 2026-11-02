@@ -35,6 +35,19 @@ function fmtDate(d?: string) {
   }
 }
 
+function fmtDateTimeEt(d?: string) {
+  if (!d) return '—'
+  try {
+    return new Date(d).toLocaleString('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+      timeZone: 'America/New_York',
+    }) + ' ET'
+  } catch {
+    return d
+  }
+}
+
 export default async function RegimePage() {
   const [posture, morning, tape, alarms, metals] = await Promise.all([
     api.posture(),
@@ -46,6 +59,7 @@ export default async function RegimePage() {
 
   const p = posture ?? {}
   const today = morning?.today
+  const intraday = morning?.intraday
   const record = morning?.record ?? []
 
   const tone = TONE[p.posture ?? 'neutral'] ?? 'text-neutral'
@@ -54,6 +68,7 @@ export default async function RegimePage() {
   // journal (regime_snapshots) refreshes overnight and can lag a day;
   // let the fresher read own the header date
   const asOf = today?.as_of || p.regime_as_of
+  const latestUpdate = intraday?.market_time || tape?.ts || asOf
 
   const buckets =
     today?.buckets && typeof today.buckets === 'object' && !Array.isArray(today.buckets)
@@ -238,7 +253,10 @@ export default async function RegimePage() {
         <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
           See everything. Decide yourself.
         </span>
-        <span className="font-mono text-xs text-faint">{fmtDate(asOf)}</span>
+        <span className="font-mono text-xs text-faint">
+          {latestUpdate ? `updated ${fmtDateTimeEt(latestUpdate)}` : '—'}
+          {asOf && latestUpdate !== asOf && ` · baseline ${fmtDate(asOf)}`}
+        </span>
       </header>
 
       {missing.length > 0 && (
@@ -358,6 +376,62 @@ export default async function RegimePage() {
             label="1M · 3M"
             value={`${h1?.base?.replace(/_/g, ' ') ?? '—'} · ${h3?.base?.replace(/_/g, ' ') ?? '—'}`}
           />
+        </section>
+      )}
+
+      {/* hourly intraday overlay — timing read over the daily baseline */}
+      {intraday && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              Intraday update
+            </div>
+            <div className={`font-mono text-[11px] ${intraday.stale ? 'text-caution' : 'text-faint'}`}>
+              {intraday.stale ? 'stale · ' : ''}
+              {intraday.market_time
+                ? new Date(intraday.market_time).toLocaleString('en-US', {
+                    hour: 'numeric', minute: '2-digit',
+                    timeZone: 'America/New_York',
+                  }) + ' ET'
+                : '—'}
+            </div>
+          </div>
+          <div className="pt-3 flex flex-wrap items-center gap-2">
+            <span className={`rounded-full border px-3 py-1 text-xs font-medium ${intraday.tone === 'good'
+              ? 'border-aggressive/40 text-aggressive'
+              : intraday.tone === 'bad'
+                ? 'border-defensive/40 text-defensive'
+                : intraday.tone === 'warn'
+                  ? 'border-caution/40 text-caution'
+                  : 'border-hairline text-muted'}`}>
+              {(intraday.state ?? '—').replace(/_/g, ' ')}
+            </span>
+            {intraday.tape_state && (
+              <span className="rounded-full border border-hairline px-3 py-1 font-mono text-[11px] text-muted">
+                tape {intraday.tape_state.replace(/_/g, ' ')}
+              </span>
+            )}
+            {intraday.baseline_regime && (
+              <span className="rounded-full border border-hairline px-3 py-1 font-mono text-[11px] text-muted">
+                daily {intraday.baseline_regime.replace(/_/g, ' ')}
+              </span>
+            )}
+          </div>
+          {intraday.action && (
+            <p className="pt-3 text-sm leading-relaxed text-ink">
+              {intraday.action}
+            </p>
+          )}
+          {Array.isArray(intraday.evidence?.tape) &&
+            (intraday.evidence!.tape as unknown[]).length > 0 && (
+              <div className="pt-2 space-y-0.5">
+                {(intraday.evidence!.tape as unknown[]).slice(0, 3).map((e, i) => (
+                  <p key={i} className="text-[11px] leading-relaxed text-muted">
+                    · {String(e)}
+                  </p>
+                ))}
+              </div>
+            )}
         </section>
       )}
 
@@ -1382,7 +1456,7 @@ export default async function RegimePage() {
             <p className="text-sm text-muted">
               No regime data returned — the worker may be unreachable or
               today&apos;s snapshot hasn&apos;t run yet (morning-regime
-              fires 9:15 ET).
+              fires 8:00 ET).
             </p>
           </Section>
         )}

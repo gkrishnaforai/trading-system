@@ -34,6 +34,23 @@ export type RegimeVerdict = {
   [k: string]: unknown
 }
 
+export type IntradayRegime = {
+  as_of?: string
+  session_date?: string
+  market_time?: string
+  baseline_as_of?: string
+  baseline_regime?: string
+  baseline_score?: number
+  tape_state?: string
+  tape_ts?: string
+  stale?: boolean
+  age_minutes?: number
+  state?: string
+  action?: string
+  tone?: string
+  evidence?: Record<string, unknown>
+}
+
 export type MorningRegime = {
   today?: {
     as_of?: string
@@ -47,6 +64,7 @@ export type MorningRegime = {
     horizon_1m?: HorizonScenario | string | null
     horizon_3m?: HorizonScenario | string | null
   } | null
+  intraday?: IntradayRegime | null
   record?: Array<Record<string, unknown>>
 }
 

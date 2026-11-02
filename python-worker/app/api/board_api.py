@@ -822,6 +822,13 @@ async def _j_short_squeeze() -> dict:
                                    "squeeze_setup")}}
 
 
+async def _j_intraday_regime() -> dict:
+    """Hourly intraday regime overlay — timestamped baseline × tape
+    read for the regime page; does not overwrite the daily journal."""
+    from app.market_regime.intraday import snapshot
+    return await asyncio.to_thread(snapshot)
+
+
 async def _j_intraday() -> dict:
     """Intraday tape eval — 15-min journaled state during RTH
     (VWAP/breadth/VIX/leadership/macro). Off-hours it no-ops; the
@@ -992,6 +999,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "short-data":  ("Short interest/volume pull", _j_short_data),
     "short-squeeze": ("Squeeze + covering eval", _j_short_squeeze),
     "intraday-tape": ("Intraday tape classifier", _j_intraday),
+    "intraday-regime": ("Intraday regime overlay",
+                        _j_intraday_regime),
     "correction-alarms": ("Correction-alarm engine",
                           _j_correction_alarms),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
@@ -1048,7 +1057,8 @@ _JOB_TIMEOUT = {
     "research": 90 * 60,
     "selloff": 5 * 60,
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
-    "intraday-tape": 3 * 60, "correction-alarms": 3 * 60,
+    "intraday-tape": 3 * 60, "intraday-regime": 3 * 60,
+    "correction-alarms": 3 * 60,
     "best-picks": 5 * 60,
     "lev-etf-swings": 2 * 60,
     "signal-evals": 3 * 60,
@@ -2287,6 +2297,7 @@ async def morning_regime_report():
     """Today's morning regime + graded track record. Daily engine —
     deterministic 7-bucket score → 5-regime class → LLM explains."""
     from app.market_regime import morning
+    from app.market_regime import intraday as intraday_regime
     from app.database import db
     today = await asyncio.to_thread(
         lambda: db.execute_query(
@@ -2320,7 +2331,8 @@ async def morning_regime_report():
                     t["buckets"] = b
         except Exception:
             pass
-    return {"today": t,
+    intraday = await asyncio.to_thread(intraday_regime.latest)
+    return {"today": t, "intraday": intraday,
             "record": await asyncio.to_thread(morning.record)}
 
 
@@ -2418,7 +2430,7 @@ async def set_job_schedule(name: str, body: dict):
     from app.support import scheduler
     return await asyncio.to_thread(
         scheduler.set_schedule, name, body.get("cron"),
-        bool(body.get("enabled")))
+        bool(body.get("enabled")), body.get("timezone"))
 
 
 @router.get("/jobs/runs")

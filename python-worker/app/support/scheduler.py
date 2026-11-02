@@ -5,7 +5,8 @@ enabled), fires due jobs through the same _run_job path the buttons
 use, and records everything into job_runs.
 
 AutoSys semantics, deliberately minimal:
-  - 5-field cron, UTC  (min hour dom month dow; dow 0/7 = Sunday)
+  - 5-field cron in each job's timezone (default UTC;
+    dow 0/7 = Sunday)
   - depends_on        predecessors must have an ERROR-FREE job_runs
                       row within dep_max_age_h, else the job waits
   - box 'all'         fires _run_all (dependency order lives in code)
@@ -17,6 +18,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +62,15 @@ def cron_match(expr: str, dt: datetime) -> bool:
         return False
 
 
+def _job_tz(name: str | None = None) -> ZoneInfo:
+    try:
+        return ZoneInfo(name or "UTC")
+    except Exception:
+        return ZoneInfo("UTC")
+
+
 def _missed_slot(expr: str, last_run, now: datetime,
-                 max_days: int = 8) -> bool:
+                 max_days: int = 8, tz_name: str = "UTC") -> bool:
     """Catch-up — was the job due at ANY minute between its last run
     and now? Scans backward minute-by-minute; a missed slot fires on
     the next live tick (anacron semantics). Never-run jobs don't
@@ -69,12 +78,15 @@ def _missed_slot(expr: str, last_run, now: datetime,
     from datetime import timedelta
     if last_run is None:
         return False
+    tz = _job_tz(tz_name)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     t = now.replace(second=0, microsecond=0)
     floor = max(last_run.replace(tzinfo=timezone.utc),
                 t - timedelta(days=max_days))
     while t > floor:
         t -= timedelta(minutes=1)
-        if cron_match(expr, t):
+        if cron_match(expr, t.astimezone(tz)):
             return True
     return False
 
@@ -96,7 +108,10 @@ async def tick(now: datetime | None = None) -> dict[str, Any]:
     from app.database import db
     from app.api.board_api import JOBS, _jobs, _run_job, _run_all
 
-    now = now or datetime.now(timezone.utc)
+    now = (now or datetime.now(timezone.utc))
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    now = now.astimezone(timezone.utc)
     # in-flight count is read once — jobs fired this tick haven't
     # marked running yet, so track our own fires alongside
     in_flight = sum(1 for s in _jobs.values() if s.get("running"))
@@ -106,14 +121,18 @@ async def tick(now: datetime | None = None) -> dict[str, Any]:
     fired, skipped = [], []
     for r in rows:
         name = r["name"]
+        job_tz = _job_tz(r.get("timezone"))
+        local_now = now.astimezone(job_tz)
         # same-minute dedup + last run — pulled up front because the
         # catch-up check needs it too
         last = db.execute_query(
             "SELECT max(ran_at) m FROM job_runs WHERE name=:n",
             {"n": name})[0]["m"]
-        due_now = cron_match(r["cron"], now)
+        due_now = cron_match(r["cron"], local_now)
         due_catchup = (not due_now and r["kind"] != "box"
-                       and _missed_slot(r["cron"], last, now))
+                       and _missed_slot(r["cron"], last, now,
+                                        tz_name=(r.get("timezone")
+                                                 or "UTC")))
         if not (due_now or due_catchup):
             continue
         if last and last.replace(tzinfo=timezone.utc) >= \
@@ -174,33 +193,43 @@ def sync_registry() -> int:
     return n
 
 
-def set_schedule(name: str, cron: str | None, enabled: bool) -> dict:
+def set_schedule(name: str, cron: str | None, enabled: bool,
+                 tz_name: str | None = None) -> dict:
     """UI/ops write path — the only mutation the dispatcher honors."""
     from app.database import db
     if cron is not None and cron.strip():
-        # validate the expression before trusting it
-        probe = cron_match(cron.strip(), datetime(2026, 1, 1, 0, 0))
         fields = cron.strip().split()
         if len(fields) != 5:
             return {"ok": False, "error": "need 5 cron fields"}
+    if tz_name is not None:
+        try:
+            ZoneInfo(tz_name)
+        except Exception:
+            return {"ok": False, "error": "unknown timezone"}
     db.execute_update(
         "UPDATE job_definitions SET cron=:c, enabled=:e,"
+        " timezone=COALESCE(:tz, timezone),"
         " updated_at=now() WHERE name=:n",
-        {"c": (cron or "").strip() or None, "e": enabled, "n": name})
-    return {"ok": True, "name": name, "cron": cron, "enabled": enabled}
+        {"c": (cron or "").strip() or None, "e": enabled,
+         "tz": tz_name, "n": name})
+    return {"ok": True, "name": name, "cron": cron,
+            "enabled": enabled, "timezone": tz_name}
 
 
 def next_fire(expr: str, now: datetime,
-              max_days: int = 8) -> Optional[datetime]:
-    """First minute after `now` matching `expr` (UTC). None if the
-    cron is unparseable or nothing fires within max_days."""
+              max_days: int = 8, tz_name: str = "UTC") -> Optional[datetime]:
+    """First UTC minute after `now` matching `expr` in `tz_name`.
+    None if the cron is unparseable or nothing fires within max_days."""
     from datetime import timedelta
     if not expr or not str(expr).strip():
         return None
+    tz = _job_tz(tz_name)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     t = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
     end = t + timedelta(days=max_days)
     while t < end:
-        if cron_match(expr, t):
+        if cron_match(expr, t.astimezone(tz)):
             return t
         t += timedelta(minutes=1)
     return None
@@ -212,7 +241,7 @@ def catalog() -> list[dict[str, Any]]:
     from app.database import db
     rows = db.execute_query(
         "SELECT d.name, d.label, d.purpose, d.kind, d.cron, d.enabled,"
-        " d.depends_on, d.priority, r.ran_at AS last_run,"
+        " d.timezone, d.depends_on, d.priority, r.ran_at AS last_run,"
         " r.error AS last_error, r.duration_s"
         " FROM job_definitions d"
         " LEFT JOIN LATERAL (SELECT ran_at, error, duration_s"
@@ -221,7 +250,8 @@ def catalog() -> list[dict[str, Any]]:
         " ORDER BY d.name")
     now = datetime.now(timezone.utc)
     for r in rows:
-        nxt = next_fire(r.get("cron"), now) \
+        nxt = next_fire(r.get("cron"), now,
+                        tz_name=str(r.get("timezone") or "UTC")) \
             if r.get("enabled") and r.get("cron") else None
         r["next_run"] = nxt.isoformat() if nxt else None
     return rows

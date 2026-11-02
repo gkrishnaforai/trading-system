@@ -6,6 +6,7 @@ export type JobRow = {
   purpose?: string
   kind?: string
   cron?: string | null
+  timezone?: string | null
   enabled?: boolean
   depends_on?: string[] | null
   priority?: number

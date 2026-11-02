@@ -53,7 +53,7 @@ function JobRowView({ j }: { j: JobRow }) {
         {j.cron ? (
           <>
             <div className="text-ink">{j.cron}</div>
-            <div className="text-[10px] text-faint">UTC · next {until(j.next_run)}</div>
+            <div className="text-[10px] text-faint">{j.timezone ?? 'UTC'} · next {until(j.next_run)}</div>
           </>
         ) : (
           <span className="text-faint">manual</span>
@@ -201,8 +201,8 @@ export default async function AdminPage() {
       )}
 
       <footer className="mt-16 border-t border-hairline pt-6 text-[11px] text-faint">
-        dispatcher ticks every 60s · schedules are UTC cron · paused jobs
-        still accept manual runs
+        dispatcher ticks every 60s · cron uses each job's timezone ·
+        paused jobs still accept manual runs
       </footer>
     </main>
   )
