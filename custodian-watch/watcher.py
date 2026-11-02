@@ -786,7 +786,7 @@ def _job_repair_json(hours: int = JOB_REPAIR_HOURS) -> dict:
                  SELECT DISTINCT ON (signature) signature, action,
                         result, created_at
                  FROM custodian_actions
-                 WHERE signature LIKE 'job:%'
+                 WHERE signature LIKE 'job:%%'
                  ORDER BY signature, id DESC
                )
                SELECT d.name, d.label, d.cron, d.enabled,
