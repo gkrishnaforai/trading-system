@@ -62,6 +62,71 @@ function Fresh({
   )
 }
 
+function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
+  if (!m) return null
+  const guidance = obj(m.guidance)
+  const label = String(guidance?.label ?? '')
+  const tone = /attractive|reasonable/.test(label) ? 'text-aggressive'
+    : /premium|stale|unknown/.test(label) ? 'text-caution'
+      : /avoid|not usable|transition|unavailable/.test(label) ? 'text-defensive'
+        : 'text-muted'
+  const multiple = (value: unknown) => {
+    const n = num(value)
+    return n != null && n > 0 ? `${n.toFixed(1)}×` : 'N/M'
+  }
+  const growth = guidance?.growth_pct == null
+    ? null : num(guidance.growth_pct)
+  const epsMoney = (value: unknown) =>
+    value == null ? '—' : money(value)
+  return (
+    <div className="mt-2 w-[min(100%,19rem)] rounded-lg border border-hairline/70 bg-card/70 px-3 py-2 text-left">
+      <div className="grid grid-cols-2 gap-x-4">
+        <div>
+          <div className="text-[9px] uppercase tracking-wider text-faint">Trailing P/E</div>
+          <div className="font-mono text-sm text-ink">{multiple(m.pe_ttm)}</div>
+          <div className="text-[10px] text-faint">
+            EPS {epsMoney(m.eps_ttm)} · reported TTM
+          </div>
+        </div>
+        <div>
+          <div className="text-[9px] uppercase tracking-wider text-faint">Forward P/E</div>
+          <div className="font-mono text-sm text-ink">{multiple(m.fwd_pe)}</div>
+          <div className="text-[10px] text-faint">
+            EPS {epsMoney(m.fwd_eps)} · consensus
+          </div>
+        </div>
+      </div>
+      {guidance && (
+        <div className="mt-2 border-t border-hairline/60 pt-1.5">
+          <div className={`text-[11px] font-medium ${tone}`}>
+            {label || 'P/E guidance unavailable'}
+            {growth != null && ` · EPS growth ${pct(growth)}`}
+            {guidance.peg_like != null &&
+              ` · growth-adjusted ${Number(guidance.peg_like).toFixed(2)}×`}
+          </div>
+          {guidance.reason != null && (
+            <p className="pt-0.5 text-[10px] leading-snug text-muted">
+              {String(guidance.reason)}
+            </p>
+          )}
+          <div className="pt-1 text-[9px] text-faint">
+            {m.estimate_as_of != null
+              ? `est. snapshot ${String(m.estimate_as_of)}${m.analyst_count != null ? ` · ${String(m.analyst_count)} analysts` : ''}`
+              : 'estimate date unavailable'}
+            {m.ttm_as_of != null &&
+              ` · TTM through ${String(m.ttm_as_of)}${m.ttm_age_days != null ? ` (${String(m.ttm_age_days)}d old)` : ''}`}
+          </div>
+          {growth != null && growth > 0 && (
+            <div className="pt-0.5 text-[9px] text-faint">
+              Screen bands: reasonable ≤1.5× growth · stretched &gt;2.5×
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** One-sentence read — tape × fundamentals × valuation × trust, in
     words not numbers. Sits under the hero so the page answers "so
     what" before any detail. */
@@ -668,6 +733,7 @@ async function StockCore({ sym }: { sym: string }) {
                 {pct(upside)} vs fair value
               </div>
             )}
+            <PriceMultiples m={multiples} />
           </div>
         </div>
         <div className="pt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted">
@@ -862,33 +928,6 @@ async function StockCore({ sym }: { sym: string }) {
           )}
           <FvRange scen={fvScen} expected={fv.expected}
             spot={num(card.spot ?? fv.spot)} />
-          {/* multiples — the P/E context for the blend: trailing off
-              journaled actuals, forward off consensus */}
-          {multiples && (multiples.pe_ttm != null ||
-            multiples.fwd_pe != null) && (
-              <div className="pt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-xs text-muted">
-                <span className="text-[10px] uppercase tracking-wider text-faint font-sans">
-                  multiples
-                </span>
-                <span>
-                  <span className="text-faint">P/E ttm </span>
-                  {multiples.pe_ttm != null
-                    ? `${Number(multiples.pe_ttm).toFixed(0)}×`
-                    : '—'}
-                </span>
-                <span>
-                  <span className="text-faint">fwd </span>
-                  {multiples.fwd_pe != null
-                    ? `${Number(multiples.fwd_pe).toFixed(0)}×`
-                    : '—'}
-                  {multiples.fwd_eps != null && (
-                    <span className="text-faint">
-                      {' '}(est {money(multiples.fwd_eps)})
-                    </span>
-                  )}
-                </span>
-              </div>
-            )}
           {Array.isArray(fv.flags) && fv.flags.length > 0 && (
             <div className="pt-3 flex flex-wrap gap-2">
               {(fv.flags as unknown[]).map((f, i) => (

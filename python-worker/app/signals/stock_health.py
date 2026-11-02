@@ -32,6 +32,132 @@ def _leadership(det: dict, fly: dict) -> dict | None:
             "est_rev": fly.get("est_revision_pct")}
 
 
+def _pe_guidance(fwd_pe: float | None, eps_ttm: float | None,
+                 fwd_eps: float | None,
+                 estimate_age_days: int | None,
+                 ttm_age_days: int | None = None) -> dict[str, Any]:
+    """Growth-adjusted P/E screen, not a standalone buy signal.
+
+    The estimate must be positive and recently refreshed, and the
+    trailing EPS base must also be positive before comparing growth.
+    """
+    base = {"growth_pct": None, "peg_like": None,
+            "reasonable_pe_max": None, "stretched_pe_above": None}
+    if fwd_eps is None or fwd_eps <= 0 or fwd_pe is None:
+        return {**base, "label": "P/E not usable",
+                "reason": "No positive forward EPS estimate; use a sales, cash-flow, or scenario valuation method."}
+    if estimate_age_days is None or estimate_age_days < 0:
+        return {**base, "label": "Estimate freshness unknown",
+                "reason": "Forward P/E is shown, but the estimate date is unavailable; do not rely on the growth screen."}
+    if estimate_age_days > 45:
+        return {**base, "label": "Estimate is stale",
+                "reason": f"Consensus snapshot is {estimate_age_days} days old; refresh estimates before using forward P/E guidance."}
+    if ttm_age_days is not None and ttm_age_days > 180:
+        return {**base, "label": "Trailing EPS is stale",
+                "reason": f"Latest reported EPS is {ttm_age_days} days old; refresh reported results before using the growth screen."}
+    if eps_ttm is None:
+        return {**base, "label": "Trailing EPS unavailable",
+                "reason": "Fewer than four recent reported quarters are available; forward growth versus TTM EPS cannot be verified."}
+    if eps_ttm <= 0:
+        return {**base, "label": "Profitability transition",
+                "reason": "Trailing EPS is not positive, so forward EPS growth and a PEG-style comparison are not meaningful."}
+
+    growth_pct = (fwd_eps / eps_ttm - 1) * 100
+    growth_data = {
+        **base,
+        "growth_pct": round(growth_pct, 1),
+        "reasonable_pe_max": round(max(0.0, growth_pct) * 1.5, 1),
+        "stretched_pe_above": round(max(0.0, growth_pct) * 2.5, 1),
+    }
+    if growth_pct <= 0:
+        return {**growth_data, "label": "Avoid on P/E basis",
+                "reason": "Consensus forward EPS is not growing versus trailing EPS; a low multiple alone is not a buy case."}
+
+    peg_like = fwd_pe / growth_pct
+    growth_data["peg_like"] = round(peg_like, 2)
+    if peg_like <= 1:
+        label = "Attractive on growth screen"
+        reason = "Forward P/E is at or below expected EPS growth; confirm growth durability, cash conversion, and fair-value buy-below."
+    elif peg_like <= 1.5:
+        label = "Reasonable on growth screen"
+        reason = "Forward P/E is within 1.5x expected EPS growth; use the fair-value buy-below as the price gate."
+    elif peg_like <= 2.5:
+        label = "Premium"
+        reason = "The multiple is ahead of expected EPS growth; require unusually durable growth and strong cash-flow quality."
+    else:
+        label = "Stretched / avoid"
+        reason = "Forward P/E is more than 2.5x expected EPS growth; estimates may need to rise materially to justify the price."
+    if growth_pct > 50:
+        reason += " Growth exceeds 50%, so base effects can make this screen overly optimistic."
+    return {**growth_data, "label": label, "reason": reason}
+
+
+def _multiples(spot: float | None, earnings_rows: list[dict],
+              fly: dict, today: date | None = None) -> dict[str, Any]:
+    """Build price multiples from reported EPS and the existing estimate feed."""
+    today = today or date.today()
+
+    def _as_date(value) -> date | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        try:
+            return date.fromisoformat(str(value)[:10])
+        except (TypeError, ValueError):
+            return None
+
+    eps_values = []
+    for row in earnings_rows:
+        try:
+            value = float(row.get("eps_actual"))
+            if value == value and abs(value) != float("inf"):
+                eps_values.append(value)
+        except (TypeError, ValueError):
+            continue
+    eps_ttm = round(sum(eps_values), 2) if len(eps_values) == 4 else None
+    ttm_date = max((_as_date(r.get("earnings_date"))
+                    for r in earnings_rows), default=None)
+    ttm_age = (today - ttm_date).days if ttm_date else None
+
+    try:
+        fwd_eps = float(fly["fwd_eps_avg"])
+        if fwd_eps != fwd_eps or abs(fwd_eps) == float("inf"):
+            fwd_eps = None
+    except (KeyError, TypeError, ValueError):
+        fwd_eps = None
+    try:
+        price = float(spot) if spot is not None else None
+        if price is not None and (price <= 0 or abs(price) == float("inf")):
+            price = None
+    except (TypeError, ValueError):
+        price = None
+    pe_ttm = (round(price / eps_ttm, 1)
+              if price and eps_ttm and eps_ttm > 0 else None)
+    fwd_pe = (round(price / fwd_eps, 1)
+              if price and fwd_eps and fwd_eps > 0 else None)
+
+    estimate_date = _as_date(fly.get("updated_at"))
+    estimate_age = ((today - estimate_date).days
+                    if estimate_date else None)
+    guidance = _pe_guidance(
+        fwd_pe, eps_ttm, fwd_eps, estimate_age, ttm_age)
+    return {
+        "eps_ttm": eps_ttm,
+        "pe_ttm": pe_ttm,
+        "ttm_as_of": ttm_date.isoformat() if ttm_date else None,
+        "ttm_age_days": ttm_age,
+        "fwd_eps": fwd_eps,
+        "fwd_pe": fwd_pe,
+        "estimate_as_of": estimate_date.isoformat() if estimate_date else None,
+        "estimate_age_days": estimate_age,
+        "analyst_count": fly.get("num_analysts"),
+        "guidance": guidance,
+    }
+
+
 def _verdict(fund: Optional[str], mom: Optional[str],
              valuation: Optional[str],
              future_score: Optional[float],
@@ -43,7 +169,7 @@ def _verdict(fund: Optional[str], mom: Optional[str],
     dip = mom in ("pullback", "basing")
     broken = mom in ("knife", "capitulation", "breakdown",
                      "downtrend", "rolling_over")
-    expensive = valuation == "extreme"
+    expensive = valuation in ("extreme", "elevated")
 
     if strong_fund and mom == "climax" and not expensive:
         v, why = "deploy on dips", ("aligned but at euphoria — the "
@@ -207,8 +333,8 @@ def card(sym: str) -> dict[str, Any]:
     fdet = _j(st.get("fundamental_detail"))
     fly = db.execute_query(
         "SELECT rev_growth, rev_accel, eps_growth, eps_accel,"
-        " beat_streak, est_revision_pct, fwd_pe, gap_score,"
-        " fcf_ttm, fcf_margin,"
+        " eps_growth_ttm, beat_streak, est_revision_pct, fwd_pe,"
+        " fwd_eps_avg, last_report_date, gap_score, fcf_ttm, fcf_margin,"
         " num_analysts, updated_at FROM symbol_flywheel WHERE symbol=:s",
         {"s": s})
     fly = dict(fly[0]) if fly else {}
@@ -288,14 +414,6 @@ def card(sym: str) -> dict[str, Any]:
     except Exception:
         pass
 
-    val = gem.get("valuation") or (
-        "extreme" if (fly.get("fwd_pe") or 0) > 60 else
-        "elevated" if (fly.get("fwd_pe") or 0) > 35 else
-        "reasonable" if fly.get("fwd_pe") else "unknown")
-    verdict = _verdict(st.get("fundamental_state"),
-                       st.get("momentum_state"), val,
-                       conv.get("future_score"), conv.get("lane"))
-
     # fair-value upside vs latest close — the valuation leg of the
     # readiness checks (post-ADR normalization); scenario FVs + spot
     # feed PUT_ENTRY's bull-case-distance asymmetry
@@ -325,6 +443,31 @@ def card(sym: str) -> dict[str, Any]:
             fv_detail = _fv_detail(r[0], spot, _fund_as_of)
     except Exception:
         pass
+
+    # Use the same growth-adjusted read for the stock verdict and the
+    # price card; fixed P/E cutoffs ignore how fast earnings are growing.
+    earnings_rows = []
+    try:
+        earnings_rows = db.execute_query(
+            "SELECT earnings_date, eps_actual FROM earnings_data"
+            " WHERE stock_symbol=:s AND eps_actual IS NOT NULL"
+            " ORDER BY earnings_date DESC LIMIT 4", {"s": s})
+    except Exception:
+        pass
+    multiples = _multiples(spot, earnings_rows, fly)
+    pe_label = (multiples.get("guidance") or {}).get("label")
+    if pe_label in ("Attractive on growth screen",
+                    "Reasonable on growth screen"):
+        val = "reasonable"
+    elif pe_label == "Premium":
+        val = "elevated"
+    elif pe_label == "Stretched / avoid":
+        val = "extreme"
+    else:
+        val = gem.get("valuation") or "unknown"
+    verdict = _verdict(st.get("fundamental_state"),
+                       st.get("momentum_state"), val,
+                       conv.get("future_score"), conv.get("lane"))
 
     from app.signals import put_entry, tape_diagnosis
     pe = put_entry.score(det, st.get("momentum_state"),
@@ -426,32 +569,6 @@ def card(sym: str) -> dict[str, Any]:
             last_print.pop("detail", None)
     except Exception:
         pass
-
-    # multiples — trailing P/E off the journaled print stream (last 4
-    # actuals), forward P/E off the flywheel's consensus. Both are
-    # context for the FV ladder, not part of it. Negative/zero EPS →
-    # nulls, the UI shows '—'.
-    eps_ttm = None
-    try:
-        er = db.execute_query(
-            "SELECT eps_actual FROM earnings_data"
-            " WHERE stock_symbol=:s AND eps_actual IS NOT NULL"
-            " ORDER BY earnings_date DESC LIMIT 4", {"s": s})
-        if len(er) == 4:
-            eps_ttm = round(sum(float(r["eps_actual"]) for r in er), 2)
-    except Exception:
-        pass
-    fwd_eps = fly.get("fwd_eps_avg")
-    fwd_pe = fly.get("fwd_pe")
-    if fwd_pe is None and fwd_eps and float(fwd_eps) > 0 and spot:
-        fwd_pe = round(float(spot) / float(fwd_eps), 1)
-    multiples = {
-        "eps_ttm": eps_ttm,
-        "pe_ttm": (round(spot / eps_ttm, 1)
-                   if spot and eps_ttm and eps_ttm > 0 else None),
-        "fwd_eps": fwd_eps,
-        "fwd_pe": fwd_pe,
-    }
 
     # earnings event — canonical fields (stocks.next_earnings_* are
     # derived from earnings_events by the indexer) + provenance + the
