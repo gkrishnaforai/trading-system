@@ -76,54 +76,108 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
   }
   const growth = guidance?.growth_pct == null
     ? null : num(guidance.growth_pct)
+  const peg = guidance?.peg_like == null
+    ? null : num(guidance.peg_like)
   const epsMoney = (value: unknown) =>
     value == null ? '—' : money(value)
+  const ttmAge = m.ttm_age_days == null ? null : num(m.ttm_age_days)
+  const analystCount = m.analyst_count == null
+    ? null : num(m.analyst_count)
+  const estimateAge = m.estimate_age_days == null
+    ? null : num(m.estimate_age_days)
+  const growthRead = growth == null ? 'not measured'
+    : growth <= 0 ? 'not growing'
+      : growth > 50 ? 'base-effect caution' : 'positive'
+
   return (
-    <div className="mt-2 w-[min(100%,19rem)] rounded-lg border border-hairline/70 bg-card/70 px-3 py-2 text-left">
-      <div className="grid grid-cols-2 gap-x-4">
+    <section className="mt-4 w-full overflow-hidden rounded-xl border border-hairline bg-card/70">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-hairline/70 px-4 py-2.5">
         <div>
-          <div className="text-[9px] uppercase tracking-wider text-faint">Trailing P/E</div>
-          <div className="font-mono text-sm text-ink">{multiple(m.pe_ttm)}</div>
-          <div className="text-[10px] text-faint">
-            EPS {epsMoney(m.eps_ttm)} · reported TTM
+          <div className="text-[10px] uppercase tracking-[0.18em] text-faint">
+            earnings multiple screen
+          </div>
+          <div className="pt-0.5 text-[11px] text-muted">
+            Trailing reported EPS versus consensus forward EPS
           </div>
         </div>
-        <div>
-          <div className="text-[9px] uppercase tracking-wider text-faint">Forward P/E</div>
-          <div className="font-mono text-sm text-ink">{multiple(m.fwd_pe)}</div>
-          <div className="text-[10px] text-faint">
-            EPS {epsMoney(m.fwd_eps)} · consensus
-          </div>
-        </div>
+        {label && (
+          <div className={`text-sm font-medium ${tone}`}>{label}</div>
+        )}
       </div>
-      {guidance && (
-        <div className="mt-2 border-t border-hairline/60 pt-1.5">
-          <div className={`text-[11px] font-medium ${tone}`}>
-            {label || 'P/E guidance unavailable'}
-            {growth != null && ` · EPS growth ${pct(growth)}`}
-            {guidance.peg_like != null &&
-              ` · growth-adjusted ${Number(guidance.peg_like).toFixed(2)}×`}
-          </div>
-          {guidance.reason != null && (
-            <p className="pt-0.5 text-[10px] leading-snug text-muted">
-              {String(guidance.reason)}
-            </p>
-          )}
-          <div className="pt-1 text-[9px] text-faint">
-            {m.estimate_as_of != null
-              ? `est. snapshot ${String(m.estimate_as_of)}${m.analyst_count != null ? ` · ${String(m.analyst_count)} analysts` : ''}`
-              : 'estimate date unavailable'}
-            {m.ttm_as_of != null &&
-              ` · TTM through ${String(m.ttm_as_of)}${m.ttm_age_days != null ? ` (${String(m.ttm_age_days)}d old)` : ''}`}
-          </div>
-          {growth != null && growth > 0 && (
-            <div className="pt-0.5 text-[9px] text-faint">
-              Screen bands: reasonable ≤1.5× growth · stretched &gt;2.5×
-            </div>
-          )}
+      <div className="overflow-x-auto">
+        <table className="min-w-[760px] w-full table-fixed text-left text-xs">
+          <thead>
+            <tr className="border-b border-hairline/70 text-[10px] uppercase tracking-wider text-faint">
+              <th className="w-[15%] px-4 py-2 font-medium">Metric</th>
+              <th className="w-[12%] px-3 py-2 font-medium">Value</th>
+              <th className="w-[16%] px-3 py-2 font-medium">EPS / input</th>
+              <th className="w-[17%] px-3 py-2 font-medium">Basis</th>
+              <th className="w-[22%] px-3 py-2 font-medium">Source / age</th>
+              <th className="w-[18%] px-4 py-2 font-medium">Read</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono text-ink">
+            <tr className="border-b border-hairline/50">
+              <td className="px-4 py-2.5 font-sans text-muted">Trailing P/E</td>
+              <td className="px-3 py-2.5">{multiple(m.pe_ttm)}</td>
+              <td className="px-3 py-2.5">{epsMoney(m.eps_ttm)}</td>
+              <td className="px-3 py-2.5 font-sans text-muted">reported TTM</td>
+              <td className="px-3 py-2.5 font-sans text-muted">
+                {m.ttm_as_of != null
+                  ? `through ${String(m.ttm_as_of)}${ttmAge != null ? ` · ${ttmAge}d old` : ''}`
+                  : '—'}
+              </td>
+              <td className="px-4 py-2.5 font-sans text-muted">reported basis</td>
+            </tr>
+            <tr className="border-b border-hairline/50">
+              <td className="px-4 py-2.5 font-sans text-muted">Forward P/E</td>
+              <td className="px-3 py-2.5">{multiple(m.fwd_pe)}</td>
+              <td className="px-3 py-2.5">{epsMoney(m.fwd_eps)}</td>
+              <td className="px-3 py-2.5 font-sans text-muted">consensus</td>
+              <td className="px-3 py-2.5 font-sans text-muted">
+                {m.estimate_as_of != null
+                  ? `snapshot ${String(m.estimate_as_of)}${analystCount != null ? ` · ${analystCount} analysts` : ''}${estimateAge != null ? ` · ${estimateAge}d old` : ''}`
+                  : 'estimate date unavailable'}
+              </td>
+              <td className="px-4 py-2.5 font-sans text-muted">estimate basis</td>
+            </tr>
+            <tr className="border-b border-hairline/50">
+              <td className="px-4 py-2.5 font-sans text-muted">Expected EPS growth</td>
+              <td className="px-3 py-2.5">
+                {growth != null ? pct(growth) : '—'}
+              </td>
+              <td className="px-3 py-2.5">
+                {epsMoney(m.eps_ttm)} → {epsMoney(m.fwd_eps)}
+              </td>
+              <td className="px-3 py-2.5 font-sans text-muted">forward ÷ TTM</td>
+              <td className="px-3 py-2.5 font-sans text-muted">same EPS bases</td>
+              <td className="px-4 py-2.5 font-sans text-muted">{growthRead}</td>
+            </tr>
+            <tr>
+              <td className="px-4 py-2.5 font-sans text-muted">Growth-adjusted</td>
+              <td className="px-3 py-2.5">
+                {peg != null ? `${peg.toFixed(2)}×` : '—'}
+              </td>
+              <td className="px-3 py-2.5">
+                {multiple(m.fwd_pe)} ÷ {growth != null ? pct(growth) : '—'}
+              </td>
+              <td className="px-3 py-2.5 font-sans text-muted">P/E ÷ growth</td>
+              <td className="px-3 py-2.5 font-sans text-muted">
+                reasonable ≤1.5× · stretched &gt;2.5×
+              </td>
+              <td className={`px-4 py-2.5 font-sans ${tone}`}>
+                {label || '—'}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {guidance?.reason != null && (
+        <div className="border-t border-hairline/70 px-4 py-2.5 text-xs leading-relaxed text-muted">
+          {String(guidance.reason)}
         </div>
       )}
-    </div>
+    </section>
   )
 }
 
@@ -733,9 +787,9 @@ async function StockCore({ sym }: { sym: string }) {
                 {pct(upside)} vs fair value
               </div>
             )}
-            <PriceMultiples m={multiples} />
           </div>
         </div>
+        <PriceMultiples m={multiples} />
         <div className="pt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted">
           {card.name != null && <span>{String(card.name)}</span>}
           {card.sector != null && (
