@@ -19,7 +19,7 @@ services:
       - path: ../.env
         required: false # alerts/API need the vars, but the watcher itself runs without them
     environment:
-      - DATABASE_URL=${WATCH_DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@host.docker.internal:${PGBOUNCER_PORT:-6432}/${POSTGRES_DB:-trading_system}?sslmode=disable}
+      - DATABASE_URL=${WATCH_DATABASE_URL:-postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading-dev}@${WATCH_DB_HOST:-pgbouncer}:${WATCH_DB_PORT:-5432}/${POSTGRES_DB:-trading_system}?sslmode=disable}
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USER=${SMTP_USER:-}
@@ -41,6 +41,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - custodian_data:/data
+    networks:
+      - trading-network
     restart: unless-stopped
     healthcheck:
       test: [ "CMD-SHELL", "find /data/heartbeat -mmin -3 | grep -q . || exit 1" ]
@@ -57,3 +59,10 @@ services:
 volumes:
   custodian_data:
     driver: local
+
+# joins the app's compose network to reach pgbouncer by service name;
+# WATCH_DB_NETWORK must match `docker network ls` on the host
+networks:
+  trading-network:
+    external: true
+    name: ${WATCH_DB_NETWORK:-trading-network}
