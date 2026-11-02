@@ -61,11 +61,14 @@ WATCH_TOKEN = os.getenv("WATCH_TOKEN", "")   # Bearer token for the API
 # open this long after its evidence line rotates out of the tail — a
 # failing job that spams then goes quiet is not "recovered"
 KEEP_FIRING_S = int(os.getenv("WATCH_LOG_KEEP_FIRING_S", "1800"))
+JOB_REPAIR_HOURS = int(os.getenv("WATCH_JOB_REPAIR_HOURS", "24"))
 
 _STARTED = time.time()
 _LAST_PASS: dict[str, Any] = {"at": None, "findings": 0, "error": None,
                               "docker_ok": None, "watched": None,
-                              "log_scanned": None, "rules": None}
+                              "log_scanned": None, "rules": None,
+                              "job_feed": None}
+_JOB_FEED_OK = False
 
 # restart-count growth per poll that counts as a crash loop
 RESTART_LOOP_DELTA = 2
@@ -91,6 +94,11 @@ _MANUAL_STEPS = [
      "(env is baked at create time; restart alone won't pick it up). "
      "3. 429s → check plan tier or reduce call volume. 4. Incident "
      "auto-resolves when the lines stop appearing in the tail."),
+    ("job:",
+     "A scheduled job exhausted its in-worker retry budget. 1. Check "
+     "job_runs for the repeated error. 2. Check custodian_actions for "
+     "the attempted restarts. 3. Fix the job/provider/schema root "
+     "cause, then rerun from the Job Scheduler page."),
     ("container:",
      "1. Coolify/Docker logs for the named container — the log tail is "
      "attached.  2. 'Failed to apply migration' → fix the migration SQL "
@@ -513,11 +521,13 @@ def _sense(own_project: str) -> list[dict[str, Any]]:
         # a blind watcher reporting 'all clear' is worse than no watcher
         _LAST_PASS["docker_ok"] = False
         logger.warning("docker socket unreachable: %s", exc)
-        return [{"signature": "watch:docker-socket-unreachable",
-                 "source": "watch", "severity": "high",
-                 "detail": {"error": str(exc)[:300],
-                            "diagnosis": "watcher cannot read the docker "
-                            "socket — it sees nothing"}}]
+        return [{
+            "signature": "watch:docker-socket-unreachable",
+            "source": "watch", "severity": "high",
+            "detail": {"error": str(exc)[:300],
+                       "diagnosis": "watcher cannot read the docker "
+                       "socket — it sees nothing"},
+        }] + _job_escalations()
 
     watched = _watched(containers, own_project)
     _LAST_PASS["watched"] = len(watched)
@@ -628,6 +638,7 @@ def _sense(own_project: str) -> list[dict[str, Any]]:
             findings.extend(_scan_app_logs(conn, c["Id"], name))
     conn.commit()
     conn.close()
+    findings.extend(_job_escalations())
     return findings
 
 
@@ -656,17 +667,73 @@ def _email(subject: str, body: str) -> bool:
         return False
 
 
+def _pg_connect():
+    if not DATABASE_URL:
+        return None
+    import psycopg2
+    return psycopg2.connect(DATABASE_URL, connect_timeout=5)
+
+
+def _job_escalations() -> list[dict]:
+    """Worker-owned retry exhaustion → watch findings.
+
+    The worker custodian writes `job:<name>:error` incidents after its
+    bounded retries. The watcher surfaces only the terminal escalations;
+    transient retry-in-progress rows stay in the job-repair table."""
+    global _JOB_FEED_OK
+    _JOB_FEED_OK = False
+    _LAST_PASS["job_feed"] = "unavailable"
+    conn = None
+    try:
+        conn = _pg_connect()
+        if conn is None:
+            return []
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT signature, severity, detail, attempts, last_seen
+               FROM custodian_incidents
+               WHERE signature LIKE 'job:%' AND status='escalated'
+               ORDER BY last_seen DESC LIMIT 50""")
+        findings = []
+        for sig, sev, detail, attempts, last_seen in cur.fetchall():
+            if isinstance(detail, str):
+                try:
+                    detail = json.loads(detail)
+                except Exception:
+                    detail = {"error": detail}
+            det = dict(detail or {})
+            det.setdefault(
+                "diagnosis",
+                "scheduled job exhausted auto-repair attempts — "
+                "manual intervention required")
+            det["attempts"] = attempts
+            det["last_seen"] = str(last_seen)
+            findings.append({
+                "signature": sig, "source": "worker",
+                "severity": "high" if sev != "high" else sev,
+                "detail": det})
+        _JOB_FEED_OK = True
+        _LAST_PASS["job_feed"] = "ok"
+        return findings
+    except Exception as exc:
+        logger.debug("job escalation read skipped: %s", exc)
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def _mirror_pg(sig: str, sev: str, detail: dict, status: str,
                diagnosis: str, steps: str) -> None:
     """Best-effort copy into postgres custodian_incidents so the board's
     Custodian view sees watch findings. Skipped silently when DB is down
     — sqlite is the record of truth."""
-    if not DATABASE_URL:
-        return
+    conn = None
     try:
-        import psycopg2
         from psycopg2.extras import Json
-        conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
+        conn = _pg_connect()
+        if conn is None:
+            return
         cur = conn.cursor()
         cur.execute(
             """INSERT INTO custodian_incidents
@@ -679,9 +746,93 @@ def _mirror_pg(sig: str, sev: str, detail: dict, status: str,
                  resolved_at=NULL""",
             (sig, sev, status, Json(detail), diagnosis, steps))
         conn.commit()
-        conn.close()
     except Exception as exc:
         logger.debug("pg mirror skipped (%s): %s", sig, exc)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _jsonable(v):
+    """Postgres rows → JSON-safe values without changing timestamps."""
+    if isinstance(v, datetime):
+        return v.isoformat()
+    if isinstance(v, dict):
+        return {k: _jsonable(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_jsonable(x) for x in v]
+    return v
+
+
+def _job_repair_json(hours: int = JOB_REPAIR_HOURS) -> dict:
+    """Read-only job health — durable job_runs + the in-worker
+    custodian's remediation ledger. The watcher deliberately does not
+    restart jobs itself: the worker owns _run_job and retry policy."""
+    out = {"available": False, "hours": hours, "rows": []}
+    conn = None
+    try:
+        from psycopg2.extras import RealDictCursor
+        conn = _pg_connect()
+        if conn is None:
+            out["error"] = "DATABASE_URL not configured"
+            return out
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """WITH latest AS (
+                 SELECT DISTINCT ON (name) name, ran_at, duration_s,
+                        error
+                 FROM job_runs ORDER BY name, ran_at DESC
+               ), latest_action AS (
+                 SELECT DISTINCT ON (signature) signature, action,
+                        result, created_at
+                 FROM custodian_actions
+                 WHERE signature LIKE 'job:%'
+                 ORDER BY signature, id DESC
+               )
+               SELECT d.name, d.label, d.cron, d.enabled,
+                      l.ran_at, l.duration_s, l.error,
+                      i.status AS incident_status,
+                      i.severity AS incident_severity,
+                      i.attempts, i.last_seen AS incident_seen,
+                      a.action AS repair_action,
+                      a.result AS repair_result,
+                      a.created_at AS repair_at
+               FROM job_definitions d
+               JOIN latest l ON l.name = d.name
+               LEFT JOIN custodian_incidents i
+                 ON i.signature = 'job:' || d.name || ':error'
+               LEFT JOIN latest_action a
+                 ON a.signature = 'job:' || d.name || ':error'
+               WHERE l.error IS NOT NULL
+                  OR (i.status IS NOT NULL AND i.status <> 'resolved')
+                  OR a.created_at > now() - interval '1 hour' * %s
+               ORDER BY (l.error IS NULL), COALESCE(a.created_at,
+                         l.ran_at) DESC
+               LIMIT 60""",
+            (hours,))
+        rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            if r.get("incident_status") == "escalated":
+                r["state"] = "escalated"
+            elif r.get("error"):
+                if r.get("incident_status") == "mitigated":
+                    r["state"] = "repairing"
+                else:
+                    r["state"] = "queued for retry"
+            elif r.get("repair_at") or r.get("incident_status"):
+                r["state"] = "repaired"
+            else:
+                r["state"] = "healthy"
+            for k, v in list(r.items()):
+                r[k] = _jsonable(v)
+        out.update(available=True, rows=rows)
+        return out
+    except Exception as exc:
+        out["error"] = str(exc)[:300]
+        return out
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _runbook_key(sig: str) -> tuple[str, str]:
@@ -754,11 +905,13 @@ def _resolve_absent(conn, seen: set[str]) -> None:
     override else KEEP_FIRING_S), clocked off last_seen."""
     now = _now()
     for r in conn.execute(
-            "SELECT signature, detail, last_seen FROM incidents "
+            "SELECT signature, source, detail, last_seen FROM incidents "
             "WHERE status != 'resolved'").fetchall():
         sig = r["signature"]
         if sig in seen:
             continue
+        if r["source"] == "worker" and not _JOB_FEED_OK:
+            continue                    # blind feed ≠ resolved failure
         if sig.startswith("app:"):
             try:
                 grace = int(json.loads(r["detail"] or "{}")
@@ -808,6 +961,7 @@ def _incidents_json() -> dict:
             "SELECT * FROM actions ORDER BY id DESC LIMIT 30")]
         return {"generated_at": _now(), "uptime_s": int(time.time() - _STARTED),
                 "last_pass": _LAST_PASS, "open": op,
+                "job_repair": _job_repair_json(),
                 "resolved": res, "actions": acts}
     finally:
         conn.close()
@@ -820,8 +974,9 @@ th{{background:#222;color:#eee}}.hi{{color:#c0392b;font-weight:700}}.med{{color:
 pre{{white-space:pre-wrap;font-size:11px;color:#888;max-height:120px;overflow:auto}}</style>
 <h2>custodian-watch <span class=ok>&#9679;</span></h2>
 <p>up {uptime}s &middot; last pass {last} &middot; {nfind} finding(s) &middot; {proj}</p>
+<h3>scheduled jobs — failures & auto-repair</h3>{jobs_t}
 <h3>open incidents</h3>{open_t}<h3>recently resolved</h3>{res_t}
-<h3>actions</h3>{act_t}<p style=color:#888>JSON: /incidents &middot; liveness: /health &middot; <a href="/rules{tok}">edit log rules</a> &middot; <a href="/runbook{tok}">runbook</a></p>"""
+<h3>actions</h3>{act_t}<p style=color:#888>JSON: /incidents &middot; /job-failures &middot; liveness: /health &middot; <a href="/rules{tok}">edit log rules</a> &middot; <a href="/runbook{tok}">runbook</a></p>"""
 
 
 def _row_html(r, cols):
@@ -871,10 +1026,25 @@ def _incidents_html(token: str = "") -> str:
             f'<input type=hidden name=sig value="{sig_esc}">'
             f'<input name=note size=14 placeholder="note (optional)">'
             f'<button type=submit>close</button></form>')
+    jobs = d.get("job_repair") or {}
+    job_rows = []
+    for r in jobs.get("rows") or []:
+        r = dict(r)
+        r["log"] = r.get("error") or r.get("repair_result") or ""
+        r["repair"] = " ".join(x for x in
+                               (r.get("repair_action"),
+                                r.get("repair_result")) if x)
+        job_rows.append(r)
+    if not jobs.get("available"):
+        job_rows = [{"name": "job repair feed", "state": "unavailable",
+                     "log": jobs.get("error") or "DATABASE_URL not configured"}]
     return _PAGE.format(
         uptime=d["uptime_s"], last=d["last_pass"]["at"],
         nfind=d["last_pass"]["findings"], proj=os.uname().nodename,
         tok=(f"?token={token}" if token else ""),
+        jobs_t=tbl(job_rows, ["name", "state", "incident_status",
+                              "attempts", "log", "repair", "ran_at",
+                              "repair_at"]),
         open_t=tbl(d["open"], ["signature", "severity", "diagnosis",
                               "log", "live", "fix", "manual_steps",
                               "last_seen", "manage"]),
@@ -1001,6 +1171,8 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if path == "/incidents":
                 self._send(200, json.dumps(_incidents_json()))
+            elif path == "/job-failures":
+                self._send(200, json.dumps(_job_repair_json()))
             elif path == "/containers":
                 out = []
                 for c in _watched(_list_containers(), _project_name()):
@@ -1184,10 +1356,12 @@ def main() -> None:
             for f in findings:
                 seen.add(f["signature"])
                 alert, status = _record(conn, f)
-                _mirror_pg(f["signature"], f["severity"], f["detail"],
-                           status,
-                           f["detail"].get("diagnosis", "watch finding"),
-                           _steps(f["signature"]))
+                if f.get("source") != "worker":
+                    _mirror_pg(f["signature"], f["severity"],
+                               f["detail"], status,
+                               f["detail"].get("diagnosis",
+                                               "watch finding"),
+                               _steps(f["signature"]))
                 if alert:
                     ok = _email(
                         f"[custodian] {f['signature']} — "

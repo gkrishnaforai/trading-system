@@ -42,6 +42,7 @@ Update later with `git pull && docker compose -f custodian-watch/docker-compose.
 ```
 http://<host>:8100/?token=<WATCH_TOKEN>    HTML incident board
 http://<host>:8100/incidents               JSON (Bearer token or ?token=)
+http://<host>:8100/job-failures            scheduled-job failures + repair ledger
 http://<host>:8100/containers              live docker state per service
 http://<host>:8100/health                  public liveness
 ```
@@ -55,6 +56,19 @@ http://<host>:8100/health                  public liveness
 | `container:<name>:restart-loop` | restart count climbing while unhealthy |
 | `stack:no-watched-containers` | no app containers at all (deploy wiped the stack) |
 | `watch:docker-socket-unreachable` | the watcher itself is blind — check the sock mount |
+
+## Scheduled-job auto-repair
+
+The board's **scheduled jobs — failures & auto-repair** section joins
+`job_runs` (the durable failure ledger) with `custodian_incidents` and
+`custodian_actions`. The worker's in-process custodian is the repair
+executor: it re-kicks failed jobs, retries up to 3 times with a 15-minute
+cooldown, and marks the incident `escalated` when the failure persists
+after the last retry. custodian-watch stays
+read-only for job repair so it can still supervise when the worker is
+partially degraded and so two processes cannot race the same restart.
+`WATCH_JOB_REPAIR_HOURS` controls how much repair history the section
+shows (default 24).
 
 ## If the Coolify copy is still running
 

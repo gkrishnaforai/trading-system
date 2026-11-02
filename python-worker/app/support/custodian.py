@@ -229,13 +229,17 @@ def _diagnose(f: dict) -> tuple[str, str, int]:
 # ── remediator ─────────────────────────────────────────────────────────
 
 
-async def _remediate(sig: str, action: str, tier: int) -> str:
-    """Worker 3 — bounded executor. T1/T2 only touch refresh jobs,
-    each with its own already_running guard; T3 does nothing but mark
-    the incident for the human."""
+async def _remediate(sig: str, action: str, tier: int) -> tuple[str, bool]:
+    """Bounded executor → (result, consume_retry_attempt).
+
+    T1/T2 only touch refresh jobs. An already-running job or an unknown
+    job is not a retry attempt — counting it would burn the escalation
+    budget without doing any repair work."""
     from app.database import db
+    consume_attempt = True
     if tier >= 3 or action == "escalate":
         result = "escalated — human check needed"
+        consume_attempt = False
     else:
         try:
             if action == "retry:alerts":
@@ -250,6 +254,7 @@ async def _remediate(sig: str, action: str, tier: int) -> str:
                     result = f"unknown job '{job}' — escalate"
                 elif _jobs.get(job, {}).get("running"):
                     result = f"{job} already running"
+                    consume_attempt = False
                 else:
                     import asyncio
                     asyncio.create_task(_run_job(job))
@@ -260,7 +265,7 @@ async def _remediate(sig: str, action: str, tier: int) -> str:
         "INSERT INTO custodian_actions (signature, action, tier,"
         " result) VALUES (:s,:a,:t,:r)",
         {"s": sig, "a": action, "t": tier, "r": result[:400]})
-    return result
+    return result, consume_attempt
 
 
 # ── supervisor ─────────────────────────────────────────────────────────
@@ -353,17 +358,16 @@ async def run_pass() -> dict[str, Any]:
             _escalate(sig, diag, f, attempts)
         elif attempts < MAX_ATTEMPTS \
                 and mins >= COOLDOWN_MIN * (attempts > 0):
-            res = await _remediate(sig, rem, tier)
-            hit_cap = attempts + 1 >= MAX_ATTEMPTS
-            db.execute_update(
-                "UPDATE custodian_incidents SET attempts=attempts+1,"
-                " status=CASE WHEN attempts+1>=:cap THEN 'escalated'"
-                " ELSE 'mitigated' END WHERE signature=:s",
-                {"s": sig, "cap": MAX_ATTEMPTS})
+            res, consume = await _remediate(sig, rem, tier)
+            if consume:
+                db.execute_update(
+                    "UPDATE custodian_incidents SET attempts=attempts+1,"
+                    " status='mitigated' WHERE signature=:s",
+                    {"s": sig})
             acts.append(f"{sig} → {rem} ({res})")
-            if hit_cap:
-                _escalate(sig, diag, f, attempts + 1)
         elif attempts >= MAX_ATTEMPTS:
+            # The last retry already ran; the signature still firing on
+            # this pass means the bounded repair attempts actually failed.
             _escalate(sig, diag, f, attempts)
     return {"findings": len(findings), "actions": acts,
             "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
