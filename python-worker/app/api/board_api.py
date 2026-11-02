@@ -342,9 +342,21 @@ async def _j_morning_regime():
     """Daily morning regime — 7-bucket deterministic score → 5-regime
     class → LLM explains (evidence-linked). Runs every day; event
     days layer the event judge on top."""
+    from app.database import db
     from app.market_regime.morning import snapshot
+    today = date.today()
     res = await asyncio.to_thread(snapshot)
-    return res or {"skipped": "already journaled today"}
+    if res:
+        return res
+    existing = db.execute_query(
+        "SELECT id FROM morning_regime_snapshots WHERE as_of=:d",
+        {"d": today})
+    if existing:
+        return {"skipped": "already journaled today",
+                "as_of": str(today)}
+    raise RuntimeError(
+        "morning-regime produced no snapshot — check worker logs for "
+        "'morning: canonical engine failed'")
 
 
 async def _j_fred_macro():

@@ -580,8 +580,10 @@ def snapshot() -> Optional[dict[str, Any]]:
         facts = derive_facts(snap, structural=struct)
         reg = _compose_rules(snap, facts)
     except Exception as exc:
-        logger.warning("morning: canonical engine failed: %s", exc)
-        return None
+        logger.warning("morning: canonical engine failed: %s", exc,
+                       exc_info=True)
+        raise RuntimeError(
+            f"morning canonical engine failed: {exc}") from exc
     regime, composite = _five_class(reg, facts)
     # "what changed" — diff today's dims + structural block against the
     # last journaled card; this is the transition layer, not the level
