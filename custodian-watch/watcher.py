@@ -764,6 +764,29 @@ def _jsonable(v):
     return v
 
 
+def _resolve_job_incident(name: str) -> bool:
+    """Mark the worker's job:<name>:error incident resolved — the
+    watcher's acknowledgement, mirrored to the source-of-truth table."""
+    conn = None
+    try:
+        conn = _pg_connect()
+        if conn is None or not name:
+            return False
+        cur = conn.cursor()
+        cur.execute(
+            """UPDATE custodian_incidents SET status='resolved',
+               resolved_at=now() WHERE signature=%s""",
+            (f"job:{name}:error",))
+        n = cur.rowcount
+        conn.commit()
+        return n > 0
+    except Exception:
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def _job_repair_json(hours: int = JOB_REPAIR_HOURS) -> dict:
     """Read-only job health — durable job_runs + the in-worker
     custodian's remediation ledger. The watcher deliberately does not
@@ -1034,6 +1057,15 @@ def _incidents_html(token: str = "") -> str:
         r["repair"] = " ".join(x for x in
                                (r.get("repair_action"),
                                 r.get("repair_result")) if x)
+        if r.get("incident_status") and r["incident_status"] != "resolved":
+            name_esc = _h.escape(str(r.get("name") or ""), quote=True)
+            r["manage"] = (
+                f'<form method=post action="/jobs/resolve{tok_q}" '
+                f'style="margin:0">'
+                f'<input type=hidden name=name value="{name_esc}">'
+                f'<button type=submit>resolve</button></form>')
+        else:
+            r["manage"] = ""
         job_rows.append(r)
     if not jobs.get("available"):
         job_rows = [{"name": "job repair feed", "state": "unavailable",
@@ -1044,7 +1076,7 @@ def _incidents_html(token: str = "") -> str:
         tok=(f"?token={token}" if token else ""),
         jobs_t=tbl(job_rows, ["name", "state", "incident_status",
                               "attempts", "log", "repair", "ran_at",
-                              "repair_at"]),
+                              "repair_at", "manage"]),
         open_t=tbl(d["open"], ["signature", "severity", "diagnosis",
                               "log", "live", "fix", "manual_steps",
                               "last_seen", "manage"]),
@@ -1242,6 +1274,27 @@ class _Handler(BaseHTTPRequestHandler):
             return
         from urllib.parse import parse_qs, urlparse
         tok = parse_qs(urlparse(self.path).query).get("token", [""])[0]
+
+        if path == "/jobs/resolve":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(min(length, 1 << 16)).decode()
+            form = parse_qs(body)
+            name = (form.get("name") or [""])[0]
+            ok = _resolve_job_incident(name)
+            conn = _db()
+            try:
+                conn.execute(
+                    "INSERT INTO actions (signature,action,result,"
+                    "created_at) VALUES (?,?,?,?)",
+                    (f"job:{name}:error", "resolve:manual",
+                     "resolved" if ok else "no incident", _now()))
+                conn.commit()
+            finally:
+                conn.close()
+            self.send_response(303)
+            self.send_header("Location", f"/{tok}")
+            self.end_headers()
+            return
 
         if path == "/incidents/close":
             length = int(self.headers.get("Content-Length", 0))
