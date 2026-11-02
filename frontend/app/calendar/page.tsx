@@ -130,6 +130,14 @@ function EarningsLine({
             pending
           </span>
         )}
+        {verdict && (
+          <Link
+            href={`/earnings?sym=${encodeURIComponent(sym)}${r.earnings_date ? `&date=${String(r.earnings_date).slice(0, 10)}` : ''}`}
+            className="ml-2 text-[9.5px] font-semibold uppercase tracking-wider text-faint underline decoration-dotted hover:text-muted"
+          >
+            report →
+          </Link>
+        )}
         {drv && (
           <span
             className={`ml-2 rounded-full px-1.5 py-px text-[9.5px] font-semibold ${drv.delta_dir === 'raised'

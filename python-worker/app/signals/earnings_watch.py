@@ -326,6 +326,12 @@ def _reverdict(sym: str, day: date, row: dict) -> dict:
        " WHERE symbol=:s AND earnings_date=:d",
        {"s": sym, "d": day, "v": verdict, "ta": after,
         "sp": _f(surp), "de": json.dumps(det, default=str)})
+    # refreshed basis → new report version (append, never overwrite)
+    try:
+        from app.signals import earnings_report
+        earnings_report.journal(sym, day, generated_by="reverdict")
+    except Exception as exc:
+        logger.debug("earnings report %s: %s", sym, exc)
     # the alert journaled "fundamentals pending" — revise it in place
     # (same fingerprint, no duplicate) now that a verdict exists
     direction = ("UP" if verdict == "improving" else
@@ -519,6 +525,12 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
         rev = event_review.review(sym, trigger="earnings") or {}
     except Exception as exc:
         logger.debug("earnings_watch review %s: %s", sym, exc)
+    # versioned earnings report — the durable per-print document
+    try:
+        from app.signals import earnings_report
+        earnings_report.journal(sym, today)
+    except Exception as exc:
+        logger.debug("earnings report %s: %s", sym, exc)
     return {"symbol": sym, "status": "journaled",
             "verdict": verdict, "surprise_pct": _f(surp),
             "rev_surprise_pct": (rev_surp * 100

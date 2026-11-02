@@ -364,6 +364,109 @@ export type PulseBook = {
   goal_month?: number
 }
 
+export type EarningsHighlight = {
+  metric?: string
+  actual?: number | string | null
+  consensus?: number | string | null
+  delta_pct?: number | null
+  yoy_pct?: number | null
+  unit?: string
+  note?: string | null
+}
+
+export type EarningsReport = {
+  symbol?: string
+  earnings_date?: string
+  version?: number
+  title?: string
+  generated_by?: string
+  created_at?: string
+  report?: {
+    symbol?: string
+    earnings_date?: string
+    quarter_label?: string
+    company_name?: string
+    sector?: string
+    market_cap_b?: number | null
+    rating?: string | null
+    headline?: string
+    verdict?: string
+    print?: {
+      eps_estimate?: number | null
+      eps_actual?: number | null
+      adjusted_eps_actual?: number | null
+      surprise_pct?: number | null
+      revenue_estimate_b?: number | null
+      revenue_actual_b?: number | null
+      rev_surprise_pct?: number | null
+      one_time?: Record<string, unknown> | null
+    }
+    highlights?: EarningsHighlight[]
+    growth?: {
+      quarter_yoy?: number | null
+      two_year_ann?: number | null
+      five_year_cagr?: number | null
+      forward_12m?: number | null
+      quarters_tracked?: number
+    } | null
+    quality?: {
+      operating_margin?: number | null
+      operating_margin_yoy_pp?: number | null
+      fcf_margin?: number | null
+      fcf_margin_yoy_pp?: number | null
+      net_margin?: number | null
+      gross_margin?: number | null
+      beat_streak?: number | null
+      avg_surprise_pct?: number | null
+    } | null
+    expectations?: {
+      fwd_eps_avg?: number | null
+      fwd_rev_avg_b?: number | null
+      fwd_pe?: number | null
+      num_analysts?: number | null
+      est_revision_pct?: number | null
+      gap_score?: number | null
+      muted_reaction?: boolean | null
+      stance_reason?: {
+        meaning?: string
+        because?: string
+        gaps?: string
+      } | null
+    } | null
+    guidance_drivers?: Array<Record<string, unknown>>
+    thesis?: { before?: string | null; after?: string | null }
+    narrative?: string | null
+    takeaways?: string[]
+    prior_prints?: Array<{
+      earnings_date?: string
+      eps_estimate?: number | null
+      eps_actual?: number | null
+      revenue_actual?: number | null
+      surprise_percentage?: number | null
+      verdict?: string | null
+      report_version?: number | null
+    }>
+    version?: number
+  }
+}
+
+export type EarningsReportVersion = {
+  earnings_date?: string
+  version?: number
+  title?: string
+  generated_by?: string
+  created_at?: string
+}
+
+export type EarningsReportFeedRow = {
+  symbol?: string
+  earnings_date?: string
+  version?: number
+  title?: string
+  verdict?: string
+  created_at?: string
+}
+
 export type AlertItem = {
   id?: string
   symbol?: string
@@ -444,6 +547,20 @@ export const api = {
   earningsWatch: (days = 30) =>
     get<{ reporters?: string[]; captures?: EarningsCapture[] }>(
       `/earnings-watch?days=${days}`,
+    ),
+  earningsReport: (sym: string, date?: string, version?: number) =>
+    get<EarningsReport>(
+      `/earnings-report/${sym}` +
+      (date ? `?date=${date}${version ? `&version=${version}` : ''}`
+            : version ? `?version=${version}` : ''),
+    ),
+  earningsReportVersions: (sym: string) =>
+    get<{ symbol?: string; versions?: EarningsReportVersion[] }>(
+      `/earnings-report/${sym}/versions`,
+    ),
+  earningsReportsFeed: (days = 30) =>
+    get<{ reports?: EarningsReportFeedRow[] }>(
+      `/earnings-reports?days=${days}`,
     ),
   posts: (opts: { kind?: string; limit?: number; sym?: string } = {}) =>
     get<{ posts?: PostRow[] }>(

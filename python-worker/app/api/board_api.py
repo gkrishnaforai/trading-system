@@ -3136,6 +3136,50 @@ async def earnings_watch_latest(days: int = 7):
                                             days)}
 
 
+@router.get("/earnings-report/{symbol}")
+async def earnings_report(symbol: str, date: str | None = None,
+                          version: int | None = None):
+    """The versioned per-print earnings report — headline, vs-
+    consensus highlights, growth, quality, guidance, verdict.
+    ?date=YYYY-MM-DD pins a print, ?version=N pins a version."""
+    from app.signals import earnings_report as er
+    r = await asyncio.to_thread(er.report, symbol.upper(), date,
+                                version)
+    if r is None:
+        raise HTTPException(404, f"no earnings report for {symbol}")
+    return r
+
+
+@router.get("/earnings-report/{symbol}/versions")
+async def earnings_report_versions(symbol: str):
+    """Every journaled report version for a symbol — the audit list."""
+    from app.signals import earnings_report as er
+    return {"symbol": symbol.upper(),
+            "versions": await asyncio.to_thread(er.versions,
+                                                symbol.upper())}
+
+
+@router.get("/earnings-reports")
+async def earnings_reports_feed(days: int = 30):
+    """Latest-version earnings reports across the book — the feed."""
+    from app.signals import earnings_report as er
+    return {"reports": await asyncio.to_thread(er.recent, days)}
+
+
+@router.post("/earnings-report/{symbol}/rebuild")
+async def earnings_report_rebuild(symbol: str, date: str | None = None):
+    """Recompose + append a new version — e.g. after a surprise %
+    backfill or a manual driver edit. Never overwrites history."""
+    from app.signals import earnings_report as er
+    from datetime import date as _date
+    d = _date.fromisoformat(date) if date else None
+    r = await asyncio.to_thread(er.journal, symbol.upper(), d,
+                                "manual")
+    if r is None:
+        raise HTTPException(404, f"no print to report for {symbol}")
+    return r
+
+
 @router.get("/income-plan")
 async def income_plan(funds: float | None = None):
     """Daily income & swing plan — posture-gated suggestions across

@@ -1084,6 +1084,13 @@ async function StockCore({ sym }: { sym: string }) {
                 ` · adj ${Number(lastPrint.adjusted_eps_actual).toFixed(2)} ex-1x`}
               {' — '}
               <span className={lpTone}>{lpVerdict}</span>
+              {' · '}
+              <Link
+                href={`/earnings?sym=${sym}&date=${String(lastPrint.earnings_date).slice(0, 10)}`}
+                className="underline decoration-dotted hover:text-fg"
+              >
+                report →
+              </Link>
               {Array.isArray(lastPrint.drivers) && (lastPrint.drivers as Record<string, unknown>[]).some(d => d?.delta_dir === 'cut' || d?.delta_dir === 'raised') && (
                 <div className="pt-1">
                   {(lastPrint.drivers as Record<string, unknown>[])
