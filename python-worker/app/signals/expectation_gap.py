@@ -914,6 +914,112 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
     return m
 
 
+def audit_fwd_eps(symbols: Optional[list[str]] = None) -> list[dict]:
+    """Deterministic audit of every stored fwd_eps_avg — no provider
+    calls. Two checks, same logic as the write-time guard:
+
+      ratio     fwd_eps vs reported TTM EPS (0.05x-6.0x band)
+      snapshot  fwd_eps vs the NEAREST-future period's eps_avg in
+                symbol_estimate_snapshots — >25% divergence means the
+                stored value came from a different fiscal year
+
+    Returns the suspect rows; repair_fwd_eps() recomputes them."""
+    from app.database import db
+    p: dict = {}
+    sql = ("SELECT f.symbol, f.fwd_eps_avg, f.fwd_pe, f.updated_at,"
+           " (SELECT MIN(period_end) FROM symbol_estimate_snapshots ss"
+           "  WHERE ss.symbol=f.symbol"
+           "    AND ss.period_end > CURRENT_DATE + 60) AS fwd_period,"
+           " (SELECT ss.eps_avg FROM symbol_estimate_snapshots ss"
+           "  WHERE ss.symbol=f.symbol"
+           "    AND ss.period_end > CURRENT_DATE + 60"
+           "  ORDER BY ss.period_end, ss.as_of DESC LIMIT 1)"
+           "   AS snap_eps"
+           " FROM symbol_flywheel f WHERE f.fwd_eps_avg IS NOT NULL")
+    if symbols:
+        sql += " AND f.symbol = ANY(:s)"
+        p["s"] = [s.upper() for s in symbols]
+    rows = db.execute_query(sql, p)
+    ttm = {r["symbol"]: r["t"] for r in db.execute_query(
+        "SELECT symbol, SUM(eps_actual) AS t FROM ("
+        "  SELECT stock_symbol AS symbol, eps_actual,"
+        "   ROW_NUMBER() OVER (PARTITION BY stock_symbol"
+        "    ORDER BY earnings_date DESC) AS rn"
+        "  FROM earnings_data WHERE eps_actual IS NOT NULL) x"
+        " WHERE rn <= 4 GROUP BY symbol HAVING COUNT(*) = 4")}
+    out = []
+    for r in rows:
+        sym = r["symbol"]
+        fwd = r.get("fwd_eps_avg")
+        t = ttm.get(sym)
+        ratio = (float(fwd) / float(t)
+                 if fwd is not None and t and float(t) >= 0.25
+                 else None)
+        snap = r.get("snap_eps")
+        snap_div = (abs(float(fwd) / float(snap) - 1)
+                    if fwd is not None and snap and float(snap) > 0
+                    else None)
+        bad_ratio = ratio is not None and not (0.05 <= ratio <= 6.0)
+        bad_snap = snap_div is not None and snap_div > 0.25
+        if bad_ratio or bad_snap:
+            out.append({
+                "symbol": sym, "fwd_eps_avg": fwd,
+                "eps_ttm": round(float(t), 2) if t else None,
+                "ttm_ratio": round(ratio, 2) if ratio else None,
+                "snap_eps": snap, "fwd_period": str(r.get("fwd_period")),
+                "snap_divergence": round(snap_div, 2)
+                                   if snap_div else None,
+                "checks": [c for c, b in
+                           (("ttm_ratio", bad_ratio),
+                            ("snapshot_year", bad_snap)) if b],
+                "updated_at": str(r.get("updated_at"))[:19]})
+    return out
+
+
+async def repair_fwd_eps(symbols: Optional[list[str]] = None) -> dict:
+    """Audit → recompute suspects → re-resolve FV where the EPS moved.
+
+    The flywheel recompute is the fix: _estimates now picks the
+    nearest forward year and the sanity guard clears/corrects
+    anything still out of band. Symbols whose forward EPS moved >10%
+    get a fair-value re-resolve — the earnings-driven FV legs were
+    priced on the same wrong estimate."""
+    from app.database import db
+    suspects = audit_fwd_eps(symbols)
+    fixed, failed, fv = [], [], []
+    fmp = None
+    for row in suspects:
+        sym = row["symbol"]
+        try:
+            if fmp is None:
+                from app.providers.financial_modeling_prep.client \
+                    import EnhancedFMPClient
+                fmp = EnhancedFMPClient.from_settings()
+            before = row["fwd_eps_avg"]
+            m = await asyncio.to_thread(compute_flywheel, fmp, sym)
+            after = m.get("fwd_eps_avg")
+            moved = (before is None or after is None
+                     or abs(after / before - 1) > 0.10)
+            fixed.append({"symbol": sym, "before": before,
+                          "after": after,
+                          "suspect": m.get("eps_suspect")})
+            if moved:
+                fv.append(sym)
+        except Exception as exc:
+            failed.append({"symbol": sym, "error": str(exc)[:120]})
+    fv_results = []
+    for sym in fv:
+        try:
+            from app.signals import fv_sweep
+            fv_results.append(await asyncio.to_thread(
+                fv_sweep._resolve_fv, sym))
+        except Exception as exc:
+            fv_results.append({"symbol": sym, "error": str(exc)[:120]})
+    return {"audited": len(suspects), "suspects": suspects,
+            "fixed": fixed, "failed": failed,
+            "fv_recomputed": fv_results}
+
+
 async def refresh_flywheel(symbols: list[str],
                            concurrency: int = 4) -> dict:
     """Batch refresh — called at the tail of engine evals so boards

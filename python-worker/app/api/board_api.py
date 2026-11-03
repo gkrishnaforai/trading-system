@@ -486,6 +486,16 @@ async def _j_flywheel():
     return await refresh_flywheel(await _tracked_symbols(), concurrency=8)
 
 
+async def _j_fwd_eps_repair():
+    """Audit every stored fwd_eps_avg vs reported TTM + snapshot-year
+    checks, recompute suspects through the guarded flywheel path, and
+    re-resolve FV where the estimate moved >10% — the earnings-driven
+    FV legs were priced on the same wrong basis."""
+    from app.signals import expectation_gap
+    return await expectation_gap.repair_fwd_eps(
+        await _tracked_symbols())
+
+
 async def _j_tailwind_review():
     """Weekly LLM attribution over the deterministic tailwind screen —
     what kind of tailwind is repricing each candidate. Journal-only:
@@ -940,6 +950,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "leaps-mark":    ("LEAPS book marks", _j_leaps_mark),
     "regime":        ("Market regime card", _j_regime),
     "flywheel":      ("Expectation gap", _j_flywheel),
+    "fwd-eps-repair": ("Forward-EPS audit + repair",
+                       _j_fwd_eps_repair),
     "macro-snapshot": ("Macro market snapshot", _j_macro_snapshot),
     "fund-snapshots": ("Fundamental snapshots", _j_fund_snapshots),
     "focus-scan":    ("Focus book scan", _j_focus),
@@ -1041,6 +1053,7 @@ _JOB_TIMEOUT = {
     "swing-scan": 15 * 60, "alerts": 15 * 60, "focus-scan": 10 * 60,
     "after-hours": 8 * 60, "pt-watch": 8 * 60,
     "custodian": 10 * 60, "momentum": 8 * 60, "flywheel": 50 * 60,
+    "fwd-eps-repair": 15 * 60,
     "macro-snapshot": 3 * 60, "fund-snapshots": 120 * 60,
     "fund-flags": 8 * 60, "outcomes": 8 * 60, "leaps-mark": 5 * 60,
     "regime": 5 * 60, "pilot": 8 * 60, "daily-calls": 5 * 60,
@@ -3134,6 +3147,16 @@ async def earnings_watch_latest(days: int = 7):
         earnings_watch.todays_reporters),
         "captures": await asyncio.to_thread(earnings_watch.latest,
                                             days)}
+
+
+@router.get("/fwd-eps-audit")
+async def fwd_eps_audit():
+    """Read-only audit — every stored fwd_eps_avg that fails the
+    TTM-ratio or snapshot-year checks. The fwd-eps-repair job
+    recomputes these through the guarded path and re-resolves FV."""
+    from app.signals import expectation_gap
+    return {"suspects": await asyncio.to_thread(
+        expectation_gap.audit_fwd_eps, await _tracked_symbols())}
 
 
 @router.get("/earnings-report/{symbol}")
