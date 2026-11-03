@@ -91,6 +91,18 @@ def _pe_guidance(fwd_pe: float | None, eps_ttm: float | None,
 
     peg_like = fwd_pe / growth_pct
     growth_data["peg_like"] = round(peg_like, 2)
+    if growth_pct > 50:
+        # recovery/base-effect growth — not a durable rate, and PEG
+        # anchors on it print absurd fair values (CRDO: +137% ->
+        # $1994 'FV' on a $140 stock). Show the ratios, suppress the
+        # derived anchors — the scenario FV engine owns valuation here
+        return {**growth_data,
+                "label": "Base-effect growth — anchors suppressed",
+                "reason": (f"Reported forward growth of {growth_pct:.0f}% is a "
+                           "recovery/base effect, not a durable rate — "
+                           "PEG anchors and the FY+2 discount are not "
+                           "meaningful here. Use the scenario fair "
+                           "value engine for valuation.")}
     if peg_like <= 1:
         label = "Attractive on growth screen"
         reason = "Forward P/E is at or below expected EPS growth; confirm growth durability, cash conversion, and fair-value buy-below."
@@ -195,8 +207,12 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
     spot_peg = (guidance or {}).get("peg_like")
     # g_pct is already the forward YoY growth (FY+1 ÷ FY0 override
     # when the FY0 snapshot exists, else fwd ÷ TTM) — the band and
-    # spot_peg share the same basis so the table shows ONE PEG
-    g_band = g_pct if g_pct is not None and g_pct > 0 else None
+    # spot_peg share the same basis so the table shows ONE PEG.
+    # Suppress derived anchors on base-effect growth (>50%) — a
+    # recovery number isn't a durable rate to price on.
+    base_effect = (g_pct is not None and g_pct > 50)
+    g_band = (g_pct if g_pct is not None and 0 < g_pct <= 50
+              else None)
     g_basis = "FY+1 ÷ FY0" if g_fwd is not None else "fwd ÷ TTM"
     peg_band = None
     if fwd_eps and g_band is not None and g_band > 0:
