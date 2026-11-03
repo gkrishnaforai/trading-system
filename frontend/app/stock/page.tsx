@@ -204,6 +204,34 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                 </td>
               </tr>
             )}
+            {num(m.fv_growth) != null && (
+              <tr className="border-b border-hairline/50">
+                <td className="px-4 py-2.5 font-sans text-muted">
+                  Fair value (growth)
+                </td>
+                <td className="px-3 py-2.5 font-semibold">
+                  {money(m.fv_growth)}
+                </td>
+                <td className="px-3 py-2.5">
+                  1.5× PEG × {money(m.fwd_eps)}
+                </td>
+                <td className="px-3 py-2.5 font-sans text-muted">
+                  growth-adjusted FV
+                </td>
+                <td className="px-3 py-2.5 font-sans text-muted">
+                  mid anchor of band
+                </td>
+                <td className={`px-4 py-2.5 font-sans ${
+                  num(m.fv_growth_upside_pct) != null
+                    ? num(m.fv_growth_upside_pct)! >= 0
+                      ? 'text-aggressive' : 'text-defensive'
+                    : 'text-muted'}`}>
+                  {num(m.fv_growth_upside_pct) != null
+                    ? `spot ${pct(m.fv_growth_upside_pct)} vs FV`
+                    : '—'}
+                </td>
+              </tr>
+            )}
             {num(m.fy2_eps) != null && num(m.fy2_pe) != null && (
               <tr>
                 <td className="px-4 py-2.5 font-sans text-muted">

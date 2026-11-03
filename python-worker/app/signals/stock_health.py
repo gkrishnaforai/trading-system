@@ -202,6 +202,13 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
         if g_pct is not None and g_pct > 0:
             exit_m = g_pct * 1.2          # mid-band exit multiple
             fy2_equiv = round(eps_fy2 * exit_m / 1.10, 2)
+
+    # the growth-adjusted fair value is the 1.5x-PEG anchor — state
+    # it explicitly with the spot delta so the band isn't just three
+    # unlabeled prices
+    fv_growth = (peg_band or {}).get("peg_1_5_price")
+    fv_growth_upside = (round((fv_growth / price - 1) * 100, 1)
+                        if fv_growth and price else None)
     return {
         "spot": price,
         "eps_ttm": eps_ttm,
@@ -219,6 +226,8 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
         "guidance": guidance,
         "spot_peg": spot_peg,
         "peg_band": peg_band,
+        "fv_growth": fv_growth,
+        "fv_growth_upside_pct": fv_growth_upside,
         "fy2_eps": eps_fy2,
         "fy2_period": fy2_period.isoformat() if fy2_period else None,
         "fy2_pe": fy2_pe,
