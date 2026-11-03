@@ -48,6 +48,15 @@ const GROUPS: { title: string; note?: string; entries: Entry[] }[] = [
     ],
   },
   {
+    title: 'Forward outlook & options',
+    note: 'deterministic engines — observed analog outcomes and scenario-weighted option P&L, not calibrated forecasts',
+    entries: [
+      { method: 'GET', path: 'forward-outlook', desc: 'market analogs → forward outcome stats at 5d-252d + book event study' },
+      { method: 'GET', path: 'forward-outlook?sym={sym}', desc: 'adds the stock forward baseline + per-symbol earnings event study', fields: [{ name: 'sym', placeholder: 'PLTR' }] },
+      { method: 'GET', path: 'expected-option-pnl?sym={sym}&strike={strike}&expiry={expiry}&premium={premium}&iv={iv}', desc: 'call expected P&L under FV scenario blend — pass the chain quote you\'re evaluating', fields: [{ name: 'sym', placeholder: 'PLTR' }, { name: 'strike', placeholder: '200' }, { name: 'expiry', placeholder: '2026-08-21' }, { name: 'premium', placeholder: '12.50' }, { name: 'iv', placeholder: '0.45' }] },
+    ],
+  },
+  {
     title: 'Symbol data',
     entries: [
       { method: 'GET', path: 'symbol/{sym}/health', desc: 'stock card — multiples, stance, flywheel, FV, readiness', fields: [{ name: 'sym', placeholder: 'PLTR' }] },
