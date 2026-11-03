@@ -125,3 +125,70 @@ def test_estimates_picks_nearest_forward_year(monkeypatch):
     out = eg._estimates(fmp, "PLTR")
     assert out["fwd_eps_avg"] == 2.35
     assert out["fwd_rev_avg"] == 6.5e9
+
+
+def test_estimates_sanity_clears_out_of_band_eps(monkeypatch):
+    """Write-time guard: a provider forward EPS orders of magnitude
+    from reported TTM gets cleared, not stored — the PLTR FY2030
+    $14.38 vs $1.43 TTM case."""
+    from app.signals import expectation_gap as eg
+    import app.database as adb
+
+    rows = [{"date": "2027-12-31", "epsAvg": 14.38,
+             "revenueAvg": 6.5e9}]
+    fmp = type("F", (), {"_make_request": lambda s, p, q: rows})()
+    monkeypatch.setattr(eg, "_ensure_stock", lambda s: None)
+    monkeypatch.setattr(eg, "yf", None, raising=False)
+
+    class _DB:
+        @staticmethod
+        def execute_query(sql, p=None):
+            if "eps_actual" in sql:
+                return [{"eps_actual": v} for v in
+                        (0.44, 0.36, 0.33, 0.30)]  # TTM ≈ $1.43
+            return []
+
+        @staticmethod
+        def execute_update(sql, p=None):
+            return None
+
+    monkeypatch.setattr(adb, "db", _DB)
+    # kill the yfinance block — the guard must work without it
+    import sys, types
+    fake_yf = types.SimpleNamespace(Ticker=lambda s: None)
+    monkeypatch.setitem(sys.modules, "yfinance", fake_yf)
+    out = eg._estimates(fmp, "PLTR")
+    assert out["fwd_eps_avg"] is None
+    assert out["eps_suspect"]["provider_eps"] == 14.38
+    assert out["eps_suspect"]["action"] == "cleared"
+
+
+def test_estimates_sanity_keeps_in_band_eps(monkeypatch):
+    """A real FY+1 estimate within 6x TTM passes through."""
+    from app.signals import expectation_gap as eg
+    import app.database as adb
+
+    rows = [{"date": "2027-12-31", "epsAvg": 2.35,
+             "revenueAvg": 6.5e9}]
+    fmp = type("F", (), {"_make_request": lambda s, p, q: rows})()
+    monkeypatch.setattr(eg, "_ensure_stock", lambda s: None)
+
+    class _DB:
+        @staticmethod
+        def execute_query(sql, p=None):
+            if "eps_actual" in sql:
+                return [{"eps_actual": v} for v in
+                        (0.44, 0.36, 0.33, 0.30)]
+            return []
+
+        @staticmethod
+        def execute_update(sql, p=None):
+            return None
+
+    monkeypatch.setattr(adb, "db", _DB)
+    import sys, types
+    fake_yf = types.SimpleNamespace(Ticker=lambda s: None)
+    monkeypatch.setitem(sys.modules, "yfinance", fake_yf)
+    out = eg._estimates(fmp, "PLTR")
+    assert out["fwd_eps_avg"] == 2.35
+    assert out["eps_suspect"] is None

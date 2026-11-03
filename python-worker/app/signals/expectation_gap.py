@@ -316,6 +316,7 @@ def _estimates(fmp, sym: str) -> dict:
     # up/down breadth. This fills the revision signal TODAY; our own
     # snapshots only become the source once they've aged past 90d.
     breadth = None
+    yf_eps = None
     try:
         import yfinance as yf
         tk = yf.Ticker(sym)
@@ -324,6 +325,8 @@ def _estimates(fmp, sym: str) -> dict:
                 and "+1y" in trend.index:
             cur = trend.loc["+1y", "current"]
             ago = trend.loc["+1y", "90daysAgo"]
+            if pd.notna(cur):
+                yf_eps = float(cur)
             # same base sanity as the snapshot path — near-zero or
             # sign-flipping priors make % revision pure noise
             if (pd.notna(cur) and pd.notna(ago)
@@ -346,9 +349,46 @@ def _estimates(fmp, sym: str) -> dict:
     except Exception as exc:
         logger.debug("yf estimates %s failed: %s", sym, exc)
 
+    # write-time sanity vs the reported basis — a forward-FY consensus
+    # orders of magnitude from reported TTM EPS is a provider row on
+    # the wrong basis (far-year row, wrong field, unit mismatch), not
+    # analyst opinion. PLTR's 'forward EPS' journaled $14.38 — the
+    # FY2030 row — against $1.43 TTM and a ~$2.35 real FY27 print,
+    # printing a fake-cheap 12.4x forward P/E. Ratio check needs a
+    # sane base (>=$0.25 TTM); below that the denominator is near-zero
+    # and the ratio can't distinguish junk from a real inflection.
+    eps_suspect = None
+    if eps_avg is not None:
+        try:
+            er = db.execute_query(
+                "SELECT eps_actual FROM earnings_data"
+                " WHERE stock_symbol=:s AND eps_actual IS NOT NULL"
+                " ORDER BY earnings_date DESC LIMIT 4", {"s": sym})
+            eps_ttm = (sum(float(r["eps_actual"]) for r in er)
+                       if len(er) == 4 else None)
+            if (eps_ttm is not None and eps_ttm >= 0.25
+                    and not (0.05 <= eps_avg / eps_ttm <= 6.0)):
+                # prefer the yfinance +1y figure when it's in-band;
+                # else clear — a NULL is honest, a corrupt ratio is not
+                if (yf_eps is not None
+                        and 0.05 <= yf_eps / eps_ttm <= 6.0):
+                    eps_suspect = {"provider_eps": eps_avg,
+                                   "eps_ttm": round(eps_ttm, 2),
+                                   "fixed_by": "yfinance"}
+                    eps_avg = yf_eps
+                else:
+                    eps_suspect = {"provider_eps": eps_avg,
+                                   "eps_ttm": round(eps_ttm, 2),
+                                   "action": "cleared"}
+                    eps_avg = None
+                logger.warning("fwd_eps %s suspect: %s", sym,
+                               eps_suspect)
+        except Exception as exc:
+            logger.debug("eps sanity %s: %s", sym, exc)
+
     return {"fwd_eps_avg": eps_avg, "fwd_rev_avg": rev_avg,
             "num_analysts": analysts, "est_revision_pct": revision_pct,
-            "rev_breadth_30d": breadth}
+            "rev_breadth_30d": breadth, "eps_suspect": eps_suspect}
 
 
 def _h2_load(fmp, sym: str) -> Optional[dict]:
@@ -660,6 +700,8 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
         logger.debug("flywheel exp-risk %s: %s", sym, exc)
 
     score, det = _score(m)
+    if m.get("eps_suspect"):
+        det["eps_suspect"] = m["eps_suspect"]
     # provider outage guard — a total miss must not wipe last-known-good
     _CORE = ("rev_growth", "gm_now", "eps_growth", "beat_streak",
              "fwd_eps_avg", "num_analysts", "last_report_date")
@@ -731,8 +773,11 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             " symbol_flywheel.last_surprise_pct),"
             " last_report_date=COALESCE(EXCLUDED.last_report_date,"
             " symbol_flywheel.last_report_date),"
-            " fwd_eps_avg=COALESCE(EXCLUDED.fwd_eps_avg,"
-            " symbol_flywheel.fwd_eps_avg),"
+            # cleared-by-sanity must override COALESCE — otherwise the
+            # corrupt stored value (PLTR's $14.38 FY2030 row) survives
+            " fwd_eps_avg=CASE WHEN :feb THEN NULL"
+            " ELSE COALESCE(EXCLUDED.fwd_eps_avg,"
+            "      symbol_flywheel.fwd_eps_avg) END,"
             " fwd_rev_avg=COALESCE(EXCLUDED.fwd_rev_avg,"
             " symbol_flywheel.fwd_rev_avg),"
             " num_analysts=COALESCE(EXCLUDED.num_analysts,"
@@ -811,6 +856,8 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
              "lsp": m.get("last_surprise_pct"),
              "lrd": m.get("last_report_date"),
              "fe": m.get("fwd_eps_avg"), "fr": m.get("fwd_rev_avg"),
+             "feb": bool((m.get("eps_suspect") or {})
+                        .get("action") == "cleared"),
              "na": m.get("num_analysts"),
              "er": m.get("est_revision_pct"), "fpe": m.get("fwd_pe"),
              "mr": m.get("muted_reaction"), "gs": score,

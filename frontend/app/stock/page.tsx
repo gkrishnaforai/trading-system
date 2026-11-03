@@ -68,7 +68,7 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
   const label = String(guidance?.label ?? '')
   const tone = /attractive|reasonable/.test(label) ? 'text-aggressive'
     : /premium|stale|unknown/.test(label) ? 'text-caution'
-      : /avoid|not usable|transition|unavailable/.test(label) ? 'text-defensive'
+      : /avoid|not usable|transition|unavailable|suspect/.test(label) ? 'text-defensive'
         : 'text-muted'
   const multiple = (value: unknown) => {
     const n = num(value)

@@ -62,6 +62,19 @@ def _pe_guidance(fwd_pe: float | None, eps_ttm: float | None,
         return {**base, "label": "Profitability transition",
                 "reason": "Trailing EPS is not positive, so forward EPS growth and a PEG-style comparison are not meaningful."}
 
+    # read-time sanity vs the reported basis — a stored estimate on
+    # the wrong basis (far-year row, unit mismatch) passes the NULL
+    # and age checks but is not a usable forward multiple. Needs a
+    # sane denominator; near-zero TTM can't judge the ratio.
+    if eps_ttm >= 0.25 and not (0.05 <= fwd_eps / eps_ttm <= 6.0):
+        return {**base,
+                "label": "Estimate basis suspect",
+                "reason": (f"Forward EPS ${fwd_eps:.2f} is {fwd_eps / eps_ttm:.1f}x "
+                           f"reported TTM EPS ${eps_ttm:.2f} — the stored "
+                           "estimate is likely on the wrong fiscal-year "
+                           "basis. Do not use this forward P/E until the "
+                           "flywheel refreshes.")}
+
     growth_pct = (fwd_eps / eps_ttm - 1) * 100
     growth_data = {
         **base,
