@@ -182,10 +182,17 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
               <tr className="border-b border-hairline/50">
                 <td className="px-4 py-2.5 font-sans text-muted">PEG band</td>
                 <td className="px-3 py-2.5">
-                  {peg != null ? `${peg.toFixed(2)}×` : '—'}
+                  {num(obj(m.peg_band)?.spot_peg) != null
+                    ? `${num(obj(m.peg_band)?.spot_peg)!.toFixed(2)}×`
+                    : '—'}
                 </td>
                 <td className="px-3 py-2.5">
                   growth {pct(obj(m.peg_band)?.growth_pct)}
+                  {obj(m.peg_band)?.fy0_eps != null && (
+                    <span className="text-faint">
+                      {' '}({String(obj(m.peg_band)?.growth_basis)})
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2.5 font-sans text-muted">
                   1.0× / 1.5× / 2.0× growth

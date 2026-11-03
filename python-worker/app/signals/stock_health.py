@@ -110,7 +110,8 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
               spot_date: date | None = None,
               eps_period: date | None = None,
               eps_fy2: float | None = None,
-              fy2_period: date | None = None) -> dict[str, Any]:
+              fy2_period: date | None = None,
+              fy0_eps: float | None = None) -> dict[str, Any]:
     """Build price multiples from reported EPS and the existing estimate feed."""
     today = today or date.today()
 
@@ -178,20 +179,37 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
     # P/E cutoff. spot_peg = where the price actually sits in band.
     g_pct = (guidance or {}).get("growth_pct")
     spot_peg = (guidance or {}).get("peg_like")
+    # band growth = FY+1 ÷ FY0 (forward YoY consensus growth) when the
+    # FY0 estimate exists — the durable-growth anchor the multiple
+    # should pay for. fwd ÷ TTM mixes fiscal bases (PLTR +62.9%
+    # fwd/TTM vs +46% real FY27/FY26 consensus growth → anchors
+    # $146/220/293 instead of the correct $108/162/216)
+    g_band = g_pct
+    g_basis = "fwd ÷ TTM"
+    if (fy0_eps and fwd_eps and fy0_eps > 0 and fwd_eps > 0
+            and 0.5 <= fwd_eps / fy0_eps <= 4.0):
+        g_band = round((fwd_eps / fy0_eps - 1) * 100, 1)
+        g_basis = "FY+1 ÷ FY0"
+        if g_band <= 0:
+            g_band = None
     peg_band = None
-    if fwd_eps and g_pct is not None and g_pct > 0:
-        lo = round(fwd_eps * g_pct * 1.0, 2)
-        mid = round(fwd_eps * g_pct * 1.5, 2)
-        hi = round(fwd_eps * g_pct * 2.0, 2)
+    if fwd_eps and g_band is not None and g_band > 0:
+        lo = round(fwd_eps * g_band * 1.0, 2)
+        mid = round(fwd_eps * g_band * 1.5, 2)
+        hi = round(fwd_eps * g_band * 2.0, 2)
+        spot_peg_band = (round(fwd_pe / g_band, 2)
+                         if fwd_pe and g_band > 0 else None)
         zone = None
-        if spot_peg is not None:
-            zone = ("below band" if spot_peg < 1.0 else
-                    "fair zone" if spot_peg <= 1.5 else
-                    "rich" if spot_peg <= 2.0 else
+        if spot_peg_band is not None:
+            zone = ("below band" if spot_peg_band < 1.0 else
+                    "fair zone" if spot_peg_band <= 1.5 else
+                    "rich" if spot_peg_band <= 2.0 else
                     "priced for perfection")
-        peg_band = {"growth_pct": g_pct, "peg_1_0_price": lo,
-                    "peg_1_5_price": mid, "peg_2_0_price": hi,
-                    "spot_peg": spot_peg, "zone": zone}
+        peg_band = {"growth_pct": g_band, "growth_basis": g_basis,
+                    "fy0_eps": fy0_eps,
+                    "peg_1_0_price": lo, "peg_1_5_price": mid,
+                    "peg_2_0_price": hi, "spot_peg": spot_peg_band,
+                    "zone": zone}
 
     # multi-year discounted view — hyper-growth names are priced on
     # FY+2/FY+3 earnings a year early; discounting the out-year EPS
@@ -199,8 +217,9 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
     fy2_pe = fy2_equiv = None
     if eps_fy2 and price:
         fy2_pe = round(price / eps_fy2, 1)
-        if g_pct is not None and g_pct > 0:
-            exit_m = g_pct * 1.2          # mid-band exit multiple
+        g_exit = g_band if g_band is not None and g_band > 0 else g_pct
+        if g_exit is not None and g_exit > 0:
+            exit_m = g_exit * 1.2         # mid-band exit multiple
             fy2_equiv = round(eps_fy2 * exit_m / 1.10, 2)
 
     # the growth-adjusted fair value is the 1.5x-PEG anchor — state
@@ -536,7 +555,7 @@ def card(sym: str) -> dict[str, Any]:
             " ORDER BY earnings_date DESC LIMIT 4", {"s": s})
     except Exception:
         pass
-    eps_period = fy2_eps = fy2_period = None
+    eps_period = fy2_eps = fy2_period = fy0_eps = None
     try:
         # the fiscal year fwd_eps_avg covers + the FY+2 estimate for
         # the discounted out-year view — flywheel picks the first
@@ -547,6 +566,18 @@ def card(sym: str) -> dict[str, Any]:
             " AND period_end > :cut AND eps_avg IS NOT NULL"
             " ORDER BY period_end, as_of DESC LIMIT 2",
             {"s": s, "cut": date.today() + timedelta(days=60)})
+        # FY0 = the in-progress fiscal year estimate — the band's
+        # growth anchor is FY+1 ÷ FY0 (forward YoY), not fwd ÷ TTM,
+        # which mixes fiscal bases (PLTR read +62.9% vs the real
+        # consensus growth of ~46%)
+        f0 = db.execute_query(
+            "SELECT DISTINCT ON (period_end) period_end, eps_avg"
+            " FROM symbol_estimate_snapshots WHERE symbol=:s"
+            " AND period_end <= :cut AND eps_avg IS NOT NULL"
+            " ORDER BY period_end DESC, as_of DESC LIMIT 1",
+            {"s": s, "cut": date.today() + timedelta(days=60)})
+        if f0 and f0[0].get("eps_avg") is not None:
+            fy0_eps = float(f0[0]["eps_avg"])
         if ep:
             _ep = ep[0].get("period_end")
             eps_period = (_ep if isinstance(_ep, date)
@@ -563,7 +594,8 @@ def card(sym: str) -> dict[str, Any]:
         pass
     multiples = _multiples(spot, earnings_rows, fly,
                            spot_date=spot_date, eps_period=eps_period,
-                           eps_fy2=fy2_eps, fy2_period=fy2_period)
+                           eps_fy2=fy2_eps, fy2_period=fy2_period,
+                           fy0_eps=fy0_eps)
     pe_label = (multiples.get("guidance") or {}).get("label")
     if pe_label in ("Attractive on growth screen",
                     "Reasonable on growth screen"):
