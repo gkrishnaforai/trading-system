@@ -192,3 +192,48 @@ def test_estimates_sanity_keeps_in_band_eps(monkeypatch):
     out = eg._estimates(fmp, "PLTR")
     assert out["fwd_eps_avg"] == 2.35
     assert out["eps_suspect"] is None
+
+
+def test_estimates_cross_source_divergence_fixes_far_year(monkeypatch):
+    """AMZN-class miss: FY+2 row sits inside the TTM ratio band
+    (21.79 vs 12.37 TTM = 1.76x — passes), but diverges >25% from
+    yfinance +1y consensus (10.67) — the fiscal-year bases differ.
+    yfinance's explicitly-labeled next-FY figure wins."""
+    from app.signals import expectation_gap as eg
+    import app.database as adb
+    import pandas as pd
+
+    rows = [{"date": "2028-12-31", "epsAvg": 21.79,
+             "revenueAvg": 9e11}]
+    fmp = type("F", (), {"_make_request": lambda s, p, q: rows})()
+    monkeypatch.setattr(eg, "_ensure_stock", lambda s: None)
+
+    class _DB:
+        @staticmethod
+        def execute_query(sql, p=None):
+            if "eps_actual" in sql:
+                return [{"eps_actual": v} for v in
+                        (3.2, 3.1, 3.0, 3.07)]  # TTM ≈ $12.37
+            return []
+
+        @staticmethod
+        def execute_update(sql, p=None):
+            return None
+
+    monkeypatch.setattr(adb, "db", _DB)
+    trend = pd.DataFrame(
+        {"current": [10.67, 10.2], "90daysAgo": [10.1, 10.0]},
+        index=["+1y", "0y"])
+    ee = pd.DataFrame({"numberOfAnalysts": [30]}, index=["+1y"])
+    rv = pd.DataFrame({"upLast30days": [5], "downLast30days": [3]},
+                      index=["+1y"])
+    tk = type("T", (), {"eps_trend": trend,
+                        "earnings_estimate": ee,
+                        "eps_revisions": rv})()
+    import sys, types
+    fake_yf = types.SimpleNamespace(Ticker=lambda s: tk)
+    monkeypatch.setitem(sys.modules, "yfinance", fake_yf)
+    out = eg._estimates(fmp, "AMZN")
+    assert out["fwd_eps_avg"] == 10.67
+    assert out["eps_suspect"]["fixed_by"] == "cross_source"
+    assert out["eps_suspect"]["provider_eps"] == 21.79

@@ -366,21 +366,40 @@ def _estimates(fmp, sym: str) -> dict:
                 " ORDER BY earnings_date DESC LIMIT 4", {"s": sym})
             eps_ttm = (sum(float(r["eps_actual"]) for r in er)
                        if len(er) == 4 else None)
-            if (eps_ttm is not None and eps_ttm >= 0.25
-                    and not (0.05 <= eps_avg / eps_ttm <= 6.0)):
-                # prefer the yfinance +1y figure when it's in-band;
-                # else clear — a NULL is honest, a corrupt ratio is not
-                if (yf_eps is not None
-                        and 0.05 <= yf_eps / eps_ttm <= 6.0):
-                    eps_suspect = {"provider_eps": eps_avg,
-                                   "eps_ttm": round(eps_ttm, 2),
-                                   "fixed_by": "yfinance"}
+            yf_sane = (yf_eps is not None and
+                       (eps_ttm is None or eps_ttm < 0.25 or
+                        0.05 <= yf_eps / eps_ttm <= 6.0))
+            out_of_band = (eps_ttm is not None and eps_ttm >= 0.25
+                           and not (0.05 <= eps_avg / eps_ttm <= 6.0))
+            # cross-source divergence — FMP's fiscal-year basis and
+            # yfinance's +1y should agree closely; >25% apart means the
+            # provider row is a different fiscal year (the AMZN/FN/
+            # ALGM/PWR far-year rows all sit inside the TTM band and
+            # only this check separates them from real fast growers)
+            diverged = (eps_suspect is None and yf_eps is not None
+                        and yf_eps > 0
+                        and abs(eps_avg / yf_eps - 1) > 0.25)
+            if out_of_band or diverged:
+                if yf_sane:
+                    eps_suspect = {
+                        "provider_eps": eps_avg,
+                        "eps_ttm": (round(eps_ttm, 2)
+                                    if eps_ttm is not None else None),
+                        "yf_eps": yf_eps,
+                        "fixed_by": ("yfinance" if out_of_band
+                                     else "cross_source")}
                     eps_avg = yf_eps
-                else:
+                elif out_of_band:
                     eps_suspect = {"provider_eps": eps_avg,
                                    "eps_ttm": round(eps_ttm, 2),
                                    "action": "cleared"}
                     eps_avg = None
+                else:
+                    # diverged but yf isn't a sane substitute either —
+                    # keep the provider value, flag it unresolved
+                    eps_suspect = {"provider_eps": eps_avg,
+                                   "yf_eps": yf_eps,
+                                   "action": "unresolved"}
                 logger.warning("fwd_eps %s suspect: %s", sym,
                                eps_suspect)
         except Exception as exc:
