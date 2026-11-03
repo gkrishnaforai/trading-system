@@ -229,7 +229,7 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
             {num(m.fv_growth) != null && (
               <tr className="border-b border-hairline/50">
                 <td className="px-4 py-2.5 font-sans text-muted">
-                  Fair value (growth)
+                  PEG-based fair value
                 </td>
                 <td className="px-3 py-2.5 font-semibold">
                   {money(m.fv_growth)}
@@ -238,7 +238,7 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                   1.5× PEG × {money(m.fwd_eps)}
                 </td>
                 <td className="px-3 py-2.5 font-sans text-muted">
-                  growth-adjusted FV
+                  heuristic anchor, not intrinsic FV
                 </td>
                 <td className="px-3 py-2.5 font-sans text-muted">
                   mid anchor of band
