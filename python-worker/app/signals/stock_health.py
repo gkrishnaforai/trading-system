@@ -642,6 +642,23 @@ def card(sym: str) -> dict[str, Any]:
                            spot_date=spot_date, eps_period=eps_period,
                            eps_fy2=fy2_eps, fy2_period=fy2_period,
                            fy0_eps=fy0_eps)
+    # base-effect suppression defers valuation to fair_value_v2 —
+    # surface the engine's own verdict inline so the row carries the
+    # real number, not just 'use the other engine'
+    if (multiples.get("guidance") or {}).get("label", "").startswith(
+            "Base-effect"):
+        try:
+            fe = {
+                "fair_value": (float(r[0]["fair_value"])
+                               if r and r[0].get("fair_value") else None),
+                "expected": fv_detail.get("expected"),
+                "decision": fv_detail.get("decision"),
+                "as_of": fv_detail.get("as_of"),
+            }
+            if any(v is not None for v in fe.values()):
+                multiples["fv_engine"] = fe
+        except Exception:
+            pass
     pe_label = (multiples.get("guidance") or {}).get("label")
     if pe_label in ("Attractive on growth screen",
                     "Reasonable on growth screen"):

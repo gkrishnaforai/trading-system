@@ -254,6 +254,33 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                 </td>
               </tr>
             )}
+            {obj(m.fv_engine) != null && (
+              <tr className="border-b border-hairline/50">
+                <td className="px-4 py-2.5 font-sans text-muted">
+                  FV engine
+                </td>
+                <td className="px-3 py-2.5 font-semibold">
+                  {money(obj(m.fv_engine)?.expected
+                         ?? obj(m.fv_engine)?.fair_value)}
+                </td>
+                <td className="px-3 py-2.5">
+                  {obj(m.fv_engine)?.decision != null
+                    ? String(obj(m.fv_engine)?.decision).replace(/_/g, ' ')
+                    : '—'}
+                </td>
+                <td className="px-3 py-2.5 font-sans text-muted">
+                  fair_value_v2 scenario blend
+                </td>
+                <td className="px-3 py-2.5 font-sans text-muted">
+                  {obj(m.fv_engine)?.as_of != null
+                    ? `run ${String(obj(m.fv_engine)?.as_of).slice(0, 10)}`
+                    : 'see FV section below'}
+                </td>
+                <td className="px-4 py-2.5 font-sans text-muted">
+                  intrinsic valuation
+                </td>
+              </tr>
+            )}
             {num(m.fy2_eps) != null && num(m.fy2_pe) != null && (
               <tr>
                 <td className="px-4 py-2.5 font-sans text-muted">
