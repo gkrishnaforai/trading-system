@@ -292,6 +292,45 @@ class FairValueV2Resolver:
             decision["scenario_probs"] = result.scenario_probs
         if decision is not None and result.reverse_dcf:
             decision["reverse_dcf"] = result.reverse_dcf
+            # growth-duration consistency — a flat FY+2 estimate
+            # alongside a premium implied FV P/E means the blend is
+            # pricing reacceleration the estimate curve doesn't show
+            try:
+                fy2 = db.execute_query(
+                    "SELECT DISTINCT ON (period_end) period_end, eps_avg"
+                    " FROM symbol_estimate_snapshots WHERE symbol=:s"
+                    " AND period_end > :cut AND eps_avg IS NOT NULL"
+                    " ORDER BY period_end, as_of DESC LIMIT 2",
+                    {"s": result.symbol,
+                     "cut": date.today() + timedelta(days=60)})
+                fwd_eps = scalars.get("eps_forward")
+                fv_ref = (result.expected_fair_value
+                          or result.fair_value)
+                if (len(fy2) > 1 and fy2[1].get("eps_avg") is not None
+                        and fwd_eps and float(fwd_eps) > 0 and fv_ref):
+                    fy2_g = float(fy2[1]["eps_avg"]) / float(fwd_eps) - 1
+                    implied_pe = float(fv_ref) / float(fwd_eps)
+                    decision["growth_duration"] = {
+                        "fy2_growth_pct": round(fy2_g * 100, 1),
+                        "implied_fv_pe": round(implied_pe, 1),
+                        "supported": fy2_g > 0}
+                    if fy2_g <= 0 and implied_pe > 22.5:
+                        quality_flags.append(
+                            "growth_reacceleration_required")
+                        decision["growth_duration"]["supported"] = \
+                            "requires_evidence"
+            except Exception:
+                pass
+            # model-family disagreement — reverse DCF at/above cap +
+            # material method dispersion means 'high' overstates
+            if (decision.get("valuation_confidence") == "high"
+                    and decision.get("method_dispersion") is not None
+                    and decision["method_dispersion"] > 0.25
+                    and (result.reverse_dcf or {}).get("flag")
+                        == "implied_above_cap"):
+                decision["valuation_confidence"] = "medium"
+                decision.setdefault("confidence_drivers", []).append(
+                    "method_disagreement:reverse_dcf_above_cap")
         if decision is not None and result.relative_valuation:
             decision["relative_valuation"] = result.relative_valuation
         try:

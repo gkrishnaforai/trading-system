@@ -452,6 +452,13 @@ def decide(category: Optional[str],
         "mos_pct": mos,
         "mos_band": [low, high],
         "mos_adders": applied,
+        # per-adder contribution — the MoS shouldn't be a black box;
+        # funding_* names map back to capital_funding_risk
+        "mos_adder_detail": {
+            n: round(float(adders.get(
+                "capital_funding_risk" if str(n).startswith("funding_")
+                else n, 0) or 0), 3)
+            for n in applied},
         "buy_below": buy_below,
         "fv_upside_pct": upside,
         "expected_return_2y": er2y,
