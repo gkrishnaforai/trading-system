@@ -18,6 +18,7 @@ const LINKS = [
   { href: '/insights', label: 'Insights' },
   { href: '/alerts', label: 'Alerts' },
   { href: '/hold', label: 'Hold' },
+  { href: '/apis', label: 'APIs' },
 ]
 
 export function Nav() {
