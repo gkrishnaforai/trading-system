@@ -35,7 +35,8 @@ def _leadership(det: dict, fly: dict) -> dict | None:
 def _pe_guidance(fwd_pe: float | None, eps_ttm: float | None,
                  fwd_eps: float | None,
                  estimate_age_days: int | None,
-                 ttm_age_days: int | None = None) -> dict[str, Any]:
+                 ttm_age_days: int | None = None,
+                 growth_override: float | None = None) -> dict[str, Any]:
     """Growth-adjusted P/E screen, not a standalone buy signal.
 
     The estimate must be positive and recently refreshed, and the
@@ -75,7 +76,9 @@ def _pe_guidance(fwd_pe: float | None, eps_ttm: float | None,
                            "basis. Do not use this forward P/E until the "
                            "flywheel refreshes.")}
 
-    growth_pct = (fwd_eps / eps_ttm - 1) * 100
+    growth_pct = (growth_override
+                  if growth_override is not None
+                  else (fwd_eps / eps_ttm - 1) * 100)
     growth_data = {
         **base,
         "growth_pct": round(growth_pct, 1),
@@ -161,8 +164,16 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
     estimate_age = ((today - estimate_date).days
                     if estimate_date else None)
     spot_age = ((today - spot_date).days if spot_date else None)
+    # forward YoY growth (FY+1 ÷ FY0) — the standard PEG basis; when
+    # the FY0 snapshot exists it wins over fwd ÷ TTM, which mixes
+    # fiscal bases (PLTR: +46% real consensus growth, not +62.9%)
+    g_fwd = None
+    if (fy0_eps and fwd_eps and fy0_eps > 0 and fwd_eps > 0
+            and 0.5 <= fwd_eps / fy0_eps <= 4.0):
+        g_fwd = round((fwd_eps / fy0_eps - 1) * 100, 1)
     guidance = _pe_guidance(
-        fwd_pe, eps_ttm, fwd_eps, estimate_age, ttm_age)
+        fwd_pe, eps_ttm, fwd_eps, estimate_age, ttm_age,
+        growth_override=g_fwd)
     if spot_age is not None and spot_age > 4 and fwd_pe is not None:
         # a stale close makes the multiple meaningless — a frozen
         # 2024 price against today's consensus reads as cheap
@@ -179,19 +190,11 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
     # P/E cutoff. spot_peg = where the price actually sits in band.
     g_pct = (guidance or {}).get("growth_pct")
     spot_peg = (guidance or {}).get("peg_like")
-    # band growth = FY+1 ÷ FY0 (forward YoY consensus growth) when the
-    # FY0 estimate exists — the durable-growth anchor the multiple
-    # should pay for. fwd ÷ TTM mixes fiscal bases (PLTR +62.9%
-    # fwd/TTM vs +46% real FY27/FY26 consensus growth → anchors
-    # $146/220/293 instead of the correct $108/162/216)
-    g_band = g_pct
-    g_basis = "fwd ÷ TTM"
-    if (fy0_eps and fwd_eps and fy0_eps > 0 and fwd_eps > 0
-            and 0.5 <= fwd_eps / fy0_eps <= 4.0):
-        g_band = round((fwd_eps / fy0_eps - 1) * 100, 1)
-        g_basis = "FY+1 ÷ FY0"
-        if g_band <= 0:
-            g_band = None
+    # g_pct is already the forward YoY growth (FY+1 ÷ FY0 override
+    # when the FY0 snapshot exists, else fwd ÷ TTM) — the band and
+    # spot_peg share the same basis so the table shows ONE PEG
+    g_band = g_pct if g_pct is not None and g_pct > 0 else None
+    g_basis = "FY+1 ÷ FY0" if g_fwd is not None else "fwd ÷ TTM"
     peg_band = None
     if fwd_eps and g_band is not None and g_band > 0:
         lo = round(fwd_eps * g_band * 1.0, 2)
@@ -217,9 +220,8 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
     fy2_pe = fy2_equiv = None
     if eps_fy2 and price:
         fy2_pe = round(price / eps_fy2, 1)
-        g_exit = g_band if g_band is not None and g_band > 0 else g_pct
-        if g_exit is not None and g_exit > 0:
-            exit_m = g_exit * 1.2         # mid-band exit multiple
+        if g_band is not None and g_band > 0:
+            exit_m = g_band * 1.2         # mid-band exit multiple
             fy2_equiv = round(eps_fy2 * exit_m / 1.10, 2)
 
     # the growth-adjusted fair value is the 1.5x-PEG anchor — state
@@ -243,6 +245,8 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
         "estimate_age_days": estimate_age,
         "analyst_count": fly.get("num_analysts"),
         "guidance": guidance,
+        "growth_basis": g_basis,
+        "fy0_eps": fy0_eps,
         "spot_peg": spot_peg,
         "peg_band": peg_band,
         "fv_growth": fv_growth,

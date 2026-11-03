@@ -156,9 +156,11 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                 {growth != null ? pct(growth) : '—'}
               </td>
               <td className="px-3 py-2.5">
-                {epsMoney(m.eps_ttm)} → {epsMoney(m.fwd_eps)}
+                {epsMoney(m.fy0_eps ?? m.eps_ttm)} → {epsMoney(m.fwd_eps)}
               </td>
-              <td className="px-3 py-2.5 font-sans text-muted">forward ÷ TTM</td>
+              <td className="px-3 py-2.5 font-sans text-muted">
+                {String(m.growth_basis ?? 'forward ÷ TTM')}
+              </td>
               <td className="px-3 py-2.5 font-sans text-muted">same EPS bases</td>
               <td className="px-4 py-2.5 font-sans text-muted">{growthRead}</td>
             </tr>
