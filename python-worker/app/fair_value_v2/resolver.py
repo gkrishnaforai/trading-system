@@ -111,6 +111,23 @@ class FairValueV2Resolver:
                 )
             except Exception:
                 pass
+            # flywheel diagnostics (eps_suspect, cleared estimates) and
+            # estimate snapshots feed feature quality — a diagnostic
+            # flip with unchanged feature values must still invalidate
+            # reuse, so both are inputs marks (model_version already
+            # covers YAML/config surface)
+            for table, col in (
+                    ("symbol_flywheel", "updated_at"),
+                    ("symbol_estimate_snapshots", "as_of")):
+                try:
+                    marks.append(
+                        session.execute(
+                            text(
+                                f"SELECT MAX({col}) FROM {table}"
+                                " WHERE symbol = :symbol"),
+                            {"symbol": symbol}).scalar())
+                except Exception:
+                    continue
         stamps = [self._as_datetime(m) for m in marks if m is not None]
         stamps = [s for s in stamps if s is not None]
         return max(stamps) if stamps else None

@@ -450,6 +450,42 @@ class FairValueRunner:
                     }
                 )
 
+        # P0b — suspect forward-EPS guard. The fundamentals bundle's
+        # eps_forward gets the same 0.05x-6.0x TTM band the flywheel
+        # applies: a corrupted estimate must not price a method leg no
+        # matter its configured weight. Suspect legs stay in
+        # method_results for inspection but carry zero blend weight.
+        eps_suspect_flags: List[str] = []
+        try:
+            ttm_rows = db.execute_query(
+                "SELECT eps_actual FROM ("
+                "  SELECT eps_actual, ROW_NUMBER() OVER ("
+                "    ORDER BY earnings_date DESC) AS rn"
+                "  FROM earnings_data WHERE stock_symbol=:s"
+                "   AND eps_actual IS NOT NULL) x WHERE rn <= 4",
+                {"s": symbol})
+            eps_ttm_base = (sum(float(r["eps_actual"])
+                                for r in ttm_rows)
+                            if len(ttm_rows) == 4 else None)
+            if eps_ttm_base and eps_ttm_base >= 0.25:
+                for idx, (mr, w) in enumerate(blend_inputs):
+                    ins = mr.inputs_used or {}
+                    eps_f = (ins.get("eps_forward")
+                             or ins.get("optional.eps_forward"))
+                    if eps_f is None or w == 0:
+                        continue
+                    ratio = float(eps_f) / eps_ttm_base
+                    if not (0.05 <= ratio <= 6.0):
+                        eps_suspect_flags.append(
+                            f"eps_suspect:{mr.method_key}")
+                        (mr.metrics or {}).update({
+                            "eps_forward_suspect": True,
+                            "eps_ttm_ratio": round(ratio, 2),
+                            "blend_excluded": "eps_suspect"})
+                        blend_inputs[idx] = (mr, 0.0)
+        except Exception:
+            pass
+
         # family cap applies to the recorded weight too — the breakdown
         # shows the effective share, not just the configured one
         self.blender.cap_family_weights(blend_inputs)
@@ -464,7 +500,7 @@ class FairValueRunner:
         # Scenario post-processing: enforce monotone ordering and compute
         # the probability-weighted expected value.
         scen, order_flags = enforce_scenario_order(blend.scenario_fair_values)
-        quality_flags = list(order_flags)
+        quality_flags = list(order_flags) + eps_suspect_flags
         ok_methods = [mr for mr in method_results
                       if mr.status == "ok" and mr.fair_price]
         scen_methods = [
