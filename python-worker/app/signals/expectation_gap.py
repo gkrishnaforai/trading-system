@@ -251,11 +251,16 @@ def _estimates(fmp, sym: str) -> dict:
         "/analyst-estimates",
         {"symbol": sym, "period": "annual", "limit": 6}) or []
     today = date.today()
-    fwd = next((e for e in est
+    # nearest forward fiscal year — the response order is not
+    # guaranteed, and taking the first row past the horizon silently
+    # grabbed FY+4 estimates (PLTR 'fwd EPS $14.38' was the FY2030
+    # row, printing a fake-cheap 12.4× forward P/E)
+    fwd_rows = [e for e in est
                 if e.get("date") and str(e["date"])[:10] >
-                str(today + timedelta(days=60))), None)
-    if not fwd:
+                str(today + timedelta(days=60))]
+    if not fwd_rows:
         return {}
+    fwd = min(fwd_rows, key=lambda e: str(e["date"])[:10])
     period_end = str(fwd["date"])[:10]
     eps_avg = fwd.get("epsAvg")
     rev_avg = fwd.get("revenueAvg")

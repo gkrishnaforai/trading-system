@@ -133,11 +133,20 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
               <td className="px-4 py-2.5 font-sans text-muted">Forward P/E</td>
               <td className="px-3 py-2.5">{multiple(m.fwd_pe)}</td>
               <td className="px-3 py-2.5">{epsMoney(m.fwd_eps)}</td>
-              <td className="px-3 py-2.5 font-sans text-muted">consensus</td>
+              <td className="px-3 py-2.5 font-sans text-muted">
+                {m.fwd_eps_period != null
+                  ? `consensus FY${String(m.fwd_eps_period).slice(0, 4)}`
+                  : 'consensus'}
+              </td>
               <td className="px-3 py-2.5 font-sans text-muted">
                 {m.estimate_as_of != null
                   ? `snapshot ${String(m.estimate_as_of)}${analystCount != null ? ` · ${analystCount} analysts` : ''}${estimateAge != null ? ` · ${estimateAge}d old` : ''}`
                   : 'estimate date unavailable'}
+                {num(m.spot_age_days) != null && num(m.spot_age_days)! > 4 && (
+                  <span className="text-caution">
+                    {' '}· spot {num(m.spot_age_days)}d old
+                  </span>
+                )}
               </td>
               <td className="px-4 py-2.5 font-sans text-muted">estimate basis</td>
             </tr>

@@ -7,7 +7,7 @@ knife = 'watch, don't catch the knife').
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -93,7 +93,9 @@ def _pe_guidance(fwd_pe: float | None, eps_ttm: float | None,
 
 
 def _multiples(spot: float | None, earnings_rows: list[dict],
-              fly: dict, today: date | None = None) -> dict[str, Any]:
+              fly: dict, today: date | None = None,
+              spot_date: date | None = None,
+              eps_period: date | None = None) -> dict[str, Any]:
     """Build price multiples from reported EPS and the existing estimate feed."""
     today = today or date.today()
 
@@ -142,14 +144,27 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
     estimate_date = _as_date(fly.get("updated_at"))
     estimate_age = ((today - estimate_date).days
                     if estimate_date else None)
+    spot_age = ((today - spot_date).days if spot_date else None)
     guidance = _pe_guidance(
         fwd_pe, eps_ttm, fwd_eps, estimate_age, ttm_age)
+    if spot_age is not None and spot_age > 4 and fwd_pe is not None:
+        # a stale close makes the multiple meaningless — a frozen
+        # 2024 price against today's consensus reads as cheap
+        guidance = {
+            "label": "Stale price",
+            "reason": (f"Spot close is {spot_age} days old; forward "
+                       "P/E is computed against a stale price and "
+                       "should not be trusted until daily_bars "
+                       "refreshes.")}
     return {
         "eps_ttm": eps_ttm,
         "pe_ttm": pe_ttm,
         "ttm_as_of": ttm_date.isoformat() if ttm_date else None,
         "ttm_age_days": ttm_age,
+        "spot_age_days": spot_age,
         "fwd_eps": fwd_eps,
+        "fwd_eps_period": (eps_period.isoformat()
+                           if eps_period else None),
         "fwd_pe": fwd_pe,
         "estimate_as_of": estimate_date.isoformat() if estimate_date else None,
         "estimate_age_days": estimate_age,
@@ -418,6 +433,7 @@ def card(sym: str) -> dict[str, Any]:
     # readiness checks (post-ADR normalization); scenario FVs + spot
     # feed PUT_ENTRY's bull-case-distance asymmetry
     fv_up, scen, spot = None, {}, None
+    spot_date = None
     fv_detail = {}
     _fund_as_of = _fundamentals_data_as_of(s)
     try:
@@ -429,13 +445,17 @@ def card(sym: str) -> dict[str, Any]:
             " FROM fair_value_v2_runs WHERE symbol=:s"
             " ORDER BY as_of DESC LIMIT 1", {"s": s})
         p = db.execute_query(
-            "SELECT close FROM daily_bars WHERE symbol=:s"
+            "SELECT close, date FROM daily_bars WHERE symbol=:s"
             " ORDER BY date DESC LIMIT 1", {"s": s})
         if r and p and r[0]["fair_value"] and p[0]["close"]:
             fv_up = round((float(r[0]["fair_value"]) /
                            float(p[0]["close"]) - 1) * 100, 1)
         if p and p[0]["close"]:
             spot = float(p[0]["close"])
+            _sd = p[0].get("date")
+            spot_date = (_sd if isinstance(_sd, date)
+                         else date.fromisoformat(str(_sd)[:10])
+                         if _sd else None)
         sc = (r[0].get("scenario_fair_values") if r else None)
         if isinstance(sc, dict):
             scen = sc
@@ -454,7 +474,22 @@ def card(sym: str) -> dict[str, Any]:
             " ORDER BY earnings_date DESC LIMIT 4", {"s": s})
     except Exception:
         pass
-    multiples = _multiples(spot, earnings_rows, fly)
+    eps_period = None
+    try:
+        # the fiscal year fwd_eps_avg covers — flywheel picks the
+        # first annual estimate > today+60d; snapshots share the rule
+        ep = db.execute_query(
+            "SELECT MIN(period_end) p FROM symbol_estimate_snapshots"
+            " WHERE symbol=:s AND period_end > :cut",
+            {"s": s, "cut": date.today() + timedelta(days=60)})
+        _ep = ep[0].get("p") if ep else None
+        eps_period = (_ep if isinstance(_ep, date)
+                      else date.fromisoformat(str(_ep)[:10])
+                      if _ep else None)
+    except Exception:
+        pass
+    multiples = _multiples(spot, earnings_rows, fly,
+                           spot_date=spot_date, eps_period=eps_period)
     pe_label = (multiples.get("guidance") or {}).get("label")
     if pe_label in ("Attractive on growth screen",
                     "Reasonable on growth screen"):

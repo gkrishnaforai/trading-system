@@ -91,3 +91,37 @@ def test_stale_reported_eps_blocks_growth_guidance():
 
     assert result["pe_ttm"] == 12.5
     assert result["guidance"]["label"] == "Trailing EPS is stale"
+
+
+def test_estimates_picks_nearest_forward_year(monkeypatch):
+    """FMP annual analyst-estimates arrive newest-first; the picker
+    must take the NEAREST fiscal year past the horizon, not the first
+    row — first-row selection journaled FY2030 EPS as 'forward EPS'
+    and made PLTR's ~76x forward P/E read as 12x."""
+    from app.signals import expectation_gap as eg
+    from datetime import date, timedelta
+
+    rows = [
+        {"date": "2032-12-31", "epsAvg": 14.38, "revenueAvg": 2e10},
+        {"date": "2028-12-31", "epsAvg": 3.46, "revenueAvg": 9e9},
+        {"date": "2027-12-31", "epsAvg": 2.35, "revenueAvg": 6.5e9},
+        {"date": "2026-09-30", "epsAvg": 1.2, "revenueAvg": 5e9},
+    ]
+    fmp = type("F", (), {"_make_request": lambda s, p, q: rows})()
+    monkeypatch.setattr(eg, "_ensure_stock", lambda s: None)
+
+    class _DB:
+        @staticmethod
+        def execute_query(sql, p=None):
+            return []
+
+        @staticmethod
+        def execute_update(sql, p=None):
+            return None
+
+    monkeypatch.setattr(eg, "db", _DB, raising=False)
+    import app.database as adb
+    monkeypatch.setattr(adb, "db", _DB)
+    out = eg._estimates(fmp, "PLTR")
+    assert out["fwd_eps_avg"] == 2.35
+    assert out["fwd_rev_avg"] == 6.5e9
