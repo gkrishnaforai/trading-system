@@ -976,48 +976,71 @@ def audit_fwd_eps(symbols: Optional[list[str]] = None) -> list[dict]:
     return out
 
 
-async def repair_fwd_eps(symbols: Optional[list[str]] = None) -> dict:
+async def repair_fwd_eps(symbols: Optional[list[str]] = None,
+                         batch: int = 40,
+                         concurrency: int = 5) -> dict:
     """Audit → recompute suspects → re-resolve FV where the EPS moved.
 
     The flywheel recompute is the fix: _estimates now picks the
     nearest forward year and the sanity guard clears/corrects
     anything still out of band. Symbols whose forward EPS moved >10%
     get a fair-value re-resolve — the earnings-driven FV legs were
-    priced on the same wrong estimate."""
-    from app.database import db
+    priced on the same wrong estimate.
+
+    Batched + concurrent: the first full-book pass found ~130
+    suspects and a serial compute (~25-40s of provider calls per
+    symbol) blew the 15m job timeout after only ~3 fixes. Each run
+    re-audits, so fixed names drop out of the suspect list — the job
+    converges over successive runs within its timeout."""
     suspects = audit_fwd_eps(symbols)
+    todo = suspects[:batch]
+    if not todo:
+        return {"audited": len(suspects), "suspects": suspects,
+                "fixed": [], "failed": [], "fv_recomputed": [],
+                "remaining": 0}
+    from app.providers.financial_modeling_prep.client import (
+        EnhancedFMPClient)
+    fmp = EnhancedFMPClient.from_settings()
+    sem = asyncio.Semaphore(concurrency)
     fixed, failed, fv = [], [], []
-    fmp = None
-    for row in suspects:
+
+    async def _one(row):
         sym = row["symbol"]
-        try:
-            if fmp is None:
-                from app.providers.financial_modeling_prep.client \
-                    import EnhancedFMPClient
-                fmp = EnhancedFMPClient.from_settings()
+        async with sem:
             before = row["fwd_eps_avg"]
             m = await asyncio.to_thread(compute_flywheel, fmp, sym)
             after = m.get("fwd_eps_avg")
             moved = (before is None or after is None
                      or abs(after / before - 1) > 0.10)
-            fixed.append({"symbol": sym, "before": before,
-                          "after": after,
-                          "suspect": m.get("eps_suspect")})
-            if moved:
-                fv.append(sym)
-        except Exception as exc:
-            failed.append({"symbol": sym, "error": str(exc)[:120]})
-    fv_results = []
-    for sym in fv:
-        try:
-            from app.signals import fv_sweep
-            fv_results.append(await asyncio.to_thread(
-                fv_sweep._resolve_fv, sym))
-        except Exception as exc:
-            fv_results.append({"symbol": sym, "error": str(exc)[:120]})
-    return {"audited": len(suspects), "suspects": suspects,
+            return {"symbol": sym, "before": before, "after": after,
+                    "suspect": m.get("eps_suspect")}, moved
+
+    results = await asyncio.gather(
+        *(_one(r) for r in todo), return_exceptions=True)
+    for res in results:
+        if isinstance(res, Exception):
+            failed.append({"error": str(res)[:120]})
+            continue
+        rec, moved = res
+        fixed.append(rec)
+        if moved:
+            fv.append(rec["symbol"])
+
+    fv_sem = asyncio.Semaphore(2)
+    async def _fv(sym):
+        async with fv_sem:
+            try:
+                from app.signals import fv_sweep
+                return await asyncio.to_thread(
+                    fv_sweep._resolve_fv, sym)
+            except Exception as exc:
+                return {"symbol": sym, "error": str(exc)[:120]}
+    fv_results = await asyncio.gather(*(_fv(s) for s in fv))
+    remaining = len(audit_fwd_eps(symbols))
+    return {"audited": len(suspects), "batch": len(todo),
             "fixed": fixed, "failed": failed,
-            "fv_recomputed": fv_results}
+            "fv_recomputed": list(fv_results),
+            "remaining": remaining}
 
 
 async def refresh_flywheel(symbols: list[str],
