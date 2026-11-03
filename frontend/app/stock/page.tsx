@@ -162,7 +162,7 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
               <td className="px-3 py-2.5 font-sans text-muted">same EPS bases</td>
               <td className="px-4 py-2.5 font-sans text-muted">{growthRead}</td>
             </tr>
-            <tr>
+            <tr className="border-b border-hairline/50">
               <td className="px-4 py-2.5 font-sans text-muted">Growth-adjusted</td>
               <td className="px-3 py-2.5">
                 {peg != null ? `${peg.toFixed(2)}×` : '—'}
@@ -178,6 +178,64 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                 {label || '—'}
               </td>
             </tr>
+            {obj(m.peg_band) != null && (
+              <tr className="border-b border-hairline/50">
+                <td className="px-4 py-2.5 font-sans text-muted">PEG band</td>
+                <td className="px-3 py-2.5">
+                  {peg != null ? `${peg.toFixed(2)}×` : '—'}
+                </td>
+                <td className="px-3 py-2.5">
+                  growth {pct(obj(m.peg_band)?.growth_pct)}
+                </td>
+                <td className="px-3 py-2.5 font-sans text-muted">
+                  1.0× / 1.5× / 2.0× growth
+                </td>
+                <td className="px-3 py-2.5 font-sans text-muted">
+                  {money(obj(m.peg_band)?.peg_1_0_price)} ·{' '}
+                  {money(obj(m.peg_band)?.peg_1_5_price)} ·{' '}
+                  {money(obj(m.peg_band)?.peg_2_0_price)}
+                </td>
+                <td className={`px-4 py-2.5 font-sans ${
+                  /below|fair/.test(String(obj(m.peg_band)?.zone))
+                    ? 'text-aggressive'
+                    : /rich|perfection/.test(String(obj(m.peg_band)?.zone))
+                      ? 'text-caution' : 'text-muted'}`}>
+                  {String(obj(m.peg_band)?.zone ?? '—')}
+                </td>
+              </tr>
+            )}
+            {num(m.fy2_eps) != null && num(m.fy2_pe) != null && (
+              <tr>
+                <td className="px-4 py-2.5 font-sans text-muted">
+                  FY+2 discounted
+                </td>
+                <td className="px-3 py-2.5">
+                  {num(m.fy2_equiv) != null ? money(m.fy2_equiv) : '—'}
+                </td>
+                <td className="px-3 py-2.5">
+                  EPS {money(m.fy2_eps)} · spot {multiple(m.fy2_pe)}
+                </td>
+                <td className="px-3 py-2.5 font-sans text-muted">
+                  {m.fy2_period != null
+                    ? `FY${String(m.fy2_period).slice(0, 4)} est × ${growth != null ? (growth * 1.2).toFixed(0) : '—'}× ÷ 1.10`
+                    : 'out-year est ÷ 1.10'}
+                </td>
+                <td className="px-3 py-2.5 font-sans text-muted">
+                  one-year-forward equiv
+                </td>
+                <td className={`px-4 py-2.5 font-sans ${
+                  num(m.fy2_equiv) != null && num(m.spot) != null
+                    ? num(m.spot)! <= num(m.fy2_equiv)!
+                      ? 'text-aggressive' : 'text-caution'
+                    : 'text-muted'}`}>
+                  {num(m.fy2_equiv) != null && num(m.spot) != null
+                    ? num(m.spot)! <= num(m.fy2_equiv)!
+                      ? 'spot below FY+2 value'
+                      : 'spot already pays FY+2'
+                    : '—'}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

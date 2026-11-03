@@ -108,7 +108,9 @@ def _pe_guidance(fwd_pe: float | None, eps_ttm: float | None,
 def _multiples(spot: float | None, earnings_rows: list[dict],
               fly: dict, today: date | None = None,
               spot_date: date | None = None,
-              eps_period: date | None = None) -> dict[str, Any]:
+              eps_period: date | None = None,
+              eps_fy2: float | None = None,
+              fy2_period: date | None = None) -> dict[str, Any]:
     """Build price multiples from reported EPS and the existing estimate feed."""
     today = today or date.today()
 
@@ -169,7 +171,39 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
                        "P/E is computed against a stale price and "
                        "should not be trusted until daily_bars "
                        "refreshes.")}
+
+    # PEG-anchored fair-value band — the market pays a multiple
+    # roughly proportional to DURABLE growth, so anchor price zones
+    # at 1.0x/1.5x/2.0x the consensus growth rate instead of a fixed
+    # P/E cutoff. spot_peg = where the price actually sits in band.
+    g_pct = (guidance or {}).get("growth_pct")
+    spot_peg = (guidance or {}).get("peg_like")
+    peg_band = None
+    if fwd_eps and g_pct is not None and g_pct > 0:
+        lo = round(fwd_eps * g_pct * 1.0, 2)
+        mid = round(fwd_eps * g_pct * 1.5, 2)
+        hi = round(fwd_eps * g_pct * 2.0, 2)
+        zone = None
+        if spot_peg is not None:
+            zone = ("below band" if spot_peg < 1.0 else
+                    "fair zone" if spot_peg <= 1.5 else
+                    "rich" if spot_peg <= 2.0 else
+                    "priced for perfection")
+        peg_band = {"growth_pct": g_pct, "peg_1_0_price": lo,
+                    "peg_1_5_price": mid, "peg_2_0_price": hi,
+                    "spot_peg": spot_peg, "zone": zone}
+
+    # multi-year discounted view — hyper-growth names are priced on
+    # FY+2/FY+3 earnings a year early; discounting the out-year EPS
+    # back at a justified exit multiple shows what 'priced in' means
+    fy2_pe = fy2_equiv = None
+    if eps_fy2 and price:
+        fy2_pe = round(price / eps_fy2, 1)
+        if g_pct is not None and g_pct > 0:
+            exit_m = g_pct * 1.2          # mid-band exit multiple
+            fy2_equiv = round(eps_fy2 * exit_m / 1.10, 2)
     return {
+        "spot": price,
         "eps_ttm": eps_ttm,
         "pe_ttm": pe_ttm,
         "ttm_as_of": ttm_date.isoformat() if ttm_date else None,
@@ -183,6 +217,12 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
         "estimate_age_days": estimate_age,
         "analyst_count": fly.get("num_analysts"),
         "guidance": guidance,
+        "spot_peg": spot_peg,
+        "peg_band": peg_band,
+        "fy2_eps": eps_fy2,
+        "fy2_period": fy2_period.isoformat() if fy2_period else None,
+        "fy2_pe": fy2_pe,
+        "fy2_equiv": fy2_equiv,
     }
 
 
@@ -487,22 +527,34 @@ def card(sym: str) -> dict[str, Any]:
             " ORDER BY earnings_date DESC LIMIT 4", {"s": s})
     except Exception:
         pass
-    eps_period = None
+    eps_period = fy2_eps = fy2_period = None
     try:
-        # the fiscal year fwd_eps_avg covers — flywheel picks the
-        # first annual estimate > today+60d; snapshots share the rule
+        # the fiscal year fwd_eps_avg covers + the FY+2 estimate for
+        # the discounted out-year view — flywheel picks the first
+        # annual estimate > today+60d; snapshots share the rule
         ep = db.execute_query(
-            "SELECT MIN(period_end) p FROM symbol_estimate_snapshots"
-            " WHERE symbol=:s AND period_end > :cut",
+            "SELECT DISTINCT ON (period_end) period_end, eps_avg"
+            " FROM symbol_estimate_snapshots WHERE symbol=:s"
+            " AND period_end > :cut AND eps_avg IS NOT NULL"
+            " ORDER BY period_end, as_of DESC LIMIT 2",
             {"s": s, "cut": date.today() + timedelta(days=60)})
-        _ep = ep[0].get("p") if ep else None
-        eps_period = (_ep if isinstance(_ep, date)
-                      else date.fromisoformat(str(_ep)[:10])
-                      if _ep else None)
+        if ep:
+            _ep = ep[0].get("period_end")
+            eps_period = (_ep if isinstance(_ep, date)
+                          else date.fromisoformat(str(_ep)[:10])
+                          if _ep else None)
+        if len(ep) > 1:
+            fy2_eps = float(ep[1]["eps_avg"]) \
+                if ep[1].get("eps_avg") is not None else None
+            _ep2 = ep[1].get("period_end")
+            fy2_period = (_ep2 if isinstance(_ep2, date)
+                          else date.fromisoformat(str(_ep2)[:10])
+                          if _ep2 else None)
     except Exception:
         pass
     multiples = _multiples(spot, earnings_rows, fly,
-                           spot_date=spot_date, eps_period=eps_period)
+                           spot_date=spot_date, eps_period=eps_period,
+                           eps_fy2=fy2_eps, fy2_period=fy2_period)
     pe_label = (multiples.get("guidance") or {}).get("label")
     if pe_label in ("Attractive on growth screen",
                     "Reasonable on growth screen"):
