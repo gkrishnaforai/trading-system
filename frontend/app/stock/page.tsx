@@ -160,8 +160,21 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
               </td>
               <td className="px-3 py-2.5 font-sans text-muted">
                 {String(m.growth_basis ?? 'forward ÷ TTM')}
+                {num(m.ttm_to_fwd_growth_pct) != null && (
+                  <div className="text-faint">
+                    TTM→fwd {pct(m.ttm_to_fwd_growth_pct)} base-effect
+                  </div>
+                )}
               </td>
-              <td className="px-3 py-2.5 font-sans text-muted">same EPS bases</td>
+              <td className="px-3 py-2.5 font-sans text-muted">
+                same EPS bases
+                {obj(m.growth_runway) != null && (
+                  <div className="text-faint">
+                    runway FY+1 {pct(obj(m.growth_runway)?.fy1)} → FY+2 {pct(obj(m.growth_runway)?.fy2)}
+                    {obj(m.growth_runway)?.decelerating ? ' · slowing' : ''}
+                  </div>
+                )}
+              </td>
               <td className="px-4 py-2.5 font-sans text-muted">{growthRead}</td>
             </tr>
             <tr className="border-b border-hairline/50">
@@ -254,7 +267,7 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                 </td>
                 <td className="px-3 py-2.5 font-sans text-muted">
                   {m.fy2_period != null
-                    ? `FY${String(m.fy2_period).slice(0, 4)} est × ${growth != null ? (growth * 1.2).toFixed(0) : '—'}× ÷ 1.10`
+                    ? `FY${String(m.fy2_period).slice(0, 4)} est ${money(m.fy2_eps)} × ${m.fy2_exit_multiple != null ? num(m.fy2_exit_multiple)!.toFixed(0) : '—'}× ÷ 1.10`
                     : 'out-year est ÷ 1.10'}
                 </td>
                 <td className="px-3 py-2.5 font-sans text-muted">
@@ -279,6 +292,12 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
       {guidance?.reason != null && (
         <div className="border-t border-hairline/70 px-4 py-2.5 text-xs leading-relaxed text-muted">
           {String(guidance.reason)}
+        </div>
+      )}
+      {m.basis_caveat != null && (
+        <div className="border-t border-hairline/70 px-4 py-2 text-[10px] font-mono text-faint">
+          basis note — {String(m.basis_caveat)}; growth fields are
+          labeled by basis (FY+1 ÷ FY0 vs TTM → fwd)
         </div>
       )}
     </section>

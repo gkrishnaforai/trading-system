@@ -99,7 +99,10 @@ def _pe_guidance(fwd_pe: float | None, eps_ttm: float | None,
         reason = "Forward P/E is within 1.5x expected EPS growth; use the fair-value buy-below as the price gate."
     elif peg_like <= 2.5:
         label = "Premium"
-        reason = "The multiple is ahead of expected EPS growth; require unusually durable growth and strong cash-flow quality."
+        reason = ("Growth-adjusted valuation is moderately expensive; "
+                  "reasonable only under premium-growth assumptions "
+                  "(PEG toward 2.0x). Require durable growth and "
+                  "strong cash-flow quality.")
     else:
         label = "Stretched / avoid"
         reason = "Forward P/E is more than 2.5x expected EPS growth; estimates may need to rise materially to justify the price."
@@ -217,12 +220,26 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
     # multi-year discounted view — hyper-growth names are priced on
     # FY+2/FY+3 earnings a year early; discounting the out-year EPS
     # back at a justified exit multiple shows what 'priced in' means
-    fy2_pe = fy2_equiv = None
+    fy2_pe = fy2_equiv = fy2_exit_m = fy2_growth = None
     if eps_fy2 and price:
         fy2_pe = round(price / eps_fy2, 1)
+        if fwd_eps and fwd_eps > 0:
+            fy2_growth = round((eps_fy2 / fwd_eps - 1) * 100, 1)
         if g_band is not None and g_band > 0:
-            exit_m = g_band * 1.2         # mid-band exit multiple
-            fy2_equiv = round(eps_fy2 * exit_m / 1.10, 2)
+            fy2_exit_m = round(g_band * 1.2, 1)  # mid-band exit multiple
+            fy2_equiv = round(eps_fy2 * fy2_exit_m / 1.10, 2)
+
+    # two growth rates, kept distinct per the review: ttm→fwd is a
+    # base-effect measure (reported TTM vs next-FY consensus), the
+    # FY0→FY+1 figure is the conventional PEG input
+    ttm_growth = (round((fwd_eps / eps_ttm - 1) * 100, 1)
+                  if fwd_eps and eps_ttm and eps_ttm > 0 else None)
+    # growth runway — how long consensus keeps EPS growing, from the
+    # forward curve itself (duration drives FV more than level)
+    runway = None
+    if g_fwd is not None and fy2_growth is not None:
+        runway = {"fy1": g_fwd, "fy2": fy2_growth,
+                  "decelerating": fy2_growth < g_fwd * 0.8}
 
     # the growth-adjusted fair value is the 1.5x-PEG anchor — state
     # it explicitly with the spot delta so the band isn't just three
@@ -247,6 +264,8 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
         "guidance": guidance,
         "growth_basis": g_basis,
         "fy0_eps": fy0_eps,
+        "ttm_to_fwd_growth_pct": ttm_growth,
+        "growth_runway": runway,
         "spot_peg": spot_peg,
         "peg_band": peg_band,
         "fv_growth": fv_growth,
@@ -255,6 +274,13 @@ def _multiples(spot: float | None, earnings_rows: list[dict],
         "fy2_period": fy2_period.isoformat() if fy2_period else None,
         "fy2_pe": fy2_pe,
         "fy2_equiv": fy2_equiv,
+        "fy2_exit_multiple": fy2_exit_m,
+        "fy2_growth_pct": fy2_growth,
+        # reported TTM vs adjusted-consensus forward may sit on
+        # different EPS bases — display the caveat rather than
+        # silently mixing (GAAP vs non-GAAP)
+        "basis_caveat": ("reported TTM vs adjusted-consensus "
+                         "forward EPS may differ in basis"),
     }
 
 
