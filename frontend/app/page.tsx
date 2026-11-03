@@ -49,12 +49,13 @@ function fmtDateTimeEt(d?: string) {
 }
 
 export default async function RegimePage() {
-  const [posture, morning, tape, alarms, metals] = await Promise.all([
+  const [posture, morning, tape, alarms, metals, fwd] = await Promise.all([
     api.posture(),
     api.morningRegime(),
     api.intraday(),
     api.correctionAlarms(),
     api.metalsPulse(),
+    api.forwardOutlook(),
   ])
 
   const p = posture ?? {}
@@ -1450,6 +1451,91 @@ export default async function RegimePage() {
             </div>
           </Section>
         )}
+
+        {fwd?.market?.horizons != null && (
+            <Section
+              title="Forward outlook — historical analogs"
+              subtitle={`${fwd.market.analogs?.length ?? 0} nearest market states · as of ${fwd.market.as_of ?? '—'} · observed outcomes, not a calibrated model`}
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="text-faint text-left">
+                      <th className="py-1 pr-3">horizon</th>
+                      <th className="py-1 pr-3">median</th>
+                      <th className="py-1 pr-3">p25 / p75</th>
+                      <th className="py-1 pr-3">% positive</th>
+                      <th className="py-1 pr-3">worst</th>
+                      <th className="py-1">n</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(fwd.market.horizons as Record<string, { n?: number; median_pct?: number; p25_pct?: number; p75_pct?: number; pct_positive?: number; worst_pct?: number; low_evidence?: boolean }>).map(([h, s]) => (
+                      <tr key={h} className="border-t border-hairline/50">
+                        <td className="py-1.5 pr-3 text-muted">{h}</td>
+                        <td className={`py-1.5 pr-3 ${(s.median_pct ?? 0) >= 0 ? 'text-aggressive' : 'text-defensive'}`}>
+                          {s.median_pct != null ? `${s.median_pct > 0 ? '+' : ''}${s.median_pct}%` : '—'}
+                        </td>
+                        <td className="py-1.5 pr-3 text-muted">
+                          {s.p25_pct}% / {s.p75_pct}%
+                        </td>
+                        <td className="py-1.5 pr-3">{s.pct_positive ?? '—'}%</td>
+                        <td className="py-1.5 pr-3 text-defensive">{s.worst_pct ?? '—'}%</td>
+                        <td className="py-1.5">
+                          {s.n ?? 0}
+                          {s.low_evidence && (
+                            <span className="ml-1 text-caution">low n</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="pt-2 text-[10px] font-mono text-faint">
+                analogs: {fwd.market.analogs?.map(a => a.date).join(', ')}
+                {fwd.market.current_state && (
+                  <> · state vix {fwd.market.current_state.vix} vs50 {fwd.market.current_state.vs50} vs200 {fwd.market.current_state.vs200}</>
+                )}
+              </div>
+            </Section>
+          )}
+
+          {fwd?.event_study?.by_verdict != null && (
+            <Section
+              title="Earnings event study"
+              subtitle={`${fwd.event_study.events_n ?? 0} journaled prints — how prints actually traded afterward`}
+              defaultOpen={false}
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="text-faint text-left">
+                      <th className="py-1 pr-3">verdict</th>
+                      <th className="py-1 pr-3">+5d med</th>
+                      <th className="py-1 pr-3">+20d med</th>
+                      <th className="py-1 pr-3">+60d med</th>
+                      <th className="py-1">n</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(fwd.event_study.by_verdict as Record<string, Record<string, { n?: number; median_pct?: number; pct_positive?: number; low_evidence?: boolean }>>).map(([v, hz]) => (
+                      <tr key={v} className="border-t border-hairline/50">
+                        <td className="py-1.5 pr-3 text-muted">{v}</td>
+                        {(['5d', '20d', '60d'] as const).map(h => (
+                          <td key={h} className={`py-1.5 pr-3 ${(hz[h]?.median_pct ?? 0) >= 0 ? 'text-aggressive' : 'text-defensive'}`}>
+                            {hz[h]?.median_pct != null ? `${hz[h].median_pct! > 0 ? '+' : ''}${hz[h].median_pct}%` : '—'}
+                            {hz[h]?.low_evidence && <span className="ml-1 text-caution text-[9px]">*</span>}
+                          </td>
+                        ))}
+                        <td className="py-1.5">{hz['5d']?.n ?? hz['20d']?.n ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+          )}
 
         {!posture && !today && (
           <Section title="Status" defaultOpen>

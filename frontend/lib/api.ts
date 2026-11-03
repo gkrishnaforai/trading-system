@@ -487,6 +487,25 @@ export type AlertItem = {
   fund_alert?: string
 }
 
+export interface ForwardOutlook {
+  market?: {
+    as_of?: string
+    current_state?: Record<string, number>
+    analogs?: { date: string; distance: number }[]
+    horizons?: Record<string, {
+      n?: number; median_pct?: number; p25_pct?: number
+      p75_pct?: number; pct_positive?: number; worst_pct?: number
+      low_evidence?: boolean }>
+    error?: string
+  }
+  event_study?: {
+    events_n?: number; symbols?: number
+    by_verdict?: Record<string, Record<string, {
+      n?: number; median_pct?: number; pct_positive?: number
+      low_evidence?: boolean }>>
+  }
+}
+
 export async function getRaw<T>(
   path: string, opts?: { fresh?: boolean },
 ): Promise<T | null> {
@@ -503,6 +522,9 @@ export async function getRaw<T>(
 }
 
 export const api = {
+  forwardOutlook: (sym?: string) =>
+    get<ForwardOutlook>(
+      `/forward-outlook${sym ? `?sym=${sym}` : ''}`),
   posture: () => get<Posture>('/posture'),
   morningRegime: () => get<MorningRegime>('/morning-regime'),
   metalsPulse: () => get<MetalsPulse>('/metals-pulse'),

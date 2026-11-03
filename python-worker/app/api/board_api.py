@@ -3149,6 +3149,35 @@ async def earnings_watch_latest(days: int = 7):
                                             days)}
 
 
+@router.get("/forward-outlook")
+async def forward_outlook(sym: Optional[str] = None):
+    """Engine A+B output for the regime page — market analogs →
+    forward outcome stats at 5d..252d, plus (when sym) the stock's
+    unconditional forward distribution and the event study."""
+    from app.signals import forward_analogs, event_study
+    out = {"market": await asyncio.to_thread(
+        forward_analogs.market_outlook)}
+    if sym:
+        out["stock_forward"] = await asyncio.to_thread(
+            forward_analogs.stock_forward_distribution, sym)
+        out["event_study"] = await asyncio.to_thread(
+            event_study.run, sym)
+    else:
+        out["event_study"] = await asyncio.to_thread(event_study.run)
+    return out
+
+
+@router.get("/expected-option-pnl")
+async def expected_option_pnl(sym: str, strike: float, expiry: str,
+                              premium: float, iv: Optional[float] = None):
+    """Engine C — Σ p_i × (BS(S_i, IV_i) − premium) under the FV
+    scenario distribution. Contract params come from the chain quote
+    the user is evaluating."""
+    from app.options import expected_pnl
+    return await asyncio.to_thread(
+        expected_pnl.expected_call_pnl, sym, strike, expiry, premium, iv)
+
+
 @router.get("/fwd-eps-audit")
 async def fwd_eps_audit():
     """Read-only audit — every stored fwd_eps_avg that fails the
