@@ -11,13 +11,14 @@ import { SignalStrip, toneOf } from '@/components/signal-strip'
 import FvRecompute from '@/components/fv-recompute'
 
 function num(v: unknown) {
+  if (v === null || v === undefined || v === '') return null
   const x = Number(v)
   return Number.isFinite(x) ? x : null
 }
 
 function money(v: unknown, dec = 2) {
-  const n = Number(v)
-  return Number.isFinite(n) ? `$${n.toFixed(dec)}` : '—'
+  const n = num(v)
+  return n !== null ? `$${n.toFixed(dec)}` : '—'
 }
 
 function moneyShort(v: unknown) {
@@ -264,9 +265,14 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                          ?? obj(m.fv_engine)?.fair_value)}
                 </td>
                 <td className="px-3 py-2.5">
-                  {obj(m.fv_engine)?.decision != null
-                    ? String(obj(m.fv_engine)?.decision).replace(/_/g, ' ')
-                    : '—'}
+                  {(() => {
+                    const fv = num(obj(m.fv_engine)?.expected
+                                   ?? obj(m.fv_engine)?.fair_value)
+                    const sp = num(m.spot)
+                    if (fv == null || sp == null || sp <= 0) return '—'
+                    const d = (fv / sp - 1) * 100
+                    return `spot is ${Math.abs(d).toFixed(0)}% ${d >= 0 ? 'below' : 'above'} FV`
+                  })()}
                 </td>
                 <td className="px-3 py-2.5 font-sans text-muted">
                   fair_value_v2 scenario blend
