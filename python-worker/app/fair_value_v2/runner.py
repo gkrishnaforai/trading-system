@@ -214,6 +214,36 @@ class FairValueRunner:
             quality=quality,
         )
 
+    def _lifecycle_methods(self, category: str,
+                           stage: int) -> Optional[List]:
+        """category × lifecycle stage → MethodWeight list. Roles map
+        to weight bands: primaries share 0.65, cross-checks 0.35,
+        renormalized to 1.0 across the set."""
+        try:
+            import yaml
+            path = os.path.join(os.path.dirname(__file__),
+                                "methods", "lifecycle_methods.yaml")
+            cfg = yaml.safe_load(open(path)) or {}
+            rows = ((cfg.get("matrix") or {}).get(category) or {}) \
+                .get(str(stage))
+            if not rows:
+                return None
+            from app.fair_value_v2.router import MethodWeight
+            p_n = sum(1 for r in rows if r.get("role") == "primary")
+            c_n = len(rows) - p_n
+            out = []
+            for r in rows:
+                w = (0.65 / p_n if r.get("role") == "primary"
+                     else 0.35 / c_n if c_n else 0.0)
+                out.append(MethodWeight(
+                    method_key=str(r["method_key"]), weight=w))
+            tot = sum(m.weight for m in out) or 1.0
+            for m in out:
+                m.weight = round(m.weight / tot, 4)
+            return out
+        except Exception:
+            return None
+
     def _industry_params(self, category: Optional[str]) -> Dict[str, Any]:
         """Category constants overlaid onto method params — a method
         referencing `{param: industry_scap}` sees the archetype's
@@ -422,6 +452,23 @@ class FairValueRunner:
 
         # Use regime-selected methods when present; otherwise, keep category methods.
         selected_method_weights = regime_method_weights or method_weights
+
+        # lifecycle routing — business maturity reshapes the method
+        # set (category × stage → roles → weight bands). Low-confidence
+        # stages leave the category route untouched.
+        try:
+            from app.fair_value_v2.lifecycle import classify
+            life = classify(
+                symbol, dict(regime_features.scalars or {}))
+            classification["lifecycle"] = life
+            if (not regime_method_weights and not override_category
+                    and life.get("confidence") != "low"):
+                mws = self._lifecycle_methods(
+                    category, int(life.get("stage") or 0))
+                if mws:
+                    selected_method_weights = mws
+        except Exception:
+            pass
         industry_params = self._industry_params(category)
 
         method_results: List[MethodResult] = []
@@ -485,6 +532,24 @@ class FairValueRunner:
                         blend_inputs[idx] = (mr, 0.0)
         except Exception:
             pass
+
+        # business-fit eligibility — revenue-multiple legs lose half
+        # their weight on profitable names (EV/S double-counts when
+        # margins are real); recorded on the leg, weight demoted
+        _nm = None
+        try:
+            _nm = (regime_features.scalars or {}).get("net_margin") \
+                or (regime_features.scalars or {}).get("net_margin_ttm")
+            _nm = float(_nm) if _nm is not None else None
+        except (TypeError, ValueError):
+            _nm = None
+        if _nm is not None and _nm > 0.08:
+            for idx, (mr, w) in enumerate(blend_inputs):
+                if w > 0 and mr.method_key.startswith("ev_sales"):
+                    (mr.metrics or {}).update(
+                        {"eligibility_demoted": "profitable_ev_sales",
+                         "weight_before": w})
+                    blend_inputs[idx] = (mr, w * 0.5)
 
         # family cap applies to the recorded weight too — the breakdown
         # shows the effective share, not just the configured one

@@ -1,0 +1,45 @@
+method_key: mid_cycle_pe
+version: 1
+category: cyclical
+requires:
+  scalars:
+    - eps_ttm
+  optional_scalars:
+    - eps_norm_8q
+  series: []
+params:
+  pe_base: 16.0
+  pe_bear: 11.0
+  pe_bull: 20.0
+  pe_explosive: 24.0
+formula:
+  # normalized earnings through the cycle — prefers the 8-quarter
+  # mean EPS when the eps_norm_8q scalar resolves, else TTM
+  fair_price:
+    if:
+      cond: {lte: [{coalesce: [{var: eps_norm_8q}, {var: eps_ttm}]}, 0]}
+      then: null
+      else:
+        mul: [{coalesce: [{var: eps_norm_8q}, {var: eps_ttm}]},
+              {param: pe_base}]
+  bear_fair_price:
+    if:
+      cond: {lte: [{coalesce: [{var: eps_norm_8q}, {var: eps_ttm}]}, 0]}
+      then: null
+      else:
+        mul: [{coalesce: [{var: eps_norm_8q}, {var: eps_ttm}]},
+              {param: pe_bear}]
+  bull_fair_price:
+    if:
+      cond: {lte: [{coalesce: [{var: eps_norm_8q}, {var: eps_ttm}]}, 0]}
+      then: null
+      else:
+        mul: [{coalesce: [{var: eps_norm_8q}, {var: eps_ttm}]},
+              {param: pe_bull}]
+  explosive_fair_price:
+    if:
+      cond: {lte: [{coalesce: [{var: eps_norm_8q}, {var: eps_ttm}]}, 0]}
+      then: null
+      else:
+        mul: [{coalesce: [{var: eps_norm_8q}, {var: eps_ttm}]},
+              {param: pe_explosive}]

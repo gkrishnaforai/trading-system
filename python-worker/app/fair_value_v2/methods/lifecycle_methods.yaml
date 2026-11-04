@@ -1,0 +1,86 @@
+version: 1
+# category × lifecycle stage → method set with roles.
+# role→weight bands: primaries share 0.65, cross-checks share 0.35
+# (renormalized); eligibility demotions then apply. Weights are
+# structural, not fitted — calibration waits on backtest outcomes.
+matrix:
+  technology:
+    "1": [{method_key: ev_sales_survival, role: primary},
+          {method_key: ev_sales_growth, role: cross}]
+    "2": [{method_key: eps_trajectory, role: primary},
+          {method_key: peg_corrected, role: cross},
+          {method_key: ev_sales_growth, role: cross}]
+    "3": [{method_key: dcf_simple, role: primary},
+          {method_key: pe_technology_dynamic, role: primary},
+          {method_key: eps_trajectory, role: cross}]
+    "4": [{method_key: dcf_mega_cap, role: primary},
+          {method_key: ev_fcf, role: cross},
+          {method_key: pe_technology_dynamic, role: cross}]
+    "5": [{method_key: mid_cycle_pe, role: primary},
+          {method_key: pe_cyclical, role: cross}]
+  ai_infra:
+    "1": [{method_key: ev_sales_survival, role: primary},
+          {method_key: ev_sales_growth, role: cross}]
+    "2": [{method_key: eps_trajectory, role: primary},
+          {method_key: ev_sales_growth, role: cross},
+          {method_key: peg_r40_cagr, role: cross}]
+    "3": [{method_key: dcf_simple, role: primary},
+          {method_key: eps_trajectory, role: primary},
+          {method_key: pe_technology_dynamic, role: cross}]
+    "4": [{method_key: dcf_mega_cap, role: primary},
+          {method_key: ev_fcf, role: cross}]
+    "5": [{method_key: mid_cycle_pe, role: primary},
+          {method_key: ev_fcf, role: cross}]
+  growth:
+    "2": [{method_key: pe_growth, role: primary},
+          {method_key: eps_trajectory, role: cross},
+          {method_key: peg_r40_cagr, role: cross}]
+    "3": [{method_key: pe_growth, role: primary},
+          {method_key: dcf_simple, role: cross},
+          {method_key: eps_trajectory, role: cross}]
+    "4": [{method_key: dcf_simple, role: primary},
+          {method_key: dividend_model, role: cross},
+          {method_key: pe_value, role: cross}]
+    "5": [{method_key: mid_cycle_pe, role: primary}]
+  financials:
+    "2": [{method_key: pb_roe, role: primary},
+          {method_key: pe_forward, role: cross}]
+    "3": [{method_key: pb_roe, role: primary},
+          {method_key: pe_forward, role: cross}]
+    "4": [{method_key: pb_roe, role: primary},
+          {method_key: dividend_model, role: cross}]
+    "5": [{method_key: pb_bank, role: primary}]
+  fintech:
+    "2": [{method_key: ev_sales_fintech, role: primary},
+          {method_key: pe_forward, role: cross}]
+    "3": [{method_key: pe_forward, role: primary},
+          {method_key: pb_roe, role: cross}]
+    "4": [{method_key: pb_roe, role: primary},
+          {method_key: dividend_model, role: cross}]
+  consumer:
+    "3": [{method_key: pe_value, role: primary},
+          {method_key: dcf_simple, role: cross}]
+    "4": [{method_key: dividend_model, role: primary},
+          {method_key: dcf_simple, role: cross},
+          {method_key: pe_value, role: cross}]
+    "5": [{method_key: mid_cycle_pe, role: primary}]
+  healthcare:
+    "2": [{method_key: pe_growth, role: primary},
+          {method_key: ev_sales_growth, role: cross}]
+    "3": [{method_key: dcf_simple, role: primary},
+          {method_key: pe_value, role: cross}]
+    "4": [{method_key: pe_value, role: primary},
+          {method_key: dcf_simple, role: cross}]
+  cyclical:
+    "3": [{method_key: mid_cycle_pe, role: primary},
+          {method_key: pe_cyclical, role: cross}]
+    "4": [{method_key: mid_cycle_pe, role: primary},
+          {method_key: pe_cyclical, role: cross}]
+    "5": [{method_key: mid_cycle_pe, role: primary}]
+  value:
+    "3": [{method_key: pe_value, role: primary},
+          {method_key: dcf_simple, role: cross}]
+    "4": [{method_key: pe_value, role: primary},
+          {method_key: dividend_model, role: cross},
+          {method_key: dcf_simple, role: cross}]
+    "5": [{method_key: pe_cyclical, role: primary}]

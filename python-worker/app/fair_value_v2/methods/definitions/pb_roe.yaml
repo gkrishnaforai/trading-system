@@ -1,0 +1,74 @@
+method_key: pb_roe
+version: 1
+category: financials
+requires:
+  scalars:
+    - book_value_per_share
+    - roe
+  series: []
+params:
+  r: 0.10
+  g: 0.035
+  pb_floor: 0.6
+  pb_cap: 4.0
+  bear_r: 0.12
+  bull_r: 0.085
+formula:
+  # residual-income form: BV x (ROE-g)/(r-g), clamped — generalizes
+  # pb_bank with wider bands for non-bank financials/insurers
+  fair_price:
+    if:
+      cond: {lte: [{var: book_value_per_share}, 0]}
+      then: null
+      else:
+        mul:
+          - var: book_value_per_share
+          - clamp:
+              value:
+                div:
+                  - sub: [{var: roe}, {param: g}]
+                  - sub: [{param: r}, {param: g}]
+              lo: {param: pb_floor}
+              hi: {param: pb_cap}
+  bear_fair_price:
+    if:
+      cond: {lte: [{var: book_value_per_share}, 0]}
+      then: null
+      else:
+        mul:
+          - var: book_value_per_share
+          - clamp:
+              value:
+                div:
+                  - sub: [{var: roe}, {param: g}]
+                  - sub: [{param: bear_r}, {param: g}]
+              lo: {param: pb_floor}
+              hi: {param: pb_cap}
+  bull_fair_price:
+    if:
+      cond: {lte: [{var: book_value_per_share}, 0]}
+      then: null
+      else:
+        mul:
+          - var: book_value_per_share
+          - clamp:
+              value:
+                div:
+                  - sub: [{var: roe}, {param: g}]
+                  - sub: [{param: bull_r}, {param: g}]
+              lo: {param: pb_floor}
+              hi: {param: pb_cap}
+  explosive_fair_price:
+    if:
+      cond: {lte: [{var: book_value_per_share}, 0]}
+      then: null
+      else:
+        mul:
+          - var: book_value_per_share
+          - clamp:
+              value:
+                div:
+                  - sub: [{var: roe}, {param: g}]
+                  - sub: [{param: bull_r}, {param: g}]
+              lo: {param: pb_floor}
+              hi: {param: pb_cap}

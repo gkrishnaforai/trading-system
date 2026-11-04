@@ -1,0 +1,59 @@
+method_key: dividend_model
+version: 1
+category: consumer
+requires:
+  scalars:
+    - dividends_ttm
+    - shares_outstanding
+  series: []
+params:
+  r: 0.08
+  g: 0.025
+  bear_r: 0.09
+  bull_g: 0.035
+formula:
+  # Gordon model on per-share dividends — mature payers only
+  fair_price:
+    if:
+      cond:
+        any:
+          - lte: [{var: dividends_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - div: [{var: dividends_ttm}, {var: shares_outstanding}]
+          - sub: [{param: r}, {param: g}]
+  bear_fair_price:
+    if:
+      cond:
+        any:
+          - lte: [{var: dividends_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - div: [{var: dividends_ttm}, {var: shares_outstanding}]
+          - sub: [{param: bear_r}, {param: g}]
+  bull_fair_price:
+    if:
+      cond:
+        any:
+          - lte: [{var: dividends_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - div: [{var: dividends_ttm}, {var: shares_outstanding}]
+          - sub: [{param: r}, {param: bull_g}]
+  explosive_fair_price:
+    if:
+      cond:
+        any:
+          - lte: [{var: dividends_ttm}, 0]
+          - lte: [{var: shares_outstanding}, 0]
+      then: null
+      else:
+        div:
+          - div: [{var: dividends_ttm}, {var: shares_outstanding}]
+          - sub: [{param: r}, {param: bull_g}]

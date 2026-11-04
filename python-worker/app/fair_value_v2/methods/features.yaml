@@ -64,6 +64,8 @@ units:
   roe: decimal
   eps_ttm: usd_per_share
   eps_ttm_implied: usd_per_share
+  eps_norm_8q: usd_per_share
+  dividends_ttm: usd
   eps_forward: usd_per_share
   eps_growth_ttm: decimal
   operating_margin_ttm: decimal
