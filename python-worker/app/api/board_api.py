@@ -2125,10 +2125,11 @@ async def fv_resolve(sym: str, force: bool = False):
         "run_as_of": meta.get("run_as_of"),
         "fair_value": res.fair_value,
         "expected_fair_value": res.expected_fair_value,
-        "scenarios": res.scenarios,
+        "scenarios": res.scenario_fair_values,
         "method_results": [
             {"key": m.method_key, "fv": m.fair_price,
-             "status": m.status, "role": (m.metrics or {}).get("role"),
+             "status": str(m.status),
+             "role": (m.metrics or {}).get("role"),
              "demoted": (m.metrics or {}).get("eligibility_demoted")}
             for m in (res.method_results or [])],
         "classification": res.classification,
