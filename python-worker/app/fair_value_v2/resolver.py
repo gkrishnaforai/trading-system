@@ -331,6 +331,19 @@ class FairValueV2Resolver:
                 decision["valuation_confidence"] = "medium"
                 decision.setdefault("confidence_drivers", []).append(
                     "method_disagreement:reverse_dcf_above_cap")
+            # three confidences stay separate — classification
+            # certainty, input/method reliability, and consensus
+            # quality are different questions (PLTR: clear lifecycle,
+            # uncertain FV)
+            try:
+                from app.fair_value_v2.lifecycle import (
+                    classify, market_expectation_confidence)
+                decision["lifecycle"] = classify(
+                    result.symbol, scalars)
+                decision["market_expectation"] = \
+                    market_expectation_confidence(scalars)
+            except Exception:
+                pass
         if decision is not None and result.relative_valuation:
             decision["relative_valuation"] = result.relative_valuation
         try:

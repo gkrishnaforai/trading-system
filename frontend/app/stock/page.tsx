@@ -294,6 +294,15 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                             .slice(0, 3).map(r => `· ${String(r)}`).join(' · ')}
                         </div>
                       )}
+                      {obj(m.fv_engine)?.lifecycle != null && (() => {
+                        const lc = obj(m.fv_engine)!.lifecycle as Record<string, unknown>
+                        const me = obj(m.fv_engine)?.market_expectation as Record<string, unknown> | undefined
+                        return (
+                          <div className="text-faint">
+                            lifecycle S{String(lc.stage)} ({String(lc.confidence)}) · market exp {String(me?.score ?? '—')}
+                          </div>
+                        )
+                      })()}
                     </div>
                   )}
                 </td>
