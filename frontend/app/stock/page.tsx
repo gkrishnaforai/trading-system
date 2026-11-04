@@ -276,6 +276,20 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                 </td>
                 <td className="px-3 py-2.5 font-sans text-muted">
                   fair_value_v2 scenario blend
+                  {obj(obj(m.fv_engine)?.scenarios) != null && (() => {
+                    const s = obj(m.fv_engine)!.scenarios as Record<string, unknown>
+                    return (
+                      <div className="text-faint">
+                        bear {money(s.bear)} · base {money(s.base)} · bull {money(s.bull)}
+                        {s.explosive != null ? ` · expl ${money(s.explosive)}` : ''}
+                      </div>
+                    )
+                  })()}
+                  {obj(m.fv_engine)?.confidence != null && (
+                    <div className="text-faint">
+                      confidence {String(obj(m.fv_engine)?.confidence)}
+                    </div>
+                  )}
                 </td>
                 <td className="px-3 py-2.5 font-sans text-muted">
                   {obj(m.fv_engine)?.as_of != null
