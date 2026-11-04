@@ -530,6 +530,9 @@ export const api = {
   metalsPulse: () => get<MetalsPulse>('/metals-pulse'),
   themeIntelligence: () =>
     get<ThemeIntelligence>('/theme-intelligence'),
+  sectorTiming: () =>
+    get<{ sectors?: Array<Record<string, unknown>>;
+          history_days?: number }>('/sector-timing'),
   macroEvents: () =>
     get<{ events?: MacroEvent[] } | MacroEvent[]>('/macro-events'),
   daily: () => get<DailyBoard>('/daily'),

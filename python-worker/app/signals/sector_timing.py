@@ -131,9 +131,13 @@ def compute(as_of: Optional[date] = None) -> Dict[str, Any]:
             trap += 25
         trap = round(min(100, trap), 1)
 
-        # state machine
+        # state machine — 'none' means quiet/healthy, not 'in a
+        # selloff too shallow to matter'; a real drawdown reads
+        # selloff even before it's an opportunity
         if opp < 40:
-            state = "none"
+            state = "selloff" if (dd is not None and dd < -0.08
+                                  or (rs20 is not None
+                                      and rs20 < -0.08)) else "none"
         elif conf >= 65:
             state = "rebound_confirmed"
         elif conf >= 50:

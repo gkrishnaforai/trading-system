@@ -181,6 +181,7 @@ function ThemeRow({ k, t }: { k: string; t: ThemeCard }) {
 
 export default async function ThemesPage() {
   const data = await api.themeIntelligence()
+  const st = await api.sectorTiming()
   const today = data?.today
   const themes = today?.themes ?? {}
   const ranked = Object.entries(themes).sort(
@@ -211,6 +212,31 @@ export default async function ThemesPage() {
             <ScenarioStrip probs={today.scenario_probs} />
           </section>
         )}
+
+      {st?.sectors && st.sectors.length > 0 && (
+        <section className="mb-4 rounded-xl border border-hairline bg-card px-5 py-3.5">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-faint pb-2">
+            Sector timing — cheap vs recovering
+          </div>
+          <div className="space-y-1">
+            {st.sectors.map((s, i) => (
+              <div key={i}
+                   className="flex justify-between text-[12px] font-mono">
+                <span>
+                  {String(s.sector_key)}{' '}
+                  <span className="text-faint">{String(s.state)}</span>
+                </span>
+                <span className="text-faint">
+                  opp {String(s.opp_score)} · conf {String(s.conf_score)}
+                  {(s.trap_score as number) > 40
+                    ? ` · ⚠ trap ${String(s.trap_score)}`
+                    : ` · trap ${String(s.trap_score)}`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {!today && (
         <p className="py-12 text-center text-sm text-faint">
