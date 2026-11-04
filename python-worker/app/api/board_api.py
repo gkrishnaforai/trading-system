@@ -902,6 +902,12 @@ async def _j_universe_fill() -> dict:
     return await asyncio.to_thread(fill)
 
 
+async def _j_sector_timing() -> dict:
+    """Sector timing — daily two-score state machine per sector."""
+    from app.signals.sector_timing import run
+    return await asyncio.to_thread(run)
+
+
 async def _j_best_picks() -> dict:
     """Best-picks eval — the three-lane declarative selection
     (best_picks.yaml): growth_swing / long_term / compounder_3_5y
@@ -1027,6 +1033,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
     "universe-fill": ("Universe snapshot chunked fill",
                       _j_universe_fill),
+    "sector-timing": ("Sector bottom/rebound scores",
+                      _j_sector_timing),
     "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
     "lev-etf-swings": ("3x semis swing detector", _j_lev_swings),
     "signal-evals": ("Signal contract evals", _j_signal_evals),
@@ -1064,6 +1072,7 @@ _JOB_TIMEOUT = {
     "custodian": 10 * 60, "momentum": 8 * 60, "flywheel": 50 * 60,
     "fwd-eps-repair": 15 * 60,
     "universe-fill": 10 * 60,
+    "sector-timing": 5 * 60,
     "macro-snapshot": 3 * 60, "fund-snapshots": 120 * 60,
     "fund-flags": 8 * 60, "outcomes": 8 * 60, "leaps-mark": 5 * 60,
     "regime": 5 * 60, "pilot": 8 * 60, "daily-calls": 5 * 60,
@@ -2155,6 +2164,15 @@ async def theme_composition(key: str):
     I add' as data, not narrative."""
     from app.signals.theme_composition import composition
     return await asyncio.to_thread(composition, key)
+
+
+@router.get("/sector-timing")
+async def sector_timing():
+    """Per-sector bottom-opportunity vs rebound-confirmation scores
+    + state (selloff/capitulation/potential_bottom/bottom_forming/
+    rebound_confirmed). 'Cheap' and 'recovering' stay separate."""
+    from app.signals.sector_timing import current
+    return await asyncio.to_thread(current)
 
 
 @router.get("/universe-snapshot/stats")
