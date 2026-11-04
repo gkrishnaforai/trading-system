@@ -1,4 +1,5 @@
 import { api, type ThemeCard } from '@/lib/api'
+import { SectorRefreshButton } from './sector-refresh'
 
 export const dynamic = 'force-dynamic'
 
@@ -213,30 +214,53 @@ export default async function ThemesPage() {
           </section>
         )}
 
-      {st?.sectors && st.sectors.length > 0 && (
-        <section className="mb-4 rounded-xl border border-hairline bg-card px-5 py-3.5">
-          <div className="text-[11px] uppercase tracking-[0.2em] text-faint pb-2">
-            Sector timing — cheap vs recovering
-          </div>
-          <div className="space-y-1">
-            {st.sectors.map((s, i) => (
-              <div key={i}
-                   className="flex justify-between text-[12px] font-mono">
-                <span>
-                  {String(s.sector_key)}{' '}
-                  <span className="text-faint">{String(s.state)}</span>
-                </span>
-                <span className="text-faint">
-                  opp {String(s.opp_score)} · conf {String(s.conf_score)}
-                  {(s.trap_score as number) > 40
-                    ? ` · ⚠ trap ${String(s.trap_score)}`
-                    : ` · trap ${String(s.trap_score)}`}
-                </span>
+      {st?.sectors && st.sectors.length > 0 && (() => {
+        const STATE_TONE: Record<string, string> = {
+          selloff: 'text-red-400',
+          capitulation: 'text-red-400',
+          potential_bottom: 'text-amber-400',
+          bottom_forming: 'text-sky-400',
+          rebound_confirmed: 'text-emerald-400',
+          none: 'text-faint',
+        }
+        return (
+          <section className="mb-4 rounded-xl border border-hairline bg-card px-5 py-3.5">
+            <div className="flex items-baseline justify-between pb-2">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+                Sector timing — cheap vs recovering
               </div>
-            ))}
-          </div>
-        </section>
-      )}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono text-faint">
+                  {String(st.sectors[0]?.as_of ?? '')}
+                </span>
+                <SectorRefreshButton />
+              </div>
+            </div>
+            <div className="space-y-1">
+              {st.sectors.map((s, i) => {
+                const state = String(s.state ?? 'none')
+                return (
+                  <div key={i}
+                       className="flex justify-between text-[12px] font-mono">
+                    <span>
+                      {String(s.sector_key)}{' '}
+                      <span className={STATE_TONE[state] ?? 'text-faint'}>
+                        {state}
+                      </span>
+                    </span>
+                    <span className="text-faint">
+                      opp {String(s.opp_score)} · conf {String(s.conf_score)}
+                      {(s.trap_score as number) > 40
+                        ? ` · ⚠ trap ${String(s.trap_score)}`
+                        : ` · trap ${String(s.trap_score)}`}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )
+      })()}
 
       {!today && (
         <p className="py-12 text-center text-sm text-faint">
