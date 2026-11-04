@@ -2137,6 +2137,16 @@ async def fv_resolve(sym: str, force: bool = False):
     }
 
 
+@router.get("/theme/{key}/composition")
+async def theme_composition(key: str):
+    """Cross-sectional member comparison inside a theme — fwd P/E,
+    PEG, FY+2 growth, backlog, FCF, lifecycle stage, FV upside,
+    confidence — ranked deterministically. 'Which two of these 8 do
+    I add' as data, not narrative."""
+    from app.signals.theme_composition import composition
+    return await asyncio.to_thread(composition, key)
+
+
 @router.get("/symbol/{sym}/health")
 async def symbol_health(sym: str):
     """The per-stock health card — fundamental state + tape state +
