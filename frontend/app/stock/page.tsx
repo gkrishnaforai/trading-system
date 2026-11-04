@@ -288,6 +288,12 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                   {obj(m.fv_engine)?.confidence != null && (
                     <div className="text-faint">
                       confidence {String(obj(m.fv_engine)?.confidence)}
+                      {Array.isArray(obj(m.fv_engine)?.confidence_reasons) && (
+                        <div>
+                          {(obj(m.fv_engine)!.confidence_reasons as unknown[])
+                            .slice(0, 3).map(r => `· ${String(r)}`).join(' · ')}
+                        </div>
+                      )}
                     </div>
                   )}
                 </td>

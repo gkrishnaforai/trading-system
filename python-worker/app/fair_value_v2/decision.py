@@ -194,6 +194,28 @@ def decide(category: Optional[str],
                 and confidence == "high":
             confidence = "medium"
 
+    # why this confidence — every gate that fired, for the review trail
+    conf_reasons: List[str] = []
+    if fv_ref is None:
+        conf_reasons.append("no fair value computed")
+    hi_n = int(hi_spec.get("min_ok_methods", 99))
+    if ok_n < hi_n:
+        conf_reasons.append(
+            f"{ok_n} ok method(s) — high needs ≥{hi_n}")
+    for f in (hi_spec.get("forbid_flags") or []):
+        if f in (quality_flags or []):
+            conf_reasons.append(f"blocking flag: {f}")
+    for f in (me_spec.get("forbid_flags") or []):
+        if f in (quality_flags or []) \
+                and f not in (hi_spec.get("forbid_flags") or []):
+            conf_reasons.append(f"blocking flag: {f}")
+    if method_dispersion is not None and method_dispersion > \
+            float(disp_cfg.get("high_conf_max", 0.35)):
+        conf_reasons.append(
+            f"method disagreement {method_dispersion:.0%} of spot")
+    if not conf_reasons:
+        conf_reasons.append("methods agree, no blocking flags")
+
     # uncertainty adders — each a measurable risk the scenario may miss;
     # their total positions the name inside its category band
     applied: List[str] = []
@@ -463,6 +485,7 @@ def decide(category: Optional[str],
         "fv_upside_pct": upside,
         "expected_return_2y": er2y,
         "valuation_confidence": confidence,
+        "confidence_reasons": conf_reasons,
         "method_dispersion": method_dispersion,
         "earnings_quality": earnings_quality,
         "capital_quality": capital_quality,

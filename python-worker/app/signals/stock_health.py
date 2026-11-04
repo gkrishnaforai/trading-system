@@ -655,6 +655,9 @@ def card(sym: str) -> dict[str, Any]:
                 "decision": fv_detail.get("decision"),
                 "scenarios": fv_detail.get("scenarios"),
                 "confidence": fv_detail.get("valuation_confidence"),
+                "confidence_reasons": (
+                    (fv_detail.get("decision") or {})
+                    .get("confidence_reasons")),
                 "as_of": fv_detail.get("as_of"),
             }
             if any(v is not None for v in fe.values()):
