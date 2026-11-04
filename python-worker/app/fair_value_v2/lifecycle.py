@@ -58,8 +58,8 @@ def classify(symbol: str, scalars: Dict[str, Any]) -> Dict[str, Any]:
     rev_g = _num(scalars, "revenue_growth", "revenue_growth_yoy",
                  "rev_growth_ttm", "revenue_yoy_growth")
     eps_g = _num(scalars, "eps_growth", "eps_yoy_growth",
-                 "eps_growth_yoy")
-    div_yield = _num(scalars, "dividend_yield")
+                 "eps_growth_yoy", "eps_growth_ttm", "forward_growth")
+    div_yield = _num(scalars, "dividend_yield", "dividends_ttm")
     buybacks = _num(scalars, "buybacks_ttm", "share_buyback_ttm")
     m_sd = _margin_stddev(symbol)
 

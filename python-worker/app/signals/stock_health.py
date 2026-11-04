@@ -1172,6 +1172,9 @@ def _fv_detail(run_row: dict, spot, fund_as_of=None) -> dict:
             "w": (mr.get("metrics") or {}).get("blend_weight"),
             "fv": mr.get("fair_price"),
             "scenarios": mscen,
+            "role": (mr.get("metrics") or {}).get("role"),
+            "demoted": (mr.get("metrics") or {}).get(
+                "eligibility_demoted"),
             "explain": _method_explain(mr.get("method_key"), iu, mscen),
         })
     # street targets — context for comparison only; removed from the

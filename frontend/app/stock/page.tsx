@@ -1517,6 +1517,9 @@ async function StockCore({ sym }: { sym: string }) {
                         <span className="text-muted">
                           {String(m.key ?? 'method') +
                             (m.w != null ? ` (w ${Number(m.w).toFixed(2)})` : '') +
+                            (m.role === 'primary' ? ' • primary' : '') +
+                            (m.role === 'cross' ? ' • check' : '') +
+                            (m.demoted ? ` ⚠ ${String(m.demoted).replace(/_/g, ' ')}` : '') +
                             (m.outlier ? ' ⚠ outlier' : '')}
                         </span>
                         <span className="font-mono text-ink">{money(m.fv)}</span>

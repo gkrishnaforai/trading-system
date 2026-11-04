@@ -114,6 +114,10 @@ class FairValueRunner:
             "fcf_ttm",        # pre_earnings needs the actual burn —
                             # GAAP-margin-negative but FCF-positive names
                             # (NET) are self-funding, not survival cases
+            "net_margin_ttm",
+            "eps_growth_ttm",
+            "dividends_ttm",
+            "book_value_per_share",
         ]
 
         # Decision-layer inputs — resolved once per run regardless of
@@ -240,6 +244,10 @@ class FairValueRunner:
             tot = sum(m.weight for m in out) or 1.0
             for m in out:
                 m.weight = round(m.weight / tot, 4)
+            self._life_roles = {m.method_key:
+                                ("cross" if r.get("role") == "cross"
+                                 else "primary")
+                                for m, r in zip(out, rows)}
             return out
         except Exception:
             return None
@@ -474,6 +482,7 @@ class FairValueRunner:
         method_results: List[MethodResult] = []
         blend_inputs: List[Tuple[MethodResult, float]] = []
         features_hashes: List[str] = []
+        life_roles = getattr(self, "_life_roles", {}) or {}
         for mw in selected_method_weights:
             mr, fh = self._run_method(mw.method_key, symbol, ts,
                                       extra_params=industry_params)
@@ -481,6 +490,9 @@ class FairValueRunner:
                 (mr.metrics or {}).update({"blend_weight": mw.weight})
             except Exception:
                 pass
+            if life_roles.get(mw.method_key):
+                mr.metrics = dict(mr.metrics or {})
+                mr.metrics["role"] = life_roles[mw.method_key]
             method_results.append(mr)
             features_hashes.append(fh)
             blend_inputs.append((mr, mw.weight))
@@ -548,6 +560,26 @@ class FairValueRunner:
                 if w > 0 and mr.method_key.startswith("ev_sales"):
                     (mr.metrics or {}).update(
                         {"eligibility_demoted": "profitable_ev_sales",
+                         "weight_before": w})
+                    blend_inputs[idx] = (mr, w * 0.5)
+
+        # base-effect demotion — fwd/ttm >1.5x is a recovery jump, not
+        # a durable rate; PEG/growth legs must not price it at weight.
+        # Same rule the display layer uses, wired into the blend
+        _ef = (regime_features.scalars or {}).get("eps_forward")
+        _et = (regime_features.scalars or {}).get("eps_ttm")
+        try:
+            _be = (_ef is not None and _et is not None
+                   and float(_et) > 0 and float(_ef) > 1.5 * float(_et))
+        except (TypeError, ValueError):
+            _be = False
+        if _be:
+            for idx, (mr, w) in enumerate(blend_inputs):
+                if w > 0 and (mr.method_key.startswith("peg")
+                              or mr.method_key.startswith("pe_growth")
+                              or mr.method_key == "pe_forward"):
+                    (mr.metrics or {}).update(
+                        {"eligibility_demoted": "base_effect_growth",
                          "weight_before": w})
                     blend_inputs[idx] = (mr, w * 0.5)
 
