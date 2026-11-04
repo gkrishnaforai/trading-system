@@ -123,6 +123,106 @@ def _pe_guidance(fwd_pe: float | None, eps_ttm: float | None,
     return {**growth_data, "label": label, "reason": reason}
 
 
+def _valuation_gap(spot: float | None, scen: dict, multiples: dict,
+                   fly: dict, dec: dict) -> dict[str, Any] | None:
+    """Why the market price sits where it does vs the scenario blend —
+    which leg the market is pricing plus the measurable drivers of
+    the premium/discount: peer multiple gap, estimate revision trend,
+    demand durability. Deterministic lines, not narrative."""
+    if not spot or not scen:
+        return None
+    bear = scen.get("bear")
+    base = scen.get("base")
+    bull = scen.get("bull")
+    expl = scen.get("explosive")
+    pos = None
+    if bear and spot < bear:
+        pos = "below bear"
+    elif bear and base and bear <= spot < base:
+        pos = "bear–base"
+    elif base and abs(spot / base - 1) <= 0.10:
+        pos = "at base"
+    elif base and bull and base <= spot < bull:
+        pos = "base–bull"
+    elif bull and spot >= bull:
+        pos = "above bull" if not expl or spot < expl else "explosive"
+
+    lines: list[str] = []
+    _m = lambda v: f"${float(v):,.0f}" if v is not None else "—"
+    pos_txt = {
+        "below bear": f"spot prices below the bear leg ({_m(bear)}) — "
+                      "the market is more pessimistic than the model's "
+                      "worst case",
+        "bear–base": f"spot prices between bear ({_m(bear)}) and base "
+                     f"({_m(base)}) — the market is pricing downside "
+                     "protection, not the base case",
+        "at base": f"spot sits at the base leg ({_m(base)}) — the "
+                   "market broadly agrees with the model",
+        "base–bull": f"spot prices between base ({_m(base)}) and bull "
+                     f"({_m(bull)}) — the market pays for upside "
+                     "already",
+        "above bull": f"spot prices above the bull leg ({_m(bull)}) — "
+                      "the market pays more than the modeled upside",
+        "explosive": f"spot prices at/above the explosive leg "
+                     f"({_m(expl)}) — priced for a scenario the model "
+                     "treats as a tail",
+    }
+    if pos:
+        lines.append(pos_txt[pos])
+
+    # peer multiple gap — is the market discounting the company or
+    # paying a company-specific premium
+    rv = dec.get("relative_valuation") or {}
+    peer_pe = (rv.get("peer_medians") or {}).get("pe")
+    fwd_pe = multiples.get("fwd_pe")
+    if peer_pe and fwd_pe:
+        rel = fwd_pe / float(peer_pe) - 1
+        if abs(rel) > 0.15:
+            word = "below" if rel < 0 else "above"
+            lines.append(
+                f"forward P/E {fwd_pe:.0f}× is {abs(rel):.0%} {word} "
+                f"the peer median {float(peer_pe):.0f}× — "
+                + ("the market isn't paying the group multiple"
+                   if rel < 0 else
+                   "the market pays a premium over the group"))
+
+    # revision trend — is the market front-running estimate moves the
+    # printed consensus hasn't caught up to
+    rev = fly.get("est_revision_pct")
+    try:
+        rev = float(rev) if rev is not None else None
+    except (TypeError, ValueError):
+        rev = None
+    if rev is not None:
+        if rev <= -5:
+            lines.append("consensus is being revised down — the market "
+                         "may be pricing further cuts")
+        elif rev >= 10:
+            lines.append("revisions are strongly positive — the market "
+                         "may be front-running upgrades")
+
+    # demand durability — does the gap reflect fundamentals or
+    # positioning/cycle
+    dur = ((dec.get("demand_profile") or {}).get("durability") or {}) \
+        .get("score")
+    try:
+        dur = float(dur) if dur is not None else None
+    except (TypeError, ValueError):
+        dur = None
+    if dur is not None:
+        if dur >= 60 and pos in ("below bear", "bear–base"):
+            lines.append(f"demand durability {dur:.0f}/100 reads "
+                         "strong — the discount is likely "
+                         "cycle/positioning, not the business")
+        elif dur < 40 and pos in ("base–bull", "above bull",
+                                  "explosive"):
+            lines.append(f"demand durability {dur:.0f}/100 is thin — "
+                         "the premium leans on narrative more than "
+                         "demand evidence")
+    return {"position": pos, "lines": lines,
+            "peer_pe": peer_pe, "spot_fwd_pe": fwd_pe}
+
+
 def _multiples(spot: float | None, earnings_rows: list[dict],
               fly: dict, today: date | None = None,
               spot_date: date | None = None,
@@ -642,6 +742,12 @@ def card(sym: str) -> dict[str, Any]:
                            spot_date=spot_date, eps_period=eps_period,
                            eps_fy2=fy2_eps, fy2_period=fy2_period,
                            fy0_eps=fy0_eps)
+    try:
+        multiples["valuation_gap"] = _valuation_gap(
+            spot, fv_detail.get("scenarios") or {},
+            multiples, fly, fv_detail.get("decision") or {})
+    except Exception:
+        pass
     # base-effect suppression defers valuation to fair_value_v2 —
     # surface the engine's own verdict inline so the row carries the
     # real number, not just 'use the other engine'

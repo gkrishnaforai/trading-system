@@ -307,6 +307,24 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                 </td>
               </tr>
             )}
+            {obj(m.valuation_gap) != null &&
+              Array.isArray(obj(m.valuation_gap)?.lines) &&
+              (obj(m.valuation_gap)!.lines as unknown[]).length > 0 && (
+              <tr>
+                <td className="px-4 py-2.5 font-sans text-muted">
+                  Market vs model
+                </td>
+                <td className="px-3 py-2.5 font-sans">
+                  {String(obj(m.valuation_gap)?.position ?? '—')}
+                </td>
+                <td colSpan={4}
+                    className="px-3 py-2.5 font-sans text-muted leading-relaxed">
+                  {(obj(m.valuation_gap)!.lines as unknown[]).map((l, i) => (
+                    <div key={i}>· {String(l)}</div>
+                  ))}
+                </td>
+              </tr>
+            )}
             {num(m.fy2_eps) != null && num(m.fy2_pe) != null && (
               <tr>
                 <td className="px-4 py-2.5 font-sans text-muted">
