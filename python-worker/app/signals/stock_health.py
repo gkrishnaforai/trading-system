@@ -748,11 +748,11 @@ def card(sym: str) -> dict[str, Any]:
             multiples, fly, fv_detail.get("decision") or {})
     except Exception:
         pass
-    # base-effect suppression defers valuation to fair_value_v2 —
-    # surface the engine's own verdict inline so the row carries the
-    # real number, not just 'use the other engine'
-    if (multiples.get("guidance") or {}).get("label", "").startswith(
-            "Base-effect"):
+    # any suppressed growth anchor (base-effect >50%, declining EPS,
+    # missing estimate) defers valuation to fair_value_v2 — surface
+    # the engine's verdict inline whenever no PEG anchor computed,
+    # not just the base-effect case that originally prompted it
+    if multiples.get("fv_growth") is None:
         try:
             fe = {
                 "fair_value": (float(r[0]["fair_value"])
