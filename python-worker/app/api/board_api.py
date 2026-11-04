@@ -895,6 +895,13 @@ async def _j_fv_sweep() -> dict:
     return await asyncio.to_thread(fv_sweep.run, symbols)
 
 
+async def _j_universe_fill() -> dict:
+    """Universe snapshot — chunked rollup refresh (stalest-first);
+    every rule job reads this row instead of per-symbol compute."""
+    from app.signals.universe_fill import fill
+    return await asyncio.to_thread(fill)
+
+
 async def _j_best_picks() -> dict:
     """Best-picks eval — the three-lane declarative selection
     (best_picks.yaml): growth_swing / long_term / compounder_3_5y
@@ -1018,6 +1025,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
     "metals-pulse": ("Metals Pulse — regime + opportunity", _j_metals),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
+    "universe-fill": ("Universe snapshot chunked fill",
+                      _j_universe_fill),
     "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
     "lev-etf-swings": ("3x semis swing detector", _j_lev_swings),
     "signal-evals": ("Signal contract evals", _j_signal_evals),
@@ -1054,6 +1063,7 @@ _JOB_TIMEOUT = {
     "after-hours": 8 * 60, "pt-watch": 8 * 60,
     "custodian": 10 * 60, "momentum": 8 * 60, "flywheel": 50 * 60,
     "fwd-eps-repair": 15 * 60,
+    "universe-fill": 10 * 60,
     "macro-snapshot": 3 * 60, "fund-snapshots": 120 * 60,
     "fund-flags": 8 * 60, "outcomes": 8 * 60, "leaps-mark": 5 * 60,
     "regime": 5 * 60, "pilot": 8 * 60, "daily-calls": 5 * 60,
@@ -2145,6 +2155,22 @@ async def theme_composition(key: str):
     I add' as data, not narrative."""
     from app.signals.theme_composition import composition
     return await asyncio.to_thread(composition, key)
+
+
+@router.get("/universe-snapshot/stats")
+async def universe_snapshot_stats():
+    """How fresh is the shared base-data layer — total, filled,
+    stale, and oldest rows in universe_snapshot."""
+    rows = await asyncio.to_thread(db.execute_query,
+        "SELECT count(*) total,"
+        " count(*) FILTER (WHERE u.snapshot_as_of IS NOT NULL) filled,"
+        " count(*) FILTER (WHERE u.snapshot_as_of"
+        "   > now() - interval '1 day') fresh,"
+        " max(u.snapshot_as_of) newest,"
+        " min(u.snapshot_as_of) oldest"
+        " FROM stocks s LEFT JOIN universe_snapshot u"
+        " ON u.symbol = s.symbol")
+    return rows[0] if rows else {}
 
 
 @router.get("/symbol/{sym}/health")
