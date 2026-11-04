@@ -2107,6 +2107,35 @@ async def symbol_fundamentals(sym: str):
     return await asyncio.to_thread(_go)
 
 
+@router.get("/symbol/{sym}/fv-resolve")
+async def fv_resolve(sym: str, force: bool = False):
+    """Resolve FV for one symbol — reuse-friendly by default;
+    force=true skips the reuse check and recomputes under the
+    current code. The escape hatch for 'engine changed, old cache'
+    (a code update doesn't advance the inputs watermark, so cached
+    runs would otherwise serve until max-age)."""
+    from app.fair_value_v2.resolver import FairValueV2Resolver
+    res, meta = await asyncio.to_thread(
+        FairValueV2Resolver().resolve, sym.upper(), force)
+    return {
+        "symbol": sym.upper(),
+        "forced": force,
+        "reused": meta.get("reused"),
+        "reason": meta.get("reason"),
+        "run_as_of": meta.get("run_as_of"),
+        "fair_value": res.fair_value,
+        "expected_fair_value": res.expected_fair_value,
+        "scenarios": res.scenarios,
+        "method_results": [
+            {"key": m.method_key, "fv": m.fair_price,
+             "status": m.status, "role": (m.metrics or {}).get("role"),
+             "demoted": (m.metrics or {}).get("eligibility_demoted")}
+            for m in (res.method_results or [])],
+        "classification": res.classification,
+        "quality_flags": res.quality_flags,
+    }
+
+
 @router.get("/symbol/{sym}/health")
 async def symbol_health(sym: str):
     """The per-stock health card — fundamental state + tape state +

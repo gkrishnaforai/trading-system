@@ -60,6 +60,7 @@ const GROUPS: { title: string; note?: string; entries: Entry[] }[] = [
     title: 'Symbol data',
     entries: [
       { method: 'GET', path: 'symbol/{sym}/health', desc: 'stock card — multiples, stance, flywheel, FV, readiness', fields: [{ name: 'sym', placeholder: 'PLTR' }] },
+      { method: 'GET', path: 'symbol/{sym}/fv-resolve?force=true', desc: 'recompute FV bypassing the run cache — use after engine code changes', fields: [{ name: 'sym', placeholder: 'COHR' }] },
       { method: 'GET', path: 'earnings-watch?days=7', desc: 'recent print captures — verdicts + surprises' },
       { method: 'GET', path: 'trade-plans/suggest?sym={sym}&uc=swing', desc: 'engine-proposed plan — stop, targets, trail rule', fields: [{ name: 'sym', placeholder: 'PWR' }] },
     ],
