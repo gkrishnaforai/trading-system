@@ -221,6 +221,7 @@ export default async function ThemesPage() {
           potential_bottom: 'text-amber-400',
           bottom_forming: 'text-sky-400',
           rebound_confirmed: 'text-emerald-400',
+          steady: 'text-faint',
           none: 'text-faint',
         }
         return (
@@ -238,22 +239,29 @@ export default async function ThemesPage() {
             </div>
             <div className="space-y-1">
               {st.sectors.map((s, i) => {
-                const state = String(s.state ?? 'none')
+                const state = String(s.state ?? 'steady')
+                const sig = obj(s.signals)
                 return (
-                  <div key={i}
-                       className="flex justify-between text-[12px] font-mono">
-                    <span>
-                      {String(s.sector_key)}{' '}
-                      <span className={STATE_TONE[state] ?? 'text-faint'}>
-                        {state}
+                  <div key={i} className="py-0.5">
+                    <div className="flex justify-between text-[12px] font-mono">
+                      <span>
+                        {String(s.sector_key)}{' '}
+                        <span className={STATE_TONE[state] ?? 'text-faint'}>
+                          {state}
+                        </span>
                       </span>
-                    </span>
-                    <span className="text-faint">
-                      opp {String(s.opp_score)} · conf {String(s.conf_score)}
-                      {(s.trap_score as number) > 40
-                        ? ` · ⚠ trap ${String(s.trap_score)}`
-                        : ` · trap ${String(s.trap_score)}`}
-                    </span>
+                      <span className="text-faint">
+                        opp {String(s.opp_score)} · conf {String(s.conf_score)}
+                        {(s.trap_score as number) > 40
+                          ? ` · ⚠ trap ${String(s.trap_score)}`
+                          : ` · trap ${String(s.trap_score)}`}
+                      </span>
+                    </div>
+                    {sig?.read != null && (
+                      <div className="text-[10px] font-sans text-faint pl-2">
+                        {String(sig.read)}
+                      </div>
+                    )}
                   </div>
                 )
               })}

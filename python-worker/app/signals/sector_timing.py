@@ -131,13 +131,13 @@ def compute(as_of: Optional[date] = None) -> Dict[str, Any]:
             trap += 25
         trap = round(min(100, trap), 1)
 
-        # state machine — 'none' means quiet/healthy, not 'in a
+        # state machine — 'steady' means quiet/healthy, not 'in a
         # selloff too shallow to matter'; a real drawdown reads
         # selloff even before it's an opportunity
         if opp < 40:
             state = "selloff" if (dd is not None and dd < -0.08
                                   or (rs20 is not None
-                                      and rs20 < -0.08)) else "none"
+                                      and rs20 < -0.08)) else "steady"
         elif conf >= 65:
             state = "rebound_confirmed"
         elif conf >= 50:
@@ -149,9 +149,23 @@ def compute(as_of: Optional[date] = None) -> Dict[str, Any]:
             state = "potential_bottom"
         else:
             state = "selloff"
+        # one-line read — what's actually happening, not just a state
+        parts = []
+        if dd is not None:
+            parts.append(f"{dd * 100:+.0f}% from 60d high")
+        if rs20 is not None:
+            w = ("leading" if rs20 > 0.01 else
+                 "lagging" if rs20 < -0.01 else "in line")
+            parts.append(f"{w} vs SPY ({rs20 * 100:+.0f}%/20d)")
+        if below20 is not None:
+            parts.append(f"{below20 * 100:.0f}% below 20d avg")
+        if rev is not None:
+            parts.append("revisions positive" if rev > 0
+                         else "revisions cut")
+        read = " · ".join(parts) or "no signal data"
         out.append({"sector": key, "etf": etf, "as_of": str(as_of),
                     "opp_score": opp, "conf_score": conf,
-                    "trap_score": trap, "state": state,
+                    "trap_score": trap, "state": state, "read": read,
                     "signals": {"drawdown_pct": round(dd * 100, 1)
                                 if dd is not None else None,
                                 "vs_sma20_pct": round(stretch * 100, 1)
@@ -161,7 +175,8 @@ def compute(as_of: Optional[date] = None) -> Dict[str, Any]:
                                 "rs60_pct": round(rs60 * 100, 1)
                                 if rs60 is not None else None,
                                 "breadth_below_20": below20,
-                                "median_revision": rev},
+                                "median_revision": rev,
+                                "read": read},
                     "missing": missing})
     return {"as_of": str(as_of), "sectors": out}
 
