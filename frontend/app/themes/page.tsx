@@ -240,7 +240,8 @@ export default async function ThemesPage() {
             <div className="space-y-1">
               {st.sectors.map((s, i) => {
                 const state = String(s.state ?? 'steady')
-                const sig = obj(s.signals)
+                const sig = s.signals as
+                  Record<string, unknown> | undefined
                 return (
                   <div key={i} className="py-0.5">
                     <div className="flex justify-between text-[12px] font-mono">
