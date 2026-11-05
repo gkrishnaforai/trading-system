@@ -41,6 +41,53 @@ SECTORS = {
 }
 
 
+def _ohlcv(sym: str, n: int, as_of: date) -> List[tuple]:
+    """(close, high, low, volume) ascending — for VWAP/volume legs."""
+    rows = db.execute_query(
+        "SELECT close, high, low, volume FROM daily_bars"
+        " WHERE symbol=:s AND date<=:d ORDER BY date DESC LIMIT :n",
+        {"s": sym, "d": as_of, "n": n})
+    return [(float(r["close"]), float(r.get("high") or r["close"]),
+             float(r.get("low") or r["close"]),
+             float(r.get("volume") or 0))
+            for r in reversed(rows)]
+
+
+def _bottom_structure(bars: List[tuple]) -> Dict[str, Any]:
+    """The checklist the ticker-tape calls capitulation-stabilization:
+    higher low, VWAP reclaim (anchored, typical-price), bounce
+    volume vs 20d average, no new lower-low in the last 5 days."""
+    if len(bars) < 25:
+        return {}
+    closes = [b[0] for b in bars]
+    vols = [b[3] for b in bars]
+    tp = [(b[1] + b[2] + b[0]) / 3 for b in bars]
+    # anchored VWAP — last 20 sessions, typical price × volume
+    v = vols[-20:]
+    pv = sum(p * x for p, x in zip(tp[-20:], v))
+    avwap = pv / sum(v) if sum(v) > 0 else None
+    # higher low: recent 5d min above the prior 10d min
+    low_recent = min(closes[-5:])
+    low_prior = min(closes[-15:-5])
+    higher_low = low_recent > low_prior
+    # still making lower lows? any of last 5 closes under the prior
+    # 20d window's minimum
+    new_lows = sum(1 for c in closes[-5:]
+                   if c <= min(closes[-25:-5]) * 1.001)
+    # bounce volume: mean volume on up-days last 5 vs 20d mean
+    up_vol = [vols[-i] for i in range(1, 6)
+              if closes[-i] > closes[-i - 1]]
+    v20 = sum(vols[-20:]) / 20 if len(vols) >= 20 else None
+    bounce_vol = (sum(up_vol) / len(up_vol) / v20) if (
+        up_vol and v20 and v20 > 0) else None
+    return {"higher_low": higher_low,
+            "new_lows_5d": new_lows,
+            "avwap": round(avwap, 2) if avwap else None,
+            "above_avwap": bool(closes[-1] > avwap) if avwap else None,
+            "bounce_vol_ratio": round(bounce_vol, 2)
+            if bounce_vol else None}
+
+
 def _pct_below_sma20(syms: List[str], as_of: date) -> Optional[float]:
     hits, n = 0, 0
     for s in syms:
@@ -105,19 +152,34 @@ def compute(as_of: Optional[date] = None) -> Dict[str, Any]:
             opp += 10 if -15 <= rev else 5               # trough-ish
         opp = round(min(100, opp), 1)
 
+        # bottom structure — the capitulation checklist: higher low,
+        # no new lows, anchored-VWAP reclaim, meaningful bounce volume
+        bs = _bottom_structure(_ohlcv(etf, 30, as_of))
+
         # confirmation — is the turn real
         conf = 0.0
         if sma20 and last and last > sma20:
-            conf += 25
-        if sma50 and last and last > sma50:
             conf += 15
+        if sma50 and last and last > sma50:
+            conf += 10
         if rs20 is not None and rs20 > 0:
             conf += 15 + min(15, rs20 * 150)
         if below20 is not None and below20 < 0.4:
-            conf += 15
+            conf += 10
         if rev is not None and rev > 0:
-            conf += 15 + min(10, rev / 5)
-        conf = round(min(100, conf), 1)
+            conf += 10 + min(10, rev / 5)
+        if bs:
+            if bs.get("higher_low"):
+                conf += 12
+            if bs.get("new_lows_5d") == 0:
+                conf += 8
+            elif (bs.get("new_lows_5d") or 0) >= 3:
+                conf -= 10
+            if bs.get("above_avwap"):
+                conf += 10
+            if (bs.get("bounce_vol_ratio") or 0) > 1.15:
+                conf += 8
+        conf = round(max(0, min(100, conf)), 1)
 
         # trap — oversold while fundamentals deteriorate
         trap = 0.0
@@ -176,7 +238,8 @@ def compute(as_of: Optional[date] = None) -> Dict[str, Any]:
                                 if rs60 is not None else None,
                                 "breadth_below_20": below20,
                                 "median_revision": rev,
-                                "read": read},
+                                "read": read,
+                                **bs},
                     "missing": missing})
     return {"as_of": str(as_of), "sectors": out}
 
