@@ -121,6 +121,38 @@ _EVENT_DEF = ("SPY 5d return < -2.5% AND (VIX +20% vs 5d ago OR "
 _BASE_P5 = {"critical": 0.25, "fragile": 0.18, "elevated": 0.11,
             "guarded": 0.06, "calm": 0.03}
 
+# plain-English reads — the headline says what the score MEANS; the
+# numbers stay in the leg table for anyone who wants them
+_BAND_READS = {
+    "calm": "little stored leverage — a dip stays a dip",
+    "guarded": "some fragility under the surface — watch, no action",
+    "elevated": "fragility building — a decline can start feeding "
+                "on itself",
+    "fragile": "high stored leverage — a small trigger can cascade",
+    "critical": "loaded tape — mechanical selling can amplify any "
+                "decline",
+}
+_LEG_PLAIN = {
+    "positioning": {
+        "hi": "positioning crowded — leveraged money already long",
+        "mid": "positioning tilted — some crowding"},
+    "vol_control": {
+        "hi": "vol-target funds still cutting exposure",
+        "mid": "vol-control cohort over-allocated"},
+    "market_structure": {
+        "hi": "hedging demand stressed — tail-risk pricing elevated",
+        "mid": "options surface cautious"},
+    "trigger_proximity": {
+        "hi": "index sell-triggers already breached",
+        "mid": "sitting close to systematic sell triggers"},
+    "credit_funding": {
+        "hi": "credit spreads widening — funding stress",
+        "mid": "credit softening"},
+    "liquidity": {
+        "hi": "system liquidity tightening",
+        "mid": "liquidity flat"},
+}
+
 
 def _f(v) -> Optional[float]:
     try:
@@ -1298,9 +1330,13 @@ def _assemble(legs: dict[str, dict], firing: list[str],
     probs = _trigger_probs(vuln, band, firing,
                            discharge_score, exhaustion_score)
     worst = sorted(have.items(), key=lambda kv: -kv[1]["score"])[:3]
-    read = (f"{band} — " + " · ".join(
-        f"{k.replace('_', ' ')} {v['score']:.0f}"
-        for k, v in worst))
+    drivers = []
+    for k, v in worst:
+        ph = _LEG_PLAIN.get(k, {})
+        drivers.append(ph["hi"] if v["score"] >= 60
+                       else ph.get("mid", k.replace("_", " ")))
+    read = (f"{band} — {_BAND_READS.get(band, '')}"
+            + (" · " + " · ".join(drivers) if drivers else ""))
     return {"as_of": str(as_of),
             "vulnerability": round(vuln, 1),
             "band": band,
