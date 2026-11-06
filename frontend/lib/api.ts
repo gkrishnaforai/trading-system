@@ -67,6 +67,12 @@ export type Fragility = {
     signals?: Record<string, unknown>
   }>
   validators?: Record<string, unknown>
+  resolution?: {
+    phase?: string
+    discharge_pct?: number | null
+    bottom_score?: number | null
+    read?: string
+  }
   missing?: string[]
   read?: string
   computed_at?: string

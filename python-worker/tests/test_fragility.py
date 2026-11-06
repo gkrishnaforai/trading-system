@@ -1,8 +1,8 @@
 from app.market_regime.fragility import (
-    _assemble, _trigger_probs, score_credit_funding,
-    score_market_structure, score_positioning,
-    score_trigger_proximity, score_vol_compression,
-    score_vol_control_pressure)
+    _assemble, _resolution, _trigger_probs, score_bottom_structure,
+    score_credit_funding, score_discharge, score_market_structure,
+    score_positioning, score_trigger_proximity,
+    score_vol_compression, score_vol_control_pressure)
 
 
 def test_trigger_proximity_sitting_on_sma50_is_fragile():
@@ -159,3 +159,68 @@ def test_assemble_all_estimated_caps_confidence():
                     {"validators": {}}, [])
     assert out["coverage_pct"] == 0.0
     assert out["confidence"] == "low"
+
+
+# ---------- resolution: discharge + bottom + phase ----------
+
+def test_discharge_leverage_visibly_leaving_scores_high():
+    out = score_discharge(
+        {"lev_aum_chg_pct": -12.0, "lev_vol_share_trend": -0.06},
+        {"chg_4w": -2.5},
+        {"deleveraging_firing": True, "rvol20": 22.0},
+        vix=32.0, vix_chg5=-4.0, credit_state="healthy")
+    assert out["score"] >= 80
+
+
+def test_discharge_still_adding_scores_low():
+    out = score_discharge(
+        {"lev_aum_chg_pct": 9.0},
+        {"chg_4w": 3.0},
+        {"deleveraging_firing": False, "rvol20": 8.0},
+        vix=14.0, vix_chg5=6.0, credit_state="severe")
+    assert out["score"] <= 20
+
+
+def test_bottom_structure_full_checklist_scores_high():
+    cell = {"higher_low": True, "new_lows_5d": 0,
+            "above_avwap": True, "bounce_vol_ratio": 1.4}
+    out = score_bottom_structure(
+        {"SPY": cell, "QQQ": cell, "SMH": cell}, smh_rs20=0.01)
+    assert out["score"] >= 95
+
+
+def test_bottom_structure_still_making_lows_scores_low():
+    cell = {"higher_low": False, "new_lows_5d": 4,
+            "above_avwap": False, "bounce_vol_ratio": 0.8}
+    out = score_bottom_structure(
+        {"SPY": cell, "QQQ": cell, "SMH": cell}, smh_rs20=-0.12)
+    assert out["score"] <= 10
+
+
+def test_resolution_recovering_needs_flush_and_structure():
+    out = _resolution(70, ["ma_triggers_broken"],
+                      {"score": 60, "signals": {}},
+                      {"score": 65, "signals": {}}, dd52=-9.0)
+    assert out["phase"] == "recovering"
+
+
+def test_resolution_discharging_when_flushing_no_bottom():
+    out = _resolution(70, ["vol_control_deleveraging",
+                           "term_structure_inverted"],
+                      {"score": 55, "signals": {}},
+                      {"score": 10, "signals": {}}, dd52=-12.0)
+    assert out["phase"] == "discharging"
+
+
+def test_resolution_building_before_anything_trips():
+    out = _resolution(55, [],
+                      {"score": 10, "signals": {}},
+                      {"score": 5, "signals": {}}, dd52=-2.0)
+    assert out["phase"] == "building"
+
+
+def test_resolution_stabilizing_on_bottom_evidence():
+    out = _resolution(60, ["ma_triggers_broken"],
+                      {"score": 25, "signals": {}},
+                      {"score": 48, "signals": {}}, dd52=-8.0)
+    assert out["phase"] == "stabilizing"

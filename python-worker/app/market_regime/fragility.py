@@ -707,6 +707,168 @@ def score_credit_funding(credit: dict, hyg_lqd_20d: Optional[float],
             "read": read, "signals": signals}
 
 
+def score_discharge(lev: dict, cot: dict, pressure_signals: dict,
+                    vix: Optional[float], vix_chg5: Optional[float],
+                    credit_state: Optional[str]) -> dict[str, Any]:
+    """How much of the stored leverage has already been flushed — the
+    'fuel burned' read. High discharge + no bottom evidence = mid-
+    selloff; high discharge + bottom structure = the dangerous part
+    is behind. Selloffs end when the marginal forced seller is done,
+    not when price looks low."""
+    pts = 0.0
+    signals: dict[str, Any] = {}
+    # leveraged-ETF redemptions — real leverage leaving the system
+    aum = lev.get("lev_aum_chg_pct")
+    if aum is not None:
+        signals["lev_aum_chg_20d_pct"] = aum
+        if aum <= -8:
+            pts += 25
+        elif aum <= -3:
+            pts += 15
+        elif aum >= 5:
+            pts -= 10              # still adding leverage mid-tape
+    share_tr = lev.get("lev_vol_share_trend")
+    if share_tr is not None:
+        signals["lev_vol_share_trend"] = share_tr
+        if share_tr < -0.03:
+            pts += 10              # speculative volume leaving
+    # COT leveraged funds cutting = systematic books de-grossing
+    cot_chg = cot.get("chg_4w")
+    if cot_chg is not None:
+        signals["cot_chg_4w"] = cot_chg
+        if cot_chg <= -1.5:
+            pts += 20
+        elif cot_chg <= -0.5:
+            pts += 10
+        elif cot_chg >= 2:
+            pts -= 10              # leveraged funds still adding
+    # vol-control cohort already forced out — rvol far above target
+    # means the mechanical de-lever wave largely fired
+    if pressure_signals.get("deleveraging_firing"):
+        pts += 15
+        signals["vol_control_fired"] = True
+    rvol = pressure_signals.get("rvol20")
+    if rvol is not None and rvol >= 15:
+        pts += 10
+        signals["rvol20"] = rvol
+    # the VIX spring — released AND cresting is the tell; still
+    # ramping means discharge hasn't finished
+    if vix is not None:
+        signals["vix"] = vix
+        if vix >= 25:
+            pts += 10
+        if vix_chg5 is not None:
+            signals["vix_chg_5d"] = round(vix_chg5, 1)
+            if vix_chg5 <= -3:
+                pts += 10          # fear cresting
+            elif vix_chg5 >= 5:
+                pts -= 10          # fear still building
+    # credit still widening = the flush isn't done — counter-evidence
+    if credit_state in ("stress", "severe"):
+        pts -= 15
+        signals["credit_still_widening"] = credit_state
+    score = round(_clamp(pts), 1)
+    read = (f"{score:.0f}% flushed"
+            + (" — leverage visibly leaving" if pts >= 40
+               else " — discharge incomplete" if pts >= 20
+               else " — leverage still loaded"))
+    return {"score": score, "status": "observed",
+            "read": read, "signals": signals}
+
+
+def score_bottom_structure(cells: dict[str, dict],
+                           smh_rs20: Optional[float]
+                           ) -> dict[str, Any]:
+    """Index-level bottom evidence — the capitulation-stabilization
+    checklist applied to SPY/QQQ/SMH: higher low, no new lows in 5d,
+    anchored-VWAP reclaim, meaningful bounce volume. 'Recovering'
+    needs the structure, not just a green day."""
+    subs = {"SPY": 0.5, "QQQ": 0.3, "SMH": 0.2}
+    score = 0.0
+    got = 0
+    signals: dict[str, Any] = {}
+    for sym, w in subs.items():
+        bs = cells.get(sym) or {}
+        if not bs:
+            continue
+        got += 1
+        s = 0.0
+        if bs.get("higher_low"):
+            s += 30
+        nlows = bs.get("new_lows_5d")
+        if nlows == 0:
+            s += 20
+        elif (nlows or 0) >= 3:
+            s -= 15
+        if bs.get("above_avwap"):
+            s += 25
+        if (bs.get("bounce_vol_ratio") or 0) > 1.15:
+            s += 25
+        signals[sym] = {**bs, "score": round(s, 1)}
+        score += _clamp(s) * w
+    if smh_rs20 is not None:
+        signals["smh_rs20_pct"] = round(smh_rs20 * 100, 1)
+        if smh_rs20 > -0.03:
+            score += 10            # the weakest sector stabilizing
+        elif smh_rs20 < -0.10:
+            score -= 10            # still leading the decline
+    if not got:
+        return {"score": None, "status": "missing",
+                "read": "no index bar data", "signals": {}}
+    score = round(_clamp(score), 1)
+    bits = []
+    for sym in subs:
+        bs = signals.get(sym)
+        if not bs:
+            continue
+        marks = []
+        if bs.get("higher_low"):
+            marks.append("higher low")
+        if bs.get("new_lows_5d") == 0:
+            marks.append("no new lows")
+        elif (bs.get("new_lows_5d") or 0) >= 3:
+            marks.append("still making lows")
+        if bs.get("above_avwap"):
+            marks.append("above AVWAP")
+        if (bs.get("bounce_vol_ratio") or 0) > 1.15:
+            marks.append("bounce volume")
+        if marks:
+            bits.append(f"{sym}: {'/'.join(marks)}")
+    read = (f"bottom evidence {score:.0f} — "
+            + ("; ".join(bits) if bits else "no stabilization yet"))
+    return {"score": score, "status": "observed",
+            "read": read, "signals": signals}
+
+
+def _resolution(vuln: float, firing: list, discharge: dict,
+                bottom: dict, dd52: Optional[float]) -> dict[str, Any]:
+    """Where in the deleveraging cycle — the 'more selloff or
+    recovering' read. Not a forecast claim: an evidence phase over
+    (fragility stored) × (fragility flushed) × (structure forming)."""
+    dis = discharge.get("score")
+    bot = bottom.get("score")
+    sold_off = (dd52 or 0) <= -4 or len(firing) >= 2 or (vuln >= 60)
+    if not sold_off and (vuln or 0) < 30:
+        phase, tone = "quiet", "nothing stored up to discharge"
+    elif bot is not None and bot >= 55 and (dis or 0) >= 40:
+        phase, tone = "recovering", "leverage flushed + bottom structure"
+    elif bot is not None and bot >= 45:
+        phase, tone = "stabilizing", "bottom evidence forming"
+    elif (dis or 0) >= 35 or len(firing) >= 2:
+        phase, tone = "discharging", "forced selling in progress"
+    else:
+        phase, tone = "building", "fragility stored, not yet tripped"
+    read = f"{phase} — {tone}"
+    if dis is not None:
+        read += f" · {dis:.0f}% flushed"
+    if bot is not None:
+        read += f" · bottom {bot:.0f}"
+    return {"phase": phase, "discharge_pct": dis,
+            "bottom_score": bot, "read": read,
+            "discharge": discharge.get("signals", {}),
+            "bottom": bottom.get("signals", {})}
+
+
 def score_liquidity(liq: Optional[dict]) -> dict[str, Any]:
     """System-liquidity direction — read from the journaled engine.
     Liquidity tightening is the substrate deleveraging feeds on."""
@@ -919,8 +1081,31 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
         "aum_days": lev.get("aum_days", 0),
     }
 
-    return _assemble(legs, firing, as_of,
-                     {"validators": validators}, missing_extra)
+    row = _assemble(legs, firing, as_of,
+                    {"validators": validators}, missing_extra)
+
+    # ---- resolution — where in the deleveraging cycle: still
+    # building, actively discharging, stabilizing, or recovering.
+    # Index-level capitulation checklist (same evidence shape as
+    # sector timing's bottom reads) + the leverage-flush score.
+    try:
+        from app.signals.sector_timing import (
+            _bottom_structure, _ohlcv as _st_ohlcv)
+        cells = {s: _bottom_structure(_st_ohlcv(s, 30, as_of))
+                 for s in ("SPY", "QQQ", "SMH")}
+    except Exception:
+        cells = {}
+    smh_c = _closes("SMH", 30, as_of)
+    smh_rs20 = ((smh_c[-1] / smh_c[-21] - 1) - (spy[-1] / spy[-21] - 1)
+                if len(smh_c) > 21 and len(spy) > 21 else None)
+    vix_chg5 = _nf(vix_c[-1] - vix_c[-6]) if len(vix_c) > 6 else None
+    discharge = score_discharge(
+        lev, cot, pressure["signals"], vix, vix_chg5,
+        credit_leg["signals"].get("credit_state"))
+    bottom = score_bottom_structure(cells, smh_rs20)
+    row["resolution"] = _resolution(row["vulnerability"], firing,
+                                    discharge, bottom, dd52)
+    return row
 
 
 # ============================ journal ============================
@@ -930,13 +1115,15 @@ def _persist(row: dict[str, Any]) -> None:
     db.execute_update(
         "INSERT INTO fragility_daily"
         " (as_of, vulnerability, band, probabilities, legs, signals,"
-        "  firing, validators, confidence, coverage_pct, missing, read)"
-        " VALUES (:d,:v,:b,:p,:l,:s,:f,:val,:c,:cv,:m,:r)"
+        "  firing, validators, resolution, confidence, coverage_pct,"
+        "  missing, read)"
+        " VALUES (:d,:v,:b,:p,:l,:s,:f,:val,:res,:c,:cv,:m,:r)"
         " ON CONFLICT (as_of) DO UPDATE SET"
         " vulnerability=EXCLUDED.vulnerability, band=EXCLUDED.band,"
         " probabilities=EXCLUDED.probabilities, legs=EXCLUDED.legs,"
         " signals=EXCLUDED.signals, firing=EXCLUDED.firing,"
         " validators=EXCLUDED.validators,"
+        " resolution=EXCLUDED.resolution,"
         " confidence=EXCLUDED.confidence,"
         " coverage_pct=EXCLUDED.coverage_pct,"
         " missing=EXCLUDED.missing, read=EXCLUDED.read",
@@ -945,6 +1132,7 @@ def _persist(row: dict[str, Any]) -> None:
          "l": json.dumps(row["legs"]), "s": json.dumps(row["signals"]),
          "f": json.dumps(row["firing"]),
          "val": json.dumps(row["validators"]),
+         "res": json.dumps(row.get("resolution") or {}),
          "c": row["confidence"], "cv": row["coverage_pct"],
          "m": json.dumps(row["missing"]), "r": row["read"]})
 
@@ -965,14 +1153,14 @@ def latest() -> Optional[dict[str, Any]]:
     try:
         rows = db.execute_query(
             "SELECT as_of, vulnerability, band, probabilities, legs,"
-            " signals, firing, validators, confidence, coverage_pct,"
-            " missing, read, computed_at"
+            " signals, firing, validators, resolution, confidence,"
+            " coverage_pct, missing, read, computed_at"
             " FROM fragility_daily ORDER BY as_of DESC LIMIT 1")
         if not rows:
             return None
         r = dict(rows[0])
         for k in ("probabilities", "legs", "signals", "firing",
-                  "validators", "missing"):
+                  "validators", "resolution", "missing"):
             if isinstance(r.get(k), str):
                 r[k] = json.loads(r[k])
         r["as_of"] = str(r["as_of"])

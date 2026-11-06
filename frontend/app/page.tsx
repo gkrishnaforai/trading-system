@@ -472,6 +472,36 @@ export default async function RegimePage() {
               {fragility.read}
             </p>
           )}
+          {fragility.resolution?.phase && (
+            <div className="pt-3 flex flex-wrap items-center gap-2">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-faint">
+                cycle
+              </span>
+              <span className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                fragility.resolution.phase === 'recovering' || fragility.resolution.phase === 'quiet'
+                  ? 'border-aggressive/40 text-aggressive'
+                  : fragility.resolution.phase === 'stabilizing'
+                    ? 'border-caution/40 text-caution'
+                    : 'border-defensive/40 text-defensive'}`}>
+                {fragility.resolution.phase}
+              </span>
+              {fragility.resolution.discharge_pct != null && (
+                <span className="rounded-full border border-hairline px-3 py-1 font-mono text-[11px] text-muted">
+                  flushed {Math.round(fragility.resolution.discharge_pct)}%
+                </span>
+              )}
+              {fragility.resolution.bottom_score != null && (
+                <span className="rounded-full border border-hairline px-3 py-1 font-mono text-[11px] text-muted">
+                  bottom {Math.round(fragility.resolution.bottom_score)}
+                </span>
+              )}
+            </div>
+          )}
+          {fragility.resolution?.read && (
+            <p className="pt-1 text-[12px] leading-relaxed text-muted">
+              {fragility.resolution.read}
+            </p>
+          )}
           <div className="pt-3 space-y-1">
             {Object.entries(fragility.legs ?? {}).map(([name, leg]) => (
               <div key={name} className="flex items-baseline gap-2 text-[11px] leading-relaxed">
