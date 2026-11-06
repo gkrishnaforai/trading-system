@@ -323,12 +323,20 @@ def _cot() -> dict[str, Any]:
             return {}
         latest = nets[0]
         hist = [n["net_pct"] for n in nets]
-        pctile = _pctile(hist, latest["net_pct"])
+        # direction matters — leveraged funds are structurally short
+        # index futures, so a raw percentile of net is ambiguous:
+        # net at its high percentile could be 'least short', not
+        # 'crowded long'. Carry BOTH the directional percentile and
+        # the absolute-size percentile; the scorer interprets side.
         chg4w = (nets[0]["net_pct"] - nets[4]["net_pct"]
                  if len(nets) > 4 else None)
         return {"report_date": latest["date"],
                 "net_pct_oi": round(latest["net_pct"], 2),
-                "pctile_1y": pctile,
+                "direction": ("net_long" if latest["net_pct"] > 0
+                              else "net_short"),
+                "net_pctile_1y": _pctile(hist, latest["net_pct"]),
+                "abs_pctile_1y": _pctile(
+                    [abs(x) for x in hist], abs(latest["net_pct"])),
                 "chg_4w": round(chg4w, 2) if chg4w is not None else None}
     except Exception as exc:
         logger.debug("cot: %s", exc)
@@ -464,6 +472,35 @@ def score_trigger_proximity(dist: dict[str, dict[str, Optional[float]]]
     tot_w = sum(_TRIGGER_UNIVERSE.get(s, 0.05) for s in legs)
     score = sum(legs[s] * _TRIGGER_UNIVERSE.get(s, 0.05)
                 for s in legs) / tot_w
+
+    # trigger STATE — 'proximity' was the wrong name once a break has
+    # fired: QQQ −10% under its SMA50 isn't near a trigger, it tripped
+    # it. Track breached triggers and the distance to the NEXT
+    # un-broken threshold separately so a selloff in progress doesn't
+    # keep reading as 'approaching'.
+    breached = []
+    next_dists = []
+    for sym, d in dist.items():
+        if (d.get("d50") or 0) < 0:
+            breached.append(f"{sym.lower()}_sma50")
+        if (d.get("d200") or 0) < 0:
+            breached.append(f"{sym.lower()}_sma200")
+        for k in ("d50", "d200"):
+            v = d.get(k)
+            if v is not None and v > 0:
+                next_dists.append(v)
+    n_below50 = sum(1 for b in breached if b.endswith("sma50"))
+    n_below200 = sum(1 for b in breached if b.endswith("sma200"))
+    nearest = round(min(next_dists), 2) if next_dists else None
+    if n_below200 >= 1 or n_below50 >= 3:
+        trigger_state = "heavily_breached"
+    elif n_below50 >= 1:
+        trigger_state = "breached"
+    elif nearest is not None and nearest < 2.5:
+        trigger_state = "approaching"
+    else:
+        trigger_state = "distant"
+
     worst = sorted(legs.items(), key=lambda kv: -kv[1])[:2]
     def _lbl(s: str) -> str:
         d = signals[s].get("d50_pct")
@@ -472,9 +509,13 @@ def score_trigger_proximity(dist: dict[str, dict[str, Optional[float]]]
         return (f"{s} {'below' if d < 0 else 'on'} SMA50 "
                 f"({d:+.1f}%)")
     read = "; ".join(_lbl(s) for s, _ in worst)
+    if nearest is not None:
+        read += f" · next trigger {nearest:+.1f}% away"
     return {"score": round(_clamp(score), 1), "status": "observed",
-            "read": f"closest triggers — {read}",
-            "signals": signals}
+            "trigger_state": trigger_state,
+            "breached": breached,
+            "nearest_unbroken_pct": nearest,
+            "read": read, "signals": signals}
 
 
 def score_vol_compression(rvol20: Optional[float],
@@ -512,36 +553,54 @@ def score_vol_compression(rvol20: Optional[float],
 
 
 def score_vol_control_pressure(rvol20: Optional[float],
-                               rvol5: Optional[float]
+                               rvol5: Optional[float],
+                               rvol20_ago: Optional[float] = None
                                ) -> dict[str, Any]:
     """Modeled vol-control exposure — ESTIMATED, never observed.
 
     The vol-target cohort scales equity exposure by target/realized.
-    rvol below target → they're over-allocated (fragility building);
-    rvol above target → de-leveraging is already firing. Score is the
-    assumed exposure multiple mapped 0-100 — the $ AUM isn't scored
-    because it's a guess."""
+    Three numbers matter, and conflating them was the review's point:
+      entry    what they were carrying BEFORE the shock — sized off
+               realized vol ~10d ago (the lag: they lever on stale vol)
+      target   where today's vol forces them — target/rvol_now
+      remaining entry − target: the mechanical selling still to come.
+    remaining ≈ 0 after a vol spike means the wave already fired —
+    high vol then stops implying MORE selling, which a flat 'over-
+    allocated' score got wrong."""
     if rvol20 is None:
         return {"score": None, "status": "missing",
                 "read": "no realized vol", "signals": {}}
-    mult = min(_VOL_CONTROL_MAX_MULT,
-               _VOL_TARGET / max(rvol20, 4.0))
-    score = _clamp((mult - 0.5) / 1.5 * 100)   # 0.5×→0, 2×→100
-    firing = bool(rvol5 and rvol20
-                  and rvol5 > rvol20 * 1.5
-                  and rvol20 > _VOL_TARGET)
+    entry = min(_VOL_CONTROL_MAX_MULT,
+                _VOL_TARGET / max(rvol20_ago or rvol20, 4.0))
+    target = min(_VOL_CONTROL_MAX_MULT,
+                 _VOL_TARGET / max(rvol20, 4.0))
+    remaining = max(0.0, entry - target)
+    firing = bool(remaining > 0.10 and rvol5 and rvol20
+                  and rvol5 > rvol20 * 1.3 and rvol20 > _VOL_TARGET)
+    # over-allocated quiet (spring) OR large remaining wave (loaded
+    # gun mid-selloff) — the bigger threat owns the leg score
+    over = _clamp((entry - 0.5) / 1.5 * 100)
+    rem = _clamp(remaining / 0.8 * 100)
+    score = max(over * 0.7, rem)
     if firing:
-        score = max(score, 85)
-    signals = {"est_exposure_multiple": round(mult, 2),
+        score = max(score, 80)
+    signals = {"entry_exposure": round(entry, 2),
+               "target_exposure": round(target, 2),
+               "remaining_deleveraging": round(remaining, 2),
                "vol_target_pct": _VOL_TARGET,
                "rvol20": round(rvol20, 1),
+               "rvol20_ago": round(rvol20_ago, 1)
+               if rvol20_ago else None,
                "rvol5": round(rvol5, 1) if rvol5 else None,
                "deleveraging_firing": firing}
-    read = (f"est {mult:.1f}× target-vol exposure"
-            + (" — vol spike tripped de-leveraging"
-               if firing else
-               " — cohort over-allocated" if mult > 1.2
-               else " — inside target band"))
+    if remaining >= 0.15:
+        tail = f" ~{remaining:.1f}× exposure still to cut"
+    elif target < entry:
+        tail = " de-lever wave largely done"
+    else:
+        tail = (" — cohort over-allocated" if entry > 1.2
+                else " — inside target band")
+    read = (f"entry {entry:.1f}× → target {target:.1f}×" + tail)
     return {"score": round(score, 1), "status": "estimated",
             "read": read, "signals": signals}
 
@@ -625,15 +684,30 @@ def score_positioning(lev: dict, cot: dict, pc: dict
         signals["lev_aum_chg_20d_pct"] = aum_chg
     net_pct = cot.get("net_pct_oi")
     if net_pct is not None:
-        pctile = cot.get("pctile_1y")
-        # crowded = leveraged funds' net long in the top of its range
-        s = _clamp(pctile if pctile is not None else 50)
+        net_pctile = cot.get("net_pctile_1y")
+        abs_pctile = cot.get("abs_pctile_1y")
+        direction = cot.get("direction")
         chg = cot.get("chg_4w")
+        # interpretation is directional: a crowded LONG is downside
+        # fuel (forced sells when the trade breaks); a crowded SHORT
+        # is squeeze fuel, not sell pressure — same instability, less
+        # selloff contribution. Score = size percentile scaled by side.
+        base = abs_pctile if abs_pctile is not None else 50
+        if direction == "net_long":
+            s = _clamp(base)                    # full downside fuel
+        else:
+            # net-short crowding — high absolute position still
+            # unstable, but it isn't sell pressure; cap at ~60% of it
+            s = _clamp(base * 0.6)
         if chg is not None and chg < -1.5:
-            s = max(0, s - 15)     # already de-grossing — less fuel
+            s = max(0, s - 15)                  # already de-grossing
+        elif chg is not None and chg > 2:
+            s = min(100, s + 10)                # still adding exposure
         subs["cot"] = (s, 30)
         signals["cot_net_pct_oi"] = net_pct
-        signals["cot_pctile_1y"] = pctile
+        signals["cot_direction"] = direction
+        signals["cot_net_pctile_1y"] = net_pctile
+        signals["cot_abs_pctile_1y"] = abs_pctile
         signals["cot_chg_4w"] = chg
         signals["cot_report_date"] = cot.get("report_date")
     pc_eq = pc.get("equity_pc") if pc else None
@@ -655,10 +729,11 @@ def score_positioning(lev: dict, cot: dict, pc: dict
     if aum_chg is not None:
         bits.append(f"lev AUM {aum_chg:+.0f}%/20d")
     if net_pct is not None:
-        bits.append(f"COT lev-fund net {net_pct:+.1f}% OI"
-                    f" ({cot.get('pctile_1y'):.0f}th pctile)"
-                    if cot.get("pctile_1y") is not None else
-                    f"COT lev-fund net {net_pct:+.1f}% OI")
+        bits.append(
+            f"COT lev-fund {cot.get('direction', 'net').replace('_', ' ')}"
+            f" {net_pct:+.1f}% OI"
+            + (f" ({cot['net_pctile_1y']:.0f}th pctile)"
+               if cot.get("net_pctile_1y") is not None else ""))
     return {"score": round(score, 1), "status": status,
             "read": " · ".join(bits) or "no reads",
             "signals": signals}
@@ -742,10 +817,19 @@ def score_discharge(lev: dict, cot: dict, pressure_signals: dict,
             pts += 10
         elif cot_chg >= 2:
             pts -= 10              # leveraged funds still adding
-    # vol-control cohort already forced out — rvol far above target
-    # means the mechanical de-lever wave largely fired
+    # vol-control cohort already forced out — a SMALL remaining wave
+    # means the mechanical selling largely fired; a large remaining
+    # wave counts against discharge, not for it
+    remaining = pressure_signals.get("remaining_deleveraging")
+    if remaining is not None:
+        signals["vol_control_remaining"] = remaining
+        if remaining <= 0.05 and (pressure_signals.get("rvol20") or 0) \
+                > _VOL_TARGET:
+            pts += 20              # wave fired and mostly spent
+        elif remaining >= 0.4:
+            pts -= 10              # big mechanical wave still ahead
     if pressure_signals.get("deleveraging_firing"):
-        pts += 15
+        pts += 10
         signals["vol_control_fired"] = True
     rvol = pressure_signals.get("rvol20")
     if rvol is not None and rvol >= 15:
@@ -768,7 +852,7 @@ def score_discharge(lev: dict, cot: dict, pressure_signals: dict,
         pts -= 15
         signals["credit_still_widening"] = credit_state
     score = round(_clamp(pts), 1)
-    read = (f"{score:.0f}% flushed"
+    read = (f"discharge evidence {score:.0f}"
             + (" — leverage visibly leaving" if pts >= 40
                else " — discharge incomplete" if pts >= 20
                else " — leverage still loaded"))
@@ -834,17 +918,62 @@ def score_bottom_structure(cells: dict[str, dict],
             marks.append("bounce volume")
         if marks:
             bits.append(f"{sym}: {'/'.join(marks)}")
-    read = (f"bottom evidence {score:.0f} — "
+    read = (f"bottoming evidence {score:.0f} — "
             + ("; ".join(bits) if bits else "no stabilization yet"))
     return {"score": score, "status": "observed",
             "read": read, "signals": signals}
 
 
+def score_selling_pressure(firing: list[str], trigger_state: str,
+                           credit_score: Optional[float],
+                           vix: Optional[float],
+                           vix_chg5: Optional[float]) -> dict[str, Any]:
+    """How much systematic selling is happening RIGHT NOW — the fourth
+    headline, kept separate from stored fragility: a market can carry
+    max vulnerability with zero selling pressure (the loaded calm),
+    and a market can be discharging hard with vulnerability already
+    spent. Firing flags + breached triggers + credit stress + a live
+    vol shock compose the read."""
+    s = 0.0
+    s += min(40, 13 * len(firing))
+    if trigger_state == "heavily_breached":
+        s += 25
+    elif trigger_state == "breached":
+        s += 15
+    elif trigger_state == "approaching":
+        s += 5
+    if credit_score is not None and credit_score >= 60:
+        s += 20
+    elif credit_score is not None and credit_score >= 35:
+        s += 8
+    if vix is not None and vix >= 28:
+        s += 10
+    if vix_chg5 is not None and vix_chg5 > 3:
+        s += 8
+    score = round(_clamp(s), 1)
+    band = ("intense" if score >= 70 else "active" if score >= 45
+            else "light" if score >= 20 else "quiet")
+    return {"score": score, "band": band, "status": "observed",
+            "read": f"selling pressure {band}",
+            "signals": {"firing": firing,
+                        "trigger_state": trigger_state,
+                        "credit_score": credit_score,
+                        "vix": vix, "vix_chg5": vix_chg5}}
+
+
 def _resolution(vuln: float, firing: list, discharge: dict,
-                bottom: dict, dd52: Optional[float]) -> dict[str, Any]:
+                bottom: dict, dd52: Optional[float],
+                trigger_state: Optional[str] = None
+                ) -> dict[str, Any]:
     """Where in the deleveraging cycle — the 'more selloff or
-    recovering' read. Not a forecast claim: an evidence phase over
-    (fragility stored) × (fragility flushed) × (structure forming)."""
+    recovering' read. Five evidence phases over (stored) × (firing)
+    × (flushed) × (structure forming):
+      quiet        nothing stored up
+      building     fragility stored, nothing tripped yet
+      triggering   mechanical triggers just fired — onset happening
+      discharging  forced selling underway, no bottom evidence
+      stabilizing  bottom structure forming, flush incomplete
+      recovering   leverage flushed AND structure confirmed"""
     dis = discharge.get("score")
     bot = bottom.get("score")
     sold_off = (dd52 or 0) <= -4 or len(firing) >= 2 or (vuln >= 60)
@@ -856,14 +985,17 @@ def _resolution(vuln: float, firing: list, discharge: dict,
         phase, tone = "stabilizing", "bottom evidence forming"
     elif (dis or 0) >= 35 or len(firing) >= 2:
         phase, tone = "discharging", "forced selling in progress"
+    elif len(firing) >= 1 or trigger_state in ("breached",
+                                               "heavily_breached"):
+        phase, tone = "triggering", "mechanical triggers just fired"
     else:
         phase, tone = "building", "fragility stored, not yet tripped"
     read = f"{phase} — {tone}"
     if dis is not None:
-        read += f" · {dis:.0f}% flushed"
+        read += f" · discharge {dis:.0f}"
     if bot is not None:
-        read += f" · bottom {bot:.0f}"
-    return {"phase": phase, "discharge_pct": dis,
+        read += f" · bottoming {bot:.0f}"
+    return {"phase": phase, "discharge_score": dis,
             "bottom_score": bot, "read": read,
             "discharge": discharge.get("signals", {}),
             "bottom": bottom.get("signals", {})}
@@ -887,36 +1019,75 @@ def score_liquidity(liq: Optional[dict]) -> dict[str, Any]:
 
 # ============================ composite ============================
 
-def _trigger_probs(vuln: float, band: str,
-                   firing: list[str]) -> dict[str, float]:
-    """Heuristic trigger probabilities — PRIORS for calibration, not
-    a fitted model. Base rate by band scaled across horizons via the
-    hazard approximation; live triggers bump it."""
-    p5 = _BASE_P5.get(band, 0.06)
+def _trigger_probs(vuln: float, band: str, firing: list[str],
+                   discharge_score: Optional[float],
+                   bottom_score: Optional[float]
+                   ) -> dict[str, dict[str, float]]:
+    """Three probability families — heuristic PRIORS journaled for
+    calibration, not a fitted model. The single 'selloff within Nd'
+    number conflated two different questions; now explicit:
+
+      onset        a NEW forced-selling event starts within horizon —
+                   meaningful pre-event; collapses once it's underway
+      continuation significant further selling within horizon —
+                   the relevant read while discharging
+      exhaustion   forced selling is ~done within horizon — rises as
+                   the flush completes and bottom structure forms
+
+    All cumulative-within-horizon via the hazard approximation, so
+    each family is non-decreasing in h."""
+    def _scale(p5: float, cap: float = 0.60) -> dict[str, float]:
+        return {f"{h}d": round(min(cap, 1 - (1 - p5) ** (h / 5)), 3)
+                for h in (1, 3, 5, 10)}
+
     firing_mult = 1.0 + min(0.5, 0.18 * len(firing))
-    p5 = min(0.60, p5 * firing_mult)
-    out = {}
-    for h in (1, 3, 5, 10):
-        p = 1 - (1 - p5) ** (h / 5)
-        out[f"{h}d"] = round(min(0.60, p), 3)
-    return out
+    onset_p5 = min(0.60, _BASE_P5.get(band, 0.06) * firing_mult)
+    if firing:
+        onset_p5 *= 0.4          # the event already began — onset
+                                 # is mostly answered, not a forecast
+
+    cont_p5 = {"critical": 0.35, "fragile": 0.28, "elevated": 0.18,
+               "guarded": 0.10, "calm": 0.05}.get(band, 0.10)
+    cont_p5 *= (1.0 + min(0.6, 0.15 * len(firing))
+                + (0.25 if (discharge_score or 0) < 30 else 0.0))
+    if not firing and (discharge_score or 0) < 20:
+        cont_p5 *= 0.5           # nothing underway — continuation
+                                 # has little to continue
+
+    dis = (discharge_score or 0) / 100
+    bot = (bottom_score or 0) / 100
+    exh_p5 = min(0.75, dis * 0.5 + bot * 0.35
+                 + (0.05 if not firing else 0.0))
+
+    return {"onset": _scale(onset_p5),
+            "continuation": _scale(min(0.70, cont_p5), cap=0.70),
+            "exhaustion": _scale(exh_p5, cap=0.75)}
 
 
 def _assemble(legs: dict[str, dict], firing: list[str],
               as_of: date, extra_signals: dict,
-              missing_extra: list[str]) -> dict[str, Any]:
+              missing_extra: list[str],
+              discharge_score: Optional[float] = None,
+              bottom_score: Optional[float] = None,
+              selling_pressure: Optional[dict] = None
+              ) -> dict[str, Any]:
     have = {k: v for k, v in legs.items() if v.get("score") is not None}
     missing = [k for k in WEIGHTS if k not in have] + missing_extra
     tw = sum(WEIGHTS[k] for k in have)
     vuln = (sum(have[k]["score"] * WEIGHTS[k] for k in have) / tw
             if tw else 0.0)
+    total_w = sum(WEIGHTS.values())
     observed_w = sum(WEIGHTS[k] for k in have
                      if have[k].get("status") == "observed")
-    coverage = round(observed_w / sum(WEIGHTS.values()) * 100)
+    estimated_w = sum(WEIGHTS[k] for k in have
+                      if have[k].get("status") == "estimated")
+    coverage = round(observed_w / total_w * 100)
+    est_share = round(estimated_w / total_w * 100)
     confidence = ("high" if coverage >= 85 else
                   "medium" if coverage >= 55 else "low")
     band = _band(vuln)
-    probs = _trigger_probs(vuln, band, firing)
+    probs = _trigger_probs(vuln, band, firing,
+                           discharge_score, bottom_score)
     worst = sorted(have.items(), key=lambda kv: -kv[1]["score"])[:3]
     read = (f"{band} — " + " · ".join(
         f"{k.replace('_', ' ')} {v['score']:.0f}"
@@ -924,11 +1095,16 @@ def _assemble(legs: dict[str, dict], firing: list[str],
     return {"as_of": str(as_of),
             "vulnerability": round(vuln, 1),
             "band": band,
+            "selling_pressure": selling_pressure,
             "probabilities": probs,
             "prob_model": "heuristic_prior",
             "event_def": _EVENT_DEF,
             "confidence": confidence,
             "coverage_pct": coverage,
+            "data_quality": {"completeness_pct": coverage,
+                             "estimated_pct": est_share,
+                             "missing": missing,
+                             "confidence": confidence},
             "firing": firing,
             "legs": legs,
             "validators": extra_signals.get("validators", {}),
@@ -994,7 +1170,8 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
     compress = score_vol_compression(rvol20, rvol_pct, vix, vix_pct,
                                      dd52)
     pressure = score_vol_control_pressure(
-        rvol20, rv5[-1] if rv5 else None)
+        rvol20, rv5[-1] if rv5 else None,
+        rvol20_ago=rv_series[-11] if len(rv_series) >= 11 else None)
     vc_score = None
     if compress["score"] is not None or pressure["score"] is not None:
         parts = [(l["score"], 0.55 if l is compress else 0.45)
@@ -1053,7 +1230,7 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
     # selling: triggers broken, credit stressed, term inverted,
     # vol-target de-levering tripped
     firing = []
-    if (trig["score"] or 0) >= 80:
+    if trig.get("trigger_state") in ("breached", "heavily_breached"):
         firing.append("ma_triggers_broken")
     if (credit_leg["score"] or 0) >= 70:
         firing.append("credit_stress")
@@ -1063,6 +1240,28 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
         firing.append("vol_control_deleveraging")
     if vix is not None and vix >= 28:
         firing.append("vix_shock")
+
+    # ---- resolution inputs — deleveraging-cycle evidence, computed
+    # before assemble so discharge/bottom can feed the probability
+    # families and selling-pressure headline
+    try:
+        from app.signals.sector_timing import (
+            _bottom_structure, _ohlcv as _st_ohlcv)
+        cells = {s: _bottom_structure(_st_ohlcv(s, 30, as_of))
+                 for s in ("SPY", "QQQ", "SMH")}
+    except Exception:
+        cells = {}
+    smh_c = _closes("SMH", 30, as_of)
+    smh_rs20 = ((smh_c[-1] / smh_c[-21] - 1) - (spy[-1] / spy[-21] - 1)
+                if len(smh_c) > 21 and len(spy) > 21 else None)
+    vix_chg5 = _nf(vix_c[-1] - vix_c[-6]) if len(vix_c) > 6 else None
+    discharge = score_discharge(
+        lev, cot, pressure["signals"], vix, vix_chg5,
+        credit_leg["signals"].get("credit_state"))
+    bottom = score_bottom_structure(cells, smh_rs20)
+    selling = score_selling_pressure(
+        firing, trig.get("trigger_state") or "distant",
+        credit_leg.get("score"), vix, vix_chg5)
 
     validators = {
         "margin_debt": {"status": "unavailable",
@@ -1082,29 +1281,13 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
     }
 
     row = _assemble(legs, firing, as_of,
-                    {"validators": validators}, missing_extra)
-
-    # ---- resolution — where in the deleveraging cycle: still
-    # building, actively discharging, stabilizing, or recovering.
-    # Index-level capitulation checklist (same evidence shape as
-    # sector timing's bottom reads) + the leverage-flush score.
-    try:
-        from app.signals.sector_timing import (
-            _bottom_structure, _ohlcv as _st_ohlcv)
-        cells = {s: _bottom_structure(_st_ohlcv(s, 30, as_of))
-                 for s in ("SPY", "QQQ", "SMH")}
-    except Exception:
-        cells = {}
-    smh_c = _closes("SMH", 30, as_of)
-    smh_rs20 = ((smh_c[-1] / smh_c[-21] - 1) - (spy[-1] / spy[-21] - 1)
-                if len(smh_c) > 21 and len(spy) > 21 else None)
-    vix_chg5 = _nf(vix_c[-1] - vix_c[-6]) if len(vix_c) > 6 else None
-    discharge = score_discharge(
-        lev, cot, pressure["signals"], vix, vix_chg5,
-        credit_leg["signals"].get("credit_state"))
-    bottom = score_bottom_structure(cells, smh_rs20)
-    row["resolution"] = _resolution(row["vulnerability"], firing,
-                                    discharge, bottom, dd52)
+                    {"validators": validators}, missing_extra,
+                    discharge_score=discharge["score"],
+                    bottom_score=bottom["score"],
+                    selling_pressure=selling)
+    row["resolution"] = _resolution(
+        row["vulnerability"], firing, discharge, bottom, dd52,
+        trig.get("trigger_state"))
     return row
 
 

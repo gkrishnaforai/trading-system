@@ -460,12 +460,26 @@ export default async function RegimePage() {
                   : 'border-aggressive/40 text-aggressive'}`}>
               {Math.round(fragility.vulnerability)} — {(fragility.band ?? '—').replace(/_/g, ' ')}
             </span>
-            {(['1d', '3d', '5d', '10d'] as const).map((h) => (
-              <span key={h}
-                className="rounded-full border border-hairline px-3 py-1 font-mono text-[11px] text-muted">
-                {h} {((fragility.probabilities?.[h] ?? 0) * 100).toFixed(0)}%
+            {fragility.selling_pressure?.score != null && (
+              <span className={`rounded-full border px-3 py-1 font-mono text-[11px] ${
+                (fragility.selling_pressure.score ?? 0) >= 45
+                  ? 'border-defensive/40 text-defensive'
+                  : (fragility.selling_pressure.score ?? 0) >= 20
+                    ? 'border-caution/40 text-caution'
+                    : 'border-hairline text-muted'}`}>
+                selling {Math.round(fragility.selling_pressure.score)}
               </span>
-            ))}
+            )}
+            {(['continuation', 'exhaustion', 'onset'] as const).map((fam) => {
+              const p = fragility.probabilities?.[fam]?.['5d']
+              if (p == null) return null
+              return (
+                <span key={fam}
+                  className="rounded-full border border-hairline px-3 py-1 font-mono text-[11px] text-muted">
+                  {fam === 'continuation' ? 'cont' : fam === 'exhaustion' ? 'exh' : 'onset'} 5d {(p * 100).toFixed(0)}%
+                </span>
+              )
+            })}
           </div>
           {fragility.read && (
             <p className="pt-3 text-sm leading-relaxed text-ink">
@@ -485,14 +499,14 @@ export default async function RegimePage() {
                     : 'border-defensive/40 text-defensive'}`}>
                 {fragility.resolution.phase}
               </span>
-              {fragility.resolution.discharge_pct != null && (
+              {fragility.resolution.discharge_score != null && (
                 <span className="rounded-full border border-hairline px-3 py-1 font-mono text-[11px] text-muted">
-                  flushed {Math.round(fragility.resolution.discharge_pct)}%
+                  discharge {Math.round(fragility.resolution.discharge_score)}
                 </span>
               )}
               {fragility.resolution.bottom_score != null && (
                 <span className="rounded-full border border-hairline px-3 py-1 font-mono text-[11px] text-muted">
-                  bottom {Math.round(fragility.resolution.bottom_score)}
+                  bottoming {Math.round(fragility.resolution.bottom_score)}
                 </span>
               )}
             </div>

@@ -55,21 +55,36 @@ export type Fragility = {
   as_of?: string
   vulnerability?: number | null
   band?: string
-  probabilities?: Record<string, number>
+  selling_pressure?: {
+    score?: number | null
+    band?: string
+    status?: string
+    read?: string
+  } | null
+  probabilities?: Record<string, Record<string, number>>
   prob_model?: string
   confidence?: string
   coverage_pct?: number | null
+  data_quality?: {
+    completeness_pct?: number | null
+    estimated_pct?: number | null
+    missing?: string[]
+    confidence?: string
+  }
   firing?: string[]
   legs?: Record<string, {
     score?: number | null
     status?: string
     read?: string
+    trigger_state?: string
+    breached?: string[]
+    nearest_unbroken_pct?: number | null
     signals?: Record<string, unknown>
   }>
   validators?: Record<string, unknown>
   resolution?: {
     phase?: string
-    discharge_pct?: number | null
+    discharge_score?: number | null
     bottom_score?: number | null
     read?: string
   }

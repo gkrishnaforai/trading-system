@@ -49,14 +49,27 @@ def test_vol_compression_low_vol_off_highs_dampened():
 def test_vol_control_low_rvol_means_over_allocated():
     out = score_vol_control_pressure(rvol20=6.0, rvol5=None)
     assert out["status"] == "estimated"
-    assert out["signals"]["est_exposure_multiple"] > 1.5
-    assert out["score"] >= 60
+    assert out["signals"]["entry_exposure"] > 1.5
+    # quiet over-allocation scores below an active wave — the
+    # compression leg carries the 'loaded spring' read, not pressure
+    assert 40 <= out["score"] <= 65
 
 
 def test_vol_control_spike_trips_deleveraging():
-    out = score_vol_control_pressure(rvol20=14.0, rvol5=25.0)
+    out = score_vol_control_pressure(rvol20=14.0, rvol5=25.0,
+                                     rvol20_ago=8.0)
     assert out["signals"]["deleveraging_firing"] is True
-    assert out["score"] >= 85
+    assert out["signals"]["remaining_deleveraging"] > 0.4
+    assert out["score"] >= 80
+
+
+def test_vol_control_wave_done_when_remaining_near_zero():
+    out = score_vol_control_pressure(rvol20=22.0, rvol5=23.0,
+                                     rvol20_ago=20.0)
+    # entry≈target — the mechanical wave already fired, no large
+    # remaining exposure to cut; score should not keep screaming
+    assert out["signals"]["remaining_deleveraging"] < 0.1
+    assert out["score"] < 40
 
 
 def test_market_structure_backwardation_plus_vvix_scores():
@@ -82,8 +95,9 @@ def test_market_structure_no_data_is_missing():
 def test_positioning_crowded_lev_plus_cot_scores_high():
     lev = {"lev_vol_share": 0.30, "lev_vol_share_trend": 0.05,
            "lev_aum_chg_pct": 12.0, "aum_days": 25}
-    cot = {"net_pct_oi": 8.0, "pctile_1y": 90.0, "chg_4w": 0.5,
-           "report_date": "2026-10-27"}
+    cot = {"net_pct_oi": 8.0, "direction": "net_long",
+           "net_pctile_1y": 90.0, "abs_pctile_1y": 90.0,
+           "chg_4w": 0.5, "report_date": "2026-10-27"}
     out = score_positioning(lev, cot, {})
     assert out["status"] == "observed"
     assert out["score"] >= 70
@@ -91,11 +105,22 @@ def test_positioning_crowded_lev_plus_cot_scores_high():
 
 def test_positioning_cot_deleveraging_softens_crowding():
     lev = {"lev_vol_share": 0.12}
-    crowded = score_positioning(
-        lev, {"net_pct_oi": 6.0, "pctile_1y": 85.0, "chg_4w": 0.5}, {})
-    degross = score_positioning(
-        lev, {"net_pct_oi": 6.0, "pctile_1y": 85.0, "chg_4w": -3.0}, {})
+    base = {"net_pct_oi": 6.0, "direction": "net_long",
+            "net_pctile_1y": 85.0, "abs_pctile_1y": 85.0}
+    crowded = score_positioning(lev, {**base, "chg_4w": 0.5}, {})
+    degross = score_positioning(lev, {**base, "chg_4w": -3.0}, {})
     assert degross["score"] < crowded["score"]
+
+
+def test_positioning_crowded_short_is_less_sell_fuel():
+    lev = {"lev_vol_share": 0.12}
+    long_side = score_positioning(
+        lev, {"net_pct_oi": 6.0, "direction": "net_long",
+              "abs_pctile_1y": 85.0, "chg_4w": 0.0}, {})
+    short_side = score_positioning(
+        lev, {"net_pct_oi": -6.0, "direction": "net_short",
+              "abs_pctile_1y": 85.0, "chg_4w": 0.0}, {})
+    assert short_side["score"] < long_side["score"]
 
 
 def test_credit_funding_reuses_classifier_state():
@@ -115,13 +140,38 @@ def test_credit_funding_healthy_scores_low():
 
 
 def test_trigger_probs_scale_by_band_and_horizon():
-    calm = _trigger_probs(20, "calm", [])
-    fragile = _trigger_probs(65, "fragile", [])
-    assert calm["5d"] < fragile["5d"]
-    assert fragile["10d"] > fragile["5d"] > fragile["3d"] > fragile["1d"]
-    fired = _trigger_probs(65, "fragile", ["ma_triggers_broken",
-                                          "credit_stress"])
-    assert fired["5d"] > fragile["5d"]
+    calm = _trigger_probs(20, "calm", [], 10, 5)
+    fragile = _trigger_probs(65, "fragile", [], 10, 5)
+    assert calm["onset"]["5d"] < fragile["onset"]["5d"]
+    p = fragile["continuation"]
+    assert p["10d"] > p["5d"] > p["3d"] > p["1d"]
+
+
+def test_trigger_probs_onset_collapses_once_firing():
+    quiet = _trigger_probs(65, "fragile", [], 10, 5)
+    underway = _trigger_probs(65, "fragile",
+                              ["ma_triggers_broken", "vix_shock"],
+                              10, 5)
+    assert underway["onset"]["5d"] < quiet["onset"]["5d"]
+    assert underway["continuation"]["5d"] > quiet["continuation"]["5d"]
+
+
+def test_trigger_probs_exhaustion_rises_with_discharge():
+    early = _trigger_probs(65, "fragile", ["vix_shock"], 10, 5)
+    late = _trigger_probs(65, "fragile", ["vix_shock"], 70, 60)
+    assert late["exhaustion"]["5d"] > early["exhaustion"]["5d"]
+
+
+def test_selling_pressure_intense_when_firing():
+    from app.market_regime.fragility import score_selling_pressure
+    out = score_selling_pressure(
+        ["ma_triggers_broken", "credit_stress",
+         "term_structure_inverted", "vix_shock"],
+        "heavily_breached", 75.0, 30.0, 6.0)
+    assert out["band"] in ("intense", "active")
+    quiet = score_selling_pressure([], "distant", 10.0, 13.0, -2.0)
+    assert quiet["band"] == "quiet"
+    assert quiet["score"] < out["score"]
 
 
 def test_assemble_renormalizes_missing_legs():
