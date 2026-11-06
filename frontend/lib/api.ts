@@ -51,6 +51,27 @@ export type IntradayRegime = {
   evidence?: Record<string, unknown>
 }
 
+export type Fragility = {
+  as_of?: string
+  vulnerability?: number | null
+  band?: string
+  probabilities?: Record<string, number>
+  prob_model?: string
+  confidence?: string
+  coverage_pct?: number | null
+  firing?: string[]
+  legs?: Record<string, {
+    score?: number | null
+    status?: string
+    read?: string
+    signals?: Record<string, unknown>
+  }>
+  validators?: Record<string, unknown>
+  missing?: string[]
+  read?: string
+  computed_at?: string
+}
+
 export type MorningRegime = {
   today?: {
     as_of?: string
@@ -65,6 +86,7 @@ export type MorningRegime = {
     horizon_3m?: HorizonScenario | string | null
   } | null
   intraday?: IntradayRegime | null
+  fragility?: Fragility | null
   record?: Array<Record<string, unknown>>
 }
 
@@ -609,6 +631,7 @@ export const api = {
   shortSqueeze: (symbol: string) =>
     get<SqueezeEval>(`/short-squeeze/${encodeURIComponent(symbol)}`),
   intraday: () => get<IntradayTape>('/intraday'),
+  fragility: () => get<Fragility>('/fragility'),
   readiness: () => get<ReadinessBoard>('/readiness'),
   correctionAlarms: () => get<CorrectionAlarms>('/correction-alarms'),
   researchBoard: (sector = 'healthcare') =>

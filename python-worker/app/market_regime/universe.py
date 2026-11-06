@@ -51,6 +51,7 @@ MACRO_SYMBOLS = {
     "tips":  "TIP",        # breakevens proxy (TIP/IEI)
     "tsy13": "IEI",
     "vvix":  "^VVIX",      # tail-hedge demand — vol of vol
+    "skew":  "^SKEW",      # tail convexity pricing — hedging stress
 }
 
 # ~100 liquid mega/large-cap names — the institutional-breadth leg.

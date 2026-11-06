@@ -908,6 +908,13 @@ async def _j_sector_timing() -> dict:
     return await asyncio.to_thread(run)
 
 
+async def _j_fragility() -> dict:
+    """Systematic selling early warning — leverage/positioning
+    fragility + heuristic trigger probabilities, journaled daily."""
+    from app.market_regime.fragility import run
+    return await asyncio.to_thread(run)
+
+
 async def _j_best_picks() -> dict:
     """Best-picks eval — the three-lane declarative selection
     (best_picks.yaml): growth_swing / long_term / compounder_3_5y
@@ -1035,6 +1042,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
                       _j_universe_fill),
     "sector-timing": ("Sector bottom/rebound scores",
                       _j_sector_timing),
+    "fragility":    ("Systematic selling early warning",
+                      _j_fragility),
     "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
     "lev-etf-swings": ("3x semis swing detector", _j_lev_swings),
     "signal-evals": ("Signal contract evals", _j_signal_evals),
@@ -1044,6 +1053,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
 # (evals already tail-refresh momentum+flywheel — harmless overlap)
 _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "fred-macro", "fed-path", "morning-regime",
+              "fragility",
               "econ-cal-verify",
               "etf-flows",
               "strategy", "event-day",
@@ -1073,6 +1083,7 @@ _JOB_TIMEOUT = {
     "fwd-eps-repair": 15 * 60,
     "universe-fill": 10 * 60,
     "sector-timing": 5 * 60,
+    "fragility":    5 * 60,
     "macro-snapshot": 3 * 60, "fund-snapshots": 120 * 60,
     "fund-flags": 8 * 60, "outcomes": 8 * 60, "leaps-mark": 5 * 60,
     "regime": 5 * 60, "pilot": 8 * 60, "daily-calls": 5 * 60,
@@ -2175,6 +2186,16 @@ async def sector_timing():
     return await asyncio.to_thread(current)
 
 
+@router.get("/fragility")
+async def fragility_report():
+    """Systematic selling early warning — how much leverage/fragility
+    sits under the tape: vulnerability 0-100 (six legs, per-leg
+    observed|estimated|missing status) + heuristic 1/3/5/10d trigger
+    probabilities. Fragile ≠ bearish — a bullish tape can be loaded."""
+    from app.market_regime.fragility import current
+    return await asyncio.to_thread(current)
+
+
 @router.get("/universe-snapshot/stats")
 async def universe_snapshot_stats():
     """How fresh is the shared base-data layer — total, filled,
@@ -2429,7 +2450,12 @@ async def morning_regime_report():
         except Exception:
             pass
     intraday = await asyncio.to_thread(intraday_regime.latest)
-    return {"today": t, "intraday": intraday,
+    try:
+        from app.market_regime import fragility as frag
+        fragility = await asyncio.to_thread(frag.latest)
+    except Exception:
+        fragility = None
+    return {"today": t, "intraday": intraday, "fragility": fragility,
             "record": await asyncio.to_thread(morning.record)}
 
 

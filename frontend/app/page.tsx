@@ -61,6 +61,7 @@ export default async function RegimePage() {
   const p = posture ?? {}
   const today = morning?.today
   const intraday = morning?.intraday
+  const fragility = morning?.fragility
   const record = morning?.record ?? []
 
   const tone = TONE[p.posture ?? 'neutral'] ?? 'text-neutral'
@@ -432,6 +433,70 @@ export default async function RegimePage() {
                   </p>
                 ))}
               </div>
+            )}
+        </section>
+      )}
+
+      {/* systematic fragility — leverage/positioning under the tape.
+          orthogonal to regime: bullish tape can still be loaded */}
+      {fragility?.vulnerability != null && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+              Systematic fragility — selling early warning
+            </div>
+            <div className="font-mono text-[11px] text-faint">
+              {fragility.as_of} · conf {fragility.confidence}
+              {fragility.coverage_pct != null &&
+                ` · ${Math.round(fragility.coverage_pct)}% observed`}
+            </div>
+          </div>
+          <div className="pt-3 flex flex-wrap items-center gap-2">
+            <span className={`rounded-full border px-3 py-1 text-xs font-medium ${
+              (fragility.band ?? '') === 'critical' || (fragility.band ?? '') === 'fragile'
+                ? 'border-defensive/40 text-defensive'
+                : (fragility.band ?? '') === 'elevated'
+                  ? 'border-caution/40 text-caution'
+                  : 'border-aggressive/40 text-aggressive'}`}>
+              {Math.round(fragility.vulnerability)} — {(fragility.band ?? '—').replace(/_/g, ' ')}
+            </span>
+            {(['1d', '3d', '5d', '10d'] as const).map((h) => (
+              <span key={h}
+                className="rounded-full border border-hairline px-3 py-1 font-mono text-[11px] text-muted">
+                {h} {((fragility.probabilities?.[h] ?? 0) * 100).toFixed(0)}%
+              </span>
+            ))}
+          </div>
+          {fragility.read && (
+            <p className="pt-3 text-sm leading-relaxed text-ink">
+              {fragility.read}
+            </p>
+          )}
+          <div className="pt-3 space-y-1">
+            {Object.entries(fragility.legs ?? {}).map(([name, leg]) => (
+              <div key={name} className="flex items-baseline gap-2 text-[11px] leading-relaxed">
+                <span className="w-32 shrink-0 font-mono text-faint">
+                  {name.replace(/_/g, ' ')}
+                </span>
+                <span className={`w-8 shrink-0 font-mono ${
+                  (leg.score ?? 0) >= 70 ? 'text-defensive'
+                  : (leg.score ?? 0) >= 45 ? 'text-caution' : 'text-muted'}`}>
+                  {leg.score != null ? Math.round(leg.score) : '—'}
+                </span>
+                <span className={`shrink-0 font-mono ${
+                  leg.status === 'observed' ? 'text-faint'
+                  : leg.status === 'estimated' ? 'text-caution' : 'text-faint'}`}>
+                  {leg.status === 'observed' ? 'obs' : leg.status === 'estimated' ? 'est' : '—'}
+                </span>
+                <span className="text-muted">{leg.read}</span>
+              </div>
+            ))}
+          </div>
+          {Array.isArray(fragility.firing) &&
+            fragility.firing.length > 0 && (
+              <p className="pt-2 font-mono text-[11px] text-defensive">
+                firing: {(fragility.firing as string[]).map((f) => f.replace(/_/g, ' ')).join(' · ')}
+              </p>
             )}
         </section>
       )}

@@ -42,9 +42,12 @@ const GROUPS: { title: string; note?: string; entries: Entry[] }[] = [
   {
     title: 'Regime & pulse',
     entries: [
-      { method: 'GET', path: 'morning-regime', desc: 'daily canonical regime baseline + intraday overlay + tape' },
+      { method: 'GET', path: 'morning-regime', desc: 'daily canonical regime baseline + intraday overlay + fragility + tape' },
+      { method: 'GET', path: 'fragility', desc: 'systematic selling early warning — vulnerability 0-100 + 1/3/5/10d trigger probabilities (per-leg observed/estimated status)' },
       { method: 'GET', path: 'metals-pulse', desc: 'metals regime + opportunity scores' },
-      { method: 'GET', path: 'intraday-tape', desc: 'latest 15-min tape classification' },
+      { method: 'GET', path: 'intraday', desc: 'latest 15-min tape classification' },
+      { method: 'POST', path: 'refresh/fragility', desc: 'recompute SSEW now — snapshots leveraged-ETF AUM first' },
+      { method: 'POST', path: 'refresh/intraday-tape', desc: 'run the intraday tape classifier job now' },
     ],
   },
   {
