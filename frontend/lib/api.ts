@@ -81,6 +81,14 @@ export type Fragility = {
     nearest_unbroken_pct?: number | null
     signals?: Record<string, unknown>
   }>
+  exhaustion?: {
+    score?: number | null
+    band?: string
+    status?: string
+    read?: string
+    legs?: Record<string, { score?: number | null; status?: string;
+                            read?: string }>
+  } | null
   validators?: Record<string, unknown>
   resolution?: {
     phase?: string

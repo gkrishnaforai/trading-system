@@ -1,8 +1,9 @@
 from app.market_regime.fragility import (
     _assemble, _resolution, _trigger_probs, score_bottom_structure,
-    score_credit_funding, score_discharge, score_market_structure,
-    score_positioning, score_trigger_proximity,
-    score_vol_compression, score_vol_control_pressure)
+    score_credit_funding, score_discharge, score_exhaustion,
+    score_market_structure, score_panic_cresting, score_positioning,
+    score_trigger_proximity, score_vol_compression,
+    score_vol_control_pressure, score_volume_exhaustion)
 
 
 def test_trigger_proximity_sitting_on_sma50_is_fragile():
@@ -274,3 +275,67 @@ def test_resolution_stabilizing_on_bottom_evidence():
                       {"score": 25, "signals": {}},
                       {"score": 48, "signals": {}}, dd52=-8.0)
     assert out["phase"] == "stabilizing"
+
+
+def test_resolution_triggering_between_building_and_discharging():
+    out = _resolution(55, ["term_structure_inverted"],
+                      {"score": 10, "signals": {}},
+                      {"score": 5, "signals": {}}, dd52=-3.0,
+                      trigger_state="breached")
+    assert out["phase"] == "triggering"
+
+
+# ---------- SSES — exhaustion ----------
+
+def test_panic_cresting_fear_rolling_over_scores_high():
+    out = score_panic_cresting(
+        vix=30.0, vix_chg5=-6.0, term=1.05, term_ago=0.94,
+        vvix=130.0, vvix_chg5=-12.0, rvol5=14.0, rvol20=20.0)
+    assert out["score"] >= 90
+    assert out["status"] == "observed"
+
+
+def test_panic_still_ramping_scores_low():
+    out = score_panic_cresting(
+        vix=28.0, vix_chg5=7.0, term=0.90, term_ago=0.95,
+        vvix=125.0, vvix_chg5=15.0, rvol5=26.0, rvol20=18.0)
+    assert out["score"] <= 15
+
+
+def test_volume_exhaustion_climax_then_drying():
+    # climax = a big-volume down day mid-window, then declines on
+    # shrinking volume with up-days on rising volume
+    bars = [(100.0, 100.0)]
+    for i in range(13):
+        bars.append((bars[-1][0] - 1.0, 100.0))          # quiet bleed
+    bars.append((bars[-1][0] - 3.0, 500.0))              # CLIMAX down day
+    for i in range(5):
+        bars.append((bars[-1][0] - 0.4, 120.0))          # small declines
+        bars.append((bars[-1][0] + 0.8, 160.0))          # up on volume
+    out = score_volume_exhaustion(bars)
+    assert out["signals"]["climax_down_day"] is True
+    assert out["score"] >= 60
+
+
+def test_volume_exhaustion_no_climax_scores_low():
+    bars = [(100.0 + i * 0.1, 100.0) for i in range(26)]
+    out = score_volume_exhaustion(bars)
+    assert out["score"] < 30
+
+
+def test_exhaustion_composite_spent():
+    hi = {"score": 80, "status": "observed", "read": "", "signals": {}}
+    legs = {k: dict(hi) for k in
+            ("discharge", "bottom", "panic", "volume", "breadth")}
+    out = score_exhaustion(legs)
+    assert out["score"] == 80.0
+    assert out["band"] == "spent"
+
+
+def test_exhaustion_all_missing_stays_missing():
+    legs = {k: {"score": None, "status": "missing", "read": "",
+                "signals": {}}
+            for k in ("discharge", "bottom", "panic", "volume",
+                      "breadth")}
+    out = score_exhaustion(legs)
+    assert out["status"] == "missing"

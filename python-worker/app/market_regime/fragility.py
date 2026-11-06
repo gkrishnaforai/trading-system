@@ -961,6 +961,217 @@ def score_selling_pressure(firing: list[str], trigger_state: str,
                         "vix": vix, "vix_chg5": vix_chg5}}
 
 
+# ================== exhaustion (SSES) — sellers running out =========
+# The third axis: vulnerability says 'loaded', selling_pressure says
+# 'firing', exhaustion says 'nearly spent'. Forced sellers run out
+# when the panic markers crest, the climax volume is behind, breadth
+# stops worsening and the leverage flush completes.
+
+_EXH_WEIGHTS = {"discharge": 30, "bottom": 25, "panic": 20,
+                "volume": 15, "breadth": 10}
+_EXH_BANDS = [(70, "spent"), (50, "maturing"), (30, "developing"),
+              (0, "absent")]
+
+
+def score_panic_cresting(vix: Optional[float],
+                         vix_chg5: Optional[float],
+                         term: Optional[float],
+                         term_ago: Optional[float],
+                         vvix: Optional[float],
+                         vvix_chg5: Optional[float],
+                         rvol5: Optional[float],
+                         rvol20: Optional[float]) -> dict[str, Any]:
+    """Is the panic wave cresting? Observed — every input is a real
+    quote. Forced-selling waves end when fear stops accelerating,
+    not when fear is high."""
+    pts = 0.0
+    got = []
+    if vix is not None:
+        got.append("vix")
+        if vix >= 25 and vix_chg5 is not None and vix_chg5 <= -3:
+            pts += 35
+        elif vix >= 25 and vix_chg5 is not None and vix_chg5 < 0:
+            pts += 20
+        elif vix_chg5 is not None and vix_chg5 > 5:
+            pts -= 15              # still ramping — not cresting
+    if term is not None and term_ago is not None:
+        got.append("term")
+        if term >= 1.0 and term_ago < 1.0:
+            pts += 25              # re-steepened — panic passed
+        elif term < 1.0 and term > term_ago:
+            pts += 12              # healing, still inverted
+    if vvix is not None and vvix_chg5 is not None:
+        got.append("vvix")
+        if vvix > 110 and vvix_chg5 <= -5:
+            pts += 20              # tail-hedge demand rolling over
+        elif vvix_chg5 > 10:
+            pts -= 10
+    if rvol5 is not None and rvol20 is not None:
+        got.append("rvol")
+        if rvol5 < rvol20:
+            pts += 15              # the vol wave itself is decaying
+    if not got:
+        return {"score": None, "status": "missing",
+                "read": "no panic data", "signals": {}}
+    signals = {"vix": vix, "vix_chg5": vix_chg5,
+               "term": term, "term_ago": term_ago,
+               "vvix": vvix, "vvix_chg5": vvix_chg5,
+               "rvol5": rvol5, "rvol20": rvol20}
+    bits = []
+    if vix and vix_chg5 is not None and vix_chg5 <= -3:
+        bits.append(f"VIX cresting ({vix_chg5:+.0f}/5d)")
+    if term is not None and term_ago is not None \
+            and term >= 1.0 and term_ago < 1.0:
+        bits.append("term structure re-steepened")
+    if vvix and vvix_chg5 is not None and vvix_chg5 <= -5:
+        bits.append(f"VVIX rolling ({vvix_chg5:+.0f}/5d)")
+    if rvol5 and rvol20 and rvol5 < rvol20:
+        bits.append("realized-vol wave decaying")
+    return {"score": round(_clamp(pts), 1), "status": "observed",
+            "read": "; ".join(bits) or "panic still building",
+            "signals": signals}
+
+
+def score_volume_exhaustion(bars: list[tuple]) -> dict[str, Any]:
+    """Climax-volume signature — the classic exhaustion tell: a
+    max-volume DOWN day near the low, then declines on shrinking
+    volume (forced sellers spent), with up-days starting to out-
+    volume down-days. `bars` = (close, volume) ascending, ≥25."""
+    if len(bars) < 25:
+        return {"score": None, "status": "missing",
+                "read": "insufficient bar history", "signals": {}}
+    closes = [b[0] for b in bars]
+    vols = [b[1] for b in bars]
+    w = list(zip(closes[-21:], vols[-21:]))
+    # climax = max-volume day inside the window; must be a down day
+    ci = max(range(1, len(w)), key=lambda i: w[i][1])
+    climax_vol = w[ci][1]
+    climax_down = w[ci][0] < w[ci - 1][0]
+    days_since = len(w) - 1 - ci
+    pts = 0.0
+    signals = {"climax_days_ago": days_since,
+               "climax_down_day": climax_down,
+               "climax_vol": round(climax_vol)}
+    if not climax_down or not climax_vol:
+        return {"score": round(_clamp(pts), 1), "status": "observed",
+                "read": "no down-day volume climax in window",
+                "signals": signals}
+    pts += 25
+    # declines after the climax on shrinking volume — sellers drying
+    down_vols_post = [v for (c, v), (pc, _) in
+                      zip(w[ci + 1:], w[ci:-1]) if c < pc]
+    if down_vols_post and climax_vol > 0:
+        mean_post = sum(down_vols_post) / len(down_vols_post)
+        signals["post_climax_down_vol_ratio"] = round(
+            mean_post / climax_vol, 2)
+        if mean_post < climax_vol * 0.6:
+            pts += 30
+        elif mean_post < climax_vol * 0.8:
+            pts += 18
+    elif days_since >= 3:
+        pts += 15                  # no down days since the climax
+    # up/down volume mix in the last 5 sessions — buyers regaining
+    up_v = dn_v = 0.0
+    for i in range(-5, 0):
+        c, v = w[i][0], w[i][1]
+        if w[i][0] > w[i - 1][0]:
+            up_v += v
+        elif w[i][0] < w[i - 1][0]:
+            dn_v += v
+    if up_v and dn_v:
+        mix = up_v / dn_v
+        signals["up_down_vol_5d"] = round(mix, 2)
+        if mix > 1.3:
+            pts += 25
+        elif mix > 1.05:
+            pts += 12
+    # the climax low held — price didn't re-break it
+    if closes[-1] >= w[ci][0]:
+        pts += 15
+        signals["climax_close_held"] = True
+    return {"score": round(_clamp(pts), 1), "status": "observed",
+            "read": (f"climax {days_since}d ago"
+                     + (" — volume drying on declines"
+                        if pts >= 40 else "")),
+            "signals": signals}
+
+
+def score_breadth_stabilization(payloads: list[dict]
+                                ) -> dict[str, Any]:
+    """Breadth stop-worsening — read the journaled regime payloads
+    (PIT by construction): % above SMA50 trend + new-lows trend.
+    ~5-day spread across the last snapshots."""
+    probe = []
+    for p in (payloads or [])[:6]:
+        br = (p or {}).get("breadth") or {}
+        row = {"as_of": p.get("as_of") if isinstance(p, dict) else None}
+        for k in ("pct_above_sma50", "new_lows", "new_highs",
+                  "breadth_chg_5d"):
+            v = _f(br.get(k))
+            if v is None:
+                v = _f((p or {}).get(k))
+            row[k] = v
+        probe.append(row)
+    have = [r for r in probe if r.get("pct_above_sma50") is not None]
+    if len(have) < 2:
+        return {"score": None, "status": "missing",
+                "read": "no breadth journal", "signals": {}}
+    newest, oldest = have[0], have[-1]
+    delta = newest["pct_above_sma50"] - oldest["pct_above_sma50"]
+    pts = 0.0
+    signals = {"pct_above_sma50_now": newest["pct_above_sma50"],
+               "pct_above_sma50_delta": round(delta, 1)}
+    if delta >= 5:
+        pts += 45
+    elif delta >= 2:
+        pts += 25
+    elif delta >= 0:
+        pts += 10
+    elif delta <= -5:
+        pts -= 10                  # still worsening
+    nl_now, nl_then = newest.get("new_lows"), oldest.get("new_lows")
+    if nl_now is not None and nl_then is not None:
+        signals["new_lows_now"] = nl_now
+        signals["new_lows_then"] = nl_then
+        if nl_now < nl_then * 0.6:
+            pts += 30              # new lows contracting hard
+        elif nl_now < nl_then:
+            pts += 15
+        elif nl_now > nl_then * 1.5:
+            pts -= 10              # new lows expanding
+    nh = newest.get("new_highs")
+    if nh is not None and nl_now is not None and nh >= nl_now:
+        pts += 15
+    return {"score": round(_clamp(pts), 1), "status": "observed",
+            "read": (f"breadth {delta:+.0f}pts"
+                     + (" — new lows contracting"
+                        if (nl_now is not None and nl_then
+                            and nl_now < nl_then) else "")),
+            "signals": signals}
+
+
+def score_exhaustion(legs: dict[str, dict]) -> dict[str, Any]:
+    """SSES composite — weighted over resolved legs, missing legs
+    renormalize (never inferred spent)."""
+    have = {k: v for k, v in legs.items()
+            if v.get("score") is not None}
+    if not have:
+        return {"score": None, "band": "unknown", "status": "missing",
+                "read": "no exhaustion data", "legs": legs}
+    tw = sum(_EXH_WEIGHTS[k] for k in have)
+    score = round(sum(have[k]["score"] * _EXH_WEIGHTS[k]
+                      for k in have) / tw, 1)
+    band = next(name for lo, name in _EXH_BANDS if score >= lo)
+    top = sorted(have.items(), key=lambda kv: -kv[1]["score"])[:2]
+    read = (f"{band} — " + " · ".join(
+        f"{k} {v['score']:.0f}" for k, v in top))
+    return {"score": score, "band": band,
+            "status": ("observed" if all(
+                v.get("status") == "observed"
+                for v in have.values()) else "partial"),
+            "read": read, "legs": legs}
+
+
 def _resolution(vuln: float, firing: list, discharge: dict,
                 bottom: dict, dd52: Optional[float],
                 trigger_state: Optional[str] = None
@@ -1021,7 +1232,7 @@ def score_liquidity(liq: Optional[dict]) -> dict[str, Any]:
 
 def _trigger_probs(vuln: float, band: str, firing: list[str],
                    discharge_score: Optional[float],
-                   bottom_score: Optional[float]
+                   exhaustion_score: Optional[float]
                    ) -> dict[str, dict[str, float]]:
     """Three probability families — heuristic PRIORS journaled for
     calibration, not a fitted model. The single 'selloff within Nd'
@@ -1054,9 +1265,7 @@ def _trigger_probs(vuln: float, band: str, firing: list[str],
         cont_p5 *= 0.5           # nothing underway — continuation
                                  # has little to continue
 
-    dis = (discharge_score or 0) / 100
-    bot = (bottom_score or 0) / 100
-    exh_p5 = min(0.75, dis * 0.5 + bot * 0.35
+    exh_p5 = min(0.75, (exhaustion_score or 0) / 100 * 0.7
                  + (0.05 if not firing else 0.0))
 
     return {"onset": _scale(onset_p5),
@@ -1068,7 +1277,7 @@ def _assemble(legs: dict[str, dict], firing: list[str],
               as_of: date, extra_signals: dict,
               missing_extra: list[str],
               discharge_score: Optional[float] = None,
-              bottom_score: Optional[float] = None,
+              exhaustion_score: Optional[float] = None,
               selling_pressure: Optional[dict] = None
               ) -> dict[str, Any]:
     have = {k: v for k, v in legs.items() if v.get("score") is not None}
@@ -1087,7 +1296,7 @@ def _assemble(legs: dict[str, dict], firing: list[str],
                   "medium" if coverage >= 55 else "low")
     band = _band(vuln)
     probs = _trigger_probs(vuln, band, firing,
-                           discharge_score, bottom_score)
+                           discharge_score, exhaustion_score)
     worst = sorted(have.items(), key=lambda kv: -kv[1]["score"])[:3]
     read = (f"{band} — " + " · ".join(
         f"{k.replace('_', ' ')} {v['score']:.0f}"
@@ -1263,6 +1472,39 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
         firing, trig.get("trigger_state") or "distant",
         credit_leg.get("score"), vix, vix_chg5)
 
+    # ---- SSES — systematic selling exhaustion: 'are the forced
+    # sellers running out?' Panic cresting + climax-volume signature
+    # + breadth stabilization ride alongside the flush and bottom
+    # reads; the composite is the third axis next to vulnerability
+    # and selling pressure.
+    spy_cv = _ohlcv("SPY", 30, as_of)
+    vol_exh = score_volume_exhaustion(spy_cv)
+    term_ago = (round(_nf(vix3m_c[-6]) / _nf(vix_c[-6]), 3)
+                if len(vix3m_c) > 6 and len(vix_c) > 6
+                and _nf(vix_c[-6]) else None)
+    vvix_chg5 = (_nf(vvix_c[-1] - vvix_c[-6])
+                 if len(vvix_c) > 6 else None)
+    panic = score_panic_cresting(
+        vix, vix_chg5, term, term_ago, vvix, vvix_chg5,
+        rv5[-1] if rv5 else None, rvol20)
+    try:
+        from app.database import db as _db
+        import json as _jj
+        _payloads = []
+        for _r in _db.execute_query(
+                "SELECT payload FROM regime_snapshots"
+                " ORDER BY as_of DESC LIMIT 6"):
+            _p = _r["payload"]
+            _payloads.append(_jj.loads(_p)
+                             if isinstance(_p, str) else _p)
+    except Exception:
+        _payloads = []
+    breadth_stab = score_breadth_stabilization(_payloads)
+    exhaustion = score_exhaustion({
+        "discharge": discharge, "bottom": bottom,
+        "panic": panic, "volume": vol_exh,
+        "breadth": breadth_stab})
+
     validators = {
         "margin_debt": {"status": "unavailable",
                         "note": "FINRA margin stats are monthly with "
@@ -1283,11 +1525,14 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
     row = _assemble(legs, firing, as_of,
                     {"validators": validators}, missing_extra,
                     discharge_score=discharge["score"],
-                    bottom_score=bottom["score"],
+                    exhaustion_score=exhaustion["score"],
                     selling_pressure=selling)
     row["resolution"] = _resolution(
         row["vulnerability"], firing, discharge, bottom, dd52,
         trig.get("trigger_state"))
+    row["exhaustion"] = exhaustion
+    row["signals"] = {**row.get("signals", {}),
+                      "exhaustion": exhaustion}
     return row
 
 
@@ -1347,6 +1592,8 @@ def latest() -> Optional[dict[str, Any]]:
             if isinstance(r.get(k), str):
                 r[k] = json.loads(r[k])
         r["as_of"] = str(r["as_of"])
+        # hoisted headline — persisted inside signals JSONB
+        r["exhaustion"] = (r.get("signals") or {}).get("exhaustion")
         return r
     except Exception:
         return None

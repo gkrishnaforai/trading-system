@@ -470,6 +470,16 @@ export default async function RegimePage() {
                 selling {Math.round(fragility.selling_pressure.score)}
               </span>
             )}
+            {fragility.exhaustion?.score != null && (
+              <span className={`rounded-full border px-3 py-1 font-mono text-[11px] ${
+                (fragility.exhaustion.score ?? 0) >= 50
+                  ? 'border-aggressive/40 text-aggressive'
+                  : (fragility.exhaustion.score ?? 0) >= 30
+                    ? 'border-caution/40 text-caution'
+                    : 'border-hairline text-muted'}`}>
+                exhaustion {Math.round(fragility.exhaustion.score)} · {fragility.exhaustion.band}
+              </span>
+            )}
             {(['continuation', 'exhaustion', 'onset'] as const).map((fam) => {
               const p = fragility.probabilities?.[fam]?.['5d']
               if (p == null) return null
