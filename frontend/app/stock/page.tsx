@@ -848,7 +848,7 @@ function obj(v: unknown): Record<string, unknown> | null {
 
 /** Resilience scorecard — the FICO-style company read: three
  *  independent scores + the checks that earned them. */
-function ResilienceScores({ r }: { r: import('@/lib/api').ResilienceCard }) {
+function CompanyScoreCard({ r }: { r: import('@/lib/api').ResilienceCard }) {
   const sc = r.scores ?? {}
   const cell = (label: string, v: number | null | undefined) => (
     <div className="flex flex-col">
@@ -865,7 +865,7 @@ function ResilienceScores({ r }: { r: import('@/lib/api').ResilienceCard }) {
     <section className="mt-6 rounded-xl border border-line/50 px-4 py-3">
       <div className="flex items-baseline justify-between">
         <h3 className="text-[11px] uppercase tracking-[0.18em] text-muted">
-          Resilience — the FICO read
+          Company score — health · ai · tape
         </h3>
         <span className="text-[10px] text-faint">
           {r.coverage?.xcheck ?? ''}
@@ -1075,7 +1075,7 @@ async function StockCore({ sym }: { sym: string }) {
         <p className="pt-2 text-sm text-muted">{readLine(card)}</p>
         <div className="pt-1.5"><EarningsBlock e={earnings} /></div>
         <Leadership l={leadership} />
-        {resilience && <ResilienceScores r={resilience} />}
+        {resilience && <CompanyScoreCard r={resilience} />}
         {spark.length >= 5 && (
           <Sparkline closes={spark} spot={num(card.spot)}
             asOf={card.spark_as_of ? String(card.spark_as_of) : null} />

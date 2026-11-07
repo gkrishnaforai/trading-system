@@ -17,7 +17,7 @@ export async function ResilienceTable() {
   return (
     <div className="mt-5">
       <div className="text-[11px] uppercase tracking-[0.18em] text-muted">
-        Resilience scores — health · ai · tape
+        Company scores — health · ai · tape
       </div>
       <div className="mt-2 overflow-x-auto">
         <table className="w-full text-[12px]">
