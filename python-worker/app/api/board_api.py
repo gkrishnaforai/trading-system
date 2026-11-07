@@ -915,6 +915,27 @@ async def _j_fragility() -> dict:
     return await asyncio.to_thread(run)
 
 
+async def _j_resilience() -> dict:
+    """Weekly resilience scorecards — health/AI/tape + validation
+    flags, journaled and diffed into alerts. Book names only —
+    positions + holdings + watchlist, not the 3k universe."""
+    from app.database import db
+    from app.signals.resilience_engine import run
+    syms = [r["symbol"] for r in db.execute_query(
+        "SELECT symbol FROM book_symbols")]
+    return await asyncio.to_thread(run, syms)
+
+
+async def _j_resilience_validate() -> dict:
+    """Nightly fact-check pass — XBRL cross-validation, slow OK.
+    Book names only."""
+    from app.database import db
+    from app.signals.resilience_engine import run
+    syms = [r["symbol"] for r in db.execute_query(
+        "SELECT symbol FROM book_symbols")]
+    return await asyncio.to_thread(run, syms, True)
+
+
 async def _j_best_picks() -> dict:
     """Best-picks eval — the three-lane declarative selection
     (best_picks.yaml): growth_swing / long_term / compounder_3_5y
@@ -1044,6 +1065,10 @@ JOBS: dict[str, tuple[str, Callable]] = {
                       _j_sector_timing),
     "fragility":    ("Systematic selling early warning",
                       _j_fragility),
+    "resilience":   ("Company resilience scorecards",
+                      _j_resilience),
+    "resilience-validate": ("Resilience fact-check (XBRL)",
+                      _j_resilience_validate),
     "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
     "lev-etf-swings": ("3x semis swing detector", _j_lev_swings),
     "signal-evals": ("Signal contract evals", _j_signal_evals),
