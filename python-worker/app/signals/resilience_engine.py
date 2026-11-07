@@ -532,17 +532,20 @@ def compute(sym: str) -> dict[str, Any]:
             flags.append(f'bad_data:{k}')
     if verdict == 'contradicted':
         flags.append('xcheck_fail')
-    elif xstate == 'unverified' and rg is not None:
-        flags.append('xbrl_unverified')
+    elif xstate == 'unverifiable' and rg is not None:
+        flags.append('xbrl_unverifiable')
+    elif xstate == 'not_yet_checked' and rg is not None:
+        flags.append('xbrl_not_checked')
     if cov_ratio and cov_ratio > 1.5:
         flags.append(f'cov_outlier:{cov_ratio:.1f}x')
     if r.get('recommendation') in NEG_STANCE and (dem or 0) >= 75:
         flags.append(f'stance_div:{r["recommendation"]}')
-    if bl is None and conv_s is None:
+    if ai_ok and bl is None and conv_s is None:
         flags.append('no_committed_evidence')
 
-    needs = sorted((c for c in dem_chk if not c['ok'] and not c['invalid']),
-                   key=lambda c: -c['wt'])
+    needs = (sorted((c for c in dem_chk
+                     if not c['ok'] and not c['invalid']),
+                    key=lambda c: -c['wt']) if ai_ok else [])
     meas = round((eq_m or 0) * .5 + (s_m or 0) * .5, 2)
 
     return {
