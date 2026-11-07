@@ -75,7 +75,17 @@ WEIGHTS = {
     "trigger_proximity": 15,
     "credit_funding": 15,
     "liquidity": 5,
+    # de-risking-spiral families — the leading layer: crowding says
+    # how much there IS to unwind, breadth says whether the unwind
+    # has started. Both computable from daily_bars alone.
+    "crowding": 10,
+    "ai_breadth": 15,
 }
+
+# AI-leadership basket for breadth/crowding — fixed list, mirrors
+# the names systematic de-risking actually hits first
+_AI_BASKET = ["NVDA", "AVGO", "MRVL", "ANET", "CRDO",
+              "ALAB", "COHR", "SMCI", "AMD", "ARM"]
 
 # index set for trigger proximity — the book's semis sleeve gets a
 # real weight because SOX underperformance is itself a listed tell,
@@ -151,6 +161,12 @@ _LEG_PLAIN = {
     "liquidity": {
         "hi": "system liquidity tightening",
         "mid": "liquidity flat"},
+    "crowding": {
+        "hi": "AI-leadership crowded — concentrated gains to unwind",
+        "mid": "leadership tilting concentrated"},
+    "ai_breadth": {
+        "hi": "AI breadth breaking down — de-risking underway",
+        "mid": "AI breadth softening"},
 }
 
 
@@ -1260,6 +1276,80 @@ def score_liquidity(liq: Optional[dict]) -> dict[str, Any]:
                         "as_of": liq.get("as_of")}}
 
 
+def _ema(c: list[float], n: int) -> Optional[float]:
+    if len(c) < n:
+        return None
+    k = 2 / (n + 1)
+    e = sum(c[:n]) / n
+    for x in c[n:]:
+        e = x * k + e * (1 - k)
+    return e
+
+
+def score_ai_breadth(as_of: Optional[date] = None) -> dict[str, Any]:
+    """AI-universe breadth breakdown — % of the AI basket below
+    20EMA / 50SMA, new-20d-lows, basket RS vs SPY. Leading layer:
+    systematic de-risking shows up as breadth rolling over days
+    before the index leg confirms."""
+    below20 = below50 = newlow = n = 0
+    for s in _AI_BASKET:
+        c = _closes(s, 70, as_of)
+        if len(c) < 25:
+            continue
+        n += 1
+        e20, s50 = _ema(c, 20), _sma(c, 50)
+        if e20 and c[-1] < e20:
+            below20 += 1
+        if s50 and c[-1] < s50:
+            below50 += 1
+        if c[-1] <= min(c[-20:]):
+            newlow += 1
+    if not n:
+        return {"score": None, "status": "missing", "signals": {}}
+    p20, p50, plow = below20 / n * 100, below50 / n * 100, newlow / n * 100
+    smh, spy = _closes("SMH", 30, as_of), _closes("SPY", 30, as_of)
+    rs = ((smh[-1] / smh[-21] - 1) - (spy[-1] / spy[-21] - 1)
+          if len(smh) > 21 and len(spy) > 21 else None)
+    # -5% relative over 20d -> 100; +5% -> 0
+    rs_s = _clamp(50 - (rs or 0) * 1000)
+    score = _clamp(p20 * .45 + p50 * .25 + plow * .15 + rs_s * .15)
+    return {"score": round(score, 1), "status": "observed",
+            "signals": {"below_20ema_pct": round(p20),
+                        "below_50sma_pct": round(p50),
+                        "new_20d_low_pct": round(plow),
+                        "ai_rs_20d_vs_spy": round(rs, 4)
+                        if rs is not None else None,
+                        "names": n}}
+
+
+def score_crowding(as_of: Optional[date] = None) -> dict[str, Any]:
+    """AI-leadership concentration — SMH/SPY ratio percentile vs its
+    own 130d history + 60d relative gain. Crowded = how much there
+    is to unwind, not whether the unwind has begun."""
+    smh, spy = _closes("SMH", 140, as_of), _closes("SPY", 140, as_of)
+    if len(smh) < 130 or len(spy) < 130:
+        return {"score": None, "status": "missing", "signals": {}}
+    ratio = [a / b for a, b in zip(smh[-130:], spy[-130:])]
+    pct = _pctile(ratio[:-1], ratio[-1])
+    rel60 = smh[-1] / smh[-61] - 1 - (spy[-1] / spy[-61] - 1)
+    rel_s = _clamp(50 + rel60 * 400)      # +12.5% rel -> 100
+    score = _clamp((pct or 50) * .6 + rel_s * .4)
+    return {"score": round(score, 1), "status": "observed",
+            "signals": {"smh_spy_ratio_pctile": pct,
+                        "ai_rel60_vs_spy": round(rel60, 4)}}
+
+
+_SPIRAL_MULT = ((25, 1.00), (45, 0.80), (60, 0.60), (75, 0.35),
+                (101, 0.15))
+
+
+def _spiral_multiplier(vuln: float) -> float:
+    for hi, m in _SPIRAL_MULT:
+        if vuln < hi:
+            return m
+    return 0.15
+
+
 # ============================ composite ============================
 
 def _trigger_probs(vuln: float, band: str, firing: list[str],
@@ -1465,11 +1555,14 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
         liq = None
     liquidity = score_liquidity(liq)
 
+    crowding = score_crowding(as_of)
+    ai_breadth = score_ai_breadth(as_of)
     legs = {"positioning": position, "vol_control": vol_control,
             "market_structure": structure,
             "trigger_proximity": trig,
             "credit_funding": credit_leg,
-            "liquidity": liquidity}
+            "liquidity": liquidity,
+            "crowding": crowding, "ai_breadth": ai_breadth}
 
     # firing — legs that aren't fragile-but-quiet, they're already
     # selling: triggers broken, credit stressed, term inverted,
@@ -1569,6 +1662,35 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
     row["exhaustion"] = exhaustion
     row["signals"] = {**row.get("signals", {}),
                       "exhaustion": exhaustion}
+    # positioning_state — separate booleans, never averaged away:
+    # a spiral can be underway while far from the low, and crowded
+    # can persist through the early unwind.
+    crowd_s = crowding.get("score")
+    brd_s = ai_breadth.get("score")
+    exh_s = (exhaustion or {}).get("score")
+    # sticky crowding — the level falls during the unwind itself;
+    # 'was it crowded when the breakdown began' is the real question
+    try:
+        from app.database import db as _db2
+        _hist = _db2.execute_query(
+            "SELECT legs->'crowding'->>'score' s FROM fragility_daily"
+            " WHERE as_of < :d ORDER BY as_of DESC LIMIT 15",
+            {"d": as_of or date.today()})
+        _recent = [_f(h.get("s")) for h in _hist]
+        crowd_recent = max([c for c in _recent if c is not None]
+                           + ([crowd_s] if crowd_s is not None else []),
+                           default=None)
+    except Exception:
+        crowd_recent = crowd_s
+    row["positioning_state"] = {
+        "crowded": bool(crowd_recent is not None and crowd_recent >= 60),
+        "de_risking": bool(brd_s is not None and brd_s >= 55),
+        "forced_liquidation": bool(firing),
+        "capitulation": bool(exh_s is not None and exh_s >= 70),
+    }
+    # spiral multiplier — consumed by selloff/entry sizing, never a
+    # buy/sell signal itself
+    row["spiral_multiplier"] = _spiral_multiplier(row["vulnerability"])
     return row
 
 

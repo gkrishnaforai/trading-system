@@ -195,9 +195,10 @@ def test_assemble_renormalizes_missing_legs():
     assert out["vulnerability"] == 60.0
     assert "market_structure" in out["missing"]
     assert "liquidity" in out["missing"]
-    # 75 of 100 weight observed → medium confidence
+    # 75 of 125 weight observed (8 legs incl. crowding/ai_breadth)
+    # → medium confidence
     assert out["confidence"] == "medium"
-    assert out["coverage_pct"] == 75.0
+    assert out["coverage_pct"] == 60.0
 
 
 def test_assemble_all_estimated_caps_confidence():
