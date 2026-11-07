@@ -1689,8 +1689,11 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
         "capitulation": bool(exh_s is not None and exh_s >= 70),
     }
     # spiral multiplier — consumed by selloff/entry sizing, never a
-    # buy/sell signal itself
+    # buy/sell signal itself. Hoisted into signals so it journals
+    # (the persist columns are fixed; signals is the JSONB carrier)
     row["spiral_multiplier"] = _spiral_multiplier(row["vulnerability"])
+    row["signals"]["positioning_state"] = row["positioning_state"]
+    row["signals"]["spiral_multiplier"] = row["spiral_multiplier"]
     return row
 
 

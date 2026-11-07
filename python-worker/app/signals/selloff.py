@@ -326,24 +326,50 @@ def _gates(d: dict) -> list[str]:
     return g
 
 
+def _spiral_mult() -> tuple[float, Optional[dict]]:
+    """Fragility's spiral multiplier — de-risking-spiral sizing
+    dampener. Read-only: missing journal = multiplier 1.0, never
+    blocks entries by itself."""
+    try:
+        from app.market_regime.fragility import latest
+        row = latest() or {}
+        sig = row.get("signals") or {}
+        m = sig.get("spiral_multiplier")
+        return (float(m) if m is not None else 1.0,
+                sig.get("positioning_state"))
+    except Exception:
+        return 1.0, None
+
+
 def _entry_plan(d: dict) -> dict:
     """Staged entry — deploy 25/25/25/25 with explicit triggers.
-    Finding the candidate ≠ timing the entry."""
+    Finding the candidate ≠ timing the entry. Stage sizes scale by
+    the fragility spiral multiplier — a crowded unwind in progress
+    deploys slower, it doesn't cancel the setup."""
     px = d["close"]
     inv = d.get("invalidation")
+    mult, pos_state = _spiral_mult()
+    stage = round(25 * mult)
+    note = None
+    if mult < 1.0:
+        st = ", ".join(k for k, v in (pos_state or {}).items() if v)
+        note = (f"sized {mult:.2f}x — de-risking spiral risk"
+                + (f" ({st})" if st else ""))
     return {
         "stages": [
-            {"pct": 25, "trigger": f"now — dislocation + thesis "
-                                   f"verified, px {px:.2f}"},
-            {"pct": 25, "trigger": "further weakness — only if the "
-                                   "thesis still verifies at the "
-                                   "lower price"},
-            {"pct": 25, "trigger": "stabilization — higher low, "
-                                   "relative strength improving, or "
-                                   "reclaim of the 20dma"},
-            {"pct": 25, "trigger": "confirmation reserve — deploy on "
-                                   "confirmed recovery or keep dry"},
+            {"pct": stage, "trigger": f"now — dislocation + thesis "
+                                      f"verified, px {px:.2f}"},
+            {"pct": stage, "trigger": "further weakness — only if the "
+                                      "thesis still verifies at the "
+                                      "lower price"},
+            {"pct": stage, "trigger": "stabilization — higher low, "
+                                      "relative strength improving, or "
+                                      "reclaim of the 20dma"},
+            {"pct": stage, "trigger": "confirmation reserve — deploy on "
+                                      "confirmed recovery or keep dry"},
         ],
+        "spiral_multiplier": mult,
+        "sizing_note": note,
         "invalidation": inv,
         "invalidation_note": (f"thesis fails below "
                               f"{inv:.2f}" if inv else
