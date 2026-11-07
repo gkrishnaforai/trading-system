@@ -1201,13 +1201,47 @@ export default async function RegimePage() {
                 typeof ix?.[k] === 'number' ? (ix[k] as number) : null
               const rsi = num('rsi14')
               const overlay = ix?.overlay === true
+              const NAME: Record<string, string> = {
+                SPY: 'S&P 500', QQQ: 'Nasdaq 100', DIA: 'Dow 30',
+                IWM: 'Russell 2000', MDY: 'Mid-caps', RSP: 'S&P equal-wt',
+                EFA: 'Developed ex-US', EEM: 'Emerging mkts',
+                SMH: 'AI infra / semis',
+              }
+              // deterministic trend read — the same inputs the card
+              // shows, turned into one honest sentence
+              const a200 = ix?.above_sma200 === true
+              const a50 = ix?.above_sma50 === true
+              const a20 = ix?.above_sma20 === true
+              const trend =
+                a200 && a50 && a20
+                  ? (rsi != null && rsi >= 70
+                      ? "uptrend — overbought, don't chase"
+                      : 'uptrend intact — pullbacks are buys')
+                : a200 && a50
+                  ? 'uptrend, short-term dip — watch 20d'
+                : a200 && !a50
+                  ? (rsi != null && rsi <= 35
+                      ? 'pullback in uptrend — oversold, watch for base'
+                      : 'pullback in uptrend — below 50d, wait')
+                : !a200 && a50
+                  ? "repair rally under 200d — unconfirmed, don't chase"
+                : !a200 && !a50
+                  ? (rsi != null && rsi <= 30
+                      ? 'downtrend, deeply oversold — no knife-catch'
+                      : 'downtrend — rallies are sells until 50d')
+                  : 'mixed — no clear trend'
               return (
                 <div
                   key={sym}
                   className="rounded-md border border-hairline/60 px-3 py-2"
                 >
                   <div className="flex items-baseline justify-between">
-                    <span className="text-[13px] font-semibold">{sym}</span>
+                    <span className="text-[13px] font-semibold">
+                      {sym}
+                      <span className="ml-1 font-normal text-[10px] text-faint">
+                        {NAME[sym] ?? ''}
+                      </span>
+                    </span>
                     <span className="font-mono text-[11px] text-faint">
                       {overlay ? 'overlay' : rsi != null ? `RSI ${rsi.toFixed(0)}` : ''}
                     </span>
@@ -1215,6 +1249,7 @@ export default async function RegimePage() {
                   <div className="mt-1 font-mono text-[12px] text-muted">
                     {num('price')?.toFixed(2) ?? '—'}
                   </div>
+                  <div className="mt-0.5 text-[10px] text-muted">{trend}</div>
                   <div className="mt-1 space-y-0.5 font-mono text-[11px]">
                     {(['sma20', 'sma50', 'sma200'] as const).map((ma) => {
                       const above = ix?.[`above_${ma}`]
