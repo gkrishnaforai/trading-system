@@ -64,10 +64,16 @@ function JobRowView({ j }: { j: JobRow }) {
           <span className={`h-1.5 w-1.5 rounded-full ${j.enabled ? 'bg-aggressive' : 'bg-faint'}`} />
           {j.enabled ? 'on' : 'off'}
         </span>
-        <div className={`pt-1 font-mono text-[11px] ${err ? 'text-defensive' : 'text-muted'}`}>
-          {ago(j.last_run)}
-          {j.duration_s != null && ` · ${fmtDur(j.duration_s)}`}
-        </div>
+        {j.running ? (
+          <div className="pt-1 font-mono text-[11px] text-accent">
+            ● running · started {ago(j.started_at)}
+          </div>
+        ) : (
+          <div className={`pt-1 font-mono text-[11px] ${err ? 'text-defensive' : 'text-muted'}`}>
+            {ago(j.last_run)}
+            {j.duration_s != null && ` · ${fmtDur(j.duration_s)}`}
+          </div>
+        )}
         {err && (
           <div className="pt-0.5 text-[10px] leading-snug text-defensive">
             {String(err).slice(0, 90)}

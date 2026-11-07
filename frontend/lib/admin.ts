@@ -14,6 +14,8 @@ export type JobRow = {
   last_error?: string | null
   duration_s?: number | null
   next_run?: string | null
+  running?: boolean
+  started_at?: string | null
 }
 
 export type JobRun = {

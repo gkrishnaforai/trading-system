@@ -2588,7 +2588,13 @@ async def jobs_catalog():
     """Job registry — every known job with purpose, schedule and last
     run. The AutoSys-style catalog the page and dispatcher share."""
     from app.support import scheduler
-    return {"jobs": await asyncio.to_thread(scheduler.catalog)}
+    jobs = await asyncio.to_thread(scheduler.catalog)
+    for j in jobs:
+        st = _jobs.get(j.get("name")) or {}
+        if st.get("running"):
+            j["running"] = True
+            j["started_at"] = st.get("started_at")
+    return {"jobs": jobs}
 
 
 @router.post("/jobs/{name}/schedule")
