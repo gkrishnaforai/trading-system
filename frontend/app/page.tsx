@@ -418,6 +418,38 @@ export default async function RegimePage() {
                 daily {intraday.baseline_regime.replace(/_/g, ' ')}
               </span>
             )}
+            {/* forecast layer — direction vs conditions, separate
+                reads: a clean trend-down can out-trade chop */}
+            {typeof intraday.evidence?.prob_close_green === 'number' && (
+              <span className="rounded-full border border-hairline px-3 py-1 font-mono text-[11px] text-muted">
+                green {Math.round((intraday.evidence.prob_close_green as number) * 100)}%
+              </span>
+            )}
+            {typeof intraday.evidence?.tradeability === 'number' && (
+              <span className={`rounded-full border px-3 py-1 font-mono text-[11px] ${
+                (intraday.evidence.tradeability as number) >= 65
+                  ? 'border-aggressive/40 text-aggressive'
+                  : (intraday.evidence.tradeability as number) >= 45
+                    ? 'border-hairline text-muted'
+                    : 'border-defensive/40 text-defensive'}`}>
+                tradeable {(intraday.evidence.tradeability as number)}
+                {intraday.evidence.tradeability_cls
+                  ? ` · ${String(intraday.evidence.tradeability_cls).replace(/_/g, ' ')}`
+                  : ''}
+              </span>
+            )}
+            {(() => {
+              const dt = intraday.evidence?.day_type as
+                | Record<string, number> | undefined
+              if (!dt) return null
+              const top = Object.entries(dt)
+                .sort((a, b) => b[1] - a[1])[0]
+              return top ? (
+                <span className="rounded-full border border-hairline px-3 py-1 font-mono text-[11px] text-muted">
+                  {top[0].replace('p_', '').replace(/_/g, ' ')} {Math.round(top[1] * 100)}%
+                </span>
+              ) : null
+            })()}
           </div>
           {intraday.action && (
             <p className="pt-3 text-sm leading-relaxed text-ink">

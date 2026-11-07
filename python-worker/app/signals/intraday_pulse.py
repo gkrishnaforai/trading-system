@@ -165,6 +165,124 @@ def _book_breadth() -> dict[str, Any]:
         return {"available": False}
 
 
+# ------------------------------ forecast --------------------------------
+# Deterministic heuristic estimates — journaled with every eval so
+# the learning loop can grade them like the state labels. Same
+# convention as fragility's _trigger_probs: priors earn calibration
+# from outcomes, never declare it. Direction and tradeability are
+# DIFFERENT questions: a clean trend-down can out-trade chop.
+
+def _clampf(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+
+def _forecast(qqq_d: dict, spy_d: dict, adv: Optional[float],
+              vix_rising: bool, vix_falling: bool, lead: Optional[str],
+              macro_press: bool, state: str) -> dict[str, Any]:
+    """prob_close_green + day_type + tradeability + permissions from
+    the same readings the state machine consumed — no new fetch."""
+    chg = qqq_d.get("chg_open") or 0
+    crosses = qqq_d.get("vwap_crosses") or 0
+    above, held = qqq_d.get("above_vwap"), qqq_d.get("vwap_held")
+
+    # --- prob QQQ closes above prev close proxy -----------------------
+    p = 0.50
+    p += 0.10 if above else -0.10
+    p += 0.05 if held else 0.0
+    if adv is not None:
+        p += (0.07 if adv >= 60 else 0.03 if adv >= 50 else
+              -0.04 if adv < 40 else 0.0)
+    p += 0.05 if vix_falling else (-0.05 if vix_rising else 0.0)
+    p += 0.03 if lead == "ai_led" else (-0.02 if lead == "defensive_led"
+                                        else 0.0)
+    p -= 0.04 if macro_press else 0.0
+    p += _clampf(chg * 8, -0.08, 0.08)     # mild continuation prior
+    p_green = round(_clampf(p, 0.05, 0.95), 2)
+
+    # --- day-type distribution ----------------------------------------
+    decisive = abs(chg) > 0.004 or qqq_d.get("above_or") or         qqq_d.get("below_or")
+    orderly = crosses <= 3 and (held or not above)
+    trend_up = (0.55 if (decisive and above and orderly) else
+                0.25 if above else 0.10)
+    trend_dn = (0.55 if (decisive and not above and orderly) else
+                0.25 if not above else 0.10)
+    choppy = min(0.60, 0.15 + max(0, crosses - 2) * 0.07)
+    rng = max(0.05, 1.0 - trend_up - trend_dn - choppy)
+    tot = trend_up + trend_dn + rng + choppy
+    day_type = {"p_trend_up": round(trend_up / tot, 2),
+                "p_trend_down": round(trend_dn / tot, 2),
+                "p_range": round(rng / tot, 2),
+                "p_choppy": round(choppy / tot, 2)}
+
+    # --- tradeability: orderliness, not bullishness --------------------
+    t = 50.0
+    t += 12 if (qqq_d.get("above_or") or qqq_d.get("below_or")) else -8
+    t += 10 if held else 0
+    t -= min(24, crosses * 4)
+    if adv is not None:
+        t += 10 if adv >= 55 else (-10 if adv < 40 else 0)
+    t += 8 if vix_falling else (-12 if vix_rising else 0)
+    t -= 8 if state in ("narrow_fragile", "chop_unconfirmed") else 0
+    trade = round(_clampf(t, 0, 100))
+    trade_cls = ("strongly_favorable" if trade >= 80 else
+                 "favorable" if trade >= 65 else
+                 "mixed" if trade >= 45 else
+                 "poor" if trade >= 25 else "dangerous")
+
+    # --- strategy permissions — state × tradeability -------------------
+    perm = {
+        "long_breakouts": state == "buyers_in_control" and trade >= 45,
+        "long_pullbacks": state in ("buyers_in_control",
+                                    "sellers_exhausting") and trade >= 40,
+        "short_momentum": state == "sellers_regaining" and trade >= 45,
+        "mean_reversion": day_type["p_choppy"] >= 0.4 and trade >= 35,
+    }
+    return {"prob_close_green": p_green, "day_type": day_type,
+            "tradeability": trade, "tradeability_cls": trade_cls,
+            "strategy_permissions": perm, "basis": "heuristic_v1"}
+
+
+def premarket() -> dict[str, Any]:
+    """Layer-1 forecast — overnight futures + gap vs ATR + prior regime.
+    Runs before the open; the RTH evals supersede it as tape arrives."""
+    from app.database import db
+    out: dict[str, Any] = {"horizon": "premarket",
+                           "ts": datetime.now(_ET).isoformat(
+                               timespec="seconds")}
+    try:
+        import yfinance as yf
+        for label, tick in (("es", "ES=F"), ("nq", "NQ=F")):
+            df = yf.download(tick, period="2d", interval="1h",
+                             progress=False)
+            if df is not None and not df.empty:
+                last = float(df["Close"].iloc[-1])
+                ref = float(df["Close"].iloc[-2]) if len(df) > 1 else last
+                out[f"{label}_chg_pct"] = round((last / ref - 1) * 100, 2)
+        # gap vs ATR — yesterday close vs futures level
+        row = db.execute_query(
+            "SELECT close, high, low FROM daily_bars WHERE symbol='SPY'"
+            " ORDER BY date DESC LIMIT 15")
+        if row and out.get("es_chg_pct") is not None:
+            atr = sum(float(r["high"]) - float(r["low"])
+                      for r in row[:14]) / 14
+            gap_pct = out["es_chg_pct"] / 100
+            out["gap_vs_atr"] = round(float(row[0]["close"]) * abs(gap_pct)
+                                      / atr, 2) if atr else None
+        # prior session state as the stale-est prior
+        prev = db.execute_query(
+            "SELECT state, readings FROM intraday_evals"
+            " ORDER BY ts DESC LIMIT 1")
+        if prev:
+            out["prior_state"] = prev[0].get("state")
+        nq = out.get("nq_chg_pct")
+        p = 0.50 + _clampf((nq or 0) / 100 * 20, -0.15, 0.15)
+        out["prob_close_green"] = round(_clampf(p, 0.15, 0.85), 2)
+        out["basis"] = "premarket_heuristic"
+    except Exception as e:
+        out["error"] = str(e)[:120]
+    return out
+
+
 # ------------------------------ evaluate --------------------------------
 
 def _fetch_all() -> dict[str, list[dict]]:
@@ -271,6 +389,16 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
            "leadership": lead, "macro_pressure": macro_press,
            "breadth_adv_pct": adv, "breadth_n": br.get("n"),
            "evidence": ev}
+    # forecast layer — direction vs conditions vs day-type, journaled
+    # for the grading loop (heuristic priors, not a fitted model)
+    fc = _forecast(q, spy, adv, vix_rising, vix_falling, lead,
+                   macro_press, state)
+    out["forecast"] = fc
+    out["prob_close_green"] = fc["prob_close_green"]
+    out["tradeability"] = fc["tradeability"]
+    out["tradeability_cls"] = fc["tradeability_cls"]
+    out["day_type"] = fc["day_type"]
+    out["strategy_permissions"] = fc["strategy_permissions"]
     if persist:
         _persist(out)
     return out

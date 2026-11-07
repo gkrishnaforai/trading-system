@@ -97,6 +97,11 @@ def snapshot() -> dict[str, Any]:
             "breadth_adv_pct": eval_.get("breadth_adv_pct"),
             "leadership": eval_.get("leadership"),
             "macro_pressure": eval_.get("macro_pressure"),
+            "prob_close_green": eval_.get("prob_close_green"),
+            "day_type": eval_.get("day_type"),
+            "tradeability": eval_.get("tradeability"),
+            "tradeability_cls": eval_.get("tradeability_cls"),
+            "strategy_permissions": eval_.get("strategy_permissions"),
         },
     }
     db.execute_update(
