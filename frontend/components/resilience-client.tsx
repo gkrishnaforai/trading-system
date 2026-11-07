@@ -10,6 +10,16 @@ const COLS: { k: Key; label: string }[] = [
   { k: 'deployment_risk', label: 'dep' },
 ]
 
+function Delta({ d }: { d?: number | null }) {
+  if (d == null || d === 0) return null
+  const up = d > 0
+  return (
+    <span className={`pl-1 text-[10px] ${up ? 'text-aggressive' : 'text-defensive'}`}>
+      {up ? '▲' : '▼'}{Math.abs(d)}
+    </span>
+  )
+}
+
 export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
   const [sortKey, setSortKey] = useState<Key>('ai_opportunity')
   const [q, setQ] = useState('')
@@ -60,9 +70,15 @@ export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
                   <td className="py-1.5 pr-3 font-medium text-ink">
                     <a href={`/stock?symbol=${r.symbol}`}>{r.symbol}</a>
                   </td>
-                  <td className="py-1.5 pr-3 font-medium">{sc.ai_opportunity ?? '—'}</td>
-                  <td className="py-1.5 pr-3">{sc.company_health ?? '—'}</td>
-                  <td className="py-1.5 pr-3">{sc.tape_resilience ?? '—'}</td>
+                  <td className="py-1.5 pr-3 font-medium">
+                    {sc.ai_opportunity ?? '—'}<Delta d={r.delta?.ai_opportunity} />
+                  </td>
+                  <td className="py-1.5 pr-3">
+                    {sc.company_health ?? '—'}<Delta d={r.delta?.company_health} />
+                  </td>
+                  <td className="py-1.5 pr-3">
+                    {sc.tape_resilience ?? '—'}<Delta d={r.delta?.tape_resilience} />
+                  </td>
                   <td className="py-1.5 pr-3 text-muted">{sc.deployment_risk ?? '—'}</td>
                   <td className="py-1.5 pr-3 text-muted">{(r.business_model ?? '').replaceAll('_', ' ')}</td>
                   <td className="py-1.5 text-muted">{meta.slice(0, 3).join(' · ') || '—'}</td>

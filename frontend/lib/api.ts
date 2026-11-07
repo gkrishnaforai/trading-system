@@ -1219,6 +1219,8 @@ export interface ResilienceCheck {
 export interface ResilienceRow {
   symbol: string; as_of: string
   scores: Record<string, number | null> | null
+  delta?: Record<string, number> | null
+  prev_as_of?: string | null
   flags?: string[]; needs?: string[]
   business_model?: string | null
   themes?: { theme: string; exposure: string }[]
