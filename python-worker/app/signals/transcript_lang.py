@@ -44,7 +44,12 @@ logger = logging.getLogger(__name__)
 ROLES = {
     "hyperscaler": ["MSFT", "AMZN", "GOOGL", "META", "ORCL"],
     "equipment": ["VRT", "ETN", "CRDO", "ALAB", "ONTO",
-                  "NVDA", "AVGO", "MRVL", "MU"],
+                  "NVDA", "AVGO", "MRVL", "MU",
+                  # extended for the resilience engine — WFE, electrical
+                  # and optical names whose backlog lives in MD&A text
+                  "LRCX", "KLAC", "AMAT", "TER", "ASML",
+                  "NVT", "PWR", "GEV", "HUBB", "APH",
+                  "COHR", "CIEN", "LITE", "FN", "CLS", "SMCI", "DELL"],
 }
 _DOCS_BACK = 4                           # drift needs a QoQ sequence
 _SEC_UA = {"User-Agent": "TradingSystem research@tradingsystem.local",

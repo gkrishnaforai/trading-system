@@ -1,4 +1,5 @@
 import { api, type ReadinessRow } from '@/lib/api'
+import { ResilienceTable } from '@/components/resilience-table'
 import { ReadinessBoard } from '@/components/readiness-board'
 
 // how much of each state bucket ships to the client — 'ready' never
@@ -51,6 +52,8 @@ export default async function ReadinessPage() {
           readiness screen unavailable — worker unreachable.
         </p>
       )}
+
+      {d && <ResilienceTable />}
 
       {d && (
         <ReadinessBoard

@@ -846,6 +846,57 @@ function obj(v: unknown): Record<string, unknown> | null {
     : null
 }
 
+/** Resilience scorecard — the FICO-style company read: three
+ *  independent scores + the checks that earned them. */
+function ResilienceScores({ r }: { r: import('@/lib/api').ResilienceCard }) {
+  const sc = r.scores ?? {}
+  const cell = (label: string, v: number | null | undefined) => (
+    <div className="flex flex-col">
+      <span className="text-[10px] uppercase tracking-wider text-muted">{label}</span>
+      <span className="font-mono text-lg text-ink">{v ?? '—'}</span>
+    </div>
+  )
+  const chk = (block: string) => {
+    const list = r.checks?.[block] ?? []
+    const ok = list.filter((c: import('@/lib/api').ResilienceCheck) => c.ok).length
+    return `${ok}/${list.length}`
+  }
+  return (
+    <section className="mt-6 rounded-xl border border-line/50 px-4 py-3">
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-[11px] uppercase tracking-[0.18em] text-muted">
+          Resilience — the FICO read
+        </h3>
+        <span className="text-[10px] text-faint">
+          {r.coverage?.xcheck ?? ''}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-5 gap-3">
+        {cell('health', sc.company_health)}
+        {cell('ai opp', sc.ai_opportunity)}
+        {cell('tape', sc.tape_resilience)}
+        {cell('deploy', sc.deployment_risk)}
+        {cell('direct', sc.ai_directness)}
+      </div>
+      <div className="mt-2 space-y-0.5 text-[11px] text-muted">
+        {(r.checks?.demand ?? []).map((c: import('@/lib/api').ResilienceCheck, i: number) => (
+          <div key={i} className="flex gap-1.5">
+            <span className={c.ok ? 'text-aggressive' : c.invalid ? 'text-caution' : 'text-faint'}>
+              {c.ok ? '✓' : c.invalid ? '!' : '✗'}
+            </span>
+            <span>{c.label}</span>
+            <span className="text-faint">{c.detail}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-1.5 text-[10px] text-faint">
+        checks h{chk('health')} · d{chk('demand')} · s{chk('structural')}
+        {r.flags?.length ? ` · ${r.flags.slice(0, 3).join(' · ')}` : ''}
+      </div>
+    </section>
+  )
+}
+
 export default function StockPage({
   searchParams,
 }: {
@@ -894,6 +945,7 @@ function StockSkeleton({ sym }: { sym: string }) {
 
 async function StockCore({ sym }: { sym: string }) {
   const card = await api.stockHealth(sym)
+  const resilience = await api.resilience(sym).catch(() => null)
   if (!card) {
     return (
       <main className="mx-auto max-w-3xl px-5 pb-20 pt-10">
@@ -1023,6 +1075,7 @@ async function StockCore({ sym }: { sym: string }) {
         <p className="pt-2 text-sm text-muted">{readLine(card)}</p>
         <div className="pt-1.5"><EarningsBlock e={earnings} /></div>
         <Leadership l={leadership} />
+        {resilience && <ResilienceScores r={resilience} />}
         {spark.length >= 5 && (
           <Sparkline closes={spark} spot={num(card.spot)}
             asOf={card.spark_as_of ? String(card.spark_as_of) : null} />

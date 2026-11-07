@@ -661,6 +661,8 @@ export const api = {
     get<SqueezeEval>(`/short-squeeze/${encodeURIComponent(symbol)}`),
   intraday: () => get<IntradayTape>('/intraday'),
   fragility: () => get<Fragility>('/fragility'),
+  resilience: (symbol: string) => get<ResilienceCard>(`/resilience/${symbol}`),
+  resilienceAll: () => get<{ items: ResilienceRow[] }>('/resilience'),
   readiness: () => get<ReadinessBoard>('/readiness'),
   correctionAlarms: () => get<CorrectionAlarms>('/correction-alarms'),
   researchBoard: (sector = 'healthcare') =>
@@ -1210,3 +1212,22 @@ export type PostRow = {
 }
 
 export type Post = PostRow & { body_md?: string; tier?: string }
+
+export interface ResilienceCheck {
+  label: string; ok: boolean; detail: string; wt?: number; invalid?: boolean
+}
+export interface ResilienceRow {
+  symbol: string; as_of: string
+  scores: Record<string, number | null> | null
+  flags?: string[]; needs?: string[]
+  business_model?: string | null
+  themes?: { theme: string; exposure: string }[]
+}
+export interface ResilienceCard {
+  symbol: string; business_model?: string | null; stance?: string | null
+  scores: Record<string, number | null>
+  checks: Record<string, ResilienceCheck[]>
+  flags: string[]; needs: string[]
+  event?: { pct_recovered?: number; thu_ret?: number; fri_ret?: number } | null
+  coverage?: { measured_share?: number; xcheck?: string; committed_evidence?: boolean }
+}

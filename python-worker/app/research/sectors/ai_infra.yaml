@@ -23,7 +23,7 @@ universe:
             VRT, ETN, NVT, HUBB, EMR, MPWR, 'ON', TXN, APH, TEL,
             TT, CARR, JCI, MOD, FIX, IESC,
             GEV, CEG, VST, TLN, CMI, CAT, GNRC, PWR,
-            TSM, AMKR]
+            TSM, AMKR, LRCX, KLAC, AMAT, ONTO, TER, ASML]
 
 # ------------------------------------------------------------------
 # symbol → module — curated assignment wins over industry hints.
@@ -80,6 +80,12 @@ symbol_map:
   PWR:  power_gen
   TSM:  foundry_osat
   AMKR: foundry_osat
+  LRCX: semicap_equipment
+  KLAC: semicap_equipment
+  AMAT: semicap_equipment
+  ONTO: semicap_equipment
+  TER:  semicap_equipment
+  ASML: semicap_equipment
 
 # ------------------------------------------------------------------
 # Architecture layers — where in the AI-infra stack a product sits.
@@ -228,6 +234,16 @@ business_models:
     exposure_terms: [foundry, wafer, packaging, hpc]
     nextgen_layers: [foundry, packaging_osat]
     kpis: [leading_node_mix, cowos_capacity, hpc_rev_share]
+  semicap_equipment:
+    industry_hints: [semiconductor equipment, semiconductor materials,
+                     test, measurement]
+    opportunities: [packaging_osat, foundry]
+    exposure_terms: [deposition, etch, process control, inspection,
+                     metrology, ion implant, test, advanced packaging,
+                     hbm]
+    nextgen_layers: [packaging_osat, foundry, hbm]
+    kpis: [wfe_share, bookings, backlog, installed_base_service,
+           process_control_share, advanced_packaging_rev]
     valuation: ev_ebitda
     profitability_expected: true
 

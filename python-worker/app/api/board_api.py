@@ -1053,7 +1053,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
 # (evals already tail-refresh momentum+flywheel — harmless overlap)
 _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "fred-macro", "fed-path", "morning-regime",
-              "fragility",
+              "fragility", "resilience", "resilience-validate",
               "econ-cal-verify",
               "etf-flows",
               "strategy", "event-day",
@@ -2184,6 +2184,26 @@ async def sector_timing():
     rebound_confirmed). 'Cheap' and 'recovering' stay separate."""
     from app.signals.sector_timing import current
     return await asyncio.to_thread(current)
+
+
+@router.get("/resilience")
+async def resilience_all():
+    """Latest resilience scorecard per symbol — the screener read."""
+    import asyncio
+    from app.signals import resilience_engine as re_mod
+    return {"items": await asyncio.to_thread(re_mod.read_all)}
+
+
+@router.get("/resilience/{symbol}")
+async def resilience_one(symbol: str):
+    """Full score card for one symbol — scores + checks + flags."""
+    import asyncio
+    from app.signals import resilience_engine as re_mod
+    card = await asyncio.to_thread(re_mod.read, symbol.upper())
+    if card is None:
+        # lazy compute so first deploy doesn't wait for the weekly job
+        card = await asyncio.to_thread(re_mod.compute, symbol.upper())
+    return card
 
 
 @router.get("/fragility")
