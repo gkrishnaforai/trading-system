@@ -926,6 +926,16 @@ async def _j_resilience() -> dict:
     return await asyncio.to_thread(run, syms)
 
 
+async def _j_flow() -> dict:
+    """Nightly flow footprint — EOD institutional signature per
+    book symbol (zvol + CLV streaks, journaled to symbol_flow)."""
+    from app.database import db
+    from app.signals.flow_footprint import run
+    syms = [r["symbol"] for r in db.execute_query(
+        "SELECT symbol FROM book_symbols")]
+    return await asyncio.to_thread(run, syms)
+
+
 async def _j_resilience_validate() -> dict:
     """Nightly fact-check pass — XBRL cross-validation, slow OK.
     Book names only."""
@@ -1069,6 +1079,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
                       _j_resilience),
     "resilience-validate": ("Resilience fact-check (XBRL)",
                       _j_resilience_validate),
+    "flow":         ("Institutional flow footprint", _j_flow),
     "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
     "lev-etf-swings": ("3x semis swing detector", _j_lev_swings),
     "signal-evals": ("Signal contract evals", _j_signal_evals),
@@ -1078,7 +1089,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
 # (evals already tail-refresh momentum+flywheel — harmless overlap)
 _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "fred-macro", "fed-path", "morning-regime",
-              "fragility", "resilience", "resilience-validate",
+              "fragility", "flow", "resilience",
+              "resilience-validate",
               "econ-cal-verify",
               "etf-flows",
               "strategy", "event-day",

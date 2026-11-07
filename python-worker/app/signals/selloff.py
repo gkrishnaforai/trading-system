@@ -349,12 +349,26 @@ def _entry_plan(d: dict) -> dict:
     px = d["close"]
     inv = d.get("invalidation")
     mult, pos_state = _spiral_mult()
+    flow = None
+    try:
+        from app.signals.flow_footprint import read as _fl_read
+        flow = _fl_read(d["sym"]) or {}
+    except Exception:
+        flow = {}
+    fp = flow.get("footprint")
+    # distribution streak during a dip = institutions exiting —
+    # deploy slower; absorption streak is disclosed, not leveraged
+    if fp == "distributing":
+        mult = round(mult * 0.8, 2)
     stage = round(25 * mult)
     note = None
     if mult < 1.0:
         st = ", ".join(k for k, v in (pos_state or {}).items() if v)
         note = (f"sized {mult:.2f}x — de-risking spiral risk"
                 + (f" ({st})" if st else ""))
+    if fp == "distributing":
+        note = (note or "sized down") + (
+            f"; distribution streak {flow.get('streak')}d" if flow.get('streak') else "; distribution streak")
     return {
         "stages": [
             {"pct": stage, "trigger": f"now — dislocation + thesis "
@@ -369,6 +383,7 @@ def _entry_plan(d: dict) -> dict:
                                       "confirmed recovery or keep dry"},
         ],
         "spiral_multiplier": mult,
+        "flow": {"footprint": fp, "streak": flow.get("streak")},
         "sizing_note": note,
         "invalidation": inv,
         "invalidation_note": (f"thesis fails below "

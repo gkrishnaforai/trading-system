@@ -242,6 +242,14 @@ def _facts(sym: str) -> dict[str, Any]:
         out['themes'] = []
     try:
         rows = db.execute_query(
+            "SELECT payload FROM symbol_flow"
+            " WHERE symbol=:s ORDER BY as_of DESC LIMIT 1", {"s": sym})
+        p = rows[0].get("payload") if rows else None
+        out['flow'] = json.loads(p) if isinstance(p, str) else (p or {})
+    except Exception:
+        out['flow'] = {}
+    try:
+        rows = db.execute_query(
             "SELECT field, verdict, evidence FROM symbol_fact_checks"
             " WHERE symbol=:s AND field='rev_growth'"
             " ORDER BY checked_at DESC LIMIT 1", {"s": sym})
@@ -419,12 +427,18 @@ def compute(sym: str) -> dict[str, Any]:
         a = bars[-1] / bars[-1 - n] - 1 if bars[-1 - n] else None
         b = spy[-1] / spy[-1 - n] - 1 if spy[-1 - n] else None
         return a - b if a is not None and b is not None else None
+    # institutional flow — signed streak maps: accumulating supports
+    # tape, distributing subtracts. Small weight — evidence, not thesis
+    fl = d.get('flow') or {}
+    fl_dir = {'accumulating': 80, 'distributing': 20}.get(
+        fl.get('footprint'))
     tape, t_cov, _ = _comp([
         (_map(rel(1), -0.08, 0.08), .05, 'm'),
         (_map(rel(5), -0.10, 0.10), .15, 'm'),
-        (_map(rel(20), -0.15, 0.15), .30, 'm'),
-        (_map(rel(60), -0.20, 0.20), .30, 'm'),
-        (_map(mom.get('down_cap'), 0.2, 0.8), .20, 'm')])
+        (_map(rel(20), -0.15, 0.15), .25, 'm'),
+        (_map(rel(60), -0.20, 0.20), .25, 'm'),
+        (_map(mom.get('down_cap'), 0.2, 0.8), .20, 'm'),
+        (fl_dir, .10, 'm')])
     if t_cov < COVERAGE_FLOOR:
         tape = None
 
@@ -564,6 +578,11 @@ def compute(sym: str) -> dict[str, Any]:
         'checks': {'health': health_chk, 'demand': dem_chk,
                    'structural': struct_chk},
         'flags': flags,
+        'flow': {'footprint': fl.get('footprint'),
+                 'streak': fl.get('streak'),
+                 'acc_days': fl.get('acc_days'),
+                 'dist_days': fl.get('dist_days'),
+                 'today': fl.get('today')},
         'needs': [c['label'] for c in needs[:2]],
         'event': ev,
         'coverage': {'measured_share': meas,

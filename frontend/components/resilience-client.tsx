@@ -57,6 +57,7 @@ export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
                   </button>
                 </th>
               ))}
+              <th className="py-1 pr-3 font-medium">flow</th>
               <th className="py-1 pr-3 font-medium">model</th>
               <th className="py-1 font-medium">flags / needs</th>
             </tr>
@@ -80,6 +81,11 @@ export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
                     {sc.tape_resilience ?? '—'}<Delta d={r.delta?.tape_resilience} />
                   </td>
                   <td className="py-1.5 pr-3 text-muted">{sc.deployment_risk ?? '—'}</td>
+                  <td className="py-1.5 pr-3">{r.flow?.footprint === 'accumulating'
+                    ? <span className="text-aggressive">▲ acc {r.flow.streak}d</span>
+                    : r.flow?.footprint === 'distributing'
+                      ? <span className="text-defensive">▼ dist {Math.abs(r.flow.streak ?? 0)}d</span>
+                      : <span className="text-faint">—</span>}</td>
                   <td className="py-1.5 pr-3 text-muted">{(r.business_model ?? '').replaceAll('_', ' ')}</td>
                   <td className="py-1.5 text-muted">{meta.slice(0, 3).join(' · ') || '—'}</td>
                 </tr>

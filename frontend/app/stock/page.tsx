@@ -889,6 +889,19 @@ function CompanyScoreCard({ r }: { r: import('@/lib/api').ResilienceCard }) {
           </div>
         ))}
       </div>
+      {r.flow?.footprint && r.flow.footprint !== 'none' && (
+        <div className="mt-1.5 text-[11px]">
+          <span className={r.flow.footprint === 'accumulating'
+            ? 'text-aggressive' : 'text-defensive'}>
+            {r.flow.footprint === 'accumulating'
+              ? `▲ accumulation streak ${r.flow.acc_days ?? ''}d`
+              : `▼ distribution streak ${r.flow.dist_days ?? ''}d`}
+          </span>
+          <span className="text-faint">
+            {' '}— high-conviction volume signature (10d window)
+          </span>
+        </div>
+      )}
       <div className="mt-1.5 text-[10px] text-faint">
         checks h{chk('health')} · d{chk('demand')} · s{chk('structural')}
         {r.flags?.length ? ` · ${r.flags.slice(0, 3).join(' · ')}` : ''}

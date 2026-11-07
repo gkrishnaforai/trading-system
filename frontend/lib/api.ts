@@ -1221,6 +1221,7 @@ export interface ResilienceRow {
   scores: Record<string, number | null> | null
   delta?: Record<string, number> | null
   prev_as_of?: string | null
+  flow?: { footprint?: string | null; streak?: number | null } | null
   flags?: string[]; needs?: string[]
   business_model?: string | null
   themes?: { theme: string; exposure: string }[]
@@ -1231,5 +1232,7 @@ export interface ResilienceCard {
   checks: Record<string, ResilienceCheck[]>
   flags: string[]; needs: string[]
   event?: { pct_recovered?: number; thu_ret?: number; fri_ret?: number } | null
+  flow?: { footprint?: string | null; streak?: number | null;
+           acc_days?: number | null; dist_days?: number | null } | null
   coverage?: { measured_share?: number; xcheck?: string; committed_evidence?: boolean }
 }
