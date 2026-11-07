@@ -177,6 +177,9 @@ def _ctx() -> dict[str, Any]:
         if fomc:
             ctx["fomc_date"] = fomc[0]["date"]
             ctx["fomc_days"] = fomc[0]["days_away"]
+        if len(fomc) > 1:
+            ctx["fomc2_date"] = fomc[1]["date"]
+            ctx["fomc2_days"] = fomc[1]["days_away"]
     except Exception:
         pass
     return ctx
@@ -370,6 +373,41 @@ def compute(ctx: dict, sp: Optional[dict] = None) -> dict[str, Any]:
         lean = "tightening_bias" if pres > 0 else "easing_bias"
 
     out["path_3_6m"] = {"lean": lean, "expected_bps": exp_bps}
+
+    # ---- second meeting --------------------------------------------
+    # The front-end window (~13w) prices BOTH meetings. Meeting-2's
+    # distribution is the residual expected move after meeting-1's
+    # share — weaker by construction, labeled and clamped, never
+    # presented with meeting-1's confidence.
+    step = sp["engine"]["decision_step_bps"]
+    m2 = {"date": ctx.get("fomc2_date"),
+          "days_away": ctx.get("fomc2_days")}
+    if exp_bps is not None:
+        resid = round(exp_bps - expected, 1)
+        p_move = min(0.85, max(0.05, abs(resid) / step))
+        direction = "hike" if resid > 0 else "cut"
+        m2.update({"p_hike": round(p_move * 100) if direction == "hike"
+                                else 0,
+                   "p_cut": round(p_move * 100) if direction == "cut"
+                                else 0,
+                   "p_hold": round(100 - p_move * 100),
+                   "expected_bps": resid,
+                   "basis": "window_residual"})
+        if ctx.get("fomc2_date"):
+            drivers.append(
+                f"{ctx['fomc2_date']} FOMC: window residual "
+                f"{resid:+.0f}bp → {direction} {round(p_move*100)}% / "
+                f"hold {round(100-p_move*100)}%")
+    else:
+        # nothing priced — decay meeting-1 toward hold, honest basis
+        m2.update({"p_hike": round(probs["hike"] * 0.5),
+                   "p_cut": round(probs["cut"] * 0.5),
+                   "p_hold": round(100 - (probs["hike"]
+                                          + probs["cut"]) * 0.5),
+                   "expected_bps": None,
+                   "basis": "extrapolated_low_confidence"})
+    out["fomc_2"] = m2
+
     out["drivers"] = drivers
     out["components"] = {
         "baseline_mode": mode, "baseline_weight": prox_w,
