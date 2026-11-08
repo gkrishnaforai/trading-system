@@ -53,7 +53,7 @@ _DIR_PAT = [
     (r"(?i)\b(reiterat\w+|maintain\w+|reaffirm\w+|unchanged|in line)\b",
      "maintained"),
 ]
-_NUM = r"\$?\s*([\d,.]+)\s*([BbMmKk%])?"
+_NUM = r"\$?\s*(\d[\d,.]*)\s*([BbMmKk%])?"
 
 
 def _normalize(text: str) -> dict[str, Any]:
