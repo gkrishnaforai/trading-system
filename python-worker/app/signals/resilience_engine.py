@@ -250,6 +250,14 @@ def _facts(sym: str) -> dict[str, Any]:
         out['flow'] = {}
     try:
         rows = db.execute_query(
+            "SELECT payload FROM symbol_earnings_quality"
+            " WHERE symbol=:s ORDER BY as_of DESC LIMIT 1", {"s": sym})
+        p = rows[0].get("payload") if rows else None
+        out['eq'] = json.loads(p) if isinstance(p, str) else (p or {})
+    except Exception:
+        out['eq'] = {}
+    try:
+        rows = db.execute_query(
             "SELECT field, verdict, evidence FROM symbol_fact_checks"
             " WHERE symbol=:s AND field='rev_growth'"
             " ORDER BY checked_at DESC LIMIT 1", {"s": sym})
@@ -414,8 +422,11 @@ def compute(sym: str) -> dict[str, Any]:
                         (_map(sbc, 0.15, 0), .2, 'm')])
     revs, _, _ = _comp([(_map(er, -0.10, 0.20), .6, 'm'),
                         (_map(st, -30, 30), .4, 'm')])
+    eq_row = d.get('eq') or {}
+    eq_s = _f(eq_row.get('quality'))
     eq, eq_cov, eq_m = _comp([(growth, .3, 'm'), (marg, .25, 'm'),
-                              (cash, .2, 'm'), (revs, .25, 'm')])
+                              (cash, .2, 'm'), (revs, .25, 'm'),
+                              (eq_s, .15, 'm')])
     health, h_cov, h_m = _comp([(eq, .75, 'm'), (bs, .25, 'm')])
     if h_cov < COVERAGE_FLOOR:
         health = None
@@ -578,6 +589,9 @@ def compute(sym: str) -> dict[str, Any]:
         'checks': {'health': health_chk, 'demand': dem_chk,
                    'structural': struct_chk},
         'flags': flags,
+        'earnings_quality': {'quality': eq_s,
+                             'flags': eq_row.get('flags') or [],
+                             'legs': eq_row.get('legs')},
         'flow': {'footprint': fl.get('footprint'),
                  'streak': fl.get('streak'),
                  'acc_days': fl.get('acc_days'),
