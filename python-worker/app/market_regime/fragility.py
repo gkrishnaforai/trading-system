@@ -1694,6 +1694,49 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
     row["spiral_multiplier"] = _spiral_multiplier(row["vulnerability"])
     row["signals"]["positioning_state"] = row["positioning_state"]
     row["signals"]["spiral_multiplier"] = row["spiral_multiplier"]
+
+    # ---- fear classification — name the fear, three dimensions:
+    # price/vol (vuln+breadth) + credit + whether it's already
+    # resolving. Never price-only. ----
+    credit_s = credit_leg.get("score") or 0
+    dis_s = (discharge or {}).get("score")
+    exh_s2 = (exhaustion or {}).get("score") or 0
+    firing_n = len(firing)
+    brd = (ai_breadth.get("signals") or {}).get("below_50sma_pct")
+    if firing_n >= 3 and credit_s < 55 and (exh_s2 or 0) >= 40:
+        fclass = "liquidity_forced_selling"
+    elif credit_s >= 70 and (brd or 0) >= 60:
+        fclass = "macro_repricing"
+    elif row["vulnerability"] >= 65 and firing_n >= 2             and (dis_s or 0) < 40:
+        fclass = "structural_bear_market"
+    elif row["vulnerability"] >= 45 and credit_s < 55:
+        fclass = "temporary_dislocation"
+    else:
+        fclass = "unknown"
+    row["fear_classification"] = fclass
+
+    # ---- second leg down — the knife-catcher's real risk ----------
+    second = []
+    if trig.get("trigger_state") in ("breached", "heavily_breached"):
+        second.append("index_triggers_broken")
+    if vix is not None and vix >= 30:
+        second.append("vix_high")
+    if credit_s >= 65:
+        second.append("credit_widening")
+    if (brd or 0) >= 80:
+        second.append("breadth_still_falling")
+    if firing_n >= 3:
+        second.append("multiple_legs_firing")
+    if (exh_s2 or 0) < 30:
+        second.append("no_exhaustion")
+    second_risk = ("HIGH" if len(second) >= 4 else
+                   "MEDIUM" if len(second) >= 2 else "LOW")
+    row["second_leg_down"] = {"risk": second_risk,
+                              "triggers": second,
+                              "block_additional_tranches":
+                                  second_risk == "HIGH"}
+    row["signals"]["fear_classification"] = fclass
+    row["signals"]["second_leg_down"] = row["second_leg_down"]
     return row
 
 

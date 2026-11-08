@@ -385,11 +385,36 @@ def _entry_plan(d: dict) -> dict:
         "spiral_multiplier": mult,
         "flow": {"footprint": fp, "streak": flow.get("streak")},
         "sizing_note": note,
+        "exit_plan": _exit_plan(px, inv),
         "invalidation": inv,
         "invalidation_note": (f"thesis fails below "
                               f"{inv:.2f}" if inv else
                               "no structural invalidation — "
                               "thesis-based exit only")}
+
+
+def _exit_plan(px: Optional[float], inv: Optional[float]
+               ) -> dict:
+    """Take-profit policy for fear-rebound trades — this is a trade,
+    not an accidental long-term hold. R = entry−invalidation.
+    Time stop needs days_held — tracked positions only; the policy
+    rides the plan so tranche tracking can enforce it later."""
+    if not px or not inv or inv >= px:
+        return {"policy": "thesis-invalidated exit only — no R "
+                          "ladder without a defined invalidation"}
+    R = px - inv
+    return {"R": round(R, 2),
+            "partials": [
+                {"at": round(px + 1.5 * R, 2), "pct": 25,
+                 "rule": "1.5R — take a quarter off"},
+                {"at": round(px + 2.0 * R, 2), "pct": 30,
+                 "rule": "2R — bank another third"}],
+            "trail": "remainder trails 20ema / last swing low",
+            "time_stop": "reassess at 5d if recovery hasn't started;"
+                         " exit-or-reduce by 10d — a failed rebound"
+                         " is not a long-term position",
+            "invalidate": "thesis fails below "
+                          f"{inv:.2f} — exit, never average through"}
 
 
 def _invalidation(det: dict, px: float) -> Optional[float]:
