@@ -926,6 +926,16 @@ async def _j_resilience() -> dict:
     return await asyncio.to_thread(run, syms)
 
 
+async def _j_guidance() -> dict:
+    """Nightly guidance intel — normalize doc_analyses guidance
+    claims, score outlook + quality. Book symbols only."""
+    from app.database import db
+    from app.signals.guidance_intel import run
+    syms = [r["symbol"] for r in db.execute_query(
+        "SELECT symbol FROM book_symbols")]
+    return await asyncio.to_thread(run, syms)
+
+
 async def _j_earnings_quality() -> dict:
     """Nightly forensic screen — accruals/DSO/inventory/FCF
     conversion/goodwill from XBRL. Slow, book-only."""
@@ -1092,6 +1102,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "flow":         ("Institutional flow footprint", _j_flow),
     "earnings-quality": ("Forensic earnings-quality screen",
                       _j_earnings_quality),
+    "guidance":     ("Guidance intelligence", _j_guidance),
     "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
     "lev-etf-swings": ("3x semis swing detector", _j_lev_swings),
     "signal-evals": ("Signal contract evals", _j_signal_evals),
@@ -1101,7 +1112,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
 # (evals already tail-refresh momentum+flywheel — harmless overlap)
 _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "fred-macro", "fed-path", "morning-regime",
-              "fragility", "flow", "earnings-quality", "resilience",
+              "fragility", "flow", "earnings-quality", "guidance",
+              "resilience",
               "resilience-validate",
               "econ-cal-verify",
               "etf-flows",
@@ -2233,6 +2245,30 @@ async def sector_timing():
     rebound_confirmed). 'Cheap' and 'recovering' stay separate."""
     from app.signals.sector_timing import current
     return await asyncio.to_thread(current)
+
+
+@router.get("/guidance/{symbol}")
+async def guidance_one(symbol: str):
+    """Latest guidance card — normalized claims + outlook/quality."""
+    import asyncio
+    from app.signals.guidance_intel import latest
+    card = await asyncio.to_thread(latest, symbol.upper())
+    if card is None:
+        from app.signals.guidance_intel import compute
+        card = await asyncio.to_thread(compute, symbol.upper())
+    return card
+
+
+@router.get("/guidance")
+async def guidance_all():
+    """Latest outlook/quality per book symbol — calendar badges."""
+    import asyncio
+    from app.database import db
+    rows = await asyncio.to_thread(
+        db.execute_query,
+        "SELECT DISTINCT ON (symbol) symbol, outlook, quality"
+        " FROM symbol_guidance ORDER BY symbol, as_of DESC")
+    return {"items": rows}
 
 
 @router.get("/resilience")

@@ -130,6 +130,23 @@ function EarningsLine({
             pending
           </span>
         )}
+        {(() => {
+          const g = guideMap.get(sym)
+          if (!g?.outlook && !g?.quality) return null
+          return (
+            <span
+              className={`ml-2 rounded-full border px-1.5 py-px text-[9.5px] font-semibold ${
+                (g.outlook ?? 50) >= 70
+                  ? 'border-aggressive/40 text-aggressive'
+                  : (g.outlook ?? 50) <= 35
+                    ? 'border-defensive/40 text-defensive'
+                    : 'border-hairline text-muted'}`}
+              title={`guidance outlook ${g.outlook ?? '—'} · quality ${g.quality ?? '—'}`}
+            >
+              guide {g.outlook ?? '—'}·q{g.quality ?? '—'}
+            </span>
+          )
+        })()}
         {verdict && (
           <Link
             href={`/earnings?sym=${encodeURIComponent(sym)}${r.earnings_date ? `&date=${String(r.earnings_date).slice(0, 10)}` : ''}`}
@@ -239,6 +256,9 @@ function MacroLine({ e, detailed }: { e: MacroEvent; detailed?: boolean }) {
   )
 }
 
+const guideMap = new Map<string,
+  { symbol: string; outlook: number | null; quality: number | null }>()
+
 export default async function CalendarPage({
   searchParams,
 }: {
@@ -261,11 +281,13 @@ export default async function CalendarPage({
     Date.parse(`${selDay}T12:00:00Z`),
   )))
 
-  const [events, earnings, watch] = await Promise.all([
+  const [events, earnings, watch, guidance] = await Promise.all([
     api.macroEvents(),
     api.earningsCalendar(start, end),
     api.earningsWatch(30),
+    api.guidanceAll().catch(() => null),
   ])
+  for (const g of guidance?.items ?? []) guideMap.set(g.symbol, g)
 
   const evList = Array.isArray(events) ? events : (events?.events ?? [])
   const erList = earnings?.data ?? []

@@ -662,6 +662,8 @@ export const api = {
   intraday: () => get<IntradayTape>('/intraday'),
   fragility: () => get<Fragility>('/fragility'),
   resilience: (symbol: string) => get<ResilienceCard>(`/resilience/${symbol}`),
+  guidanceAll: () => get<{ items: { symbol: string; outlook: number | null; quality: number | null }[] }>('/guidance'),
+  guidance: (symbol: string) => get<GuidanceCard>(`/guidance/${symbol}`),
   resilienceAll: () => get<{ items: ResilienceRow[] }>('/resilience'),
   readiness: () => get<ReadinessBoard>('/readiness'),
   correctionAlarms: () => get<CorrectionAlarms>('/correction-alarms'),
@@ -1235,4 +1237,11 @@ export interface ResilienceCard {
   flow?: { footprint?: string | null; streak?: number | null;
            acc_days?: number | null; dist_days?: number | null } | null
   coverage?: { measured_share?: number; xcheck?: string; committed_evidence?: boolean }
+}
+
+export interface GuidanceCard {
+  symbol: string; outlook: number | null; quality: number | null
+  guidance?: { text: string; metric?: string; period?: string;
+               direction?: string; normalized?: boolean }[]
+  counts?: { raised?: number; lowered?: number; maintained?: number }
 }
