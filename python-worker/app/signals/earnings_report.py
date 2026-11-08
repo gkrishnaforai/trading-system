@@ -297,6 +297,59 @@ def _expectations_section(fly: dict, stance: dict) -> Optional[dict]:
             "stance_reason": stance or None}
 
 
+def _bull_bear(sym: str) -> dict:
+    """Bull/bear takeaways — partition doc_analyses claims by the
+    direction tag doc_extract already assigns (tailwind vs headwind).
+    Deterministic list always; an LLM one-paragraph summary per side
+    only when a model is configured AND grounded — silent fallback
+    to the lists on any failure."""
+    bull, bear = [], []
+    try:
+        from app.database import db
+        import json as _j
+        for r in db.execute_query(
+                "SELECT claims FROM doc_analyses WHERE symbol=:s"
+                " ORDER BY created_at DESC LIMIT 4", {"s": sym}):
+            cl = r.get("claims")
+            cl = _j.loads(cl) if isinstance(cl, str) else (cl or [])
+            for c in cl:
+                if not isinstance(c, dict) or not c.get("text"):
+                    continue
+                if c.get("direction") == "headwind" or                         c.get("kind") in ("risk", "counter"):
+                    bear.append(str(c["text"])[:240])
+                else:
+                    bull.append(str(c["text"])[:240])
+    except Exception:
+        pass
+    out = {"bull": bull[:6], "bear": bear[:6]}
+    if not bull and not bear:
+        return out
+    try:
+        from litellm import completion
+        from app.config import settings
+        import json as _j
+        mdl = getattr(settings, "litellm_model", None)
+        if not mdl:
+            return out
+        for side, items in (("bull", bull[:6]), ("bear", bear[:6])):
+            if not items:
+                continue
+            resp = completion(
+                model=mdl, temperature=0.1, max_tokens=140, timeout=20,
+                messages=[{"role": "system", "content":
+                           "Summarize these verbatim earnings claims "
+                           "into ONE ~45-word paragraph. Use ONLY the "
+                           "facts listed — invent nothing."},
+                          {"role": "user", "content":
+                           _j.dumps(items, default=str)}])
+            txt = (resp.choices[0].message.content or "").strip()
+            if len(txt) > 60:
+                out[f"{side}_summary"] = txt
+    except Exception:
+        pass                                   # deterministic still stands
+    return out
+
+
 def _takeaways(verdict: str, growth: Optional[dict],
                quality: Optional[dict], drivers: list[dict],
                pr: dict, stock: dict) -> list[str]:
@@ -425,6 +478,7 @@ def build(sym: str, day: Optional[date] = None) -> Optional[dict]:
             "after": watch.get("thesis_after")},
         "verdict": verdict,
         "narrative": det.get("narrative"),
+        "bull_bear": _bull_bear(sym),
         "takeaways": _takeaways(verdict, growth, quality,
                                 drivers or (det.get("drivers") or []),
                                 {**pr, "earnings_date": day}, stock),

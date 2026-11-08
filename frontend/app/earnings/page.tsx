@@ -433,6 +433,40 @@ async function Report({
         </Section>
       )}
 
+      {/* bull / bear takeaways — verbatim claims partitioned by
+          direction; LLM summary line only when the model produced
+          one (deterministic lists always show) */}
+      {r.bull_bear && ((r.bull_bear.bull ?? []).length > 0 ||
+                       (r.bull_bear.bear ?? []).length > 0) && (
+        <Section title="Bullish / bearish takeaway" defaultOpen>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {[
+              { key: 'bull', label: 'Bullish takeaway', tone: 'text-aggressive' },
+              { key: 'bear', label: 'Bearish takeaway', tone: 'text-defensive' },
+            ].map(({ key, label, tone }) => {
+              const items = (r.bull_bear as any)?.[key] ?? []
+              const summary = (r.bull_bear as any)?.[`${key}_summary`]
+              if (!items.length) return null
+              return (
+                <div key={key}>
+                  <div className={`text-[11px] font-semibold uppercase tracking-wider ${tone}`}>
+                    {label}
+                  </div>
+                  {summary && (
+                    <p className="pt-1.5 text-sm text-ink">{summary}</p>
+                  )}
+                  <ul className="pt-1.5 list-disc pl-5 space-y-1 text-[12px] text-muted">
+                    {items.map((t: string, i: number) => (
+                      <li key={i}>{t}</li>
+                    ))}
+                  </ul>
+                </div>
+              )
+            })}
+          </div>
+        </Section>
+      )}
+
       {/* prior prints */}
       {priors.length > 0 && (
         <Section title="Prior prints">

@@ -488,6 +488,8 @@ export type EarningsReport = {
     thesis?: { before?: string | null; after?: string | null }
     narrative?: string | null
     takeaways?: string[]
+    bull_bear?: { bull?: string[]; bear?: string[];
+                  bull_summary?: string; bear_summary?: string }
     prior_prints?: Array<{
       earnings_date?: string
       eps_estimate?: number | null
