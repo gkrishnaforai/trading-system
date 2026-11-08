@@ -44,6 +44,8 @@ _PERIOD_PAT = [
     (r"(?i)(next quarter|current quarter|this quarter)", "quarter"),
     (r"(?i)(next year|full year|fiscal year|fiscal)", "fy"),
     (r"(?i)(second half|h2|first half|h1)", "half"),
+    # bare fiscal year in a guidance claim — "2027 guidance"
+    (r"(?i)\b(20[23]\d)\b", "fy"),
 ]
 _DIR_PAT = [
     (r"(?i)\b(rais\w+|increas\w+|lift\w+|above|higher|upgrad\w+)\b",
@@ -92,6 +94,7 @@ def _claims(sym: str, limit: int = 30) -> list[dict]:
         logger.debug("guidance claims %s: %s", sym, e)
     return [c for c in out
             if re.search(r"(?i)guid|expect|outlook|forecast|anticipat"
+                         r"|target|plan to|capacity|commit"
                          r"|fy\s*'?\d|next (quarter|year|fiscal)",
                          str(c.get("text") or ""))][:limit]
 
