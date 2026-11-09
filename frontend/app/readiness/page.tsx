@@ -8,6 +8,7 @@ const CAP: Record<string, number> = { ready: 999, close: 40, no: 15 }
 
 export default async function ReadinessPage() {
   const d = await api.readiness()
+  const states = await api.readinessStates().catch(() => null)
   const sections: Record<string, Record<string, ReadinessRow[]>> = {}
   for (const [lane, rows] of Object.entries(d?.sections ?? {})) {
     const groups: Record<string, ReadinessRow[]> = {
@@ -37,6 +38,55 @@ export default async function ReadinessPage() {
         check passes, close is one away, no is gated. rank orders inside
         each state.
       </p>
+
+      {/* all book symbols bucketed by state — no truncation; the
+          technical decision view (which names are ready vs close) */}
+      {states?.use_cases && (
+        <section className="pt-4">
+          {Object.entries(states.use_cases).map(([uc, buckets]) => {
+            const total = Object.values(buckets).reduce(
+              (n, b) => n + b.length, 0)
+            if (!total) return null
+            return (
+              <details key={uc} className="pb-3" open={uc === 'swing'}>
+                <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-muted">
+                  {uc.replace(/_/g, ' ')} —{' '}
+                  <span className="text-aggressive">{buckets.ready?.length ?? 0} ready</span> ·{' '}
+                  <span className="text-caution">{buckets.close?.length ?? 0} close</span> ·{' '}
+                  <span className="text-faint">{buckets.no?.length ?? 0} no</span>
+                </summary>
+                {(['ready', 'close', 'no'] as const).map((st) => {
+                  const items = buckets[st] ?? []
+                  if (!items.length) return null
+                  return (
+                    <div key={st} className="pt-2">
+                      <div className={`text-[10px] uppercase tracking-wider ${
+                        st === 'ready' ? 'text-aggressive' :
+                        st === 'close' ? 'text-caution' : 'text-faint'}`}>
+                        {st} ({items.length})
+                      </div>
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {items.map((it) => (
+                          <a key={it.symbol}
+                             href={`/stock?symbol=${it.symbol}`}
+                             className={`rounded border px-1.5 py-px font-mono text-[11px] ${
+                               st === 'ready'
+                                 ? 'border-aggressive/40 text-aggressive'
+                                 : st === 'close'
+                                   ? 'border-caution/40 text-caution'
+                                   : 'border-hairline text-faint'}`}>
+                            {it.symbol}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </details>
+            )
+          })}
+        </section>
+      )}
 
       {(d?.skipped?.length ?? 0) > 0 && (
         <div className="mt-3 rounded-lg border border-caution/40 bg-caution/5 px-3 py-2 text-[11px] text-caution">

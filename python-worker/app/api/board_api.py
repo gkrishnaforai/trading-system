@@ -3646,6 +3646,32 @@ async def tp_delete(pid: int):
     return {"ok": bool(n)}
 
 
+@router.get("/readiness-states")
+async def readiness_states():
+    """Every book symbol bucketed by use-case state — the 'which
+    stocks are ready vs close vs no' view for technical decisions."""
+    from app.database import db
+    rows = db.execute_query("""
+        SELECT DISTINCT ON (symbol, use_case)
+               symbol, use_case, state, score, of, rank, as_of
+        FROM readiness_evals
+        WHERE as_of >= CURRENT_DATE - 3
+        ORDER BY symbol, use_case, as_of DESC, created_at DESC""")
+    by_uc: dict = {}
+    for r in rows:
+        uc = r["use_case"]
+        by_uc.setdefault(uc, {"ready": [], "close": [], "no": []})
+        bucket = r["state"] if r["state"] in ("ready", "close") else "no"
+        by_uc[uc][bucket].append(
+            {"symbol": r["symbol"], "score": r["score"],
+             "of": r.get("of"), "rank": r.get("rank")})
+    for uc in by_uc.values():
+        for b in uc.values():
+            b.sort(key=lambda x: -(x["score"] or 0))
+    return {"as_of": str(rows[0]["as_of"]) if rows else None,
+            "use_cases": by_uc}
+
+
 @router.get("/transitions")
 async def transitions():
     """The 'just moved' feed — latest eval vs prior eval on both

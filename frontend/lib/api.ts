@@ -664,6 +664,7 @@ export const api = {
   intraday: () => get<IntradayTape>('/intraday'),
   fragility: () => get<Fragility>('/fragility'),
   resilience: (symbol: string) => get<ResilienceCard>(`/resilience/${symbol}`),
+  readinessStates: () => get<{ as_of: string | null; use_cases: Record<string, Record<string, { symbol: string; score: number | null; rank: number | null }[]>> }>('/readiness-states'),
   guidanceAll: () => get<{ items: { symbol: string; outlook: number | null; quality: number | null }[] }>('/guidance'),
   guidance: (symbol: string) => get<GuidanceCard>(`/guidance/${symbol}`),
   resilienceAll: () => get<{ items: ResilienceRow[] }>('/resilience'),
