@@ -934,15 +934,24 @@ async def _j_earnings_today() -> dict:
     from app.database import db
     from app.signals import earnings_release
     from app.signals import guidance_intel
+    # skip symbols whose earnings filing already landed in
+    # sec_filings_processed — the 45-min cadence is for WAITING
+    # on filings, not re-touching done ones
     syms = [r["symbol"] for r in db.execute_query(
         "SELECT DISTINCT ew.symbol FROM earnings_watch ew"
         " JOIN book_symbols b ON b.symbol = ew.symbol"
         " WHERE ew.earnings_date >= CURRENT_DATE - 1"
-        "   AND ew.earnings_date <= CURRENT_DATE + 1")]
+        "   AND ew.earnings_date <= CURRENT_DATE + 1"
+        "   AND NOT EXISTS (SELECT 1 FROM sec_filings_processed p"
+        "                   WHERE p.symbol = ew.symbol"
+        "                     AND p.filed >= ew.earnings_date - 1)")]
     if not syms:
         return {"symbols_reporting": 0}
     rel = await asyncio.to_thread(earnings_release.run, syms, 3)
-    gui = await asyncio.to_thread(guidance_intel.run, syms)
+    # only re-score guidance when something actually extracted —
+    # an all-done cycle costs nothing downstream
+    gui = (await asyncio.to_thread(guidance_intel.run, syms)
+           if rel.get("analyzed") else {"skipped": "no new filings"})
     return {"symbols_reporting": len(syms), "extract": rel,
             "guidance": gui}
 
