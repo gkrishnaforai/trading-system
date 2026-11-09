@@ -926,6 +926,27 @@ async def _j_resilience() -> dict:
     return await asyncio.to_thread(run, syms)
 
 
+async def _j_earnings_today() -> dict:
+    """Intraday extraction — book symbols reporting TODAY (plus
+    yesterday's BMO prints still landing). Fetches the fresh 8-K,
+    extracts claims, then re-scores guidance immediately so the
+    badge appears within the hour, not overnight."""
+    from app.database import db
+    from app.signals import earnings_release
+    from app.signals import guidance_intel
+    syms = [r["symbol"] for r in db.execute_query(
+        "SELECT DISTINCT ew.symbol FROM earnings_watch ew"
+        " JOIN book_symbols b ON b.symbol = ew.symbol"
+        " WHERE ew.earnings_date >= CURRENT_DATE - 1"
+        "   AND ew.earnings_date <= CURRENT_DATE + 1")]
+    if not syms:
+        return {"symbols_reporting": 0}
+    rel = await asyncio.to_thread(earnings_release.run, syms, 3)
+    gui = await asyncio.to_thread(guidance_intel.run, syms)
+    return {"symbols_reporting": len(syms), "extract": rel,
+            "guidance": gui}
+
+
 async def _j_guidance() -> dict:
     """Nightly guidance intel — normalize doc_analyses guidance
     claims, score outlook + quality. Book symbols only."""
@@ -1103,6 +1124,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "earnings-quality": ("Forensic earnings-quality screen",
                       _j_earnings_quality),
     "guidance":     ("Guidance intelligence", _j_guidance),
+    "earnings-today": ("Same-day earnings extraction",
+                       _j_earnings_today),
     "best-picks":  ("Best picks — 3-lane selection", _j_best_picks),
     "lev-etf-swings": ("3x semis swing detector", _j_lev_swings),
     "signal-evals": ("Signal contract evals", _j_signal_evals),
@@ -1112,7 +1135,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
 # (evals already tail-refresh momentum+flywheel — harmless overlap)
 _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "fred-macro", "fed-path", "morning-regime",
-              "fragility", "flow", "earnings-quality", "guidance",
+              "fragility", "flow", "earnings-quality", "earnings-today",
+              "guidance",
               "resilience",
               "resilience-validate",
               "econ-cal-verify",
