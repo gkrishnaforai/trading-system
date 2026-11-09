@@ -2143,6 +2143,22 @@ async def symbol_technicals(sym: str):
         d = mr.detail(tech)
         if dip:
             d.update(dip)
+        try:                       # second-leg risk — blocks adds
+            import json as _j
+            from app.database import db as _db
+            fr = _db.execute_query(
+                "SELECT signals FROM fragility_daily"
+                " ORDER BY as_of DESC LIMIT 1")
+            if fr:
+                sig = fr[0].get("signals")
+                sig = _j.loads(sig) if isinstance(sig, str)                     else (sig or {})
+                sl = sig.get("second_leg_down") or {}
+                if sl.get("risk"):
+                    d["second_leg"] = {"risk": sl["risk"],
+                                       "block": sl.get(
+                                           "block_additional_tranches")}
+        except Exception:
+            pass
         try:                                # swing-point structure
             from app.signals.swing_lows import higher_low_setup
             closes = [x.close for x in b]

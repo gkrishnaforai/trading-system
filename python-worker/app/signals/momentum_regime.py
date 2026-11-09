@@ -215,6 +215,30 @@ def dip_health(tech: dict, hist_prev: Optional[float],
         h["vol_dip_trend"] = ("accelerating" if delta > 0.15 else
                               "declining" if delta < -0.15
                               else "steady")
+    # RSI bullish divergence — price prints a new low over ~10d
+    # while RSI makes a higher low: the classic stabilization tell
+    if len(closes) >= 12:
+        lo_idx = min(range(len(closes) - 10, len(closes)),
+                     key=lambda i: lows[i - (len(closes) - 10)]
+                     if i - (len(closes) - 10) < len(lows)
+                     else 1e9)
+        p_low = closes[lo_idx]
+        prior = closes[max(0, lo_idx - 8):lo_idx]
+        p_low_prev = min(prior) if prior else p_low
+        r_at_low = _rsi_simple(closes[:lo_idx + 1])
+        r_at_prev = _rsi_simple(closes[:max(1, len(closes)
+                                           - 10)]) if prior else None
+        h["rsi_div"] = (p_low < p_low_prev
+                        and r_at_low is not None
+                        and r_at_prev is not None
+                        and r_at_low > r_at_prev)
+    else:
+        h["rsi_div"] = None
+    # macd healing — histogram rising while still negative:
+    # bearish momentum fading before price confirms
+    h["macd_healing"] = (hist is not None and h["hist_dir"] is not None
+                         and h["hist_dir"] > 0 and hist < 0)
+
     pts = sum(1 for k, cond in (
         ("hist_dir", (h["hist_dir"] or 0) > 0),
         ("low_streak", h["low_streak"] > 0),
@@ -225,6 +249,25 @@ def dip_health(tech: dict, hist_prev: Optional[float],
     h["dip_health"] = pts
     h["dip_phase"] = ("turning_up" if pts >= 3 else
                       "stabilizing" if pts == 2 else "still_falling")
+
+    # stabilization_score 0-100 — the composite the spec asks for:
+    # structure + volume + momentum + divergence, graded not binary
+    stab = 0.0
+    stab += 25 if h["low_streak"] >= 2 else (12 if h["low_streak"] == 1
+                                             else 0)
+    vol_decl = h.get("vol_dip_trend") == "declining"
+    stab += 20 if (h["vol_dip"] is not None and h["vol_dip"] < 0.8
+                   and vol_decl) else (10 if h["vol_dip"] is not None
+                                       and h["vol_dip"] < 1.0 else 0)
+    stab += 15 if h.get("macd_healing") else (8 if (h["hist_dir"] or 0)
+                                             > 0 else 0)
+    stab += 20 if h.get("rsi_div") else (8 if (h["rsi_dir"] or 0)
+                                         > 0 else 0)
+    stab += 20 if (h["vs50_drift"] or 0) > 0 else 0
+    h["stabilization_score"] = round(stab)
+    h["stab_cls"] = ("strong" if stab >= 75 else
+                     "confirming" if stab >= 60 else
+                     "possible" if stab >= 40 else "deteriorating")
 
     # multi-timeframe stochastic — daily k/d for timing, weekly for
     # the medium-term turn. 'turn_conf' is the confluence flag: a
