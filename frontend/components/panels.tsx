@@ -306,26 +306,26 @@ export function TapePanel({ d, spot }: { d: Record<string, unknown>; spot?: numb
           <Chip v={`turn ${d.turn_conf}`} />
         )}
         {swing.phase != null && <Chip v={`swing ${swing.phase}`} />}
-        {d.stabilization_score != null && (
-          <Chip v={`stab ${d.stabilization_score}`} />
+        {(d as any).stabilization_score != null && (
+          <Chip v={`stab ${(d as any).stabilization_score}`} />
         )}
-        {d.second_leg?.risk && (
-          <Chip v={`2nd-leg ${String(d.second_leg.risk).toLowerCase()}`} />
+        {(d as any).second_leg?.risk && (
+          <Chip v={`2nd-leg ${String((d as any).second_leg.risk).toLowerCase()}`} />
         )}
       </div>
 
       {/* pullback-entry checklist — the confirm layer's per-indicator
           read; pass marks earned, not assumed */}
-      {(d.dip_phase || d.stabilization_score != null) && (
+      {(d.dip_phase || (d as any).stabilization_score != null) && (
         <div className="pt-2 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10.5px]">
           {([
-            ['RSI≥40+', d.rsi_reclaim],
-            ['RSI div', d.rsi_div],
-            ['MACD heal', d.macd_healing],
-            ['8ema', d.ema8_reclaim],
-            ['20ema', d.ema20_reclaim],
-            ['vol ↓', d.vol_dip != null && d.vol_dip < 1],
-            ['lows hold', d.low_streak != null && d.low_streak > 0],
+            ['RSI≥40+', (d as any).rsi_reclaim],
+            ['RSI div', (d as any).rsi_div],
+            ['MACD heal', (d as any).macd_healing],
+            ['8ema', (d as any).ema8_reclaim],
+            ['20ema', (d as any).ema20_reclaim],
+            ['vol ↓', (d as any).vol_dip != null && (d as any).vol_dip < 1],
+            ['lows hold', (d as any).low_streak != null && (d as any).low_streak > 0],
           ] as [string, boolean | null | undefined][]).map(([l, ok]) => (
             <span key={l} className={ok ? 'text-aggressive' : 'text-faint'}>
               {ok ? '✓' : '·'} {l}
