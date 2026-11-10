@@ -20,16 +20,59 @@ function Delta({ d }: { d?: number | null }) {
   )
 }
 
+// today-filters — every predicate reads the 15-min live overlay, never
+// the weekly journal, so a name lands in the right bucket intraday.
+// Rows without live ticks fail every filter (missing ≠ passing).
+const FILTERS: { k: string; label: string;
+                 test: (r: ResilienceRow) => boolean }[] = [
+  { k: 'green', label: '▲ today',
+    test: r => (r.tape_live?.rel1 ?? 0) > 0 },
+  { k: 'red', label: '▼ today',
+    test: r => (r.tape_live?.rel1 ?? 0) < 0 },
+  { k: 'healing', label: 'healing',
+    // live tape ≥5 pts above the last journal — the snapshot caught the
+    // wound, the tape has been out-performing since
+    test: r => r.tape_live?.tape_live != null
+            && r.scores?.tape_resilience != null
+            && r.tape_live.tape_live
+               >= (r.scores.tape_resilience ?? 0) + 5 },
+  { k: 'turning', label: 'turning',
+    // the live dip read says the selloff is resolving — the watch
+    // bucket for swing setups
+    test: r => ['turning_up', 'confirmed']
+      .includes(r.swing_live?.dip_phase_live ?? '') },
+]
+
 export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
   const [sortKey, setSortKey] = useState<Key>('ai_opportunity')
   const [q, setQ] = useState('')
+  const [active, setActive] = useState<Set<string>>(new Set())
+  const toggle = (k: string) =>
+    setActive(prev => {
+      const n = new Set(prev)
+      if (n.has(k)) n.delete(k); else n.add(k)
+      return n
+    })
+  const counts = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const f of FILTERS)
+      m[f.k] = rows.filter(f.test).length
+    return m
+  }, [rows])
   const sorted = useMemo(() => {
-    const f = rows.filter(r => !q
-      || r.symbol.toLowerCase().includes(q.toLowerCase())
-      || (r.business_model ?? '').toLowerCase().includes(q.toLowerCase()))
+    const f = rows.filter(r => {
+      if (q && !r.symbol.toLowerCase().includes(q.toLowerCase())
+          && !(r.business_model ?? '').toLowerCase()
+              .includes(q.toLowerCase())) return false
+      for (const k of active) {
+        const flt = FILTERS.find(x => x.k === k)
+        if (flt && !flt.test(r)) return false
+      }
+      return true
+    })
     return [...f].sort((a, b) =>
       (b.scores?.[sortKey] ?? -1) - (a.scores?.[sortKey] ?? -1))
-  }, [rows, sortKey, q])
+  }, [rows, sortKey, q, active])
   return (
     <div className="mt-5">
       <div className="flex items-center justify-between">
@@ -56,6 +99,38 @@ export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
           placeholder="search symbol / model"
           className="rounded border border-line/60 bg-transparent px-2 py-0.5 text-[11px] text-ink placeholder:text-faint focus:outline-none"
         />
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {FILTERS.map(f => {
+          const on = active.has(f.k)
+          return (
+            <button
+              key={f.k}
+              onClick={() => toggle(f.k)}
+              className={`rounded border px-1.5 py-px font-mono text-[10px] transition-colors ${
+                on
+                  ? 'border-accent/60 bg-accent/10 text-accent'
+                  : 'border-line/60 text-muted hover:text-ink'
+              }`}
+              title={
+                f.k === 'green' ? 'outperforming SPY today (live rel-1d > 0)'
+                : f.k === 'red' ? 'underperforming SPY today (live rel-1d < 0)'
+                : f.k === 'healing' ? 'live tape ≥5 pts above last journal — recovering names'
+                : 'live dip phase turning_up / confirmed — selloff resolving'
+              }
+            >
+              {f.label} {counts[f.k] ?? 0}
+            </button>
+          )
+        })}
+        {active.size > 0 && (
+          <button
+            onClick={() => setActive(new Set())}
+            className="px-1 text-[10px] text-faint hover:text-ink"
+          >
+            clear
+          </button>
+        )}
       </div>
       <div className="mt-2 max-h-[480px] overflow-y-auto overflow-x-auto">
         <table className="w-full text-[12px]">
@@ -94,7 +169,7 @@ export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
                   <td className="py-1.5 pr-3">
                     {sc.tape_resilience ?? '—'}<Delta d={r.delta?.tape_resilience} />
                     {r.tape_live?.tape_live != null && (
-                      <span className="text-accent" title={`live ${r.tape_live.as_of ?? ''}`}>
+                      <span className="text-accent" title={`live ${r.tape_live.as_of ?? ''} · today ${((r.tape_live.rel1 ?? 0) * 100).toFixed(1)}% vs SPY`}>
                         {' →'}{r.tape_live.tape_live}
                       </span>
                     )}
@@ -114,7 +189,8 @@ export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
         </table>
       </div>
       <div className="mt-1 text-[10px] text-faint">
-        {sorted.length} scored — click a column header to sort
+        {active.size ? `${sorted.length} of ${rows.length}` : sorted.length}
+        {' '}scored — click a column header to sort
       </div>
     </div>
   )

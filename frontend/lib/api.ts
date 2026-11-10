@@ -1232,6 +1232,9 @@ export interface ResilienceRow {
   flow?: { footprint?: string | null; streak?: number | null } | null
   tape_live?: { tape_live?: number; rel1?: number; rel5?: number;
                 rel20?: number; as_of?: string } | null
+  swing_live?: { dip_phase_live?: string; stab_live?: number;
+                 stab_cls_live?: string; dip_health_live?: number;
+                 as_of?: string } | null
   flags?: string[]; needs?: string[]
   business_model?: string | null
   themes?: { theme: string; exposure: string }[]
