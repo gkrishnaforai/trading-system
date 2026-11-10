@@ -239,6 +239,22 @@ def dip_health(tech: dict, hist_prev: Optional[float],
     h["macd_healing"] = (hist is not None and h["hist_dir"] is not None
                          and h["hist_dir"] > 0 and hist < 0)
 
+    # RSI level-reclaim — 'rsi rising' from 28 is weak evidence;
+    # the spec's version is direction AND back above the 40-45 band
+    h["rsi_now"] = round(r_now, 1) if r_now is not None else None
+    h["rsi_reclaim"] = bool(r_now is not None and r_now >= 40
+                            and (h["rsi_dir"] or 0) > 0)
+    # EMA reclaims — 8ema is the fastest tell, 20ema the spec's band
+    if len(closes) >= 20:
+        ema8 = closes[-1]
+        for c in closes[-8:]:
+            ema8 = c * (2 / 9) + ema8 * (1 - 2 / 9)
+        ema20 = closes[-1]
+        for c in closes[-20:]:
+            ema20 = c * (2 / 21) + ema20 * (1 - 2 / 21)
+        h["ema8_reclaim"] = closes[-1] > ema8
+        h["ema20_reclaim"] = closes[-1] > ema20
+
     pts = sum(1 for k, cond in (
         ("hist_dir", (h["hist_dir"] or 0) > 0),
         ("low_streak", h["low_streak"] > 0),
@@ -253,17 +269,20 @@ def dip_health(tech: dict, hist_prev: Optional[float],
     # stabilization_score 0-100 — the composite the spec asks for:
     # structure + volume + momentum + divergence, graded not binary
     stab = 0.0
-    stab += 25 if h["low_streak"] >= 2 else (12 if h["low_streak"] == 1
+    stab += 20 if h["low_streak"] >= 2 else (10 if h["low_streak"] == 1
                                              else 0)
     vol_decl = h.get("vol_dip_trend") == "declining"
-    stab += 20 if (h["vol_dip"] is not None and h["vol_dip"] < 0.8
-                   and vol_decl) else (10 if h["vol_dip"] is not None
+    stab += 15 if (h["vol_dip"] is not None and h["vol_dip"] < 0.8
+                   and vol_decl) else (8 if h["vol_dip"] is not None
                                        and h["vol_dip"] < 1.0 else 0)
-    stab += 15 if h.get("macd_healing") else (8 if (h["hist_dir"] or 0)
+    stab += 10 if h.get("macd_healing") else (5 if (h["hist_dir"] or 0)
                                              > 0 else 0)
-    stab += 20 if h.get("rsi_div") else (8 if (h["rsi_dir"] or 0)
-                                         > 0 else 0)
-    stab += 20 if (h["vs50_drift"] or 0) > 0 else 0
+    stab += (15 if h.get("rsi_div") else
+             10 if h.get("rsi_reclaim") else
+             5 if (h["rsi_dir"] or 0) > 0 else 0)
+    stab += 10 if h.get("ema8_reclaim") else 0
+    stab += 15 if h.get("ema20_reclaim") else 0
+    stab += 15 if (h["vs50_drift"] or 0) > 0 else 0
     h["stabilization_score"] = round(stab)
     h["stab_cls"] = ("strong" if stab >= 75 else
                      "confirming" if stab >= 60 else
