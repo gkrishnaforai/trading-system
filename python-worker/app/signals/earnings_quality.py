@@ -191,18 +191,22 @@ def compute(sym: str) -> dict[str, Any]:
         flags.append(f"accruals_heavy:{accr:.0%}")
     if conv is not None and conv < 0.5:
         flags.append(f"fcf_divergence:{conv:.1f}x")
-    # 'improving' needs either real CFO growth or conversion rising
-    # on flat-or-better CFO — never a negative number labeled up
-    if (cfo_g is not None and cfo_g > 0.25) or             (conv_improving and (cfo_g is None or cfo_g >= 0)):
+    # direction flags — growth and conversion can disagree; when
+    # they do it's a mix note, never two opposite labels
+    up = (cfo_g is not None and cfo_g > 0.25) or          (conv_improving and (cfo_g is None or cfo_g >= 0))
+    down = conv_deteriorating or            (cfo_g is not None and cfo_g < -0.25 and (cfo or 0) > 0)
+    if up and down:
+        flags.append(f"cash_mix_note:cfo{cfo_g:+.0%}_conv_down"
+                     if cfo_g is not None else "cash_mix_note")
+    elif up:
         flags.append(f"cash_gen_improving:{cfo_g:+.0%}"
                      if cfo_g is not None else "cash_gen_improving")
-    elif conv_improving and cfo_g is not None and cfo_g < 0:
-        flags.append(f"cash_mix_note:cfo{cfo_g:+.0%}_conv_up")
-    if conv_deteriorating or (cfo_g is not None and cfo_g < -0.25
-                              and (cfo or 0) > 0):
+    elif down:
         flags.append(f"cash_gen_deteriorating:{cfo_g:+.0%}"
                      if cfo_g is not None else
                      "cash_gen_deteriorating")
+    elif conv_improving and cfo_g is not None and cfo_g < 0:
+        flags.append(f"cash_mix_note:cfo{cfo_g:+.0%}_conv_up")
     if gw_sh is not None and gw_sh > 0.40:
         flags.append(f"goodwill_intensity:{gw_sh:.0%}")
     if not live:
