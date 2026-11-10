@@ -29,6 +29,18 @@ function fmtDur(s?: number | null) {
   return `${(s / 60).toFixed(1)}m`
 }
 
+// completion clock time = ran_at + duration — what the user asked
+// to SEE, not just "3h ago"
+function completedAt(j: { last_run?: string | null; duration_s?: number | null }) {
+  if (!j.last_run) return null
+  const t = new Date(j.last_run)
+  if (j.duration_s) t.setSeconds(t.getSeconds() + j.duration_s)
+  return t.toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: 'numeric',
+    minute: '2-digit', timeZone: 'America/New_York',
+  }) + ' ET'
+}
+
 function JobRowView({ j }: { j: JobRow }) {
   const err = j.last_error
   return (
@@ -70,8 +82,13 @@ function JobRowView({ j }: { j: JobRow }) {
           </div>
         ) : (
           <div className={`pt-1 font-mono text-[11px] ${err ? 'text-defensive' : 'text-muted'}`}>
-            {ago(j.last_run)}
+            {err ? '✗' : j.last_run ? '✓' : ''} {ago(j.last_run)}
             {j.duration_s != null && ` · ${fmtDur(j.duration_s)}`}
+            {completedAt(j) && (
+              <div className="pt-0.5 text-[10px] text-faint">
+                done {completedAt(j)}
+              </div>
+            )}
           </div>
         )}
         {err && (
