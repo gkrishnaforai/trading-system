@@ -751,6 +751,14 @@ def run(symbols: list[str], validate: bool = False) -> dict[str, Any]:
             'as_of': str(date.today())}
 
 
+def _tape_live(sym: str) -> dict | None:
+    try:
+        from app.signals.live_overlay import tape_live
+        return tape_live(sym)
+    except Exception:
+        return None
+
+
 def read_all() -> list[dict[str, Any]]:
     """Latest card per symbol — the screener/readiness read."""
     from app.database import db
