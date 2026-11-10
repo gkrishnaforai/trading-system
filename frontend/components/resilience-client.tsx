@@ -35,6 +35,20 @@ export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
       <div className="flex items-center justify-between">
         <div className="text-[11px] uppercase tracking-[0.18em] text-muted">
           Company scores — health · ai · tape
+          {(() => {
+            const live = rows
+              .map((r) => r.tape_live?.as_of)
+              .filter(Boolean)
+              .sort()
+              .pop()
+            return live ? (
+              <span className="ml-2 font-mono text-[10px] normal-case tracking-normal text-accent">
+                · live bars {new Date(String(live)).toLocaleTimeString('en-US',
+                    { hour: 'numeric', minute: '2-digit',
+                      timeZone: 'America/New_York' })} ET
+              </span>
+            ) : null
+          })()}
         </div>
         <input
           value={q}
@@ -79,6 +93,11 @@ export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
                   </td>
                   <td className="py-1.5 pr-3">
                     {sc.tape_resilience ?? '—'}<Delta d={r.delta?.tape_resilience} />
+                    {r.tape_live?.tape_live != null && (
+                      <span className="text-accent" title={`live ${r.tape_live.as_of ?? ''}`}>
+                        {' →'}{r.tape_live.tape_live}
+                      </span>
+                    )}
                   </td>
                   <td className="py-1.5 pr-3 text-muted">{sc.deployment_risk ?? '—'}</td>
                   <td className="py-1.5 pr-3">{r.flow?.footprint === 'accumulating'
