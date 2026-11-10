@@ -250,6 +250,13 @@ def _facts(sym: str) -> dict[str, Any]:
         out['flow'] = {}
     try:
         rows = db.execute_query(
+            "SELECT outlook, quality FROM symbol_guidance"
+            " WHERE symbol=:s ORDER BY as_of DESC LIMIT 1", {"s": sym})
+        out['guide'] = rows[0] if rows else {}
+    except Exception:
+        out['guide'] = {}
+    try:
+        rows = db.execute_query(
             "SELECT payload FROM symbol_earnings_quality"
             " WHERE symbol=:s ORDER BY as_of DESC LIMIT 1", {"s": sym})
         p = rows[0].get("payload") if rows else None
@@ -424,9 +431,10 @@ def compute(sym: str) -> dict[str, Any]:
                         (_map(st, -30, 30), .4, 'm')])
     eq_row = d.get('eq') or {}
     eq_s = _f(eq_row.get('quality'))
-    eq, eq_cov, eq_m = _comp([(growth, .3, 'm'), (marg, .25, 'm'),
-                              (cash, .2, 'm'), (revs, .25, 'm'),
-                              (eq_s, .15, 'm')])
+    g_out = _f((d.get('guide') or {}).get('outlook'))
+    eq, eq_cov, eq_m = _comp([(growth, .28, 'm'), (marg, .23, 'm'),
+                              (cash, .18, 'm'), (revs, .18, 'm'),
+                              (eq_s, .13, 'm'), (g_out, .10, 'm')])
     health, h_cov, h_m = _comp([(eq, .75, 'm'), (bs, .25, 'm')])
     if h_cov < COVERAGE_FLOOR:
         health = None
@@ -589,6 +597,8 @@ def compute(sym: str) -> dict[str, Any]:
         'checks': {'health': health_chk, 'demand': dem_chk,
                    'structural': struct_chk},
         'flags': flags,
+        'guidance': {'outlook': g_out,
+                     'quality': (d.get('guide') or {}).get('quality')},
         'earnings_quality': {'quality': eq_s,
                              'flags': eq_row.get('flags') or [],
                              'legs': eq_row.get('legs')},
