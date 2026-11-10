@@ -432,7 +432,7 @@ def compute(sym: str) -> dict[str, Any]:
         health = None
 
     def rel(n):
-        bars, spy = d['bars'], _SPY
+        bars, spy = d['bars'], _load_spy()
         if len(bars) < n + 1 or len(spy) < n + 1:
             return None
         a = bars[-1] / bars[-1 - n] - 1 if bars[-1 - n] else None
