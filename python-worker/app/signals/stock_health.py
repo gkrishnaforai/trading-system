@@ -496,6 +496,22 @@ def _readiness(mom: Optional[str], det: dict, fund: Optional[str],
     out = {uc: pulse_engine.eval_use_case(_uc_row, uc)
            for uc in ("swing", "invest", "leap_call")}
 
+    # event-window gate — institutional rule: don't OPEN a swing
+    # inside ~2d of the print. 'ready' downgrades to 'close' — the
+    # setup is real, the timing isn't (survives as a flag not a
+    # silent vanish).
+    edays = _uc_row.get("earn_days")
+    if edays is not None and 0 <= edays <= 2:
+        sw = out.get("swing")
+        if isinstance(sw, dict):
+            sw["earn_days"] = edays
+            sw["event_window"] = True
+            if sw.get("state") == "ready":
+                sw["state"] = "close"
+                sw["event_note"] = (
+                    f"earnings in {edays}d — no new swings inside "
+                    "the event window")
+
     # ---- 📕 LEAP puts — PUT_ENTRY_SCORE drives the verdict ----------
     # extension identifies, exhaustion + support failure earn the entry;
     # category A (strong biz, multiple compression) is the only lane

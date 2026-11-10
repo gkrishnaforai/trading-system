@@ -121,3 +121,57 @@ def tape_live(sym: str, spy_live: float | None = None) -> dict | None:
                 "as_of": datetime.now(_ET).isoformat(timespec="seconds")}
     except Exception:
         return None
+
+
+def swing_live(sym: str) -> dict | None:
+    """Intraday swing read — dip_phase recomputed with the live
+    close stitched as a synthetic bar. Overlay only; the daily
+    checklist stays canonical. Flat synthetic bar (o=h=l=c) is a
+    conservative stitch — honest caveat, never fabricated lows."""
+    from app.database import db
+    px = live_px(sym)
+    if not px:
+        return None
+    try:
+        import types as _t
+        from app.signals import momentum_regime as mr
+        rows = db.execute_query(
+            "SELECT open, high, low, close, volume, date"            " FROM daily_bars"
+            " WHERE symbol=:s ORDER BY date DESC LIMIT 70",
+            {"s": sym})
+        if len(rows) < 60:
+            return None
+        # adj_close=None → indicators fall back to close (same
+        # attr shape as OHLCVBar — SimpleNamespace must match)
+        bars = [_t.SimpleNamespace(
+            open=float(r["open"]), high=float(r["high"]),
+            low=float(r["low"]), close=float(r["close"]),
+            adj_close=None, timestamp=r["date"],
+            volume=float(r["volume"] or 0)) for r in reversed(rows)]
+        # today's live bar stitched on — flat range, conservative
+        bars.append(_t.SimpleNamespace(open=px, high=px, low=px,
+                                       close=px, adj_close=None,
+                                       timestamp=date.today(),
+                                       volume=0))
+        closes = [b.close for b in bars]
+        from app.options.leaps import (_technicals,
+                                       _macd_hist_prev)
+        tech = _technicals(bars)
+        h = mr.dip_health(tech, _macd_hist_prev(bars), bars)
+        if not h:
+            return None
+        return {"dip_phase_live": h.get("dip_phase"),
+                "stab_live": h.get("stabilization_score"),
+                "stab_cls_live": h.get("stab_cls"),
+                "dip_health_live": h.get("dip_health"),
+                "as_of": datetime.now(_ET).isoformat(
+                    timespec="seconds")}
+    except Exception:
+        return None
+        return {"dip_phase_live": h.get("dip_phase"),
+                "stab_live": h.get("stabilization_score"),
+                "stab_cls_live": h.get("stab_cls"),
+                "as_of": datetime.now(_ET).isoformat(
+                    timespec="seconds")}
+    except Exception:
+        return None

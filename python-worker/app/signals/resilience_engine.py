@@ -759,6 +759,14 @@ def _tape_live(sym: str) -> dict | None:
         return None
 
 
+def _swing_live(sym: str) -> dict | None:
+    try:
+        from app.signals.live_overlay import swing_live
+        return swing_live(sym)
+    except Exception:
+        return None
+
+
 def read_all() -> list[dict[str, Any]]:
     """Latest card per symbol — the screener/readiness read."""
     from app.database import db
@@ -797,7 +805,8 @@ def read_all() -> list[dict[str, Any]]:
                         'business_model': (p or {}).get('business_model'),
                         'flow': (p or {}).get('flow'),
                         'delta': delta or None,
-                        'tape_live': _tape_live(r['symbol'])})
+                        'tape_live': _tape_live(r['symbol']),
+                        'swing_live': _swing_live(r['symbol'])})
         return out
     except Exception as e:
         logger.debug('resilience read_all: %s', e)
