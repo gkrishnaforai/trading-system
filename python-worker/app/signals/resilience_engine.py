@@ -767,18 +767,37 @@ def read_all() -> list[dict[str, Any]]:
             "SELECT DISTINCT ON (symbol) symbol, as_of, payload,"
             " ai_score, health_score, tape_score"
             " FROM company_resilience_scores ORDER BY symbol, as_of DESC")
+        # prior-snapshot scores for delta columns
+        prev = {r['symbol']: r.get('payload') for r in db.execute_query(
+            "SELECT DISTINCT ON (symbol) symbol, payload"
+            " FROM company_resilience_scores"
+            " WHERE as_of < (SELECT max(as_of)"
+            "                FROM company_resilience_scores)"
+            " ORDER BY symbol, as_of DESC")}
         out = []
         for r in rows:
             p = r.get('payload')
             if isinstance(p, str):
                 p = json.loads(p)
+            sc = (p or {}).get('scores') or {}
+            po = prev.get(r['symbol'])
+            po = json.loads(po) if isinstance(po, str) else (po or {})
+            psc = po.get('scores') or {}
+            delta = {k: sc.get(k) - psc[k] for k in
+                     ('ai_opportunity', 'company_health',
+                      'tape_resilience', 'deployment_risk')
+                     if sc.get(k) is not None
+                     and psc.get(k) is not None}
             out.append({'symbol': r['symbol'], 'as_of': str(r['as_of']),
-                        'scores': (p or {}).get('scores'),
+                        'scores': sc,
                         'flags': (p or {}).get('flags'),
                         'needs': (p or {}).get('needs'),
                         'checks': (p or {}).get('checks'),
                         'themes': (p or {}).get('themes'),
-                        'business_model': (p or {}).get('business_model')})
+                        'business_model': (p or {}).get('business_model'),
+                        'flow': (p or {}).get('flow'),
+                        'delta': delta or None,
+                        'tape_live': _tape_live(r['symbol'])})
         return out
     except Exception as e:
         logger.debug('resilience read_all: %s', e)
