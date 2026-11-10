@@ -205,6 +205,10 @@ def _normalize(row: dict) -> dict:
         # much a `slowing` leg weighs in the action rules
         "decel_cause": row.get("decel_cause"),
         "demand_health": row.get("demand_health"),
+        # cyclical is a business-model label, not a health verdict —
+        # the lean is the leading-legs judgment fundamental_health
+        # computed for exactly this kind of conditional gate
+        "cyclical_lean": row.get("cyclical_lean"),
         "gm_slope": _num(row.get("gm_slope")),
         # balance-sheet vulnerability (axis 2) — flywheel leverage +
         # cash-generation legs; sector-banded in stage 0, exempt where
@@ -590,6 +594,7 @@ def _fmt(why: str, c: dict, extra: dict) -> str:
     def _numf(k, d=0):
         return (f"{c[k]:.{d}f}" if c.get(k) is not None else "—")
     vals = {"tape": c.get("tape") or "—", "fund": c.get("fund") or "—",
+            "cyclical_lean": c.get("cyclical_lean") or "—",
             "rev": c.get("rev") or "—", "fv": _fv(),
             "priced": c.get("priced") or "—",
             "rsi": _numf("rsi"),

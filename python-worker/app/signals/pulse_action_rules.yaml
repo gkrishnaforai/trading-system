@@ -616,8 +616,17 @@ use_cases:
     checks:
       - when: {tape_in: [pullback, uptrend, recovery]}
         line: "trend supports calls — `{tape}` (want pullback/uptrend/recovery, not climax or knife)"
-      - when: {fund_in: fund_good}
-        line: "fundamentals gate — `{fund}` (leaps CALL gate wants accelerating/growing)"
+      - when:
+          any:
+            - {fund_in: fund_good}
+            - all:
+                # a cyclical label is the business model, not a health
+                # verdict — the lean is the leading-legs judgment
+                # fundamental_health computed for this; accelerating
+                # lean = the cycle is turning up
+                - {fund: cyclical}
+                - {cyclical_lean: accelerating}
+        line: "fundamentals gate — `{fund}` lean `{cyclical_lean}` (want accelerating/growing, or an accelerating cyclical)"
       - when: {dip_phase_in: [stabilizing, turning_up, confirmed]}
         line: "wash resolving — dip phase `{dip_phase}` (buy the resolved wash, not mid-air)"
       - when:

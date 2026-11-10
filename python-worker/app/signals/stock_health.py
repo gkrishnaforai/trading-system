@@ -474,7 +474,8 @@ def _readiness(mom: Optional[str], det: dict, fund: Optional[str],
                pe_ctx: Optional[dict] = None,
                gq: Optional[dict] = None,
                priced: Optional[str] = None,
-               earn_days: Optional[int] = None) -> dict[str, Any]:
+               earn_days: Optional[int] = None,
+               cyclical_lean: Optional[str] = None) -> dict[str, Any]:
     """Use-case readiness — swing / invest / LEAP call / LEAP put —
     each a deterministic checklist of stored-data facts mirroring the
     engines' own gates. Every line names the rule and the value."""
@@ -494,7 +495,8 @@ def _readiness(mom: Optional[str], det: dict, fund: Optional[str],
                "gq_score": (gq or {}).get("score"),
                "structural_proof": ((gq or {}).get("components") or {})
                                     .get("structural_proof"),
-               "earn_days": earn_days}
+               "earn_days": earn_days,
+               "cyclical_lean": cyclical_lean}
     out = {uc: pulse_engine.eval_use_case(_uc_row, uc)
            for uc in ("swing", "invest", "leap_call")}
 
@@ -819,7 +821,8 @@ def card(sym: str) -> dict[str, Any]:
                                (st["next_earnings_date"] -
                                 date.today()).days
                                if st.get("next_earnings_date")
-                               else None))
+                               else None),
+                           cyclical_lean=fdet.get("cyclical_lean"))
     tws = _try_tailwinds(s)
     # catalyst badge — a corroborated channel makes a 'close' verdict
     # actionable; never overrides a failed gate, just flags the signal
@@ -1524,7 +1527,8 @@ def board() -> dict[str, Any]:
     stocks = [dict(r) for r in db.execute_query(
         "SELECT s.symbol, s.company_name, s.sector, s.momentum_state,"
         " s.momentum_detail, s.momentum_updated_at,"
-        " s.fundamental_state, s.priced_status, s.market_cap,"
+        " s.fundamental_state, s.fundamental_detail, s.priced_status,"
+        " s.market_cap,"
         " s.revision_grade, s.emerging_growth, s.next_earnings_date,"
         " prev.state AS prev_state"
         " FROM stocks s"
@@ -1593,6 +1597,11 @@ def board() -> dict[str, Any]:
             det = st.get("momentum_detail") or {}
             if isinstance(det, str):
                 det = json.loads(det)
+            fdet = st.get("fundamental_detail") or {}
+            if isinstance(fdet, str):
+                fdet = json.loads(fdet)
+            if not isinstance(fdet, dict):
+                fdet = {}
             fv_v, px_v = fv.get(s), px.get(s)
             fv_up = round((fv_v / px_v - 1) * 100, 1) \
                 if fv_v and px_v else None
@@ -1611,7 +1620,8 @@ def board() -> dict[str, Any]:
                             earn_days=(
                                 (st["next_earnings_date"] - today).days
                                 if st.get("next_earnings_date")
-                                else None))
+                                else None),
+                            cyclical_lean=fdet.get("cyclical_lean"))
             upd = st.get("momentum_updated_at")
             if upd and (latest is None or str(upd) > str(latest)):
                 latest = str(upd)

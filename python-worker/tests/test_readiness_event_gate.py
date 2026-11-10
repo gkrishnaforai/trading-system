@@ -64,3 +64,42 @@ def test_past_earnings_no_gate():
                                  "growing", {}, {}, {}, 10.0,
                                  earn_days=-1)
     assert rd["swing"]["state"] == "ready"
+
+
+def test_leap_call_cyclical_accelerating_qualifies():
+    """A cyclical label is the business model, not a health verdict —
+    when the leading-legs lean is accelerating the LEAP-call fund gate
+    passes (system rule: judge cyclicals by leading legs)."""
+    rd = stock_health._readiness("pullback", _all_pass_det(),
+                                 "cyclical", {}, {}, {}, 10.0,
+                                 cyclical_lean="accelerating")
+    assert rd["leap_call"]["state"] == "ready"
+    fails = [x["line"] for x in rd["leap_call"]["rules"] if not x["ok"]]
+    assert not any("fundamentals gate" in f for f in fails)
+
+
+def test_leap_call_cyclical_downturn_blocked():
+    """cyclical + downturn lean fails the same gate — the exception is
+    the lean, not the label."""
+    rd = stock_health._readiness("pullback", _all_pass_det(),
+                                 "cyclical", {}, {}, {}, 10.0,
+                                 cyclical_lean="downturn")
+    assert rd["leap_call"]["state"] == "close"
+    assert not rd["leap_call"]["rules"][1]["ok"]
+
+
+def test_leap_call_cyclical_no_lean_blocked():
+    """Unknown lean must not pass — missing data fails closed."""
+    rd = stock_health._readiness("pullback", _all_pass_det(),
+                                 "cyclical", {}, {}, {}, 10.0)
+    assert rd["leap_call"]["state"] == "close"
+    assert not rd["leap_call"]["rules"][1]["ok"]
+
+
+def test_invest_gate_stays_strict():
+    """Invest is the fundamental lane — cyclical+accelerating lean does
+    NOT relax its fund gate; structural growers only."""
+    rd = stock_health._readiness("pullback", _all_pass_det(),
+                                 "cyclical", {}, {}, {}, 10.0,
+                                 cyclical_lean="accelerating")
+    assert rd["invest"]["rules"][0]["ok"] is False
