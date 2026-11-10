@@ -41,14 +41,16 @@ def refresh(symbols: list[str]) -> dict[str, Any]:
     if closes is None:
         return {"updated": 0}
     n = 0
-    for i, sym in enumerate(symbols):
+    for sym in symbols:
         try:
-            px = closes.iloc[i] if len(symbols) > 1 else closes
+            # symbol-keyed lookup — positional iloc[i] MISALIGNS when
+            # a symbol fails to download (columns shift, SPY got $12)
+            px = (closes[sym] if hasattr(closes, 'get') else closes)
             px = float(px)
             if px != px or px <= 0:
                 continue
-            v = float(vols.iloc[i]) if vols is not None \
-                and len(symbols) > 1 else 0
+            v = float(vols[sym]) if vols is not None \
+                and hasattr(vols, 'get') and sym in vols else 0
             db.execute_update(
                 "INSERT INTO symbol_live_ticks"
                 " (symbol, as_of, last_px, volume)"
