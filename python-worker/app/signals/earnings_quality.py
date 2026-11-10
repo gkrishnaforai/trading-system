@@ -104,8 +104,10 @@ def compute(sym: str) -> dict[str, Any]:
         "Revenues", "SalesRevenueNet")))
     ni, _, _ = _last2(_annual(gaap, (
         "NetIncomeLoss", "ProfitLoss")))
-    cfo, _, _ = _last2(_annual(gaap, (
+    cfo, cfo_p, _ = _last2(_annual(gaap, (
         "NetCashProvidedByUsedInOperatingActivities",)))
+    ni_p = (_last2(_annual(gaap, ("NetIncomeLoss", "ProfitLoss")))
+            [1])
     capex, _, _ = _last2(_annual(gaap, (
         "PaymentsToAcquirePropertyPlantAndEquipment",
         "PaymentsToAcquireProductiveAssets")))
@@ -139,6 +141,16 @@ def compute(sym: str) -> dict[str, Any]:
     isr = (inv_g - rev_g) if (inv_g is not None
                              and rev_g is not None) else None
     conv = (cfo / ni) if (ni and ni > 0 and cfo is not None) else None
+    # cash-generation TRAJECTORY — the level checks above miss
+    # direction: a name recovering cash (neg→improving) deserves
+    # credit; a name bleeding (pos→deteriorating) deserves a flag
+    cfo_g = _growth(cfo, cfo_p)
+    conv_p = (cfo_p / ni_p) if (ni_p and ni_p > 0
+                               and cfo_p is not None) else None
+    conv_improving = (conv is not None and conv_p is not None
+                      and conv > conv_p + 0.05)
+    conv_deteriorating = (conv is not None and conv_p is not None
+                          and conv < conv_p - 0.05)
     gw_sh = (gw / assets) if (gw is not None and assets) else None
 
     # legs -> 0-100, higher = cleaner earnings
@@ -152,11 +164,19 @@ def compute(sym: str) -> dict[str, Any]:
         else None,
         "def_rev_dir": _map(drv_g, -0.20, 0.30) if drv_g is not None
         else None,
+        "cash_trend": ((_map(cfo_g, -0.30, 0.40) or 0)
+                       + (15 if conv_improving else
+                          -15 if conv_deteriorating else 0))
+                      if cfo_g is not None else None,
     }
+    if legs["cash_trend"] is not None:
+        legs["cash_trend"] = max(0.0, min(100.0,
+                                        legs["cash_trend"]))
     live = [(s, w) for (s, w) in
-            [(legs["accruals_gap"], .25), (legs["recv_vs_rev"], .20),
-             (legs["inv_vs_rev"], .15), (legs["fcf_conversion"], .20),
-             (legs["gw_intensity"], .10), (legs["def_rev_dir"], .10)]
+            [(legs["accruals_gap"], .20), (legs["recv_vs_rev"], .20),
+             (legs["inv_vs_rev"], .10), (legs["fcf_conversion"], .15),
+             (legs["gw_intensity"], .10), (legs["def_rev_dir"], .10),
+             (legs["cash_trend"], .15)]
             if s is not None]
     quality = (round(sum(s * w for s, w in live)
                      / sum(w for _, w in live))
@@ -171,6 +191,18 @@ def compute(sym: str) -> dict[str, Any]:
         flags.append(f"accruals_heavy:{accr:.0%}")
     if conv is not None and conv < 0.5:
         flags.append(f"fcf_divergence:{conv:.1f}x")
+    # 'improving' needs either real CFO growth or conversion rising
+    # on flat-or-better CFO — never a negative number labeled up
+    if (cfo_g is not None and cfo_g > 0.25) or             (conv_improving and (cfo_g is None or cfo_g >= 0)):
+        flags.append(f"cash_gen_improving:{cfo_g:+.0%}"
+                     if cfo_g is not None else "cash_gen_improving")
+    elif conv_improving and cfo_g is not None and cfo_g < 0:
+        flags.append(f"cash_mix_note:cfo{cfo_g:+.0%}_conv_up")
+    if conv_deteriorating or (cfo_g is not None and cfo_g < -0.25
+                              and (cfo or 0) > 0):
+        flags.append(f"cash_gen_deteriorating:{cfo_g:+.0%}"
+                     if cfo_g is not None else
+                     "cash_gen_deteriorating")
     if gw_sh is not None and gw_sh > 0.40:
         flags.append(f"goodwill_intensity:{gw_sh:.0%}")
     if not live:
@@ -181,6 +213,7 @@ def compute(sym: str) -> dict[str, Any]:
                      for k, v in legs.items()},
             "facts": {"rev_g": rev_g, "recv_g": recv_g, "inv_g": inv_g,
                       "accruals_ta": accr, "cfo_ni": conv,
+                      "cfo_g": cfo_g, "conv_prev": conv_p,
                       "gw_assets": gw_sh, "def_rev_g": drv_g,
                       "fy_end": rev_end}}
 
