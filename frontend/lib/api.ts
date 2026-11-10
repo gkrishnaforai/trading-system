@@ -834,6 +834,9 @@ export type ReadinessRow = {
   confirm_level?: number | null
   avwap?: number | null
   prior_low?: number | null
+  dip_phase?: string | null
+  stab?: number | null
+  vol_dip?: number | null
   pe_band?: string | null
   pe_cat?: string | null
   stage_txt?: string | null

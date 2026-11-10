@@ -10,17 +10,39 @@ export default async function ReadinessPage() {
   const d = await api.readiness()
   const states = await api.readinessStates().catch(() => null)
   const sections: Record<string, Record<string, ReadinessRow[]>> = {}
+  // live buckets from the just-computed sections — the checklist ran
+  // on this request against the freshest engine detail, so chips move
+  // the same day momentum_detail refreshes. The journaled
+  // readiness-states view stays as the fallback only.
+  const liveCases: Record<
+    string,
+    Record<string, { symbol: string; score: number | null;
+                    rank: number | null }[]>
+  > = {}
   for (const [lane, rows] of Object.entries(d?.sections ?? {})) {
     const groups: Record<string, ReadinessRow[]> = {
       ready: [], close: [], no: [],
     }
-    for (const r of rows) groups[r.state ?? 'no']?.push(r)
+    const liveGroups: Record<string, { symbol: string;
+        score: number | null; rank: number | null }[]> = {
+      ready: [], close: [], no: [],
+    }
+    for (const r of rows) {
+      groups[r.state ?? 'no']?.push(r)
+      liveGroups[r.state ?? 'no']?.push(
+        { symbol: r.symbol, score: r.score ?? null,
+          rank: r.rank ?? null })
+    }
+    liveCases[lane] = liveGroups
     sections[lane] = {
       ready: groups.ready.slice(0, CAP.ready),
       close: groups.close.slice(0, CAP.close),
       no: groups.no.slice(0, CAP.no),
     }
   }
+  const useCases = Object.keys(liveCases).length
+    ? liveCases
+    : states?.use_cases
   return (
     <main className="mx-auto max-w-3xl px-5 py-6">
       <div className="flex items-baseline justify-between">
@@ -40,10 +62,12 @@ export default async function ReadinessPage() {
       </p>
 
       {/* all book symbols bucketed by state — no truncation; the
-          technical decision view (which names are ready vs close) */}
-      {states?.use_cases && (
+          technical decision view (which names are ready vs close).
+          Buckets come from this request's live checklist eval, so a
+          same-day heal or break shows now, not tomorrow */}
+      {useCases && (
         <section className="pt-4">
-          {Object.entries(states.use_cases).map(([uc, buckets]) => {
+          {Object.entries(useCases).map(([uc, buckets]) => {
             const total = Object.values(buckets).reduce(
               (n, b) => n + b.length, 0)
             if (!total) return null

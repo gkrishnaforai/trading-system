@@ -66,6 +66,20 @@ function Row({ r, lane }: { r: ReadinessRow; lane: string }) {
           {lane === 'swing' && r.swing_phase && (
             <span>{String(r.swing_phase)}</span>
           )}
+          {lane === 'swing' && r.dip_phase && (
+            <span
+              title={`dip phase — stab ${r.stab ?? '—'}/100, down-day vol ${r.vol_dip ?? '—'}x`}
+              className={
+                r.dip_phase === 'confirmed' || r.dip_phase === 'turning_up'
+                  ? 'text-aggressive'
+                  : r.dip_phase === 'stabilizing'
+                    ? 'text-caution'
+                    : 'text-faint'
+              }
+            >
+              dip {String(r.dip_phase)}
+            </span>
+          )}
           {r.rank != null && (
             <span className="text-ink font-semibold">
               {Number(r.rank).toFixed(0)}

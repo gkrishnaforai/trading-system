@@ -473,7 +473,8 @@ def _readiness(mom: Optional[str], det: dict, fund: Optional[str],
                val: Optional[str] = None,
                pe_ctx: Optional[dict] = None,
                gq: Optional[dict] = None,
-               priced: Optional[str] = None) -> dict[str, Any]:
+               priced: Optional[str] = None,
+               earn_days: Optional[int] = None) -> dict[str, Any]:
     """Use-case readiness — swing / invest / LEAP call / LEAP put —
     each a deterministic checklist of stored-data facts mirroring the
     engines' own gates. Every line names the rule and the value."""
@@ -492,7 +493,8 @@ def _readiness(mom: Optional[str], det: dict, fund: Optional[str],
                "lane": conv.get("lane"),
                "gq_score": (gq or {}).get("score"),
                "structural_proof": ((gq or {}).get("components") or {})
-                                    .get("structural_proof")}
+                                    .get("structural_proof"),
+               "earn_days": earn_days}
     out = {uc: pulse_engine.eval_use_case(_uc_row, uc)
            for uc in ("swing", "invest", "leap_call")}
 
@@ -812,7 +814,12 @@ def card(sym: str) -> dict[str, Any]:
     readiness = _readiness(st.get("momentum_state"), det,
                            st.get("fundamental_state"), fly, q,
                            conv, fv_up, val, {"pe": pe}, gq,
-                           st.get("priced_status"))
+                           st.get("priced_status"),
+                           earn_days=(
+                               (st["next_earnings_date"] -
+                                date.today()).days
+                               if st.get("next_earnings_date")
+                               else None))
     tws = _try_tailwinds(s)
     # catalyst badge — a corroborated channel makes a 'close' verdict
     # actionable; never overrides a failed gate, just flags the signal
@@ -1600,7 +1607,11 @@ def board() -> dict[str, Any]:
                                 det, st.get("momentum_state"),
                                 st.get("fundamental_state"), fl,
                                 scen_map.get(s) or {}, px_v, regime)},
-                            gq_map.get(s), st.get("priced_status"))
+                            gq_map.get(s), st.get("priced_status"),
+                            earn_days=(
+                                (st["next_earnings_date"] - today).days
+                                if st.get("next_earnings_date")
+                                else None))
             upd = st.get("momentum_updated_at")
             if upd and (latest is None or str(upd) > str(latest)):
                 latest = str(upd)
@@ -1659,6 +1670,12 @@ def board() -> dict[str, Any]:
                     "confirm_level": _sw.get("confirm_level"),
                     "avwap": _sw.get("avwap"),
                     "prior_low": _sw.get("prior_low"),
+                    # dip-resolution state — a 'no' that's turning_up
+                    # is healing-but-gated; the row should say so, not
+                    # read as a flat rejection
+                    "dip_phase": det.get("dip_phase"),
+                    "stab": det.get("stabilization_score"),
+                    "vol_dip": det.get("vol_dip"),
                     "fund": st.get("fundamental_state"),
                     "thesis": (th_map.get(s) or {}).get("status"),
                     "thesis_dir": (th_map.get(s) or {}).get("status_dir"),
@@ -1682,9 +1699,11 @@ def board() -> dict[str, Any]:
         sections[key].sort(key=lambda r: (_ORDER.get(r["state"], 3),
                                           -(r["rank"] or 0),
                                           r["symbol"]))
-    # journal every eval — first write of the day wins per
-    # rules_version. readiness_evals is the transitions feed + the
-    # training substrate for the use-case checklists.
+    # journal every eval — the daily row tracks the LATEST eval per
+    # rules_version: momentum refreshes hourly through the session, so
+    # a morning 'no' that heals to 'close' by 3pm must not stay 'no'
+    # in the states view until tomorrow. One row per day still holds —
+    # the transitions feed diffs day-over-day either way.
     try:
         from app.signals import pulse_engine
         rv, en = pulse_engine.rules_version(), pulse_engine.ENGINE_VERSION
@@ -1696,7 +1715,10 @@ def board() -> dict[str, Any]:
             " :of, CAST(:f AS jsonb), :m, :fn, :rk,"
             " CAST(:pt AS jsonb), :rv, :en)"
             " ON CONFLICT (symbol, as_of, use_case, rules_version)"
-            " DO NOTHING",
+            " DO UPDATE SET state=EXCLUDED.state, score=EXCLUDED.score,"
+            " \"of\"=EXCLUDED.of, fails=EXCLUDED.fails, mom=EXCLUDED.mom,"
+            " fund=EXCLUDED.fund, rank=EXCLUDED.rank,"
+            " parts=EXCLUDED.parts, engine_version=EXCLUDED.engine_version",
             [{"s": r["symbol"], "u": key, "st": r["state"],
               "sc": r["score"], "of": r["of"],
               "f": json.dumps(r["fails"]), "m": r["mom"],
