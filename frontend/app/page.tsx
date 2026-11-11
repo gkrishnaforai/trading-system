@@ -4,6 +4,7 @@ import { VolChips } from '@/components/vol-chips'
 import { TapeChips } from '@/components/tape-chips'
 import { SessionTape } from '@/components/session-tape'
 import { RetryRefresh } from '@/components/retry-refresh'
+import { RecoveryPanel } from '@/components/recovery-panel'
 
 const TONE: Record<string, string> = {
   aggressive: 'text-aggressive',
@@ -472,82 +473,12 @@ export default async function RegimePage() {
       )}
 
       {/* ai-infra intraday recovery — who's holding vwap with real
-          buying vs relief rally vs failing. 5-min engine, journaled
-          each bar; % gain is never the signal. */}
+          buying vs relief rally vs failing. Rows expand to the
+          session story: price-vs-vwap path + signal timeline +
+          transitions, all journaled. */}
       {(irec?.symbols?.length ?? 0) > 0 && (
-        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
-          <div className="flex flex-wrap items-baseline justify-between gap-2 pb-2">
-            <h2 className="text-sm font-semibold tracking-wide text-ink">
-              AI-infra recovery — vwap confirmation
-            </h2>
-            <div className="font-mono text-[11px] text-faint">
-              {irec!.as_of
-                ? new Date(irec!.as_of).toLocaleTimeString('en-US', {
-                    hour: 'numeric', minute: '2-digit',
-                    timeZone: 'America/New_York' }) + ' ET'
-                : ''}
-              {irec!.stale ? ' · stale' : ''}
-              {irec!.participation != null &&
-                ` · ${Math.round(irec!.participation)}% of universe above vwap`}
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-[11px]">
-              <tbody>
-                {irec!.symbols!.slice(0, 20).map((r) => {
-                  const sig = r.signal ?? 'WATCH'
-                  const cls =
-                    sig === 'STRONG_RECOVERY' ? 'text-aggressive'
-                    : sig === 'CONFIRMED_RECOVERY' ? 'text-aggressive/80'
-                    : sig === 'IMPROVING' ? 'text-caution'
-                    : sig === 'DISTRIBUTION' || sig === 'FAILED_REBOUND'
-                      ? 'text-defensive'
-                    : 'text-faint'
-                  return (
-                    <tr key={r.symbol} className="border-t border-hairline/40">
-                      <td className="py-1 pr-3 font-medium">
-                        <a href={`/stock?symbol=${r.symbol}`}>{r.symbol}</a>
-                      </td>
-                      <td className={`py-1 pr-3 font-mono ${cls}`}>
-                        {sig.replace(/_/g, ' ').toLowerCase()}
-                        {r.overextended ? ' ⚠' : ''}
-                      </td>
-                      <td className="py-1 pr-3 font-mono text-muted">
-                        {r.score ?? '—'}
-                      </td>
-                      <td className="py-1 pr-3 font-mono text-muted"
-                          title="price recovery — vwap hold + structure + opening range">
-                        rec {r.recovery_score ?? '—'}
-                      </td>
-                      <td className="py-1 pr-3 font-mono text-muted"
-                          title="accumulation — rs + directional volume + rvol + breadth">
-                        accum {r.accumulation_score ?? '—'}
-                      </td>
-                      <td className="py-1 pr-3 font-mono text-muted">
-                        vwap {r.vwap_hold_min != null
-                          ? `${r.vwap_hold_min}m` : '—'}
-                      </td>
-                      <td className="py-1 pr-3 font-mono text-muted">
-                        rs {r.rs30_smh != null
-                          ? `${r.rs30_smh > 0 ? '+' : ''}${Number(r.rs30_smh).toFixed(1)}` : '—'}
-                      </td>
-                      <td className="py-1 pr-3 font-mono text-muted">
-                        rvol {r.rvol != null ? `${r.rvol}x` : '—'}
-                      </td>
-                      <td className="py-1 font-mono text-muted">
-                        {r.delta_vol != null &&
-                          `Δvol ${r.delta_vol > 0 ? '+' : ''}${r.delta_vol}`}
-                        {(r.ext_pct ?? 0) > 3
-                          ? ` · +${Number(r.ext_pct).toFixed(1)}% ext`
-                          : ''}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
+        <RecoveryPanel rows={irec!.symbols!} asOf={irec!.as_of}
+          stale={irec!.stale} participation={irec!.participation} />
       )}
 
       {/* systematic fragility — leverage/positioning under the tape.

@@ -3760,6 +3760,15 @@ async def intraday_recovery_board():
             "symbols": rows}
 
 
+@router.get("/intraday-recovery/{symbol}/session")
+async def intraday_recovery_session(symbol: str):
+    """One symbol's session story — 5m bars + vwap path + journaled
+    eval timeline + signal transitions + overnight gap. Read-only
+    over stored rows; powers the expandable row on the regime page."""
+    from app.signals import intraday_recovery
+    return await asyncio.to_thread(intraday_recovery.session, symbol)
+
+
 @router.get("/transitions")
 async def transitions():
     """The 'just moved' feed — latest eval vs prior eval on both

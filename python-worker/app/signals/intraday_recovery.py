@@ -103,6 +103,17 @@ def ensure_tables() -> None:
     db.execute_update(
         "CREATE INDEX IF NOT EXISTS idx_ire_sym_asof"
         " ON intraday_recovery_evals (symbol, as_of DESC)")
+    db.execute_update(
+        "CREATE TABLE IF NOT EXISTS intraday_recovery_daily ("
+        " symbol TEXT NOT NULL, as_of DATE NOT NULL,"
+        " final_signal TEXT, final_score NUMERIC,"
+        " recovery_score NUMERIC, accumulation_score NUMERIC,"
+        " max_vwap_hold_min INT, confirmed_minutes INT,"
+        " end_delta_vol NUMERIC, end_rvol NUMERIC,"
+        " n_evals INT, n_transitions INT, signals JSONB,"
+        " first_eval TIMESTAMPTZ, last_eval TIMESTAMPTZ,"
+        " created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        " PRIMARY KEY (symbol, as_of))")
 
 
 # ---------------- bar ingest ------------------------------------------------
@@ -158,11 +169,17 @@ def refresh_bars(symbols: list[str]) -> dict[str, Any]:
             kept += 1
         except Exception as exc:
             logger.debug("ibars %s: %s", sym, exc)
-    # retention — 5m bars pile up; keep 45 days
+    # retention — bars only exist for RVOL baselines (20 sessions) and
+    # same-day replay: 35 days covers ~25 sessions with holiday slack.
+    # Raw evals keep 10 days for session stories; the durable record
+    # lives in intraday_recovery_daily (rollup, kept forever).
     try:
         db.execute_update(
             "DELETE FROM intraday_bars"
-            " WHERE bar_ts < now() - interval '45 days'")
+            " WHERE bar_ts < now() - interval '35 days'")
+        db.execute_update(
+            "DELETE FROM intraday_recovery_evals"
+            " WHERE as_of < CURRENT_DATE - 10")
     except Exception:
         pass
     return {"updated": kept}
@@ -749,13 +766,152 @@ def current() -> dict[str, dict]:
     return out
 
 
+def rollup_day(d: Optional[date] = None) -> int:
+    """Day-summary rollup — the durable record after raw 5m evals
+    age out (kept 10d). One row per (symbol, as_of): the facts that
+    matter for grading — final state, best/worst of the day, time
+    spent confirmed, signal-transition count, signal histogram."""
+    from app.database import db
+    day = d or date.today()
+    rows = db.execute_query(
+        "SELECT symbol, signal, score, legs, bar_ts"
+        " FROM intraday_recovery_evals WHERE as_of=:d"
+        " ORDER BY symbol, bar_ts", {"d": day})
+    by_sym: dict[str, list] = {}
+    for r in rows:
+        by_sym.setdefault(r["symbol"], []).append(r)
+    n = 0
+    for sym, evs in by_sym.items():
+        try:
+            ctx_of = lambda e: ((e.get("legs") or {}).get("ctx") or {}) \
+                if isinstance(e.get("legs"), dict) else \
+                ((json.loads(e["legs"]) or {}).get("ctx") or {})
+            hist: dict[str, int] = {}
+            for e in evs:
+                hist[e["signal"]] = hist.get(e["signal"], 0) + 1
+            transitions = sum(
+                1 for a, b in zip(evs, evs[1:])
+                if a["signal"] != b["signal"])
+            last = ctx_of(evs[-1])
+            confirmed = sum(
+                5 for e in evs
+                if e["signal"] in ("CONFIRMED_RECOVERY",
+                                   "STRONG_RECOVERY"))
+            max_hold = max(
+                ((ctx_of(e).get("hold_min") or 0) for e in evs),
+                default=0)
+            db.execute_update(
+                "INSERT INTO intraday_recovery_daily"
+                " (symbol, as_of, final_signal, final_score,"
+                " recovery_score, accumulation_score,"
+                " max_vwap_hold_min, confirmed_minutes,"
+                " end_delta_vol, end_rvol, n_evals,"
+                " n_transitions, signals, first_eval, last_eval)"
+                " VALUES (:s,:d,:fs,:fsc,:rs,:as,:mh,:cm,:dv,:rv,"
+                " :ne,:nt,:sig::jsonb,:fe,:le)"
+                " ON CONFLICT (symbol, as_of) DO UPDATE SET"
+                " final_signal=EXCLUDED.final_signal,"
+                " final_score=EXCLUDED.final_score,"
+                " recovery_score=EXCLUDED.recovery_score,"
+                " accumulation_score=EXCLUDED.accumulation_score,"
+                " max_vwap_hold_min=EXCLUDED.max_vwap_hold_min,"
+                " confirmed_minutes=EXCLUDED.confirmed_minutes,"
+                " end_delta_vol=EXCLUDED.end_delta_vol,"
+                " end_rvol=EXCLUDED.end_rvol,"
+                " n_evals=EXCLUDED.n_evals,"
+                " n_transitions=EXCLUDED.n_transitions,"
+                " signals=EXCLUDED.signals,"
+                " first_eval=EXCLUDED.first_eval,"
+                " last_eval=EXCLUDED.last_eval",
+                {"s": sym, "d": day,
+                 "fs": evs[-1]["signal"], "fsc": evs[-1]["score"],
+                 "rs": last.get("recovery_score"),
+                 "as": last.get("accumulation_score"),
+                 "mh": max_hold, "cm": confirmed,
+                 "dv": last.get("delta_vol"), "rv": last.get("rvol"),
+                 "ne": len(evs), "nt": transitions,
+                 "sig": json.dumps(hist),
+                 "fe": evs[0]["bar_ts"], "le": evs[-1]["bar_ts"]})
+            n += 1
+        except Exception as exc:
+            logger.debug("rollup %s: %s", sym, exc)
+    return n
+
+
+def session(symbol: str) -> dict[str, Any]:
+    """One symbol's session story — today's 5m bars + vwap path +
+    journaled eval timeline + signal transitions + the overnight gap.
+    Read-only over stored rows; nothing recomputes the signal."""
+    from app.database import db
+    sym = symbol.upper()
+    bars = _load_bars(sym, days=1)
+    today = date.today()
+    bars = [b for b in bars
+            if b["bar_ts"].astimezone(_ET).date() == today]
+    vw = _vwap(bars)
+    smh = _load_bars("SMH", days=1)
+    smh = [b["close"] for b in smh
+           if b["bar_ts"].astimezone(_ET).date() == today]
+    try:
+        prev = db.execute_query(
+            "SELECT close FROM daily_bars WHERE symbol=:s"
+            " AND date < :d ORDER BY date DESC LIMIT 1",
+            {"s": sym, "d": today})
+        prev_close = float(prev[0]["close"]) if prev else None
+    except Exception:
+        prev_close = None
+    gap = (round((bars[0]["open"] / prev_close - 1) * 100, 2)
+           if bars and prev_close else None)
+
+    evals = []
+    try:
+        for r in db.execute_query(
+                "SELECT bar_ts, signal, score, legs"
+                " FROM intraday_recovery_evals"
+                " WHERE symbol=:s AND as_of=:d ORDER BY bar_ts",
+                {"s": sym, "d": today}):
+            legs = r.get("legs")
+            if isinstance(legs, str):
+                legs = json.loads(legs)
+            ctx = (legs or {}).get("ctx") or {}
+            evals.append({
+                "ts": str(r["bar_ts"]), "signal": r["signal"],
+                "score": (float(r["score"])
+                          if r["score"] is not None else None),
+                "rec": ctx.get("recovery_score"),
+                "accum": ctx.get("accumulation_score"),
+                "dvol": ctx.get("delta_vol"),
+                "rvol": ctx.get("rvol"),
+                "hold_min": ctx.get("hold_min")})
+    except Exception:
+        pass
+    transitions = [{"ts": b["ts"], "from": a["signal"],
+                    "to": b["signal"]}
+                   for a, b in zip(evals, evals[1:])
+                   if a["signal"] != b["signal"]]
+    return {"symbol": sym, "as_of": str(today), "gap_pct": gap,
+            "prev_close": prev_close,
+            "bars": [{"ts": str(b["bar_ts"]),
+                      "o": b["open"], "h": b["high"], "l": b["low"],
+                      "c": b["close"], "v": b["volume"]}
+                     for b in bars],
+            "vwap": [round(v, 3) for v in vw],
+            "smh": smh,
+            "evals": evals, "transitions": transitions}
+
+
 def run() -> dict[str, Any]:
     """The job — fetch this cycle's bars, then evaluate."""
     syms = sorted(set(universe()) | set(benchmarks()))
     fetched = refresh_bars(syms)
     ev = evaluate_session()
+    try:
+        rolled = rollup_day()
+    except Exception as exc:
+        logger.debug("rollup failed: %s", exc)
+        rolled = 0
     return {"bars": fetched, "evaluated": ev["evaluated"],
-            "journaled": ev["journaled"],
+            "journaled": ev["journaled"], "rolled": rolled,
             "participation": ev["participation"],
             "signals": {s: r["signal"]
                         for s, r in ev["signals"].items()}}

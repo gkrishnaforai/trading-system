@@ -678,6 +678,19 @@ export const api = {
                 vwap?: number | null; last?: number | null;
                 ext_pct?: number | null }[]
   }>('/intraday-recovery'),
+  intradayRecoverySession: (symbol: string) => get<{
+    symbol?: string; as_of?: string;
+    gap_pct?: number | null; prev_close?: number | null;
+    bars?: { ts: string; o?: number | null; h?: number | null;
+             l?: number | null; c?: number | null;
+             v?: number | null }[];
+    vwap?: number[]; smh?: number[];
+    evals?: { ts: string; signal: string; score?: number | null;
+              rec?: number | null; accum?: number | null;
+              dvol?: number | null; rvol?: number | null;
+              hold_min?: number | null }[];
+    transitions?: { ts: string; from: string; to: string }[];
+  }>(`/intraday-recovery/${encodeURIComponent(symbol)}/session`),
   transitions: () => get<{
     readiness?: { symbol: string; use_case: string;
                   prev_state?: string; state?: string;
