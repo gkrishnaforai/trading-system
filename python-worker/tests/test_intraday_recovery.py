@@ -135,3 +135,28 @@ def test_bars_fetch_uses_symbol_keyed_lookup():
     src = inspect.getsource(ir.refresh_bars)
     assert "df[sym]" in src or "px[sym]" in src
     assert ".iloc[" not in src
+
+
+def test_load_bars_coerces_decimal(monkeypatch):
+    """Postgres NUMERIC returns Decimal — _load_bars must coerce to
+    float or _vwap dies on float += Decimal (the 11-11 prod crash)."""
+    from decimal import Decimal
+    import datetime as dt
+
+    rows = [{"bar_ts": dt.datetime(2026, 11, 11, 9, 30),
+             "open": Decimal("10.1"), "high": Decimal("10.2"),
+             "low": Decimal("9.9"), "close": Decimal("10.0"),
+             "volume": Decimal("1500")}]
+
+    class _DB:
+        @staticmethod
+        def execute_query(*a, **k):
+            return rows
+
+    import app.database
+    monkeypatch.setattr(app.database, "db", _DB)
+    bars = ir._load_bars("X")
+    assert all(isinstance(b[k], float)
+               for b in bars
+               for k in ("open", "high", "low", "close", "volume"))
+    assert abs(ir._vwap(bars)[0] - (10.2 + 9.9 + 10.0) / 3) < 1e-9

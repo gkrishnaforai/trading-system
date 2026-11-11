@@ -174,13 +174,21 @@ def refresh_bars(symbols: list[str]) -> dict[str, Any]:
 
 
 def _load_bars(sym: str, days: int = 30) -> list[dict]:
-    """Stored 5m bars oldest→newest for one symbol."""
+    """Stored 5m bars oldest→newest for one symbol. Postgres NUMERIC
+    returns Decimal — coerce to float here so every feature
+    (vwap/rs/rvol) sees plain floats."""
     from app.database import db
-    return [dict(r) for r in db.execute_query(
-        "SELECT bar_ts, open, high, low, close, volume"
-        " FROM intraday_bars WHERE symbol=:s"
-        " AND bar_ts > now() - (:d || ' days')::interval"
-        " ORDER BY bar_ts", {"s": sym, "d": days})]
+    out = []
+    for r in db.execute_query(
+            "SELECT bar_ts, open, high, low, close, volume"
+            " FROM intraday_bars WHERE symbol=:s"
+            " AND bar_ts > now() - (:d || ' days')::interval"
+            " ORDER BY bar_ts", {"s": sym, "d": days}):
+        d = dict(r)
+        for k in ("open", "high", "low", "close", "volume"):
+            d[k] = float(d[k]) if d[k] is not None else None
+        out.append(d)
+    return out
 
 
 # ---------------- features --------------------------------------------------
