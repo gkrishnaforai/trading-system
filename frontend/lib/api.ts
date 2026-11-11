@@ -671,6 +671,10 @@ export const api = {
     symbols?: { symbol: string; signal: string; score?: number | null;
                 bar_ts?: string; vwap_hold_min?: number | null;
                 rs30_smh?: number | null; rvol?: number | null;
+                delta_vol?: number | null;
+                recovery_score?: number | null;
+                accumulation_score?: number | null;
+                overextended?: boolean | null;
                 vwap?: number | null; last?: number | null;
                 ext_pct?: number | null }[]
   }>('/intraday-recovery'),
@@ -1255,7 +1259,11 @@ export interface ResilienceRow {
                  as_of?: string } | null
   recovery?: { signal?: string; score?: number | null;
                bar_ts?: string; vwap_hold_min?: number | null;
-               rs30_smh?: number | null; rvol?: number | null } | null
+               rs30_smh?: number | null; rvol?: number | null;
+               delta_vol?: number | null;
+               recovery_score?: number | null;
+               accumulation_score?: number | null;
+               overextended?: boolean | null } | null
   flags?: string[]; needs?: string[]
   business_model?: string | null
   themes?: { theme: string; exposure: string }[]

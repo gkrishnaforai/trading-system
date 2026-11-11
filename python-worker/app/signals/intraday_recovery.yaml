@@ -72,6 +72,18 @@ engine:
       strong: 1.50
       exceptional: 2.00
 
+  volume_quality:
+    method: close_location_value      # per-bar CLV × vol, session sum:
+    strong_accumulation: 0.35         # + = closes near highs on volume
+    accumulation: 0.15                # − = closes near lows on volume
+    distribution: -0.15               # rvol says HOW MUCH traded;
+    strong_distribution: -0.35        # this says WHO was in control
+
+  distribution:                       # active selling, not a failed
+    consecutive_closes_below: 2       # bounce — below vwap on heavy
+    min_rvol: 1.2                     # sell-side volume
+    max_delta_vol: -0.15
+
   opening_range:
     duration_minutes: 30
     breakout_buffer_pct: 0.10
@@ -94,13 +106,17 @@ engine:
     vix_warning_level: 22
 
   scoring:
+    # 50/50 axes — price recovery (vwap+structure+or+recovery) vs
+    # demand/accumulation (rs+vol_quality+rvol+breadth). A stock can
+    # recover technically without institutions accumulating it.
     weights:
-      vwap_confirmation: 25
+      vwap_confirmation: 20
       relative_strength: 20
-      relative_volume: 15
+      volume_quality: 15
+      relative_volume: 10
       price_structure: 15
       opening_range: 10
-      market_breadth: 10
+      market_breadth: 5
       recovery_quality: 5
     thresholds:
       improving: 55
@@ -110,6 +126,7 @@ engine:
   signals:
     first_match_priority:
       - DATA_BLOCKED
+      - DISTRIBUTION
       - FAILED_REBOUND
       - STRONG_RECOVERY
       - CONFIRMED_RECOVERY

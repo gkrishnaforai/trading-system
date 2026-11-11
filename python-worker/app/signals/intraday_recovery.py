@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 _ET = ZoneInfo("America/New_York")
 CFG_PATH = Path(__file__).parent / "intraday_recovery.yaml"
-ENGINE_VERSION = "1.0"
+ENGINE_VERSION = "1.1"
 _cfg: Optional[dict] = None
 
 
@@ -208,6 +208,23 @@ def _above_vwap(bars: list[dict]) -> Optional[bool]:
     return (bars[-1]["close"] > vw[-1]) if vw else None
 
 
+def _delta_vol(bars: list[dict]) -> Optional[float]:
+    """Directional volume — close-location-value per bar,
+    volume-weighted across the session, ∈ [-1, +1].
+    + = closes near bar highs on volume (accumulation signature),
+    − = closes near bar lows on volume (distribution signature).
+    RVOL says how MUCH traded; this says WHO was in control."""
+    pv = tv = 0.0
+    for b in bars:
+        v = b["volume"] or 0
+        h, l, c = b.get("high"), b.get("low"), b.get("close")
+        if v <= 0 or h is None or l is None or c is None or h <= l:
+            continue
+        pv += ((c - l) - (h - c)) / (h - l) * v
+        tv += v
+    return round(pv / tv, 3) if tv else None
+
+
 def _consec(closes: list[float], vw: list[float], above: bool) -> int:
     n = 0
     for c, v in zip(reversed(closes), reversed(vw)):
@@ -364,23 +381,23 @@ def _eval_symbol(sym: str, sess: list[dict], bench: dict[str, list],
     # --- score legs ---
     legs: dict[str, dict] = {}
 
-    # vwap_confirmation (25)
+    # vwap_confirmation (20)
     if consec_up >= int(vc.get("strong_consecutive_closes_above", 6)) \
             and slope_ok:
-        legs["vwap"] = _score_leg(25, wts.get("vwap_confirmation", 25),
+        legs["vwap"] = _score_leg(20, wts.get("vwap_confirmation", 20),
                                   f"hold {hold_min}m, slope up")
     elif consec_up >= int(vc.get("minimum_consecutive_closes_above", 3)) \
             and slope_ok:
-        legs["vwap"] = _score_leg(20, wts.get("vwap_confirmation", 25),
+        legs["vwap"] = _score_leg(16, wts.get("vwap_confirmation", 20),
                                   f"hold {hold_min}m, slope up")
     elif consec_up >= 3:
-        legs["vwap"] = _score_leg(15, wts.get("vwap_confirmation", 25),
+        legs["vwap"] = _score_leg(12, wts.get("vwap_confirmation", 20),
                                   f"hold {hold_min}m, slope flat")
     elif consec_up >= 1:
-        legs["vwap"] = _score_leg(8, wts.get("vwap_confirmation", 25),
+        legs["vwap"] = _score_leg(6, wts.get("vwap_confirmation", 20),
                                   "above vwap, unconfirmed")
     else:
-        legs["vwap"] = _score_leg(0, wts.get("vwap_confirmation", 25),
+        legs["vwap"] = _score_leg(0, wts.get("vwap_confirmation", 20),
                                   f"below vwap ({consec_dn} closes)")
 
     # relative_strength (20) — vs SMH and QQQ over 30m
@@ -403,9 +420,30 @@ def _eval_symbol(sym: str, sess: list[dict], bench: dict[str, list],
             pts, wts.get("relative_strength", 20),
             f"30m vs SMH {smh30:+.2f}pp · QQQ {qqq30:+.2f}pp")
 
-    # relative_volume (15) — filled in by caller (needs history)
-    legs["rvol"] = _score_leg(0, wts.get("relative_volume", 15),
+    # relative_volume (10) — filled in by caller (needs history)
+    legs["rvol"] = _score_leg(0, wts.get("relative_volume", 10),
                               "rvol pending", missing=True)
+
+    # volume_quality (15) — directional volume: CLV × volume across
+    # the session. Accumulation vs distribution — the axis % gain
+    # and rvol both miss.
+    dv = _delta_vol(sess)
+    vqc = eng.get("volume_quality") or {}
+    if dv is None:
+        legs["vol_q"] = _score_leg(0, wts.get("volume_quality", 15),
+                                   "no volume bars", missing=True)
+    else:
+        legs["vol_q"] = _score_leg(
+            (15 if dv >= vqc.get("strong_accumulation", 0.35)
+             else 12 if dv >= vqc.get("accumulation", 0.15)
+             else 7 if dv > vqc.get("distribution", -0.15)
+             else 3 if dv > vqc.get("strong_distribution", -0.35)
+             else 0),
+            wts.get("volume_quality", 15),
+            f"delta_vol {dv:+.2f} — "
+            + ("accumulation" if dv >= vqc.get("accumulation", 0.15)
+               else "distribution" if dv <= vqc.get("distribution", -0.15)
+               else "neutral"))
 
     # price_structure (15) — intraday higher low
     if hl is None:
@@ -434,21 +472,21 @@ def _eval_symbol(sym: str, sess: list[dict], bench: dict[str, list],
         legs["or"] = _score_leg(0, wts.get("opening_range", 10),
                                 "OR unresolved", missing=True)
 
-    # market_breadth (10) — sector participation (0-6) + benchmark
-    # VWAP confirmation (2 each: SMH, QQQ). An index-led rally where
+    # market_breadth (5) — sector participation (0-3) + benchmark
+    # VWAP confirmation (1 each: SMH, QQQ). An index-led rally where
     # the benchmarks themselves can't hold VWAP isn't confirmed.
     mc = eng.get("market_confirmation") or {}
     part = participation
-    part_pts = (6 if part >= mc.get("strong_sector_participation_pct", 65)
-                else 4 if part >= mc.get("minimum_sector_participation_pct", 50)
-                else 2 if part >= 35 else 0)
-    bench_pts = ((2 if smh_vwap_ok else 0) +
-                 (2 if qqq_vwap_ok else 0))
+    part_pts = (3 if part >= mc.get("strong_sector_participation_pct", 65)
+                else 2 if part >= mc.get("minimum_sector_participation_pct", 50)
+                else 1 if part >= 35 else 0)
+    bench_pts = ((1 if smh_vwap_ok else 0) +
+                 (1 if qqq_vwap_ok else 0))
     _vw = lambda v: ("above" if v else
                      "missing" if v is None else "below")
     legs["breadth"] = _score_leg(
-        min(10, part_pts + bench_pts),
-        wts.get("market_breadth", 10),
+        min(5, part_pts + bench_pts),
+        wts.get("market_breadth", 5),
         f"sector {part:.0f}% above vwap · SMH {_vw(smh_vwap_ok)}"
         f" · QQQ {_vw(qqq_vwap_ok)}")
 
@@ -465,8 +503,10 @@ def _eval_symbol(sym: str, sess: list[dict], bench: dict[str, list],
     return {"symbol": sym, "legs": legs,
             "_ctx": {"consec_up": consec_up, "consec_dn": consec_dn,
                      "hold_min": hold_min, "slope_ok": slope_ok,
+                     "above_vwap": closes[-1] > vw[-1],
                      "ext_pct": ext_pct, "dist_below": dist_below,
                      "rs15": rs15, "rs30": rs30, "rs_imp": rs_imp,
+                     "delta_vol": dv,
                      "or": orng, "higher_low": hl,
                      "smh_vwap_ok": smh_vwap_ok,
                      "qqq_vwap_ok": qqq_vwap_ok,
@@ -480,34 +520,56 @@ def _apply_rvol(res: dict, rvol: Optional[float], cfg: dict) -> None:
     w = (_eng().get("scoring") or {}).get("weights") or {}
     if rvol is None:
         res["legs"]["rvol"] = _score_leg(
-            0, w.get("relative_volume", 15),
+            0, w.get("relative_volume", 10),
             "insufficient session history", missing=True)
         res["_ctx"]["rvol"] = None
         return
-    pts = (15 if rvol >= th.get("exceptional", 2.0)
-           else 12 if rvol >= th.get("strong", 1.5)
-           else 8 if rvol >= th.get("normal", 1.0)
-           else 4 if rvol >= th.get("weak", 0.75) else 0)
+    pts = (10 if rvol >= th.get("exceptional", 2.0)
+           else 8 if rvol >= th.get("strong", 1.5)
+           else 5 if rvol >= th.get("normal", 1.0)
+           else 3 if rvol >= th.get("weak", 0.75) else 0)
     res["legs"]["rvol"] = _score_leg(
-        pts, w.get("relative_volume", 15), f"rvol {rvol}x")
+        pts, w.get("relative_volume", 10), f"rvol {rvol}x")
     res["_ctx"]["rvol"] = rvol
+
+
+# two-axis split — price recovery (did the stock recover?) vs demand
+# (did institutions accumulate?). Each axis maxes at its legs' total.
+_PRICE_LEGS = ("vwap", "structure", "or", "recovery")
+_DEMAND_LEGS = ("rs", "vol_q", "rvol", "breadth")
 
 
 def _signal(res: dict) -> dict:
     eng = _eng()
     vc = (eng.get("vwap") or {}).get("confirmation") or {}
     vf = (eng.get("vwap") or {}).get("failure") or {}
+    dg = eng.get("distribution") or {}
     mc = eng.get("market_confirmation") or {}
     th = (eng.get("scoring") or {}).get("thresholds") or {}
     c = res["_ctx"]
 
     score = sum(l["pts"] for l in res["legs"].values())
     res["score"] = round(score, 1)
+    c["recovery_score"] = round(
+        2 * sum(res["legs"][k]["pts"] for k in _PRICE_LEGS
+                if k in res["legs"]))
+    c["accumulation_score"] = round(
+        2 * sum(res["legs"][k]["pts"] for k in _DEMAND_LEGS
+                if k in res["legs"]))
 
     sig, why = "WATCH", "no confirmation yet"
+    # DISTRIBUTION — below vwap, lagging the sector, on heavy
+    # sell-side volume. Worse than a failed rebound: someone is
+    # actively using the strength to exit.
+    if (c["consec_dn"] >= int(dg.get("consecutive_closes_below", 2))
+            and (c["rs30"].get("SMH") or 0) < 0
+            and (c.get("rvol") or 0) >= float(dg.get("min_rvol", 1.2))
+            and (c.get("delta_vol") or 0)
+            <= float(dg.get("max_delta_vol", -0.15))):
+        sig, why = "DISTRIBUTION", "below vwap on heavy sell-side volume"
     # FAILED_REBOUND — below vwap + negative RS + broken opening range,
     # or a deep breach of the failure distance
-    if ((c["consec_dn"] >= int(vf.get("consecutive_closes_below", 2))
+    elif ((c["consec_dn"] >= int(vf.get("consecutive_closes_below", 2))
          and (c["rs30"].get("SMH") or 0) < 0
          and c["or"].get("broke_below"))
             or (c["dist_below"] or 0)
@@ -537,11 +599,13 @@ def _signal(res: dict) -> dict:
           and not c["or"].get("broke_below")):
         sig, why = "IMPROVING", "rs improving, structure intact"
 
-    # extension cap — far above vwap is a chase, not an entry
+    # extension cap — far above vwap is a chase, not an entry. The
+    # flag journals on every signal tier so the UI can warn even
+    # when the label looks calm.
     max_ext = vc.get("maximum_extension_above_vwap_pct", 3.0)
-    if (c["ext_pct"] or 0) > max_ext \
+    c["overextended"] = (c["ext_pct"] or 0) > max_ext
+    if c["overextended"] \
             and sig in ("CONFIRMED_RECOVERY", "STRONG_RECOVERY"):
-        res["overextended"] = True
         sig, why = "IMPROVING", f"{c['ext_pct']:.1f}% above vwap — extended"
 
     res["signal"], res["why"] = sig, why
@@ -676,6 +740,10 @@ def current() -> dict[str, dict]:
                         if isinstance(ctx.get("rs30"), dict)
                         else None,
             "rvol": ctx.get("rvol"),
+            "delta_vol": ctx.get("delta_vol"),
+            "recovery_score": ctx.get("recovery_score"),
+            "accumulation_score": ctx.get("accumulation_score"),
+            "overextended": ctx.get("overextended"),
             "vwap": ctx.get("vwap"), "last": ctx.get("last"),
             "ext_pct": ctx.get("ext_pct")}
     return out

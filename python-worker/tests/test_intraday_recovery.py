@@ -196,8 +196,8 @@ def test_breadth_leg_includes_benchmark_vwap():
     both = ir._eval_symbol("X", sess, bench, 90, True, True, 18, ir._eng())
     none = ir._eval_symbol("X", sess, bench, 90, False, False, 18,
                            ir._eng())
-    assert both["legs"]["breadth"]["pts"] == 10
-    assert none["legs"]["breadth"]["pts"] == 6      # participation only
+    assert both["legs"]["breadth"]["pts"] == 5      # 3 part + 1+1 bench
+    assert none["legs"]["breadth"]["pts"] == 3      # participation only
 
 
 def test_bond_market_closed_days():
@@ -209,3 +209,55 @@ def test_bond_market_closed_days():
     assert _bond_market_closed(dt.date(2026, 10, 12)) is True   # Columbus
     assert _bond_market_closed(dt.date(2026, 11, 12)) is False
     assert _bond_market_closed(dt.date(2026, 7, 4)) is False    # both closed
+
+
+def test_delta_vol_direction():
+    """Closes near bar highs on volume = accumulation; near lows =
+    distribution. RVOL alone can't see this."""
+    acc = [_bar(10, 10.5, 9.9, 10.45, 1000),
+           _bar(10.4, 10.9, 10.3, 10.85, 1500)]
+    dist = [_bar(10, 10.1, 9.5, 9.55, 1000),
+            _bar(9.6, 9.7, 9.1, 9.15, 1500)]
+    assert ir._delta_vol(acc) > 0.7
+    assert ir._delta_vol(dist) < -0.7
+    assert ir._delta_vol([]) is None
+
+
+def test_distribution_signal_needs_volume_and_sellside():
+    """Below vwap + negative rs is only DISTRIBUTION when heavy
+    sell-side volume confirms it — a quiet drift is a failed
+    rebound, not distribution."""
+    sess = [_bar(10.2, 10.3, 9.9, 10.0, 800)] * 20       # morning high
+    px = 10.0
+    for i in range(10):                                  # fade below vwap
+        px -= 0.08                                       # declining closes
+        sess.append(_bar(px + 0.15, px + 0.2, px - 0.15, px, 4000))
+    bench = {"SMH": _flat_bench(40), "QQQ": _flat_bench(40)}
+    res = ir._eval_symbol("X", sess, bench, 40, True, True, 18,
+                          ir._eng())
+    ir._apply_rvol(res, 2.0, ir._eng())                  # elevated volume
+    res = ir._signal(res)
+    assert res["signal"] == "DISTRIBUTION"
+
+    res2 = ir._eval_symbol("X", sess, bench, 40, True, True, 18,
+                           ir._eng())
+    ir._apply_rvol(res2, 0.5, ir._eng())                 # quiet tape
+    res2 = ir._signal(res2)
+    assert res2["signal"] != "DISTRIBUTION"
+
+
+def test_two_axis_scores_decompose():
+    """Price recovery and accumulation are separate axes — a name can
+    hold vwap all day on weak demand (the CRWV case)."""
+    sess = _rising_session(30, step=0.12)
+    bench = {"SMH": _flat_bench(30), "QQQ": _flat_bench(30)}
+    res = ir._eval_symbol("X", sess, bench, 90, True, True, 18,
+                          ir._eng())
+    ir._apply_rvol(res, 1.8, ir._eng())
+    res = ir._signal(res)
+    c = res["_ctx"]
+    assert c["recovery_score"] > 0
+    assert c["accumulation_score"] > 0
+    # axes must sum with the composite
+    assert abs(c["recovery_score"] + c["accumulation_score"]
+               - res["score"] * 2) < 1.5

@@ -162,7 +162,8 @@ export default async function ReadinessPage() {
                     sig === 'STRONG_RECOVERY' ? 'text-aggressive'
                     : sig === 'CONFIRMED_RECOVERY' ? 'text-aggressive/80'
                     : sig === 'IMPROVING' ? 'text-caution'
-                    : sig === 'FAILED_REBOUND' ? 'text-defensive'
+                    : sig === 'DISTRIBUTION' || sig === 'FAILED_REBOUND'
+                      ? 'text-defensive'
                     : 'text-faint'
                   return (
                     <tr key={r.symbol} className="border-t border-line/30">

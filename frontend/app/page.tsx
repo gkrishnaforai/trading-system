@@ -500,7 +500,8 @@ export default async function RegimePage() {
                     sig === 'STRONG_RECOVERY' ? 'text-aggressive'
                     : sig === 'CONFIRMED_RECOVERY' ? 'text-aggressive/80'
                     : sig === 'IMPROVING' ? 'text-caution'
-                    : sig === 'FAILED_REBOUND' ? 'text-defensive'
+                    : sig === 'DISTRIBUTION' || sig === 'FAILED_REBOUND'
+                      ? 'text-defensive'
                     : 'text-faint'
                   return (
                     <tr key={r.symbol} className="border-t border-hairline/40">
@@ -509,9 +510,18 @@ export default async function RegimePage() {
                       </td>
                       <td className={`py-1 pr-3 font-mono ${cls}`}>
                         {sig.replace(/_/g, ' ').toLowerCase()}
+                        {r.overextended ? ' ⚠' : ''}
                       </td>
                       <td className="py-1 pr-3 font-mono text-muted">
                         {r.score ?? '—'}
+                      </td>
+                      <td className="py-1 pr-3 font-mono text-muted"
+                          title="price recovery — vwap hold + structure + opening range">
+                        rec {r.recovery_score ?? '—'}
+                      </td>
+                      <td className="py-1 pr-3 font-mono text-muted"
+                          title="accumulation — rs + directional volume + rvol + breadth">
+                        accum {r.accumulation_score ?? '—'}
                       </td>
                       <td className="py-1 pr-3 font-mono text-muted">
                         vwap {r.vwap_hold_min != null
@@ -525,8 +535,10 @@ export default async function RegimePage() {
                         rvol {r.rvol != null ? `${r.rvol}x` : '—'}
                       </td>
                       <td className="py-1 font-mono text-muted">
+                        {r.delta_vol != null &&
+                          `Δvol ${r.delta_vol > 0 ? '+' : ''}${r.delta_vol}`}
                         {(r.ext_pct ?? 0) > 3
-                          ? `+${Number(r.ext_pct).toFixed(1)}% ext — chase`
+                          ? ` · +${Number(r.ext_pct).toFixed(1)}% ext`
                           : ''}
                       </td>
                     </tr>

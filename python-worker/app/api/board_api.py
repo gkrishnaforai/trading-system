@@ -3736,8 +3736,8 @@ async def intraday_recovery_board():
     from app.signals import intraday_recovery
     cur = await asyncio.to_thread(intraday_recovery.current)
     order = {"STRONG_RECOVERY": 0, "CONFIRMED_RECOVERY": 1,
-             "IMPROVING": 2, "WATCH": 3,
-             "FAILED_REBOUND": 4, "DATA_BLOCKED": 5}
+             "IMPROVING": 2, "WATCH": 3, "DISTRIBUTION": 4,
+             "FAILED_REBOUND": 5, "DATA_BLOCKED": 6}
     rows = sorted(cur.values(),
                   key=lambda r: (order.get(r["signal"], 6),
                                  -(r["score"] or 0), r.get("symbol") or ""))
