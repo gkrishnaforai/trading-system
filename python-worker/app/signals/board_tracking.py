@@ -165,6 +165,62 @@ def track_record() -> dict:
                     "SELECT count(*) AS n FROM board_decisions")[0]["n"]}
 
 
+def _universe_breadth() -> dict[str, Any]:
+    """Tracked-universe breadth over daily_bars — % above SMA50,
+    52-week highs/lows, and the 5-session delta, all PIT. Journaled
+    inside the regime payload: the fragility engine's breadth-
+    stabilization leg reads these keys and was reporting
+    'no breadth journal' until now."""
+    from app.database import db
+    rows = db.execute_query("""
+        WITH w AS (
+          SELECT symbol, close,
+                 ROW_NUMBER() OVER (PARTITION BY symbol
+                                    ORDER BY date DESC) rn,
+                 COUNT(*) OVER (PARTITION BY symbol ORDER BY date
+                                ROWS BETWEEN 49 PRECEDING
+                                AND CURRENT ROW) n50,
+                 AVG(close) OVER (PARTITION BY symbol ORDER BY date
+                                  ROWS BETWEEN 49 PRECEDING
+                                  AND CURRENT ROW) sma50,
+                 COUNT(*) OVER (PARTITION BY symbol ORDER BY date
+                                ROWS BETWEEN 251 PRECEDING
+                                AND CURRENT ROW) n252,
+                 MAX(close) OVER (PARTITION BY symbol ORDER BY date
+                                  ROWS BETWEEN 251 PRECEDING
+                                  AND CURRENT ROW) hi52,
+                 MIN(close) OVER (PARTITION BY symbol ORDER BY date
+                                  ROWS BETWEEN 251 PRECEDING
+                                  AND CURRENT ROW) lo52
+          FROM daily_bars
+          WHERE date > CURRENT_DATE - 400)
+        SELECT rn,
+               COUNT(*) FILTER (WHERE n50 >= 50) n_sma,
+               COUNT(*) FILTER (WHERE n50 >= 50
+                                AND close > sma50) n_above,
+               COUNT(*) FILTER (WHERE n252 >= 200
+                                AND close >= hi52) nh,
+               COUNT(*) FILTER (WHERE n252 >= 200
+                                AND close <= lo52) nl
+        FROM w WHERE rn IN (1, 6) GROUP BY rn""")
+    now = next((r for r in rows if r["rn"] == 1), None)
+    ago = next((r for r in rows if r["rn"] == 6), None)
+    pct = (round(float(now["n_above"]) / float(now["n_sma"]) * 100, 1)
+           if now and now.get("n_sma") else None)
+    pct_ago = (round(float(ago["n_above"]) / float(ago["n_sma"]) * 100, 1)
+               if ago and ago.get("n_sma") else None)
+    return {
+        "pct_above_sma50": pct,
+        "pct_above_sma50_5d_ago": pct_ago,
+        "breadth_chg_5d": (round(pct - pct_ago, 1)
+                          if pct is not None and pct_ago is not None
+                          else None),
+        "new_highs": int(now["nh"]) if now else None,
+        "new_lows": int(now["nl"]) if now else None,
+        "universe_n": int(now["n_sma"]) if now else None,
+    }
+
+
 def snapshot_regime(posture: dict) -> bool:
     """Journal the day's regime read — forward probs, dip character,
     allocation stance. Idempotent per day; the grader fills realized
@@ -189,6 +245,14 @@ def snapshot_regime(posture: dict) -> bool:
                              "raw_state": ch["raw_state"]}
     except Exception as exc:                                # noqa: BLE001
         logger.debug("credit health snapshot failed: %s", exc)
+    # universe breadth — % above SMA50 / 52w highs-lows / 5d delta.
+    # The fragility engine's breadth-stabilization leg reads this
+    # block PIT from the last ~6 snapshots.
+    try:
+        posture = dict(posture)
+        posture["breadth"] = _universe_breadth()
+    except Exception as exc:                                # noqa: BLE001
+        logger.debug("universe breadth failed: %s", exc)
     try:
         db.execute_update(
             """

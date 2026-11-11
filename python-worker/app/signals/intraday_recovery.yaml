@@ -86,6 +86,9 @@ engine:
 
   market_confirmation:
     require_smh_above_vwap: true
+    require_qqq_above_vwap: true      # STRONG gate — both indexes must
+                                    # hold vwap; confirmed stays
+                                    # per-symbol (SMH only)
     minimum_sector_participation_pct: 50
     strong_sector_participation_pct: 65
     vix_warning_level: 22

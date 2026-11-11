@@ -58,6 +58,19 @@ def market_open_now() -> bool:
     return now.weekday() < 5 and RTH_OPEN <= now.time() <= RTH_LAST_EVAL
 
 
+def _bond_market_closed(d: date) -> bool:
+    """Cash Treasury (SIFMA) closed while NYSE is open — ^TNX just
+    flatlines at the prior close so the rates leg reads stale.
+    Only two such days a year: Columbus Day (2nd Mon Oct) and
+    Veterans Day (Nov 11, or the observed Friday when it lands Sat)."""
+    if d.month == 10 and d.weekday() == 0 and 8 <= d.day <= 14:
+        return True                      # Columbus Day
+    if (d.month, d.day) == (11, 11) or \
+            (d.month == 11 and d.day == 10 and d.weekday() == 4):
+        return True                      # Veterans Day (+ Fri-observed)
+    return False
+
+
 # ------------------------------ bars -----------------------------------
 
 async def _bars(svc, symbol: str) -> list[dict]:
@@ -332,14 +345,23 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
         ev.append(f"leadership {lead}: SMH {smh['chg_open'] * 100:+.1f}% "
                   f"vs IWM {iwm['chg_open'] * 100:+.1f}% vs open")
 
-    # macro pressure — yields AND oil rising = headwind on growth
+    # macro pressure — yields AND oil rising = headwind on growth.
+    # On a bond-market holiday ^TNX is frozen at the prior close —
+    # it can't press, and its flatline isn't a real read.
+    bond_closed = _bond_market_closed(date.today())
     macro_press = bool(
+        not bond_closed and
         tnx.get("chg_open") and tnx["chg_open"] > 0.005 and
         clf.get("chg_open") and clf["chg_open"] > 0.005)
     if tnx.get("chg_open") is not None:
         ev.append(f"TNX {tnx['chg_open'] * 100:+.2f}% · "
                   f"CL {((clf.get('chg_open') or 0) * 100):+.1f}%"
-                  + (" — macro pressing growth" if macro_press else ""))
+                  + (" — macro pressing growth" if macro_press else "")
+                  + (" — cash Treasury closed: rates read stale"
+                     if bond_closed else ""))
+    elif bond_closed:
+        ev.append("TNX — cash Treasury closed (holiday): "
+                  "rates read stale")
 
     q = qqq
     ev.append(f"QQQ {((q.get('chg_open') or 0) * 100):+.2f}% vs open · "
@@ -387,6 +409,7 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
            "vix": round(vix_last, 2) if vix_last else None,
            "vix_rising": vix_rising, "vix_falling": vix_falling,
            "leadership": lead, "macro_pressure": macro_press,
+           "bond_closed": bond_closed,
            "breadth_adv_pct": adv, "breadth_n": br.get("n"),
            "evidence": ev}
     # forecast layer — direction vs conditions vs day-type, journaled

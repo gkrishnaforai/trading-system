@@ -58,22 +58,17 @@ def rules_version() -> str:
 # ---------------- universe -------------------------------------------------
 
 def universe() -> list[str]:
-    """ai_infra.yaml canonical universe ∩ book_symbols — the watch
-    scope follows membership, never a forked list. Falls back to the
-    full ai-infra list if the intersection is thin."""
-    from app.database import db
+    """ai_infra.yaml canonical universe — the watch scope is a
+    market-structure gauge, so it covers the whole sector scope:
+    a leader we don't hold still drives the sector tape. Book
+    membership never gates evaluation (same discipline as
+    fragility's fixed _AI_BASKET)."""
     cfg = yaml.safe_load(
         (Path(__file__).parent.parent
          / "research" / "sectors" / "ai_infra.yaml").read_text())
-    ai = [s for s in (cfg.get("universe") or {}).get("symbols") or []
-          if isinstance(s, str)]
-    try:
-        book = {r["symbol"] for r in db.execute_query(
-            "SELECT symbol FROM book_symbols")}
-    except Exception:
-        book = set()
-    out = sorted(s for s in ai if s in book)
-    return out if len(out) >= 8 else sorted(set(ai))
+    return sorted(s for s in
+                  (cfg.get("universe") or {}).get("symbols") or []
+                  if isinstance(s, str))
 
 
 def benchmarks() -> list[str]:
@@ -206,6 +201,13 @@ def _vwap(bars: list[dict]) -> list[float]:
     return out
 
 
+def _above_vwap(bars: list[dict]) -> Optional[bool]:
+    """Latest close vs session VWAP for a benchmark — None when the
+    feed is missing (missing never passes)."""
+    vw = _vwap(bars) if bars else None
+    return (bars[-1]["close"] > vw[-1]) if vw else None
+
+
 def _consec(closes: list[float], vw: list[float], above: bool) -> int:
     n = 0
     for c, v in zip(reversed(closes), reversed(vw)):
@@ -314,6 +316,7 @@ def _score_leg(points: float, weight: int, note: str,
 
 def _eval_symbol(sym: str, sess: list[dict], bench: dict[str, list],
                  participation: float, smh_vwap_ok: Optional[bool],
+                 qqq_vwap_ok: Optional[bool],
                  vix: Optional[float], cfg: dict) -> dict:
     """One symbol's session bars → score legs + signal."""
     eng = _eng()
@@ -431,16 +434,23 @@ def _eval_symbol(sym: str, sess: list[dict], bench: dict[str, list],
         legs["or"] = _score_leg(0, wts.get("opening_range", 10),
                                 "OR unresolved", missing=True)
 
-    # market_breadth (10)
+    # market_breadth (10) — sector participation (0-6) + benchmark
+    # VWAP confirmation (2 each: SMH, QQQ). An index-led rally where
+    # the benchmarks themselves can't hold VWAP isn't confirmed.
     mc = eng.get("market_confirmation") or {}
     part = participation
+    part_pts = (6 if part >= mc.get("strong_sector_participation_pct", 65)
+                else 4 if part >= mc.get("minimum_sector_participation_pct", 50)
+                else 2 if part >= 35 else 0)
+    bench_pts = ((2 if smh_vwap_ok else 0) +
+                 (2 if qqq_vwap_ok else 0))
+    _vw = lambda v: ("above" if v else
+                     "missing" if v is None else "below")
     legs["breadth"] = _score_leg(
-        10 if part >= mc.get("strong_sector_participation_pct", 65)
-        else 7 if part >= mc.get("minimum_sector_participation_pct", 50)
-        else 4 if part >= 35 else 0,
+        min(10, part_pts + bench_pts),
         wts.get("market_breadth", 10),
-        f"sector {part:.0f}% above vwap"
-        + ("" if smh_vwap_ok else " · SMH below vwap"))
+        f"sector {part:.0f}% above vwap · SMH {_vw(smh_vwap_ok)}"
+        f" · QQQ {_vw(qqq_vwap_ok)}")
 
     # recovery_quality (5)
     pr = rctx.get("pct_recovered")
@@ -459,6 +469,7 @@ def _eval_symbol(sym: str, sess: list[dict], bench: dict[str, list],
                      "rs15": rs15, "rs30": rs30, "rs_imp": rs_imp,
                      "or": orng, "higher_low": hl,
                      "smh_vwap_ok": smh_vwap_ok,
+                     "qqq_vwap_ok": qqq_vwap_ok,
                      "participation": participation, "vix": vix,
                      **rctx, "last": closes[-1],
                      "vwap": round(vw[-1], 2)}}
@@ -509,6 +520,8 @@ def _signal(res: dict) -> dict:
           and (c.get("rvol") or 0) >= 1.5
           and (c["or"].get("breakout") or c["or"].get("retest_hold"))
           and c["smh_vwap_ok"]
+          and (c.get("qqq_vwap_ok")
+               or not mc.get("require_qqq_above_vwap"))
           and c["participation"] >= mc.get(
               "minimum_sector_participation_pct", 50)):
         sig, why = "STRONG_RECOVERY", "vwap 30m + rs + rvol + breadth"
@@ -574,10 +587,8 @@ def evaluate_session() -> dict[str, Any]:
         vix = vbars[-1]["close"] if vbars else None
     except Exception:
         pass
-    smh_vw = _vwap(bench_today.get("SMH") or []) \
-        if bench_today.get("SMH") else None
-    smh_ok = (bench_today.get("SMH") or [{}])[-1].get("close", 0) > \
-        (smh_vw[-1] if smh_vw else 0) if smh_vw else None
+    smh_ok = _above_vwap(bench_today.get("SMH") or [])
+    qqq_ok = _above_vwap(bench_today.get("QQQ") or [])
 
     above = 0
     counted = 0
@@ -600,7 +611,7 @@ def evaluate_session() -> dict[str, Any]:
             all_b = books.get(s) or []
             sess = _today(all_b)
             res = _eval_symbol(s, sess, bench_close, participation,
-                               smh_ok, vix, eng)
+                               smh_ok, qqq_ok, vix, eng)
             if res.get("signal") != "DATA_BLOCKED":
                 hist = _prior_sessions(all_b, rvol_days)
                 _apply_rvol(res, _rvol(sess, hist), eng)

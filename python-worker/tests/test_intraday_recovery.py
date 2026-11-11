@@ -63,20 +63,20 @@ def test_rvol_is_time_of_day_adjusted():
 
 def test_data_blocked_on_thin_session():
     res = ir._eval_symbol("X", _rising_session(3), {"SMH": _flat_bench()},
-                          60, True, 18, ir._eng())
+                          60, True, True, 18, ir._eng())
     assert res["signal"] == "DATA_BLOCKED"
 
 
 def test_data_blocked_without_benchmark():
     res = ir._eval_symbol("X", _rising_session(30), {},
-                          60, True, 18, ir._eng())
+                          60, True, True, 18, ir._eng())
     assert res["signal"] == "DATA_BLOCKED"
 
 
 def test_confirmed_recovery_on_sustained_buying():
     sess = _rising_session(40, step=0.12)
     bench = {"SMH": _flat_bench(40), "QQQ": _flat_bench(40)}
-    res = ir._eval_symbol("X", sess, bench, 60, True, 18, ir._eng())
+    res = ir._eval_symbol("X", sess, bench, 60, True, True, 18, ir._eng())
     ir._apply_rvol(res, 1.2, ir._eng())
     res = ir._signal(res)
     assert res["signal"] in ("CONFIRMED_RECOVERY", "STRONG_RECOVERY",
@@ -93,7 +93,7 @@ def test_failed_rebound_below_vwap_broken_or():
         px -= 0.5
         bars.append(_bar(px + 0.4, px + 0.45, px - 0.05, px))
     bench = {"SMH": _flat_bench(40), "QQQ": _flat_bench(40)}
-    res = ir._eval_symbol("X", bars, bench, 20, False, 26, ir._eng())
+    res = ir._eval_symbol("X", bars, bench, 20, False, False, 26, ir._eng())
     ir._apply_rvol(res, 0.9, ir._eng())
     res = ir._signal(res)
     assert res["signal"] == "FAILED_REBOUND"
@@ -108,7 +108,7 @@ def test_extension_caps_confirmed_at_improving():
     last = sess[-1]["close"]
     sess.append(_bar(last, last * 1.045, last, last * 1.04, 5000))
     bench = {"SMH": _flat_bench(40), "QQQ": _flat_bench(40)}
-    res = ir._eval_symbol("X", sess, bench, 70, True, 18, ir._eng())
+    res = ir._eval_symbol("X", sess, bench, 70, True, True, 18, ir._eng())
     ir._apply_rvol(res, 1.8, ir._eng())
     res = ir._signal(res)
     if res["_ctx"]["ext_pct"] > 3.0:
@@ -122,7 +122,7 @@ def test_up_8pct_alone_is_not_a_signal():
     sess = [_bar(100, 100.5, 99.5, 100.2, 800)] * 7
     sess.append(_bar(100.2, 109.5, 100.0, 108.5, 4000))   # +8% bar
     bench = {"SMH": _flat_bench(40), "QQQ": _flat_bench(40)}
-    res = ir._eval_symbol("X", sess, bench, 30, False, 18, ir._eng())
+    res = ir._eval_symbol("X", sess, bench, 30, False, False, 18, ir._eng())
     ir._apply_rvol(res, None, ir._eng())
     res = ir._signal(res)
     assert res["signal"] in ("WATCH", "IMPROVING", "DATA_BLOCKED")
@@ -160,3 +160,52 @@ def test_load_bars_coerces_decimal(monkeypatch):
                for b in bars
                for k in ("open", "high", "low", "close", "volume"))
     assert abs(ir._vwap(bars)[0] - (10.2 + 9.9 + 10.0) / 3) < 1e-9
+
+
+def test_above_vwap_helper():
+    up = [_bar(10, 10.2, 9.9, 10.1, 100), _bar(10.1, 10.4, 10.0, 10.3, 100)]
+    assert ir._above_vwap(up) is True
+    dn = [_bar(10, 10.1, 9.8, 9.9, 100), _bar(9.9, 10.0, 9.7, 9.8, 100)]
+    assert ir._above_vwap(dn) is False
+    assert ir._above_vwap([]) is None        # missing never passes
+
+
+def test_qqq_vwap_gates_strong_recovery():
+    """STRONG needs SMH AND QQQ above vwap — an index-led rally where
+    the benchmark can't hold its own vwap isn't confirmed."""
+    sess = _rising_session(40, step=0.12)
+    bench = {"SMH": _flat_bench(40), "QQQ": _flat_bench(40)}
+
+    def _run(qqq_ok):
+        res = ir._eval_symbol("X", sess, bench, 90, True, qqq_ok,
+                              18, ir._eng())
+        ir._apply_rvol(res, 1.8, ir._eng())
+        res["legs"]["_bump"] = {"pts": 40, "wt": 0, "note": "t"}
+        return ir._signal(res)
+
+    assert _run(True)["signal"] == "STRONG_RECOVERY"
+    assert _run(False)["signal"] != "STRONG_RECOVERY"
+    assert _run(None)["signal"] != "STRONG_RECOVERY"
+
+
+def test_breadth_leg_includes_benchmark_vwap():
+    """Participation alone can't max the breadth leg — benchmark VWAP
+    confirmation carries the rest."""
+    sess = _rising_session(30, step=0.12)
+    bench = {"SMH": _flat_bench(30), "QQQ": _flat_bench(30)}
+    both = ir._eval_symbol("X", sess, bench, 90, True, True, 18, ir._eng())
+    none = ir._eval_symbol("X", sess, bench, 90, False, False, 18,
+                           ir._eng())
+    assert both["legs"]["breadth"]["pts"] == 10
+    assert none["legs"]["breadth"]["pts"] == 6      # participation only
+
+
+def test_bond_market_closed_days():
+    """Equity-open/SIFMA-closed days: Columbus Day + Veterans Day —
+    a frozen ^TNX is a stale rates read, not flatness."""
+    from app.signals.intraday_pulse import _bond_market_closed
+    import datetime as dt
+    assert _bond_market_closed(dt.date(2026, 11, 11)) is True   # Veterans
+    assert _bond_market_closed(dt.date(2026, 10, 12)) is True   # Columbus
+    assert _bond_market_closed(dt.date(2026, 11, 12)) is False
+    assert _bond_market_closed(dt.date(2026, 7, 4)) is False    # both closed

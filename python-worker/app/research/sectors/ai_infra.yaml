@@ -23,7 +23,8 @@ universe:
             VRT, ETN, NVT, HUBB, EMR, MPWR, 'ON', TXN, APH, TEL,
             TT, CARR, JCI, MOD, FIX, IESC,
             GEV, CEG, VST, TLN, CMI, CAT, GNRC, PWR,
-            TSM, AMKR, LRCX, KLAC, AMAT, ONTO, TER, ASML]
+            TSM, AMKR, LRCX, KLAC, AMAT, ONTO, TER, ASML,
+            CRWV, NBIS, IREN, APLD, BE]
 
 # ------------------------------------------------------------------
 # symbol → module — curated assignment wins over industry hints.
@@ -86,6 +87,11 @@ symbol_map:
   ONTO: semicap_equipment
   TER:  semicap_equipment
   ASML: semicap_equipment
+  CRWV: neocloud
+  NBIS: neocloud
+  IREN: neocloud
+  APLD: neocloud
+  BE:   power_gen
 
 # ------------------------------------------------------------------
 # Architecture layers — where in the AI-infra stack a product sits.
@@ -120,6 +126,8 @@ layers:
   server:            "servers / racks / integrated systems"
   foundry:           "wafer foundry"
   packaging_osat:    "advanced packaging / OSAT"
+  gpu_cloud:         "GPU-as-a-service / AI cloud compute"
+  ai_datacenter:     "AI datacenter capacity / colocation"
 
 # ------------------------------------------------------------------
 # Business models — same contract as healthcare: industry_hints are
@@ -234,6 +242,17 @@ business_models:
     exposure_terms: [foundry, wafer, packaging, hpc]
     nextgen_layers: [foundry, packaging_osat]
     kpis: [leading_node_mix, cowos_capacity, hpc_rev_share]
+  neocloud:
+    industry_hints: [data center, cloud infrastructure, it services,
+                     computer facilities]
+    opportunities: [gpu_cloud, ai_datacenter]
+    exposure_terms: [gpu cloud, ai infrastructure, datacenter,
+                     colocation, compute capacity, hyperscale, hpc]
+    nextgen_layers: [gpu_cloud, ai_datacenter]
+    kpis: [capacity_mw, contracted_revenue, backlog, utilization,
+           gpu_fleet_size, cost_per_mw]
+    valuation: ev_ebitda
+    profitability_expected: false
   semicap_equipment:
     industry_hints: [semiconductor equipment, semiconductor materials,
                      test, measurement]

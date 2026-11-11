@@ -3751,8 +3751,13 @@ async def intraday_recovery_board():
                      > timedelta(minutes=10))
         except Exception:
             pass
+    evald = [r for r in rows if r.get("signal") != "DATA_BLOCKED"]
+    participation = (round(
+        sum(1 for r in evald if (r.get("vwap_hold_min") or 0) > 0)
+        / len(evald) * 100, 1) if evald else None)
     return {"as_of": rows[0]["bar_ts"] if rows else None,
-            "stale": stale, "symbols": rows}
+            "stale": stale, "participation": participation,
+            "symbols": rows}
 
 
 @router.get("/transitions")

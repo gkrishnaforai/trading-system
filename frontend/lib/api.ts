@@ -667,6 +667,7 @@ export const api = {
   readinessStates: () => get<{ as_of: string | null; use_cases: Record<string, Record<string, { symbol: string; score: number | null; rank: number | null }[]>> }>('/readiness-states'),
   intradayRecovery: () => get<{
     as_of?: string | null; stale?: boolean | null;
+    participation?: number | null;
     symbols?: { symbol: string; signal: string; score?: number | null;
                 bar_ts?: string; vwap_hold_min?: number | null;
                 rs30_smh?: number | null; rvol?: number | null;
