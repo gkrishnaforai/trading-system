@@ -782,6 +782,13 @@ def read_all() -> list[dict[str, Any]]:
             " WHERE as_of < (SELECT max(as_of)"
             "                FROM company_resilience_scores)"
             " ORDER BY symbol, as_of DESC")}
+        # latest 5-min recovery eval per symbol — one query merged per
+        # row; only the ai-infra watch scope has rows
+        try:
+            from app.signals import intraday_recovery as _ir
+            rec_map = _ir.current()
+        except Exception:
+            rec_map = {}
         out = []
         for r in rows:
             p = r.get('payload')
@@ -806,7 +813,8 @@ def read_all() -> list[dict[str, Any]]:
                         'flow': (p or {}).get('flow'),
                         'delta': delta or None,
                         'tape_live': _tape_live(r['symbol']),
-                        'swing_live': _swing_live(r['symbol'])})
+                        'swing_live': _swing_live(r['symbol']),
+                        'recovery': rec_map.get(r['symbol'])})
         return out
     except Exception as e:
         logger.debug('resilience read_all: %s', e)

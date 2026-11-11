@@ -7,11 +7,12 @@ import { ReadinessBoard } from '@/components/readiness-board'
 const CAP: Record<string, number> = { ready: 999, close: 40, no: 15 }
 
 export default async function ReadinessPage() {
-  const [d, states, pulse, tr] = await Promise.all([
+  const [d, states, pulse, tr, irec] = await Promise.all([
     api.readiness(),
     api.readinessStates().catch(() => null),
     api.portfolioPulse().catch(() => null),
     api.transitions().catch(() => null),
+    api.intradayRecovery().catch(() => null),
   ])
   const sections: Record<string, Record<string, ReadinessRow[]>> = {}
   // live buckets from the just-computed sections — the checklist ran
@@ -133,6 +134,63 @@ export default async function ReadinessPage() {
               </div>
             </div>
           )}
+        </section>
+      )}
+
+      {/* intraday recovery — the 5-min session engine: sustained
+          buying (vwap hold + rs + rvol + breadth) vs relief rally vs
+          failed rebound, ai-infra watch scope. Overlay — never a
+          checklist input. */}
+      {(irec?.symbols?.length ?? 0) > 0 && (
+        <section className="mt-4 rounded-lg border border-line/40 px-3 py-2.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+            intraday recovery
+            <span className="ml-2 font-mono text-[10px] font-normal normal-case tracking-normal text-faint">
+              5-min session eval{irec!.as_of
+                ? ` · ${new Date(irec!.as_of).toLocaleTimeString('en-US',
+                    { hour: 'numeric', minute: '2-digit',
+                      timeZone: 'America/New_York' })} ET` : ''}
+              {irec!.stale ? ' · stale' : ''}
+            </span>
+          </div>
+          <div className="mt-1.5 overflow-x-auto">
+            <table className="w-full text-[11px]">
+              <tbody>
+                {irec!.symbols!.slice(0, 24).map((r) => {
+                  const sig = r.signal ?? 'WATCH'
+                  const cls =
+                    sig === 'STRONG_RECOVERY' ? 'text-aggressive'
+                    : sig === 'CONFIRMED_RECOVERY' ? 'text-aggressive/80'
+                    : sig === 'IMPROVING' ? 'text-caution'
+                    : sig === 'FAILED_REBOUND' ? 'text-defensive'
+                    : 'text-faint'
+                  return (
+                    <tr key={r.symbol} className="border-t border-line/30">
+                      <td className="py-1 pr-3 font-medium">
+                        <a href={`/stock?symbol=${r.symbol}`}>{r.symbol}</a>
+                      </td>
+                      <td className={`py-1 pr-3 font-mono ${cls}`}>
+                        {sig.replace(/_/g, ' ').toLowerCase()}
+                      </td>
+                      <td className="py-1 pr-3 font-mono text-muted">
+                        {r.score ?? '—'}
+                      </td>
+                      <td className="py-1 pr-3 font-mono text-muted">
+                        vwap {r.vwap_hold_min != null ? `${r.vwap_hold_min}m` : '—'}
+                      </td>
+                      <td className="py-1 pr-3 font-mono text-muted">
+                        rs {r.rs30_smh != null
+                          ? `${r.rs30_smh > 0 ? '+' : ''}${r.rs30_smh}%` : '—'}
+                      </td>
+                      <td className="py-1 font-mono text-muted">
+                        rvol {r.rvol != null ? `${r.rvol}x` : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 

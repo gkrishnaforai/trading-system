@@ -41,6 +41,12 @@ const FILTERS: { k: string; label: string;
     // bucket for swing setups
     test: r => ['turning_up', 'confirmed']
       .includes(r.swing_live?.dip_phase_live ?? '') },
+  { k: 'confirmed', label: 'recovery ✓',
+    // 5-min engine: VWAP hold + RS + RVOL + breadth — sustained buying,
+    // not just green. Session overlay; only the ai-infra watch scope
+    // carries evals.
+    test: r => ['CONFIRMED_RECOVERY', 'STRONG_RECOVERY']
+      .includes(r.recovery?.signal ?? '') },
 ]
 
 export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {

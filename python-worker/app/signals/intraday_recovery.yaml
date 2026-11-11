@@ -1,0 +1,115 @@
+# Intraday Recovery & VWAP Confirmation — v1.0
+#
+# Answers: after a selloff, which AI-infra names show SUSTAINED buying
+# (VWAP hold + relative strength + time-adjusted volume + breadth) vs
+# a relief rally vs a failed rebound. Deterministic features →
+# declarative thresholds → first-match signal. Up 8% is not a signal.
+#
+# Thresholds are initial research defaults — not backtested optima;
+# the eval journal exists to measure and tune them later.
+
+engine:
+  name: intraday_recovery_confirmation
+  version: "1.0"
+  timezone: America/New_York
+
+  market_session:
+    start: "09:30"
+    end: "16:00"
+    bar_interval_minutes: 5
+    exclude_premarket: true
+    exclude_afterhours: true
+    evaluate_on_completed_bar: true
+    minimum_bars_before_signal: 6
+
+  universe:
+    # resolved in code — ai_infra.yaml universe ∩ book_symbols so the
+    # watch scope follows the canonical membership, never a forked
+    # list. benchmarks are always fetched.
+    source: ai_infra_and_book
+    benchmarks: [SMH, QQQ, SPY]
+    vix: "^VIX"
+
+  data_quality:
+    max_bar_delay_seconds: 300        # 5m bars — a bar older than 5min is stale
+    minimum_intraday_bars: 6          # 30 min of session before any signal
+    missing_vwap: BLOCK
+    missing_benchmark: BLOCK
+    stale_data: BLOCK
+    minimum_history_days_rvol: 5      # sessions needed before RVOL leg scores
+
+  vwap:
+    price_source: typical_price       # (h+l+c)/3
+    reset_each_session: true
+    confirmation:
+      minimum_consecutive_closes_above: 3    # = vwap_confirmed_15m
+      strong_consecutive_closes_above: 6     # = vwap_confirmed_30m
+      require_positive_vwap_slope: true
+      slope_lookback_bars: 3
+      maximum_extension_above_vwap_pct: 3.0  # 8% up AND 4% over VWAP = chase
+      maximum_allowed_single_breach_pct: 0.10
+    failure:
+      consecutive_closes_below: 2
+      maximum_distance_below_pct: 0.20
+
+  relative_strength:
+    benchmarks: [SMH, QQQ]
+    lookbacks_minutes: [15, 30, 60]
+    minimum_positive_rs_pct:
+      versus_smh: 0.25
+      versus_qqq: 0.25
+    strong_rs_pct:
+      versus_smh: 1.00
+      versus_qqq: 0.75
+    improving_rs_lookback_minutes: 30
+
+  relative_volume:
+    method: time_of_day_adjusted      # cum-vol now vs avg cum-vol at
+    baseline_days: 20                 # the same bar slot, never vs
+    thresholds:                       # the full-day average
+      weak: 0.75
+      normal: 1.00
+      strong: 1.50
+      exceptional: 2.00
+
+  opening_range:
+    duration_minutes: 30
+    breakout_buffer_pct: 0.10
+    retest_tolerance_pct: 0.20
+    retest_hold_bars: 2
+
+  recovery:
+    selloff_lookback_days: 10
+    severe_selloff_pct: -15
+    moderate_selloff_pct: -8
+    higher_low_lookback_bars: 6
+
+  market_confirmation:
+    require_smh_above_vwap: true
+    minimum_sector_participation_pct: 50
+    strong_sector_participation_pct: 65
+    vix_warning_level: 22
+
+  scoring:
+    weights:
+      vwap_confirmation: 25
+      relative_strength: 20
+      relative_volume: 15
+      price_structure: 15
+      opening_range: 10
+      market_breadth: 10
+      recovery_quality: 5
+    thresholds:
+      improving: 55
+      confirmed: 70
+      strong: 85
+
+  signals:
+    first_match_priority:
+      - DATA_BLOCKED
+      - FAILED_REBOUND
+      - STRONG_RECOVERY
+      - CONFIRMED_RECOVERY
+      - IMPROVING
+      - WATCH
+    overextended_caps_at: IMPROVING   # >3% above VWAP: strong but a chase

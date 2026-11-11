@@ -665,6 +665,14 @@ export const api = {
   fragility: () => get<Fragility>('/fragility'),
   resilience: (symbol: string) => get<ResilienceCard>(`/resilience/${symbol}`),
   readinessStates: () => get<{ as_of: string | null; use_cases: Record<string, Record<string, { symbol: string; score: number | null; rank: number | null }[]>> }>('/readiness-states'),
+  intradayRecovery: () => get<{
+    as_of?: string | null; stale?: boolean | null;
+    symbols?: { symbol: string; signal: string; score?: number | null;
+                bar_ts?: string; vwap_hold_min?: number | null;
+                rs30_smh?: number | null; rvol?: number | null;
+                vwap?: number | null; last?: number | null;
+                ext_pct?: number | null }[]
+  }>('/intraday-recovery'),
   transitions: () => get<{
     readiness?: { symbol: string; use_case: string;
                   prev_state?: string; state?: string;
@@ -1244,6 +1252,9 @@ export interface ResilienceRow {
   swing_live?: { dip_phase_live?: string; stab_live?: number;
                  stab_cls_live?: string; dip_health_live?: number;
                  as_of?: string } | null
+  recovery?: { signal?: string; score?: number | null;
+               bar_ts?: string; vwap_hold_min?: number | null;
+               rs30_smh?: number | null; rvol?: number | null } | null
   flags?: string[]; needs?: string[]
   business_model?: string | null
   themes?: { theme: string; exposure: string }[]

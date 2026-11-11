@@ -851,6 +851,15 @@ async def _j_intraday() -> dict:
     return await asyncio.to_thread(ip.evaluate)
 
 
+async def _j_intraday_recovery() -> dict:
+    """5-min recovery-confirmation engine — fetch session bars for the
+    AI-infra watch scope, evaluate VWAP/RS/RVOL/OR/breadth on the
+    latest completed bar, journal one eval per (symbol, bar_ts).
+    Off-hours the fetch still lands but evals journal only RTH bars."""
+    from app.signals import intraday_recovery
+    return await asyncio.to_thread(intraday_recovery.run)
+
+
 async def _j_correction_alarms() -> dict:
     """Correction alarms — revision breadth (flywheel), labor/credit
     + real yields (keyless FRED CSV), valuation decomposition.
@@ -1124,6 +1133,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "intraday-tape": ("Intraday tape classifier", _j_intraday),
     "intraday-regime": ("Intraday regime overlay",
                         _j_intraday_regime),
+    "intraday-recovery": ("Intraday recovery confirm (5-min)",
+                          _j_intraday_recovery),
     "correction-alarms": ("Correction-alarm engine",
                           _j_correction_alarms),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
@@ -3715,6 +3726,33 @@ async def readiness_states():
             b.sort(key=lambda x: -(x["score"] or 0))
     return {"as_of": str(rows[0]["as_of"]) if rows else None,
             "use_cases": by_uc}
+
+
+@router.get("/intraday-recovery")
+async def intraday_recovery_board():
+    """Latest 5-min recovery-confirmation eval per universe symbol —
+    who's attracting sustained buying vs relief rally vs failing.
+    Session overlay; never a checklist input."""
+    from app.signals import intraday_recovery
+    cur = await asyncio.to_thread(intraday_recovery.current)
+    order = {"STRONG_RECOVERY": 0, "CONFIRMED_RECOVERY": 1,
+             "IMPROVING": 2, "WATCH": 3,
+             "FAILED_REBOUND": 4, "DATA_BLOCKED": 5}
+    rows = sorted(cur.values(),
+                  key=lambda r: (order.get(r["signal"], 6),
+                                 -(r["score"] or 0), r.get("symbol") or ""))
+    stale = None
+    if rows:
+        try:
+            from datetime import datetime, timezone, timedelta
+            latest = max(datetime.fromisoformat(r["bar_ts"])
+                         for r in rows)
+            stale = (datetime.now(timezone.utc) - latest
+                     > timedelta(minutes=10))
+        except Exception:
+            pass
+    return {"as_of": rows[0]["bar_ts"] if rows else None,
+            "stale": stale, "symbols": rows}
 
 
 @router.get("/transitions")
