@@ -665,6 +665,15 @@ export const api = {
   fragility: () => get<Fragility>('/fragility'),
   resilience: (symbol: string) => get<ResilienceCard>(`/resilience/${symbol}`),
   readinessStates: () => get<{ as_of: string | null; use_cases: Record<string, Record<string, { symbol: string; score: number | null; rank: number | null }[]>> }>('/readiness-states'),
+  transitions: () => get<{
+    readiness?: { symbol: string; use_case: string;
+                  prev_state?: string; state?: string;
+                  score?: number; of?: number;
+                  prev_as_of?: string; as_of?: string }[]
+    pulse?: { symbol: string; prev_action?: string; action?: string;
+              label?: string | null; matched_rule?: string | null;
+              prev_as_of?: string; as_of?: string }[]
+  }>('/transitions'),
   guidanceAll: () => get<{ items: { symbol: string; outlook: number | null; quality: number | null }[] }>('/guidance'),
   guidance: (symbol: string) => get<GuidanceCard>(`/guidance/${symbol}`),
   resilienceAll: () => get<{ items: ResilienceRow[] }>('/resilience'),
