@@ -3,6 +3,7 @@ Alpha Vantage Provider Client
 Implements all HTTP/SDK logic, rate limiting, retries, and response normalization
 Follows the clean architecture pattern
 """
+from app.utils.http_resilience import jitter, breaker, ProviderDown
 import logging
 import time
 import requests
@@ -73,6 +74,9 @@ class AlphaVantageClient:
         params["apikey"] = self.config.api_key
         
         for attempt in range(self.config.max_retries):
+            br = breaker("alphavantage")
+            if not br.allow():
+                raise ProviderDown("alphavantage circuit open — failing fast")
             try:
                 response = self.session.get(self.config.base_url, params=params)
                 response.raise_for_status()
@@ -87,7 +91,7 @@ class AlphaVantageClient:
                     # Rate limit exceeded
                     logger.warning(f"Alpha Vantage rate limit exceeded: {data['Note']}")
                     if attempt < self.config.max_retries - 1:
-                        time.sleep(self.config.retry_delay * (2 ** attempt))
+                        time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                         continue
                 
                 return data
@@ -95,8 +99,9 @@ class AlphaVantageClient:
             except requests.exceptions.RequestException as e:
                 logger.warning(f"Request failed (attempt {attempt + 1}/{self.config.max_retries}): {e}")
                 if attempt < self.config.max_retries - 1:
-                    time.sleep(self.config.retry_delay * (2 ** attempt))
+                    time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                     continue
+                br.failure()
                 raise
             except ValueError as e:
                 # API error, don't retry
@@ -146,6 +151,7 @@ class AlphaVantageClient:
         df["stock_symbol"] = symbol
         
         logger.info(f"✅ Fetched {len(df)} price records for {symbol}")
+        breaker("alphavantage").success()
         return df
     
     def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
@@ -287,6 +293,7 @@ class AlphaVantageClient:
             })
         
         logger.info(f"✅ Fetched {len(earnings)} earnings records for {symbol}")
+        breaker("alphavantage").success()
         return earnings
     
     def fetch_technical_indicators(self, symbol: str, indicator_type: str = "SMA", **kwargs) -> Dict[str, Any]:
@@ -360,6 +367,7 @@ class AlphaVantageClient:
             result.update(latest_values)
         
         logger.info(f"✅ Fetched {indicator_type} for {symbol}")
+        breaker("alphavantage").success()
         return result
     
     def fetch_industry_peers(self, symbol: str) -> Dict[str, Any]:

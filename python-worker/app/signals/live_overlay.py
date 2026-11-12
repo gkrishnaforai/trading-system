@@ -33,7 +33,7 @@ def refresh(symbols: list[str]) -> dict[str, Any]:
     if not symbols:
         return {"updated": 0}
     df = yf.download(" ".join(symbols), period="1d",
-                     group_by="column", threads=True, progress=False)
+                     group_by="column", threads=True, progress=False, timeout=30)
     if df is None or df.empty:
         return {"updated": 0, "note": "no live data"}
     closes = df["Close"].ffill().iloc[-1] if "Close" in df else None

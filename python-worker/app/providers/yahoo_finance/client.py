@@ -3,6 +3,7 @@ Yahoo Finance Provider Client
 Implements all HTTP/SDK logic, rate limiting, retries, and response normalization
 Follows the clean architecture pattern
 """
+from app.utils.http_resilience import jitter, breaker, ProviderDown
 import logging
 import time
 import requests
@@ -113,6 +114,9 @@ class YahooFinanceClient:
         self.rate_limiter.acquire()
         
         for attempt in range(self.config.max_retries):
+            br = breaker("yahoo")
+            if not br.allow():
+                raise ProviderDown("yahoo circuit open — failing fast")
             try:
                 ticker = yf.Ticker(symbol)
                 # Avoid relying on .info for validation (often slow / sometimes blocked).
@@ -124,8 +128,9 @@ class YahooFinanceClient:
             except Exception as e:
                 logger.warning(f"Failed to get ticker for {symbol} (attempt {attempt + 1}/{self.config.max_retries}): {e}")
                 if attempt < self.config.max_retries - 1:
-                    time.sleep(self.config.retry_delay * (2 ** attempt))
+                    time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                     continue
+                br.failure()
                 raise
 
     @staticmethod
@@ -221,6 +226,9 @@ class YahooFinanceClient:
                     period = "5y"
 
             for attempt in range(self.config.max_retries):
+                br = breaker("yahoo")
+                if not br.allow():
+                    raise ProviderDown("yahoo circuit open — failing fast")
                 try:
                     self.rate_limiter.acquire()
                     if start and end:
@@ -229,14 +237,16 @@ class YahooFinanceClient:
                         hist = ticker.history(period=period or "1y", interval=interval, auto_adjust=auto_adjust)
                     df = self._normalize_history(symbol, hist, interval=interval)
                     logger.info(f"✅ Fetched {len(df)} price records for {symbol}")
+                    breaker("yahoo").success()
                     return df
                 except Exception as e:
                     logger.warning(
                         f"Failed to fetch price data for {symbol} (attempt {attempt + 1}/{self.config.max_retries}): {e}"
                     )
                     if attempt < self.config.max_retries - 1:
-                        time.sleep(self.config.retry_delay * (2 ** attempt))
+                        time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                         continue
+                    br.failure()
                     raise
             
         except Exception as e:
@@ -391,6 +401,7 @@ class YahooFinanceClient:
                     logger.warning(f"Price history fallback failed for {symbol}: {hist_error}")
             
             logger.info(f"✅ Fetched symbol details for {symbol}: {len([k for k, v in details.items() if v is not None])} non-null fields")
+            breaker("yahoo").success()
             return details
             
         except Exception as e:
@@ -633,6 +644,7 @@ class YahooFinanceClient:
                     pass
             
             logger.info(f"✅ Fetched fundamentals for {symbol}")
+            breaker("yahoo").success()
             return details
             
         except Exception as e:
@@ -679,6 +691,7 @@ class YahooFinanceClient:
                     "content_keys": list(content.keys()) if isinstance(content, dict) else []
                 })
             logger.info(f"✅ Fetched {len(articles)} news articles for {symbol}")
+            breaker("yahoo").success()
             return articles
             
         except Exception as e:
@@ -733,6 +746,7 @@ class YahooFinanceClient:
                     })
             
             logger.info(f"✅ Fetched {len(earnings_data)} earnings records for {symbol}")
+            breaker("yahoo").success()
             return earnings_data
             
         except Exception as e:
@@ -831,6 +845,7 @@ class YahooFinanceClient:
                 result[f"atr_{window}"] = atr.iloc[-1]
             
             logger.info(f"✅ Calculated {indicator_type} for {symbol}")
+            breaker("yahoo").success()
             return result
             
         except Exception as e:
@@ -1270,6 +1285,7 @@ class YahooFinanceClient:
 
             earnings_data.sort(key=lambda x: (x.get("earnings_date"), x.get("symbol")))
             logger.info(f"✅ Fetched {len(earnings_data)} earnings calendar entries (fallback)")
+            breaker("yahoo").success()
             return earnings_data
         except Exception as e:
             logger.error(f"Failed to fetch earnings calendar (fallback): {e}")
@@ -1326,6 +1342,7 @@ class YahooFinanceClient:
 
             filtered.sort(key=lambda x: (x.get("earnings_date"), x.get("symbol")))
             logger.info(f"✅ Fetched {len(filtered)} earnings calendar entries (yahoo_fin)")
+            breaker("yahoo").success()
             return filtered
         except Exception as e:
             logger.warning(f"yahoo_fin earnings calendar failed, falling back to yfinance-based approach: {e}")

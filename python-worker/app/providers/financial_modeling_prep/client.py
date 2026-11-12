@@ -2,6 +2,7 @@
 Enhanced FMP Client with Complete API Coverage
 Includes all FMP endpoints from the official documentation
 """
+from app.utils.http_resilience import jitter, breaker, ProviderDown
 import logging
 import re
 import time
@@ -114,6 +115,9 @@ class EnhancedFMPClient:
         logger.debug(f"🌐 FMP Request: {endpoint} with params: {safe_params}")
         
         for attempt in range(self.config.max_retries):
+            br = breaker("fmp")
+            if not br.allow():
+                raise ProviderDown("fmp circuit open — failing fast")
             try:
                 # Make request with curl-like headers
                 response = self.session.get(url, params=params, timeout=self.config.timeout)
@@ -159,7 +163,7 @@ class EnhancedFMPClient:
                     )
 
                     if attempt < self.config.max_retries - 1:
-                        time.sleep(sleep_s)
+                        time.sleep(jitter(sleep_s))
                         continue
 
                     logger.error("❌ FMP HTTP Error: status=429")
@@ -177,20 +181,23 @@ class EnhancedFMPClient:
             except requests.exceptions.Timeout as e:
                 logger.warning(f"⏰ FMP Request timeout (attempt {attempt + 1}/{self.config.max_retries}): {_redact_key(e)}")
                 if attempt < self.config.max_retries - 1:
-                    time.sleep(self.config.retry_delay * (2 ** attempt))
+                    time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                     continue
+                br.failure()
                 raise requests.exceptions.Timeout(_redact_key(e)) from e
             except requests.exceptions.ConnectionError as e:
                 logger.warning(f"🔌 FMP Connection error (attempt {attempt + 1}/{self.config.max_retries}): {_redact_key(e)}")
                 if attempt < self.config.max_retries - 1:
-                    time.sleep(self.config.retry_delay * (2 ** attempt))
+                    time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                     continue
+                br.failure()
                 raise requests.exceptions.ConnectionError(_redact_key(e)) from e
             except requests.exceptions.RequestException as e:
                 logger.warning(f"🌐 FMP Request failed (attempt {attempt + 1}/{self.config.max_retries}): {_redact_key(e)}")
                 if attempt < self.config.max_retries - 1:
-                    time.sleep(self.config.retry_delay * (2 ** attempt))
+                    time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                     continue
+                br.failure()
                 raise requests.exceptions.RequestException(_redact_key(e)) from e
             except ValueError as e:
                 # API error, don't retry
@@ -1263,6 +1270,7 @@ class EnhancedFMPClient:
                     
                     if isinstance(data, list) and data:
                         logger.info(f"✅ Found analyst ratings using endpoint: {endpoint}")
+                        breaker("fmp").success()
                         return data
                 except Exception as endpoint_error:
                     logger.debug(f"🔍 Endpoint {endpoint} failed: {endpoint_error}")
@@ -1663,6 +1671,7 @@ class FinancialModelingPrepClient(EnhancedFMPClient):
             
             if intraday_data:
                 logger.info(f"✅ Fetched {len(intraday_data)} 5m data points for {symbol}")
+                breaker("fmp").success()
                 return pd.DataFrame(intraday_data)
             else:
                 logger.warning(f"⚠️ No 5m intraday data returned for {symbol}")
@@ -1702,9 +1711,11 @@ class FinancialModelingPrepClient(EnhancedFMPClient):
                 # FMP returns a direct array, not wrapped in "historical" key
                 if isinstance(hist_data, list):
                     logger.info(f"✅ Fetched {len(hist_data)} daily data points for {symbol}")
+                    breaker("fmp").success()
                     return pd.DataFrame(hist_data)
                 elif isinstance(hist_data, dict) and "historical" in hist_data:
                     logger.info(f"✅ Fetched {len(hist_data['historical'])} daily data points for {symbol}")
+                    breaker("fmp").success()
                     return pd.DataFrame(hist_data["historical"])
                 else:
                     logger.warning(f"⚠️ Unexpected FMP historical data format for {symbol}: {type(hist_data)}")

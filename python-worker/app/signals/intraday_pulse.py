@@ -16,7 +16,7 @@ Readings (all deterministic):
                             pressure on growth
   book breadth              % of tracked names above today's open —
                             via ONE batched yf.download (not market-
-                            wide adv/dec, which needs a paid feed)
+                            wide adv/dec, which needs a paid feed, timeout=30)
 
 States (first-match):
   buyers_in_control    above VWAP + breadth healthy + VIX falling
@@ -158,7 +158,7 @@ def _book_breadth() -> dict[str, Any]:
             return {"available": False}
         df = yf.download(" ".join(syms), period="1d",
                          group_by="column", threads=True,
-                         progress=False)
+                         progress=False, timeout=30)
         if df is None or df.empty:
             return {"available": False}
         # some tickers emit NaN spacer rows — ffill then read the last
@@ -266,7 +266,7 @@ def premarket() -> dict[str, Any]:
         import yfinance as yf
         for label, tick in (("es", "ES=F"), ("nq", "NQ=F")):
             df = yf.download(tick, period="2d", interval="1h",
-                             progress=False)
+                             progress=False, timeout=30)
             if df is not None and not df.empty:
                 last = float(df["Close"].iloc[-1])
                 ref = float(df["Close"].iloc[-2]) if len(df) > 1 else last

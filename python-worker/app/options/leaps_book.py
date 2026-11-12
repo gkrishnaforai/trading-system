@@ -205,7 +205,7 @@ def mark_book() -> dict:
         px = yf.download(" ".join(symbols), period="2y",
                          interval="1d", group_by="ticker",
                          progress=False, threads=True,
-                         auto_adjust=True)
+                         auto_adjust=True, timeout=30)
         for s in symbols:
             # group_by="ticker" → MultiIndex (px[s]); a flat frame
             # (single ticker, auto group) needs the bare frame

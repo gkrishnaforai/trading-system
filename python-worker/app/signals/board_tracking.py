@@ -72,7 +72,8 @@ def _bars(sym: str, start: date):
     import yfinance as yf
     from types import SimpleNamespace
     d = yf.download(sym, start=start.isoformat(), interval="1d",
-                    group_by="ticker", progress=False, auto_adjust=True)
+                    group_by="ticker", progress=False, auto_adjust=True,
+                    timeout=30)
     try:
         sub = d[sym]
     except (KeyError, TypeError):

@@ -3,6 +3,7 @@ Implements all HTTP logic, retries, rate limiting, and response normalization.
 Follows the clean architecture pattern.
 """
 
+from app.utils.http_resilience import jitter, breaker, ProviderDown
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -53,6 +54,9 @@ class FinnhubClient:
         params["token"] = self.config.api_key
 
         for attempt in range(self.config.max_retries):
+            br = breaker("finnhub")
+            if not br.allow():
+                raise ProviderDown("finnhub circuit open — failing fast")
             try:
                 self._rate_limiter.acquire()
                 resp = self.session.get(
@@ -64,8 +68,9 @@ class FinnhubClient:
                 return resp.json()
             except Exception as e:
                 if attempt < self.config.max_retries - 1:
-                    time.sleep(self.config.retry_delay * (2 ** attempt))
+                    time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                     continue
+                br.failure()
                 raise
 
     def fetch_current_price(self, symbol: str) -> Optional[float]:
