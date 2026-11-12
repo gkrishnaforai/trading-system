@@ -547,10 +547,11 @@ def current() -> dict:
         " order_peak, estimate_peak, revenue_peak, demand_peak_lo,"
         " demand_peak_hi, peak_confidence, peak_source,"
         " peak_movement, quarters_to_peak, rev_peak_risk, decision,"
-        " structural_break, valuation_blocked, components, flags"
+        " structural_break, valuation_blocked, components,"
+        " decision_detail, flags"
         " FROM cycle_snapshots ORDER BY symbol, as_of DESC, id DESC")
     for r in rows:
-        for j in ("components", "flags"):
+        for j in ("components", "decision_detail", "flags"):
             if isinstance(r.get(j), str):
                 r[j] = json.loads(r[j])
         for k in ("composite", "coverage_pct", "rev_peak_risk"):

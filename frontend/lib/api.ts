@@ -760,6 +760,15 @@ export type CycleRow = {
   structural_break?: boolean | null
   valuation_blocked?: boolean | null
   flags?: string[]
+  components?: Record<string, {
+    score?: number | null; weight?: number;
+    note?: string | null; unknown?: boolean
+  }> | null
+  decision_detail?: {
+    note?: string | null
+    conditions?: Record<string, string>
+    missing?: string[]
+  } | null
 }
 
 export type CycleHistoryRow = {

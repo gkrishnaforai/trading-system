@@ -56,6 +56,92 @@ function PeakDots({ r }: { r: CycleRow }) {
   )
 }
 
+const LEG_NAME: Record<string, string> = {
+  demand_accel: 'Demand acceleration',
+  backlog_quality: 'Orders & backlog',
+  est_revisions: 'Estimate revisions',
+  margin_cf: 'Margins & cash flow',
+  capacity_util: 'Capacity & utilization',
+  customer_adoption: 'Customer adoption',
+  capital_recovery: 'Capital & financing',
+  valuation_duration: 'Valuation vs runway',
+}
+
+const FLAG_TXT: Record<string, string> = {
+  insufficient_evidence:
+    'evidence is thin — this verdict is provisional',
+  order_peak_warning:
+    'orders may have peaked — momentum flag, verify before adding',
+  peak_window_unsourced:
+    'peak window is a cohort estimate, not verified evidence',
+}
+
+/** The "why" — translate the journaled decision into plain English:
+ * the fired rule's note, the strongest and weakest evidence legs,
+ * and the honest caveats. Nothing here is generated — every line
+ * restates a journaled number or note. */
+function WhyPanel({ r }: { r: CycleRow }) {
+  const comps = Object.entries(r.components ?? {})
+  const scored = comps.filter(([, c]) => c.score != null)
+    .sort((a, b) => (b[1].score ?? 0) - (a[1].score ?? 0))
+  const unknown = comps.filter(([, c]) => c.unknown)
+  const top = scored.slice(0, 3)
+  const weak = scored.filter(([, c]) => (c.score ?? 100) < 35)
+  const dd = r.decision_detail
+  return (
+    <div className="space-y-2 text-[11.5px]">
+      {dd?.note && (
+        <div className="text-ink">
+          <span className="text-faint">Why: </span>
+          {dd.note}
+          {r.rev_peak_risk != null && (
+            <span className="text-faint">
+              {' '}· peak risk {r.rev_peak_risk}/100
+            </span>
+          )}
+        </div>
+      )}
+      {top.length > 0 && (
+        <div>
+          <span className="text-faint">Strongest evidence — </span>
+          <span className="text-ink">
+            {top.map(([k, c]) =>
+              `${LEG_NAME[k] ?? k} ${c.score}` +
+              (c.note ? ` (${c.note})` : '')).join(' · ')}
+          </span>
+        </div>
+      )}
+      {weak.length > 0 && (
+        <div className="text-caution">
+          <span className="text-faint">Watch — </span>
+          {weak.map(([k, c]) =>
+            `${LEG_NAME[k] ?? k} ${c.score}` +
+            (c.note ? ` (${c.note})` : '')).join(' · ')}
+        </div>
+      )}
+      {unknown.length > 0 && (
+        <div className="text-faint">
+          No evidence yet for:{' '}
+          {unknown.map(([k]) => LEG_NAME[k] ?? k).join(', ')}
+          {' '}— excluded from the score, not counted as zero.
+        </div>
+      )}
+      {(r.flags ?? []).length > 0 && (
+        <ul className="text-faint">
+          {(r.flags ?? []).map(f => (
+            <li key={f}>· {FLAG_TXT[f] ?? f.replace(/_/g, ' ')}</li>
+          ))}
+        </ul>
+      )}
+      {(dd?.missing ?? []).length > 0 && (
+        <div className="text-faint/70">
+          unverifiable inputs: {(dd?.missing ?? []).slice(0, 6).join(', ')}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function History({ sym }: { sym: string }) {
   const [rows, setRows] = useState<CycleHistoryRow[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -164,7 +250,8 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                   {(r.cohort ?? '—').replace(/_/g, ' ')}
                 </td>
                 <td className="py-2 pr-3">
-                  <span className={`rounded-full px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider ${DEC_TONE[r.decision ?? ''] ?? 'bg-hairline/40 text-faint'}`}>
+                  <span title={r.decision_detail?.note ?? undefined}
+                        className={`rounded-full px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider ${DEC_TONE[r.decision ?? ''] ?? 'bg-hairline/40 text-faint'}`}>
                     {(r.decision ?? '—').replace(/_/g, ' ')}
                   </span>
                   {r.valuation_blocked && (
@@ -179,14 +266,17 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                   {r.coverage_pct != null
                     ? `${Math.round(r.coverage_pct * 100)}%` : '—'}
                 </td>
-                {LEG_COLS.map(l => (
-                  <td key={l.h}
-                      className={`py-2 pr-2 text-right font-mono ${legTone(r[l.k] as number | null)}`}>
-                    {r[l.k] == null
-                      ? <span className="text-faint/40">·</span>
-                      : r[l.k]}
-                  </td>
-                ))}
+                {LEG_COLS.map(l => {
+                  const v = r[l.k] as number | null | undefined
+                  return (
+                    <td key={l.h}
+                        className={`py-2 pr-2 text-right font-mono ${legTone(v)}`}>
+                      {v == null
+                        ? <span className="text-faint/40">·</span>
+                        : v}
+                    </td>
+                  )
+                })}
                 <td className={`py-2 px-2 text-right font-mono ${
                   (r.rev_peak_risk ?? 0) >= 70 ? 'text-defensive'
                   : (r.rev_peak_risk ?? 0) >= 40 ? 'text-caution'
@@ -213,6 +303,9 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                 <tr key={`${r.symbol}-h`}>
                   <td colSpan={17}
                       className="border-b border-hairline bg-card/60 px-8 py-3">
+                    <div className="mb-3">
+                      <WhyPanel r={r} />
+                    </div>
                     <History sym={r.symbol} />
                   </td>
                 </tr>
