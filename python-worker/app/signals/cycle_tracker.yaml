@@ -17,7 +17,9 @@ cohorts:
   compute_semis:
     label: "Compute & memory semis"
     phase: buildout                # buildout | deployment | monetization | efficiency
-    peak: {lo: 2027, hi: 2028, confidence: low}
+    # DBS: semi growth moderates substantially AFTER 2027; framework:
+    # GPU rental demand peaks late 2028 -> window 2028-2029, not 2027
+    peak: {lo: 2028, hi: 2029, confidence: low}
     symbols: [NVDA, AMD, AVGO, MRVL, ARM, MU, TSM, INTC, QCOM, WDC, STX]
   semicap_eda:
     label: "Semicap & design tools"
