@@ -2,7 +2,7 @@
 Enhanced FMP Client with Complete API Coverage
 Includes all FMP endpoints from the official documentation
 """
-from app.utils.http_resilience import jitter, breaker, ProviderDown
+from app.utils.http_resilience import jitter, breaker, fail, ProviderDown
 import logging
 import re
 import time
@@ -183,21 +183,21 @@ class EnhancedFMPClient:
                 if attempt < self.config.max_retries - 1:
                     time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                     continue
-                br.failure()
+                fail("fmp", endpoint, e)
                 raise requests.exceptions.Timeout(_redact_key(e)) from e
             except requests.exceptions.ConnectionError as e:
                 logger.warning(f"🔌 FMP Connection error (attempt {attempt + 1}/{self.config.max_retries}): {_redact_key(e)}")
                 if attempt < self.config.max_retries - 1:
                     time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                     continue
-                br.failure()
+                fail("fmp", endpoint, e)
                 raise requests.exceptions.ConnectionError(_redact_key(e)) from e
             except requests.exceptions.RequestException as e:
                 logger.warning(f"🌐 FMP Request failed (attempt {attempt + 1}/{self.config.max_retries}): {_redact_key(e)}")
                 if attempt < self.config.max_retries - 1:
                     time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                     continue
-                br.failure()
+                fail("fmp", endpoint, e)
                 raise requests.exceptions.RequestException(_redact_key(e)) from e
             except ValueError as e:
                 # API error, don't retry

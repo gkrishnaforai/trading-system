@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, List
 import json
 
 try:
-    from litellm import completion
+    from app.llm.client import llm_completion as completion
     LITELLM_AVAILABLE = True
 except ImportError:
     LITELLM_AVAILABLE = False

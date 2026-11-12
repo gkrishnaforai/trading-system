@@ -3,7 +3,7 @@ Implements all HTTP logic, retries, rate limiting, and response normalization.
 Follows the clean architecture pattern.
 """
 
-from app.utils.http_resilience import jitter, breaker, ProviderDown
+from app.utils.http_resilience import jitter, breaker, fail, ProviderDown
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -70,7 +70,7 @@ class FinnhubClient:
                 if attempt < self.config.max_retries - 1:
                     time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                     continue
-                br.failure()
+                fail("finnhub", "get", e)
                 raise
 
     def fetch_current_price(self, symbol: str) -> Optional[float]:

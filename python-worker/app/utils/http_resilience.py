@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import random
+from typing import Optional
 import time
 
 logger = logging.getLogger(__name__)
@@ -63,3 +64,39 @@ def breaker(name: str, threshold: int = 5,
     if name not in _breakers:
         _breakers[name] = CircuitBreaker(threshold, cooldown)
     return _breakers[name]
+
+
+def log_failure(provider: str, endpoint: str, error: str,
+                latency_ms: Optional[int] = None) -> None:
+    """Terminal provider failure → fetch_failures ledger. Cheap,
+    best-effort (never raises — a ledger write must not become a
+    second failure mode). The custodian reads this to distinguish
+    'transient blip' from 'provider down since 9:40'."""
+    try:
+        from app.database import db
+        db.execute_update(
+            "CREATE TABLE IF NOT EXISTS fetch_failures ("
+            " id bigserial PRIMARY KEY, provider TEXT NOT NULL,"
+            " endpoint TEXT NOT NULL, error TEXT NOT NULL,"
+            " latency_ms INT,"
+            " occurred_at TIMESTAMPTZ NOT NULL DEFAULT now())")
+        db.execute_update(
+            "INSERT INTO fetch_failures"
+            " (provider, endpoint, error, latency_ms)"
+            " VALUES (:p, :e, :r, :l)",
+            {"p": provider, "e": endpoint, "r": error[:500],
+             "l": latency_ms})
+        db.execute_update(
+            "DELETE FROM fetch_failures"
+            " WHERE occurred_at < now() - interval '30 days'")
+    except Exception as exc:
+        logger.debug("fetch_failures write failed: %s", exc)
+
+
+def fail(provider: str, endpoint: str, error: Exception,
+         latency_ms: Optional[int] = None) -> None:
+    """One call — ledger the failure AND trip the breaker. Use at
+    terminal-raise sites, not per-attempt (a retried blip isn't an
+    outage)."""
+    log_failure(provider, endpoint, str(error), latency_ms)
+    breaker(provider).failure()

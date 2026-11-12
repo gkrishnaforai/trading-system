@@ -3,7 +3,7 @@ Alpha Vantage Provider Client
 Implements all HTTP/SDK logic, rate limiting, retries, and response normalization
 Follows the clean architecture pattern
 """
-from app.utils.http_resilience import jitter, breaker, ProviderDown
+from app.utils.http_resilience import jitter, breaker, fail, ProviderDown
 import logging
 import time
 import requests
@@ -101,7 +101,7 @@ class AlphaVantageClient:
                 if attempt < self.config.max_retries - 1:
                     time.sleep(jitter(self.config.retry_delay * (2 ** attempt)))
                     continue
-                br.failure()
+                fail("alphavantage", "get", e)
                 raise
             except ValueError as e:
                 # API error, don't retry
