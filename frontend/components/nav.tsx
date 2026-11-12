@@ -9,6 +9,7 @@ const LINKS = [
   { href: '/calendar', label: 'Calendar' },
   { href: '/board', label: 'Board' },
   { href: '/themes', label: 'Themes' },
+  { href: '/cycle', label: 'Cycle' },
   { href: '/etf', label: 'ETF' },
   { href: '/readiness', label: 'Ready' },
   { href: '/plan', label: 'Plan' },

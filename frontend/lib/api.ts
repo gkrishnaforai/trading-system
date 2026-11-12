@@ -691,6 +691,16 @@ export const api = {
               hold_min?: number | null }[];
     transitions?: { ts: string; from: string; to: string }[];
   }>(`/intraday-recovery/${encodeURIComponent(symbol)}/session`),
+  cycle: () => get<{
+    as_of?: string | null; quarter_label?: string | null; n?: number;
+    rows?: CycleRow[];
+    cohorts?: Record<string, {
+      n: number; scored: number; median?: number | null;
+      decisions?: Record<string, number>; label?: string;
+      phase?: string | null;
+      peak?: { lo?: number; hi?: number; confidence?: string } | null
+    }>
+  }>('/cycle'),
   transitions: () => get<{
     readiness?: { symbol: string; use_case: string;
                   prev_state?: string; state?: string;
@@ -719,6 +729,56 @@ export const api = {
       delta?: ResearchDelta | null
       growth?: GrowthUplift | null
     }>(`/admin/research/${encodeURIComponent(sym)}`),
+}
+
+export type CycleRow = {
+  symbol: string
+  quarter_label?: string
+  as_of?: string
+  cohort?: string | null
+  composite?: number | null
+  coverage_pct?: number | null
+  demand_accel?: number | null
+  backlog_quality?: number | null
+  est_revisions?: number | null
+  margin_cf?: number | null
+  capacity_util?: number | null
+  customer_adoption?: number | null
+  capital_recovery?: number | null
+  valuation_duration?: number | null
+  order_peak?: boolean | null
+  estimate_peak?: boolean | null
+  revenue_peak?: boolean | null
+  demand_peak_lo?: number | null
+  demand_peak_hi?: number | null
+  peak_confidence?: string | null
+  peak_source?: string | null
+  peak_movement?: string | null
+  quarters_to_peak?: number | null
+  rev_peak_risk?: number | null
+  decision?: string | null
+  structural_break?: boolean | null
+  valuation_blocked?: boolean | null
+  flags?: string[]
+}
+
+export type CycleHistoryRow = {
+  quarter_label?: string
+  as_of?: string
+  composite?: number | null
+  coverage_pct?: number | null
+  decision?: string | null
+  rev_peak_risk?: number | null
+  demand_peak_lo?: number | null
+  demand_peak_hi?: number | null
+  peak_movement?: string | null
+  quarters_to_peak?: number | null
+  order_peak?: boolean | null
+  estimate_peak?: boolean | null
+  revenue_peak?: boolean | null
+  flags?: string[]
+  decision_detail?: { note?: string | null;
+                      conditions?: Record<string, string> } | null
 }
 
 export type ResearchRow = {

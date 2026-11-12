@@ -860,6 +860,14 @@ async def _j_intraday_recovery() -> dict:
     return await asyncio.to_thread(intraday_recovery.run)
 
 
+async def _j_ai_cycle() -> dict:
+    """AI cycle rotation tracker — quarterly per-name composite over
+    journaled evidence: 8 component legs, three-peak detection,
+    demand-peak windows, policy decisions. Weekly job."""
+    from app.signals import cycle_tracker
+    return await asyncio.to_thread(cycle_tracker.refresh)
+
+
 async def _j_correction_alarms() -> dict:
     """Correction alarms — revision breadth (flywheel), labor/credit
     + real yields (keyless FRED CSV), valuation decomposition.
@@ -1135,6 +1143,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
                         _j_intraday_regime),
     "intraday-recovery": ("Intraday recovery confirm (5-min)",
                           _j_intraday_recovery),
+    "ai-cycle":    ("AI cycle rotation tracker (weekly)", _j_ai_cycle),
     "correction-alarms": ("Correction-alarm engine",
                           _j_correction_alarms),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
@@ -3767,6 +3776,24 @@ async def intraday_recovery_session(symbol: str):
     over stored rows; powers the expandable row on the regime page."""
     from app.signals import intraday_recovery
     return await asyncio.to_thread(intraday_recovery.session, symbol)
+
+
+@router.get("/cycle")
+async def cycle_board():
+    """AI cycle rotation board — latest snapshot per universe symbol:
+    8-leg composite, decision, three-peak state, demand-peak window,
+    cohort aggregates. Read-only over journaled rows."""
+    from app.signals import cycle_tracker
+    return await asyncio.to_thread(cycle_tracker.current)
+
+
+@router.get("/cycle/{symbol}/history")
+async def cycle_history(symbol: str):
+    """Quarter-over-quarter snapshots for one name — composite, legs,
+    decision, peak-window movement. The evidence behind 'pulled
+    forward' / 'pushed out'."""
+    from app.signals import cycle_tracker
+    return await asyncio.to_thread(cycle_tracker.history, symbol)
 
 
 @router.get("/transitions")

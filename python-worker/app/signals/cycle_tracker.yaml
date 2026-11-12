@@ -1,0 +1,320 @@
+# AI Cycle Rotation Tracker — v1
+# ================================
+# Quarterly business-cycle composite per name: 8 weighted legs scored
+# from journaled evidence (flywheel, sec_facts, demand_profile, thesis,
+# quarter trends, research scores) + three-peak detection + demand-peak
+# window + policy decision. The peak SEEDS below are priors from the
+# rotation framework — hypotheses, never facts; approved demand_evidence
+# 'peak_window' claims override them per symbol.
+version: 1
+
+# -------------------------------------------------------------------
+# universe — cohorts map to rotation phases. Symbols without evidence
+# coverage still score: they land research_incomplete with an honest
+# coverage_pct instead of being silently dropped.
+# -------------------------------------------------------------------
+cohorts:
+  compute_semis:
+    label: "Compute & memory semis"
+    phase: buildout                # buildout | deployment | monetization | efficiency
+    peak: {lo: 2027, hi: 2028, confidence: low}
+    symbols: [NVDA, AMD, AVGO, MRVL, ARM, MU, TSM, INTC, QCOM, WDC, STX]
+  semicap_eda:
+    label: "Semicap & design tools"
+    phase: buildout
+    peak: {lo: 2028, hi: 2029, confidence: low}
+    symbols: [ASML, KLAC, AMAT, LRCX, ONTO, TER, SNPS, CDNS, AMKR]
+  connectivity:
+    label: "Networking & optics"
+    phase: buildout
+    peak: {lo: 2027, hi: 2029, confidence: low}
+    symbols: [ANET, CRDO, ALAB, LITE, COHR, FN, GLW, CIEN, CSCO,
+              APH, TEL, CBRS]
+  dc_equipment:
+    label: "Data-center equipment"
+    phase: buildout
+    peak: {lo: 2028, hi: 2030, confidence: low}
+    symbols: [VRT, ETN, TT, CARR, JCI, MOD, SMCI, DELL, HPE, CLS,
+              NVT, HUBB, EMR, MPWR, 'ON', TXN, FIX, IESC]
+  power:
+    label: "Power & grid"
+    phase: buildout
+    peak: {lo: 2029, hi: 2031, confidence: low}
+    symbols: [GEV, CEG, VST, TLN, CMI, CAT, GNRC, PWR, BE]
+  neocloud:
+    label: "Neoclouds & AI datacenters"
+    phase: buildout
+    peak: {lo: 2028, hi: 2029, confidence: low}
+    symbols: [CRWV, NBIS, IREN, APLD, EQIX, DLR]
+  hyperscaler:
+    label: "Hyperscalers & platforms"
+    phase: deployment
+    peak: {lo: 2029, hi: 2031, confidence: low}
+    symbols: [MSFT, AMZN, GOOGL, META, ORCL, IBM]
+  software:
+    label: "Enterprise & agentic software"
+    phase: deployment
+    peak: {lo: 2029, hi: 2031, confidence: low}
+    symbols: [NOW, CRM, SAP, PLTR, DDOG, SNOW, MDB, TEAM, ACN]
+  security:
+    label: "Cybersecurity"
+    phase: deployment
+    peak: {lo: 2029, hi: 2031, confidence: low}
+    symbols: [PANW, CRWD, FTNT, ZS, OKTA, NET]
+
+# -------------------------------------------------------------------
+# components — 8 legs, banded first-match on the shared _cond engine.
+# A leg whose evidence is missing evaluates UNKNOWN: excluded from the
+# composite, never silently zero. Composite renormalizes over answered
+# weight; coverage reports how much of the spec was answerable.
+# -------------------------------------------------------------------
+components:
+
+  demand_accel:                     # 20 — is demand still accelerating
+    weight: 20
+    bands:
+      - {if: {rev_growth_gte: 0.40, rev_accel_gte: 0.05}, score: 100,
+         note: ">40% growth and still accelerating"}
+      - {if: {rev_growth_gte: 0.25, rev_accel_gte: 0.05}, score: 90,
+         note: "strong growth, accelerating"}
+      - {if: {rev_growth_gte: 0.40}, score: 80,
+         note: "very fast growth, acceleration flat/unknown"}
+      - {if: {rev_growth_gte: 0.25, rev_accel_gte: 0}, score: 75,
+         note: "strong growth holding"}
+      - {if: {ai_tailwind_gte: 75, rev_growth_gte: 0.15}, score: 70,
+         note: "tailwind-confirmed mid-teens+ growth"}
+      - {if: {rev_growth_gte: 0.15, rev_accel_gte: 0}, score: 60,
+         note: "mid-teens growth, not decelerating"}
+      - {if: {rev_growth_gte: 0.15}, score: 50,
+         note: "mid-teens growth, decelerating"}
+      - {if: {rev_growth_gte: 0.05, rev_accel_gte: 0}, score: 45,
+         note: "modest growth, stable"}
+      - {if: {rev_growth_gte: 0.05}, score: 30,
+         note: "modest growth and slowing"}
+      - {if: {rev_growth_lt: 0.05}, score: 15,
+         note: "growth stalled"}
+
+  backlog_quality:                  # 15 — RPO/deferred-rev health
+    weight: 15
+    bands:
+      - {if: {rpo_yoy_gte: 0.30}, score: 100,
+         note: "backlog compounding >30%"}
+      - {if: {rpo_yoy_gte: 0.15, crpo_share_gte: 0.40}, score: 85,
+         note: "backlog growing with near-term conversion"}
+      - {if: {rpo_yoy_gte: 0.15}, score: 75,
+         note: "backlog growing, conversion thin"}
+      - {if: {rpo_yoy_gte: 0, def_rev_yoy_gte: 0.10}, score: 70,
+         note: "flat backlog but billings leading revenue"}
+      - {if: {rpo_yoy_gte: 0}, score: 55,
+         note: "backlog flat-to-up"}
+      - {if: {def_rev_yoy_gte: 0.15}, score: 60,
+         note: "deferred revenue building (no RPO read)"}
+      - {if: {rpo_yoy_lt: -0.10}, score: 15,
+         note: "backlog shrinking >10%"}
+      - {if: {rpo_yoy_lt: 0}, score: 30,
+         note: "backlog shrinking"}
+      - {if: {def_rev_yoy_lt: 0}, score: 35,
+         note: "billings fading"}
+
+  est_revisions:                    # 15 — forward-estimate direction
+    weight: 15
+    bands:
+      - {if: {est_revision_pct_gte: 0.15}, score: 100,
+         note: "forward estimates being raised hard"}
+      - {if: {est_revision_pct_gte: 0.07}, score: 80,
+         note: "estimates being raised"}
+      - {if: {est_revision_pct_gte: 0.02}, score: 65,
+         note: "modest positive revisions"}
+      - {if: {est_revision_pct_gte: -0.02, beat_streak_gte: 4}, score: 55,
+         note: "flat revisions, long beat streak"}
+      - {if: {est_revision_pct_gte: -0.02}, score: 45,
+         note: "revisions flat"}
+      - {if: {est_revision_pct_gte: -0.08}, score: 30,
+         note: "estimates drifting down"}
+      - {if: {est_revision_pct_lt: -0.08}, score: 10,
+         note: "estimates being cut"}
+
+  margin_cf:                        # 15 — margins + cash trajectory
+    weight: 15
+    bands:
+      - {if: {om_slope_gte: 0.05, fcf_margin_gte: 0.25}, score: 100,
+         note: "margins expanding, strong FCF"}
+      - {if: {om_slope_gte: 0.02, fcf_margin_gte: 0.15}, score: 85,
+         note: "margins improving, cash-positive"}
+      - {if: {fcf_margin_gte: 0.25, margin_trend_gte: 1}, score: 75,
+         note: "high FCF margin, margins stable+"}
+      - {if: {fcf_margin_gte: 0.10, margin_trend_gte: 1}, score: 60,
+         note: "cash-positive, margins steady"}
+      - {if: {fcf_ttm_gte: 0, om_now_gte: 0.10}, score: 55,
+         note: "profitable, thin FCF"}
+      - {if: {fcf_ttm_gte: 0}, score: 45,
+         note: "FCF positive, weak margins"}
+      - {if: {runway_quarters_gte: 8}, score: 35,
+         note: "burning cash, runway >8q"}
+      - {if: {fcf_ttm_lt: 0}, score: 20,
+         note: "cash-burning"}
+      - {if: {om_now_lt: 0}, score: 20,
+         note: "operating losses"}
+
+  capacity_util:                    # 10 — capacity/utilization health
+    weight: 10
+    bands:
+      - {if: {utilization_rank_gte: 3}, score: 100,
+         note: "utilization rising"}
+      - {if: {utilization_rank_gte: 2}, score: 75,
+         note: "utilization high and stable"}
+      - {if: {utilization_rank: 1}, score: 50,
+         note: "utilization stable"}
+      - {if: {utilization_rank: 0}, score: 15,
+         note: "utilization falling"}
+      # hardware suppliers without a utilization axis: capacity
+      # expansion evidence (capex growth) proxies — demand_durability
+      # contracted is the next-best read
+      - {if: {durability_rank_gte: 4}, score: 70,
+         note: "contracted capacity demand"}
+      - {if: {durability_rank_gte: 3}, score: 55,
+         note: "recurring demand base"}
+
+  customer_adoption:                # 10 — adoption / retention / conc.
+    weight: 10
+    bands:
+      - {if: {top1_pct_lt: 0.15, design_wins_n_gte: 3}, score: 90,
+         note: "broad base, active design wins"}
+      - {if: {top1_pct_lt: 0.15, monetization_rank_gte: 2}, score: 80,
+         note: "diversified, monetization scaling"}
+      - {if: {design_wins_n_gte: 3}, score: 75,
+         note: "multiple design wins"}
+      - {if: {monetization_rank_gte: 3}, score: 70,
+         note: "monetization proven"}
+      - {if: {monetization_rank_gte: 2, top1_pct_lt: 0.25}, score: 60,
+         note: "scaling adoption, concentration ok"}
+      - {if: {design_wins_n_gte: 1}, score: 55,
+         note: "some design-win evidence"}
+      - {if: {monetization_rank_gte: 1}, score: 45,
+         note: "early monetization"}
+      - {if: {top1_pct_gte: 0.40}, score: 25,
+         note: "heavy customer concentration"}
+      - {if: {monetization_rank: 0}, score: 20,
+         note: "monetization unproven"}
+
+  capital_recovery:                 # 10 — financing + payback
+    weight: 10
+    bands:
+      - {if: {funding_rank_gte: 3, fcf_ttm_gte: 0}, score: 95,
+         note: "self-funding, low risk"}
+      - {if: {nde_lt: 1, fcf_ttm_gte: 0}, score: 85,
+         note: "light leverage, cash-positive"}
+      - {if: {funding_rank_gte: 2, nde_lt: 3}, score: 65,
+         note: "funding risk moderate"}
+      - {if: {fcf_ttm_gte: 0, dilution_pct_lt: 0.05}, score: 60,
+         note: "cash-positive, dilution contained"}
+      - {if: {nde_lt: 3}, score: 50,
+         note: "leverage manageable"}
+      - {if: {runway_quarters_gte: 8}, score: 40,
+         note: "burning but funded >2yr"}
+      - {if: {funding_rank_gte: 1}, score: 30,
+         note: "funding risk high"}
+      - {if: {runway_quarters_lt: 4}, score: 10,
+         note: "runway under a year"}
+      - {if: {funding_rank: 0}, score: 10,
+         note: "funding risk critical"}
+      - {if: {dilution_pct_gte: 0.15, fcf_ttm_lt: 0}, score: 10,
+         note: "diluting while burning"}
+
+  valuation_duration:               # 5 — valuation vs growth runway
+    weight: 5
+    bands:
+      - {if: {vo_score_gte: 75}, score: 100,
+         note: "research valuation engine: attractive"}
+      - {if: {vo_score_gte: 60}, score: 75,
+         note: "valuation reasonable vs growth"}
+      - {if: {vo_score_gte: 45}, score: 50,
+         note: "valuation neutral"}
+      - {if: {vo_score_lt: 45}, score: 25,
+         note: "valuation stretched vs duration"}
+      - {if: {fwd_pe_lt: 25, rev_growth_gte: 0.15}, score: 80,
+         note: "cheap vs growth (no VO score)"}
+      - {if: {fwd_pe_lt: 40}, score: 55,
+         note: "moderate multiple"}
+      - {if: {fwd_pe_gte: 60, rev_growth_lt: 0.20}, score: 15,
+         note: "multiple outruns growth"}
+
+# -------------------------------------------------------------------
+# caps — hard semantic limits no leg sum can beat
+# -------------------------------------------------------------------
+caps:
+  - {when: {rev_growth_lt: 0}, cap: 45,
+     note: "revenue shrinking — composite capped"}
+  - {when: {structural_break: true}, cap: 30,
+     note: "broken thesis caps composite"}
+
+# -------------------------------------------------------------------
+# valuation gate — valuation_blocked feeds the accumulate rule
+# -------------------------------------------------------------------
+valuation_blocked_when:
+  any:
+    - {vo_score_lt: 35}
+    - {fwd_pe_gte: 80, rev_growth_lt: 0.15}
+
+# -------------------------------------------------------------------
+# rev_peak_risk — 0-100 deterministic sum over observable deterioration.
+# Leading legs dominate: orders and revisions roll before revenue.
+# -------------------------------------------------------------------
+rev_peak_risk:
+  legs:
+    - {pts: 30, when: {est_revision_pct_lt: -0.05},
+       note: "estimates being cut"}
+    - {pts: 20, when: {est_revision_pct_lt: 0},
+       note: "revisions negative"}
+    - {pts: 25, when: {rev_accel_lt: -0.05},
+       note: "growth decelerating"}
+    - {pts: 20, when: {order_peak: true},
+       note: "order peak detected"}
+    - {pts: 15, when: {capex_score_gte: 50},
+       note: "sector capex cycle slowing"}
+    - {pts: 10, when: {revenue_peak: true},
+       note: "reported growth rolled"}
+    - {pts: 10, when: {thesis_status_in: deteriorating_states},
+       note: "thesis legs deteriorating"}
+
+groups:
+  deteriorating_states: [deteriorating, severely_deteriorating, broken]
+
+# -------------------------------------------------------------------
+# decisions — first-match on _eval_when. Sell zone = between order
+# peak (1) and estimate peak (2); revenue peak (3) is already late.
+# -------------------------------------------------------------------
+decisions:
+  - {action: exit, when: {structural_break: true},
+     note: "structural thesis break"}
+  - {action: exit,
+     when: {rev_peak_risk_gte: 85,
+            any: [{demand_accel_lt: 40}, {capital_recovery_lt: 40}]},
+     note: "peak risk extreme + demand or financing deteriorating"}
+  - {action: trim, when: {rev_peak_risk_gte: 70},
+     note: "revenue-peak risk high"}
+  - {action: trim,
+     when: {order_peak: true, estimate_peak: true},
+     note: "both leading peaks rolled — sell zone passed"}
+  - {action: trim, when: {sourced_qtp_lte: 4},
+     note: "claim-backed demand-peak window within a year"}
+  - {action: trim, when: {composite_lt: 45},
+     note: "composite below hold line"}
+  - {action: accumulate,
+     when: {composite_gte: 75, quarters_to_peak_gt: 4,
+            structural_break: false, valuation_blocked: false,
+            order_peak: false},
+     note: "strong cycle score, peak >1yr out, no break"}
+  - {action: add_on_pullback,
+     when: {composite_gte: 65, quarters_to_peak_gt: 4,
+            structural_break: false},
+     note: "cycle strong — wait for technical setup"}
+  - {action: hold, when: {composite_gte: 45},
+     note: "growth healthy, no peak signal"}
+  - {action: research_incomplete, default: true,
+     note: "insufficient evidence to act"}
+
+flags:
+  - {flag: insufficient_evidence, when: {coverage_pct_lt: 0.65}}
+  - {flag: order_peak_warning, when: {order_peak: true}}
+  - {flag: peak_window_unsourced, when: {peak_source: "cohort_seed"}}
