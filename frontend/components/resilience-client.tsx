@@ -2,7 +2,16 @@
 import { useMemo, useState } from 'react'
 import type { ResilienceRow } from '@/lib/api'
 
-type Key = 'ai_opportunity' | 'company_health' | 'tape_resilience' | 'deployment_risk'
+type Key = 'ai_opportunity' | 'company_health' | 'tape_resilience' | 'deployment_risk' | 'tape_diff'
+
+// live tape vs the journaled base — who's healing/bleeding today
+const tapeDiff = (r: ResilienceRow): number | null =>
+  r.tape_live?.tape_live != null && r.scores?.tape_resilience != null
+    ? Math.round(r.tape_live.tape_live - r.scores.tape_resilience)
+    : null
+const sortVal = (r: ResilienceRow, k: Key): number =>
+  k === 'tape_diff' ? (tapeDiff(r) ?? -999)
+                    : (r.scores?.[k] ?? -1)
 const COLS: { k: Key; label: string }[] = [
   { k: 'ai_opportunity', label: 'ai' },
   { k: 'company_health', label: 'hlth' },
@@ -76,8 +85,7 @@ export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
       }
       return true
     })
-    return [...f].sort((a, b) =>
-      (b.scores?.[sortKey] ?? -1) - (a.scores?.[sortKey] ?? -1))
+    return [...f].sort((a, b) => sortVal(b, sortKey) - sortVal(a, sortKey))
   }, [rows, sortKey, q, active])
   return (
     <div className="mt-5">
@@ -152,6 +160,14 @@ export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
                   </button>
                 </th>
               ))}
+              <th className="py-1 pr-3 font-medium">
+                <button
+                  onClick={() => setSortKey('tape_diff')}
+                  title="live tape − journaled base · today's movers"
+                  className={sortKey === 'tape_diff' ? 'text-ink underline underline-offset-2' : 'hover:text-ink'}>
+                  Δtape{sortKey === 'tape_diff' ? ' ↓' : ''}
+                </button>
+              </th>
               <th className="py-1 pr-3 font-medium">flow</th>
               <th className="py-1 pr-3 font-medium">model</th>
               <th className="py-1 font-medium">flags / needs</th>
@@ -179,6 +195,17 @@ export function ResilienceClient({ rows }: { rows: ResilienceRow[] }) {
                         {' →'}{r.tape_live.tape_live}
                       </span>
                     )}
+                  </td>
+                  <td className="py-1.5 pr-3 font-mono">
+                    {(() => {
+                      const d = tapeDiff(r)
+                      return d == null
+                        ? <span className="text-faint">—</span>
+                        : <span className={d > 0 ? 'text-aggressive'
+                            : d < 0 ? 'text-defensive' : 'text-muted'}>
+                            {d > 0 ? '+' : ''}{d}
+                          </span>
+                    })()}
                   </td>
                   <td className="py-1.5 pr-3 text-muted">{sc.deployment_risk ?? '—'}</td>
                   <td className="py-1.5 pr-3">{r.flow?.footprint === 'accumulating'
