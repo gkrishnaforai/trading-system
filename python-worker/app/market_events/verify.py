@@ -28,6 +28,12 @@ _KIND_RULES = [
     (r"producer price|ppi",        ("ppi",  "PPI producer prices",  "high",    "08:30")),
     (r"nonfarm|non-farm|employment situation|nfp|payroll",
                                    ("nfp",  "Jobs report (NFP)",    "high",    "08:30")),
+    # minutes before the decision rule — "FOMC Minutes" is the meeting
+    # record released ~3wk after a decision, NOT a rate decision; it
+    # must never be journaled as kind 'fomc' or fed_path picks it up
+    # as the next meeting. On a US econ calendar the only "minutes"
+    # events are the Fed's.
+    (r"minutes",              ("fomc_minutes", "FOMC minutes",    "high",    "14:00")),
     (r"fomc|interest rate decision|fed.*rate",
                                    ("fomc", "FOMC rate decision",   "extreme", "14:00")),
     (r"personal consumption|core pce|pce price|pce",
@@ -209,11 +215,12 @@ def verify_and_store(days: int = 45) -> Dict[str, Any]:
             """INSERT INTO macro_event_overrides
                    (kind, name, event_date, original_date, status, source,
                     time_et, severity, actual, estimate, prev,
-                    verified_at)
+                    raw_name, verified_at)
                VALUES (:kind, :name, :d, :orig, :status, :src,
-                       :t, :sev, :act, :est, :prev, now())
+                       :t, :sev, :act, :est, :prev, :raw, now())
                ON CONFLICT (kind, event_date) DO UPDATE SET
                    name=excluded.name, original_date=excluded.original_date,
+                   raw_name=excluded.raw_name,
                    status=excluded.status, time_et=excluded.time_et,
                    severity=excluded.severity, source=excluded.source,
                    actual=COALESCE(excluded.actual,
@@ -228,7 +235,7 @@ def verify_and_store(days: int = 45) -> Dict[str, Any]:
              "src": m.get("source") or "finnhub",
              "t": m["time_et"], "sev": m["severity"],
              "act": _num(m["actual"]), "est": _num(m["estimate"]),
-             "prev": _num(m["prev"])})
+             "prev": _num(m["prev"]), "raw": m.get("raw_name")})
         stored += 1
         rescheduled += int(moved)
     logger.info("macro calendar verified: %d events, %d rescheduled",
@@ -316,7 +323,8 @@ def load_overrides(days: int = 45) -> Dict[str, Dict[str, Any]]:
     try:
         rows = db.execute_query(
             """SELECT kind, name, event_date, original_date, status,
-                      time_et, severity, actual, estimate, prev, source
+                      time_et, severity, actual, estimate, prev, source,
+                      raw_name
                FROM macro_event_overrides
                WHERE event_date >= CURRENT_DATE - 3
                  AND event_date <= CURRENT_DATE + CAST(:days AS int)

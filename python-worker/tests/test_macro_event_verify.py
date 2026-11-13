@@ -89,3 +89,53 @@ def test_poll_due_verifies_when_pending():
         out = verify.poll_due()
     assert out["stored"] == 3
     assert out["pending_after"] == []
+
+
+# ------------------------------------------------------------------
+# _classify — the fomc/minutes boundary. Regression: FMP emits
+# "FOMC Minutes" ~3wk after each decision; it was journaled as
+# kind 'fomc' and fed_path rendered a phantom November meeting.
+# ------------------------------------------------------------------
+
+def test_fomc_minutes_is_not_a_rate_decision():
+    assert verify._classify("FOMC Minutes", "US")[0] == "fomc_minutes"
+    assert verify._classify("FOMC Meeting Minutes", "US")[0] == \
+        "fomc_minutes"
+
+
+def test_rate_decision_names_still_classify_fomc():
+    assert verify._classify("Fed Interest Rate Decision", "US")[0] == \
+        "fomc"
+    assert verify._classify("FOMC Statement", "US")[0] == "fomc"
+    assert verify._classify("FOMC Economic Projections", "US")[0] == \
+        "fomc"
+
+
+def test_non_us_minutes_are_ignored():
+    # RBA/ECB minutes exist on the same feed — country gate drops them
+    assert verify._classify("RBA Meeting Minutes", "AU") is None
+
+
+def test_minutes_override_never_adds_a_fomc_event():
+    # a journaled fomc_minutes override must surface as its own kind —
+    # upcoming_macro_events must still see exactly one upcoming
+    # kind=='fomc' entry (the real Dec-9 decision)
+    from app.market_events import calendar
+    now = dt.datetime(2026, 11, 13, 20, 0, tzinfo=dt.timezone.utc)
+    overrides = {
+        "fomc_minutes": {
+            "2026-11-18": {"kind": "fomc_minutes", "name": "FOMC minutes",
+                           "event_date": "2026-11-18", "status": "confirmed",
+                           "time_et": "14:00", "severity": "high",
+                           "actual": None, "estimate": None, "prev": None,
+                           "source": "fmp", "raw_name": "FOMC Minutes"},
+        },
+    }
+    with patch("app.market_events.verify.load_overrides",
+               return_value=overrides), \
+         _patch_db([]):
+        evts = calendar.upcoming_macro_events(120, now=now)
+    fomc = [e for e in evts if e["kind"] == "fomc" and e["days_away"] > 0]
+    assert [e["date"] for e in fomc] == ["2026-12-09"]
+    mins = [e for e in evts if e["kind"] == "fomc_minutes"]
+    assert [e["date"] for e in mins] == ["2026-11-18"]

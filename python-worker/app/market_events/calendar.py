@@ -46,6 +46,8 @@ _SOURCE_URL = {
     "nfp": "https://www.bls.gov/news.release/empsit.nr0.htm",
     "pce": "https://www.bea.gov/data/income-saving/personal-income",
     "fomc": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+    "fomc_minutes":
+        "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
 }
 
 
@@ -73,6 +75,9 @@ def _impact_for(kind: str, actual, estimate, prev) -> str:
                 "longer repricing, cool = easing path re-opens"),
         "fomc": ("policy rate + dots/statement tone; hawkish = yields "
                  "up, duration down; dovish = risk relief rally"),
+        "fomc_minutes": ("deliberation record ~3wk post-decision — "
+                         "dissent and debate detail reprices the path; "
+                         "hawkish tone = yields up, dovish = relief"),
     }.get(kind, "scheduled macro release")
     if a is None:
         return mech
@@ -225,6 +230,7 @@ def _apply_verified_overrides(evts: list, today: date, days: int) -> list:
                 "estimate": row.get("estimate"),
                 "prev": row.get("prev"),
                 "source": row.get("source"),
+                "raw_name": row.get("raw_name"),
                 "status": row.get("status"),
                 "reading": reading_for(kind, row.get("actual"),
                                        row.get("estimate")),
