@@ -400,6 +400,14 @@ async def _j_econ_cal_poll():
     return await asyncio.to_thread(poll_due)
 
 
+async def _j_calendar_audit():
+    """Weekly calendar audit — diffs the next 45d of macro events and
+    the tracked universe's earnings dates vs last week; refreshes
+    stale dates; journals every move into calendar_audit."""
+    from app.market_events.audit import run
+    return await asyncio.to_thread(run)
+
+
 async def _j_etf_flows():
     """Daily AUM snapshot per sector/theme ETF — real fund flows
     accrue as ΔAUM − market-explained drift."""
@@ -1106,6 +1114,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "fed-path":     ("Fed path — rate probabilities", _j_fed_path),
     "econ-cal-verify": ("Macro calendar verification",
                         _j_econ_cal_verify),
+    "calendar-audit": ("Weekly calendar audit", _j_calendar_audit),
     "econ-cal-poll":  ("Due-print watcher (hourly)",
                        _j_econ_cal_poll),
     "etf-flows":    ("ETF AUM → fund flows", _j_etf_flows),
@@ -2595,6 +2604,14 @@ async def macro_events(days: int = 45):
     from app.market_events.calendar import upcoming_macro_events
     return {"events": await asyncio.to_thread(
         upcoming_macro_events, min(days, 120))}
+
+
+@router.get("/calendar-audit")
+async def calendar_audit_latest():
+    """Last weekly audit's change rows — what moved in the macro
+    calendar and tracked earnings dates since the previous run."""
+    from app.market_events import audit
+    return await asyncio.to_thread(audit.latest)
 
 
 @router.get("/event-day")
