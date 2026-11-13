@@ -74,6 +74,83 @@ const FLAG_TXT: Record<string, string> = {
     'orders may have peaked — momentum flag, verify before adding',
   peak_window_unsourced:
     'peak window is a cohort estimate, not verified evidence',
+  competition_unverified:
+    'no competitive-threat evidence journaled yet',
+  competitive_risk_deteriorating:
+    'competitive resilience is deteriorating quarter over quarter',
+  insourcing_beneficiary:
+    'customer insourcing may expand this company\u2019s opportunity',
+}
+
+const STAGE_TONE: Record<string, string> = {
+  announced: 'bg-hairline/60 text-faint',
+  prototype: 'bg-hairline/60 text-muted',
+  design_win: 'bg-caution/15 text-caution',
+  qualification: 'bg-caution/25 text-caution',
+  production: 'bg-defensive/15 text-defensive',
+  scaled: 'bg-defensive/25 text-defensive',
+}
+
+function ThreatList({ r }: { r: CycleRow }) {
+  const threats = r.top_threats ?? []
+  const opp = r.opportunity_credit
+  if (!threats.length && (r.crs == null) && !opp) return null
+  return (
+    <div className="mt-3 border-t border-hairline/50 pt-2">
+      <div className="mb-1.5 flex items-baseline gap-3">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-faint">
+          Competitive
+        </span>
+        {r.crs != null && (
+          <span className="text-[11px] font-mono text-ink">
+            resilience {r.crs}
+            {r.risk_trend === 'deteriorating' && (
+              <span className="text-defensive"> ▼</span>)}
+            {r.risk_trend === 'improving' && (
+              <span className="text-aggressive"> ▲</span>)}
+          </span>
+        )}
+        {r.displacement_confirmed && (
+          <span className="rounded-full bg-defensive/15 px-2 py-0.5 text-[9px] font-semibold uppercase text-defensive">
+            displacement confirmed
+          </span>
+        )}
+        {opp != null && opp > 0 && (
+          <span className="text-[10px] text-constructive">
+            +{opp} opportunity credit
+          </span>
+        )}
+      </div>
+      {threats.length > 0 ? (
+        <ul className="space-y-1">
+          {threats.map((t, i) => (
+            <li key={i} className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
+              <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${STAGE_TONE[t.stage ?? ''] ?? 'bg-hairline/40 text-faint'}`}>
+                {(t.stage ?? '?').replace(/_/g, ' ')}
+              </span>
+              <span className="font-medium text-ink">{t.competitor}</span>
+              <span className="text-faint">{t.segment}</span>
+              {t.share?.[0] != null && (
+                <span className="font-mono text-caution">
+                  {Math.round((t.share[0] ?? 0) * 100)}–
+                  {Math.round((t.share[1] ?? t.share[0] ?? 0) * 100)}% at risk
+                </span>
+              )}
+              <span className="text-faint/70">
+                {t.claim}
+                {t.source_date && ` · ${t.source_date}`}
+                {t.source === 'framework_doc' && ' · seed'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="text-[11px] text-faint">
+          no approved threat claims journaled
+        </div>
+      )}
+    </div>
+  )
 }
 
 /** The "why" — translate the journaled decision into plain English:
@@ -222,6 +299,8 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
             ))}
             <th className="py-2 px-2 font-medium text-right"
                 title="revenue-peak risk 0-100">pkr</th>
+            <th className="py-2 px-2 font-medium text-right"
+                title="competitive resilience 0-100 — click row for threats">crs</th>
             <th className="py-2 px-2 font-medium text-center"
                 title="peaks: orders · estimates · revenue">peaks</th>
             <th className="py-2 pl-2 font-medium">demand peak</th>
@@ -283,6 +362,16 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                   : 'text-ink'}`}>
                   {r.rev_peak_risk ?? '—'}
                 </td>
+                <td className={`py-2 px-2 text-right font-mono ${
+                  r.displacement_confirmed ? 'text-defensive'
+                  : legTone(r.crs)}`}
+                    title={r.displacement_confirmed
+                      ? 'production-stage displacement confirmed'
+                      : r.risk_trend === 'deteriorating'
+                      ? 'competitive risk deteriorating' : undefined}>
+                  {r.crs ?? <span className="text-faint/40">·</span>}
+                  {r.displacement_confirmed && ' ⚠'}
+                </td>
                 <td className="py-2 px-2 text-center"><PeakDots r={r} /></td>
                 <td className="py-2 pl-2 font-mono text-ink">
                   {r.demand_peak_lo
@@ -301,10 +390,11 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
               </tr>,
               expanded && (
                 <tr key={`${r.symbol}-h`}>
-                  <td colSpan={17}
+                  <td colSpan={18}
                       className="border-b border-hairline bg-card/60 px-8 py-3">
                     <div className="mb-3">
                       <WhyPanel r={r} />
+                      <ThreatList r={r} />
                     </div>
                     <History sym={r.symbol} />
                   </td>

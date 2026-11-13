@@ -293,6 +293,8 @@ decisions:
      when: {rev_peak_risk_gte: 85,
             any: [{demand_accel_lt: 40}, {capital_recovery_lt: 40}]},
      note: "peak risk extreme + demand or financing deteriorating"}
+  - {action: trim, when: {displacement_confirmed: true},
+     note: "production-stage displacement confirmed in a revenue pool"}
   - {action: trim, when: {rev_peak_risk_gte: 70},
      note: "revenue-peak risk high"}
   - {action: trim,
@@ -305,8 +307,10 @@ decisions:
   - {action: accumulate,
      when: {composite_gte: 75, quarters_to_peak_gt: 4,
             structural_break: false, valuation_blocked: false,
-            order_peak: false},
-     note: "strong cycle score, peak >1yr out, no break"}
+            order_peak: false,
+            any: [{crs_gte: 50}, {crs_is: null}]},
+     note: "strong cycle score, peak >1yr out, no break,
+            no confirmed competitive displacement"}
   - {action: add_on_pullback,
      when: {composite_gte: 65, quarters_to_peak_gt: 4,
             structural_break: false},
@@ -320,3 +324,7 @@ flags:
   - {flag: insufficient_evidence, when: {coverage_pct_lt: 0.65}}
   - {flag: order_peak_warning, when: {order_peak: true}}
   - {flag: peak_window_unsourced, when: {peak_source: "cohort_seed"}}
+  - {flag: competition_unverified, when: {crs_is: null}}
+  - {flag: competitive_risk_deteriorating,
+     when: {risk_trend: "deteriorating"}}
+  - {flag: insourcing_beneficiary, when: {opp_credit_gte: 8}}

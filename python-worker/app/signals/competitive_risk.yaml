@@ -1,0 +1,401 @@
+# Competitive Disruption & Substitution Engine — v1
+# ==================================================
+# "Does this name capture the industry's growth, or lose share inside
+# it?" Six resilience legs (uniform direction: 100 = protected),
+# scored deterministically over an APPROVED-claims journal — threats
+# arrive with stage + share ranges + source dates; announcements can't
+# sink a moat (pre-production evidence caps a leg at 60, never lower).
+# Opportunity-direction threats (AVGO/MRVL insourcing benefit)
+# accumulate into opportunity_credit, never into risk.
+version: 1
+
+stage_multiplier:                 # announcements are not production
+  announced: 0.10
+  prototype: 0.25
+  design_win: 0.40
+  qualification: 0.55
+  production: 0.80
+  scaled: 1.00
+
+# displacement_confirmed — the ONLY state that can move a decision.
+# Deliberately hard to reach: production-or-later stage AND a sized
+# share floor AND even odds.
+displacement_when:
+  stage_in: production_stages
+  share_lo_gte: 0.15
+  probability_gte: 0.50
+
+groups:
+  production_stages: [production, scaled]
+  pre_production_stages: [announced, prototype, design_win,
+                          qualification]
+
+# exposure = share_mid x probability x stage_mult, summed over
+# approved threat-direction claims in the type's set.
+exposure_types:
+  substitution_resist: [substitution, platform, open_source,
+                        geo_localization, pricing]
+  insourcing_resist:   [insourcing]
+
+components:
+
+  substitution_resist:            # 20 — how much revenue can be replaced
+    weight: 20
+    bands:
+      - {if: {threat_exposure_gte: 0.35}, score: 15,
+         note: ">35% of revenue pools under sized threat"}
+      - {if: {threat_exposure_gte: 0.20}, score: 30,
+         note: "20-35% pool exposure"}
+      - {if: {threat_exposure_gte: 0.10}, score: 50,
+         note: "10-20% pool exposure"}
+      - {if: {threat_exposure_gte: 0.05}, score: 65,
+         note: "5-10% pool exposure"}
+      - {if: {threat_exposure_gt: 0}, score: 78,
+         note: "documented threats, small exposure"}
+      - {if: {threat_exposure: 0, threats_n_gte: 1}, score: 80,
+         note: "documented threats are insourcing-type only"}
+      - {if: {durability_rank_gte: 4, threats_n: 0}, score: 80,
+         note: "no documented threats; contracted demand"}
+      - {if: {durability_rank_gte: 3, threats_n: 0}, score: 70,
+         note: "no documented threats; recurring base"}
+      - {if: {threats_n: 0}, score: 60,
+         note: "no documented threats — unverified, not safe"}
+
+  competitive_position:           # 20 — incumbent wins vs rivals
+    weight: 20
+    bands:
+      - {if: {competitor_prod_n_gte: 2}, score: 25,
+         note: "2+ rivals already in production"}
+      - {if: {competitor_prod_n_gte: 1}, score: 40,
+         note: "a rival reached production"}
+      - {if: {design_wins_n_gte: 3}, score: 85,
+         note: "multiple incumbent design wins"}
+      - {if: {design_wins_n_gte: 1}, score: 70,
+         note: "documented design wins"}
+      - {if: {competitor_qual_n_gte: 2}, score: 45,
+         note: "multiple rivals in qualification"}
+      - {if: {competitor_qual_n_gte: 1}, score: 58,
+         note: "a rival in qualification"}
+
+  insourcing_resist:              # 15 — can customers build it?
+    weight: 15
+    bands:
+      - {if: {insource_exposure_gte: 0.25, top1_pct_gte: 0.30}, score: 15,
+         note: "heavy insourcing exposure on concentrated customers"}
+      - {if: {insource_exposure_gte: 0.25}, score: 25,
+         note: "heavy insourcing exposure"}
+      - {if: {insource_exposure_gte: 0.10, top1_pct_gte: 0.30}, score: 35,
+         note: "insourcing risk on concentrated base"}
+      - {if: {insource_exposure_gte: 0.10}, score: 50,
+         note: "documented insourcing threat"}
+      - {if: {insource_exposure_gt: 0}, score: 65,
+         note: "small insourcing exposure"}
+      - {if: {top1_pct_gte: 0.40}, score: 45,
+         note: "concentrated customers — insourcing substrate"}
+      - {if: {insource_threats_n: 0, top1_pct_lt: 0.20}, score: 75,
+         note: "no insourcing claims, diversified base"}
+
+  technology_moat:                # 15 — how hard to replicate
+    weight: 15
+    bands:
+      - {if: {bottleneck_mechs_gte: 2}, score: 95,
+         note: "multiple bottleneck mechanisms"}
+      - {if: {bottleneck_mechs_gte: 1}, score: 80,
+         note: "a bottleneck-grade mechanism"}
+      - {if: {moat_mechs_gte: 2}, score: 70,
+         note: "multiple moat mechanisms"}
+      - {if: {moat_mechs_gte: 1}, score: 55,
+         note: "one documented moat mechanism"}
+      - {if: {rd_rev_gte: 0.20}, score: 65,
+         note: "heavy R&D reinvestment"}
+      - {if: {rd_rev_gte: 0.10}, score: 55,
+         note: "solid R&D intensity"}
+      - {if: {nextgen_stage_rank_gte: 4}, score: 60,
+         note: "next-gen already in production"}
+
+  ecosystem_switching:            # 15 — how hard to migrate away
+    weight: 15
+    bands:
+      - {if: {durability_rank_gte: 4}, score: 90,
+         note: "contracted — migration is expensive"}
+      - {if: {durability_rank_gte: 3, crpo_share_gte: 0.40}, score: 80,
+         note: "recurring demand, near-term book locked"}
+      - {if: {durability_rank_gte: 3}, score: 68,
+         note: "recurring demand base"}
+      - {if: {platform_threat_prod: true}, score: 35,
+         note: "platform alternative already in production"}
+      - {if: {durability_rank_gte: 2}, score: 55,
+         note: "usage-based — customers can drift"}
+      - {if: {durability_rank_gte: 1}, score: 40,
+         note: "replacement-cycle dependence"}
+      - {if: {durability_rank_lt: 1}, score: 25,
+         note: "discretionary/speculative demand — weak lock-in"}
+
+  value_capture:                  # 15 — can economics survive pressure
+    weight: 15
+    bands:
+      - {if: {pricing_threat_prod: true, om_slope_lt: 0}, score: 20,
+         note: "pricing pressure + margins already falling"}
+      - {if: {om_slope_gte: 0.05, fcf_margin_gte: 0.20}, score: 90,
+         note: "margins expanding — pricing power intact"}
+      - {if: {om_slope_gte: 0.02}, score: 75,
+         note: "margins improving"}
+      - {if: {fcf_margin_gte: 0.25}, score: 70,
+         note: "high FCF margin cushions pressure"}
+      - {if: {om_slope_gte: 0, margin_trend_gte: 1}, score: 60,
+         note: "margins holding"}
+      - {if: {pricing_threat_prod: true}, score: 40,
+         note: "documented pricing pressure in production"}
+      - {if: {om_slope_lt: 0}, score: 35,
+         note: "margins already compressing"}
+
+caps:
+  - {when: {threat_exposure_gte: 0.30}, cap: 45,
+     note: "high confirmed substitution exposure caps resilience"}
+  - {when: {displacement_confirmed: true}, cap: 35,
+     note: "production-stage displacement confirmed"}
+
+# ------------------------------------------------------------------
+# threat seeds — the framework doc's hypotheses, journaled as
+# source:framework_doc / status:approved / confidence:medium.
+# They are PRIORS: flagged in output, decay to stale if unrefreshed,
+# and are meant to be replaced by filing/transcript-sourced claims.
+# ------------------------------------------------------------------
+threat_seeds:
+  - {symbol: ARM, competitor: "RISC-V ecosystem (SiFive et al.)",
+     threat_type: substitution, segment: "embedded / MCU IP",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.30, probability: 0.5,
+     displacement_lo: 2026, displacement_hi: 2028,
+     claim: "RISC-V already competitive in embedded/MCU sockets"}
+  - {symbol: ARM, competitor: "RISC-V datacenter CPU IP",
+     threat_type: substitution, segment: "data-center CPU IP",
+     stage: design_win, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.35,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "RISC-V targeting dc infra components; GP server CPU at scale is the real threat"}
+  - {symbol: ARM, competitor: "hyperscaler custom CPU (internal)",
+     threat_type: insourcing, segment: "Neoverse / server CPU",
+     stage: design_win, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "customers can move merchant IP to in-house designs"}
+  - {symbol: ARM, competitor: "custom silicon demand (CSS)",
+     threat_type: insourcing, segment: "Neoverse CSS licensing",
+     stage: production, direction: opportunity,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.5,
+     claim: "customization demand also expands ARM licensing TAM"}
+  - {symbol: NVDA, competitor: "hyperscaler custom ASICs",
+     threat_type: insourcing, segment: "training/inference accelerators",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.5,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "custom chips replace SOME GPU workloads, not the platform"}
+  - {symbol: NVDA, competitor: "AMD MI-series + ROCm",
+     threat_type: substitution, segment: "GPU accelerators",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.4,
+     displacement_lo: 2026, displacement_hi: 2028,
+     claim: "credible merchant alternative on price/perf at the margin"}
+  - {symbol: AVGO, competitor: "customer in-house ASIC design",
+     threat_type: insourcing, segment: "custom silicon",
+     stage: production, direction: opportunity,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.20, probability: 0.5,
+     claim: "Broadcom supplies the custom-design capability — insourcing expands its TAM (Gartner leader, custom AI silicon)"}
+  - {symbol: AVGO, competitor: "internal design teams (socket loss)",
+     threat_type: insourcing, segment: "custom silicon",
+     stage: design_win, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.10, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "some custom sockets go fully in-house"}
+  - {symbol: MRVL, competitor: "in-house ASIC teams",
+     threat_type: insourcing, segment: "custom silicon + SerDes",
+     stage: production, direction: opportunity,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.20, probability: 0.5,
+     claim: "10-K: custom ASICs built on MRVL SerDes/ARM/photonics — customer in-house chips can EXPAND Marvell's opportunity"}
+  - {symbol: MRVL, competitor: "AVGO + internal silicon",
+     threat_type: substitution, segment: "custom silicon + connectivity",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "can lose designs; also wins attach products"}
+  - {symbol: AMD, competitor: "NVDA CUDA ecosystem",
+     threat_type: substitution, segment: "GPU accelerators",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.25, probability: 0.5,
+     displacement_lo: 2026, displacement_hi: 2028,
+     claim: "software ecosystem lock-in is the share battleground"}
+  - {symbol: AMD, competitor: "ARM/RISC-V CPUs + custom accelerators",
+     threat_type: substitution, segment: "server CPU",
+     stage: design_win, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.35,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "non-x86 server share erodes EPYC TAM"}
+  - {symbol: INTC, competitor: "AMD EPYC + ARM + RISC-V",
+     threat_type: substitution, segment: "server/PC CPU + foundry",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.15, share_at_risk_hi: 0.30, probability: 0.5,
+     displacement_lo: 2025, displacement_hi: 2027,
+     claim: "multi-front share loss already in production"}
+  - {symbol: MU, competitor: "SK Hynix + Samsung HBM",
+     threat_type: substitution, segment: "HBM / DRAM",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.25, probability: 0.5,
+     displacement_lo: 2026, displacement_hi: 2028,
+     claim: "HBM share battle is execution + supply, not demand"}
+  - {symbol: TSM, competitor: "Samsung + Intel Foundry + localization",
+     threat_type: substitution, segment: "leading-edge foundry",
+     stage: qualification, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.35,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "manufacturing substitution hard but customers have alternatives"}
+  - {symbol: ASML, competitor: "Chinese lithography (SMEE et al.)",
+     threat_type: geo_localization, segment: "lithography",
+     stage: prototype, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.25,
+     displacement_lo: 2029, displacement_hi: 2032,
+     claim: "long development cycle; ecosystem substitution is the real moat"}
+  - {symbol: AMAT, competitor: "Chinese equipment makers (Naura/AMEC)",
+     threat_type: geo_localization, segment: "deposition/etch",
+     stage: qualification, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.20, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "direct substitution in mature process categories"}
+  - {symbol: LRCX, competitor: "Chinese equipment makers + TEL",
+     threat_type: substitution, segment: "etch/deposition",
+     stage: qualification, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.20, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "selected-category substitution"}
+  - {symbol: KLAC, competitor: "Chinese inspection/metrology",
+     threat_type: geo_localization, segment: "process control",
+     stage: prototype, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.3,
+     displacement_lo: 2028, displacement_hi: 2031,
+     claim: "yield-learning + qualification barriers slow substitution"}
+  - {symbol: ANET, competitor: "white-box + NVDA networking + hyperscaler designs",
+     threat_type: substitution, segment: "DC Ethernet switching",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.20, probability: 0.4,
+     displacement_lo: 2026, displacement_hi: 2029,
+     claim: "customer architecture and vendor choices, not demand loss"}
+  - {symbol: CRDO, competitor: "MRVL/AVGO + internal connectivity silicon",
+     threat_type: substitution, segment: "AEC / SerDes",
+     stage: design_win, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.25, probability: 0.45,
+     displacement_lo: 2027, displacement_hi: 2029,
+     claim: "AEC differentiation vs in-house solutions"}
+  - {symbol: LITE, competitor: "in-house optics + Chinese suppliers",
+     threat_type: substitution, segment: "optical components",
+     stage: design_win, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.20, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "component substitution + pricing pressure"}
+  - {symbol: COHR, competitor: "in-house optics + Chinese suppliers",
+     threat_type: substitution, segment: "optical transceivers",
+     stage: design_win, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.20, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "component substitution + pricing pressure"}
+  - {symbol: VRT, competitor: "Schneider/Eaton + in-house power/cooling",
+     threat_type: substitution, segment: "DC power + thermal",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.20, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "installed-base service is the durable layer"}
+  - {symbol: MSFT, competitor: "open models + alternative clouds",
+     threat_type: platform, segment: "AI platform / Azure AI",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.35,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "distribution + enterprise lock-in partially offsets"}
+  - {symbol: GOOGL, competitor: "open models + rival clouds",
+     threat_type: platform, segment: "AI platform / GCP",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.35,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "TPU + model + distribution integration"}
+  - {symbol: AMZN, competitor: "custom-silicon customers going direct",
+     threat_type: insourcing, segment: "AWS AI infrastructure",
+     stage: design_win, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.10, probability: 0.35,
+     displacement_lo: 2028, displacement_hi: 2031,
+     claim: "Trainium is itself the insourcing hedge"}
+  - {symbol: ORCL, competitor: "hyperscaler repatriation",
+     threat_type: insourcing, segment: "OCI AI workloads",
+     stage: design_win, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.4,
+     displacement_lo: 2028, displacement_hi: 2031,
+     claim: "contracted RPO cushions near-term"}
+  - {symbol: CRWV, competitor: "hyperscaler self-build + price war",
+     threat_type: insourcing, segment: "GPU cloud",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.25, probability: 0.45,
+     displacement_lo: 2027, displacement_hi: 2029,
+     claim: "debt + utilization vs customers who can self-build"}
+  - {symbol: NBIS, competitor: "hyperscaler self-build",
+     threat_type: insourcing, segment: "AI cloud",
+     stage: qualification, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.25, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2029,
+     claim: "capacity ramp must convert to durable contracts"}
+  - {symbol: IREN, competitor: "vertically integrated clouds",
+     threat_type: insourcing, segment: "AI cloud",
+     stage: qualification, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.25, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2029,
+     claim: "power-backed moat but financing-dependent"}
+  - {symbol: APLD, competitor: "larger DC developers + tenant insourcing",
+     threat_type: insourcing, segment: "purpose-built DC leasing",
+     stage: qualification, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.25, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2029,
+     claim: "construction cost + tenant concentration"}
+  - {symbol: PLTR, competitor: "hyperscaler platforms + internal builds",
+     threat_type: insourcing, segment: "enterprise AI platforms",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.25, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "customers may build competing workflows"}
+  - {symbol: SNOW, competitor: "Databricks + hyperscaler DBs + open source",
+     threat_type: substitution, segment: "data cloud",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.20, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "data gravity protects, not completely"}
+  - {symbol: MDB, competitor: "hyperscaler DBs + open source",
+     threat_type: substitution, segment: "document DB",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.10, share_at_risk_hi: 0.20, probability: 0.4,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "open-source core invites substitution at the margin"}
+  - {symbol: CRWD, competitor: "cloud-native security + AI-native rivals",
+     threat_type: substitution, segment: "endpoint security",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.35,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "platform consolidation vs efficacy"}
+  - {symbol: PANW, competitor: "cloud-native + AI-native security",
+     threat_type: substitution, segment: "security platform",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.35,
+     displacement_lo: 2027, displacement_hi: 2030,
+     claim: "consolidation cuts both ways"}
+  - {symbol: NOW, competitor: "agentic platforms + internal tools",
+     threat_type: substitution, segment: "workflow automation",
+     stage: design_win, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.35,
+     displacement_lo: 2028, displacement_hi: 2031,
+     claim: "SaaS vs agentic-platform displacement watch"}
+  - {symbol: CRM, competitor: "agentic platforms + internal builds",
+     threat_type: substitution, segment: "CRM/agents",
+     stage: design_win, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.35,
+     displacement_lo: 2028, displacement_hi: 2031,
+     claim: "seat-based SaaS faces agentic substitution"}
+  - {symbol: EQIX, competitor: "hyperscaler self-build DC",
+     threat_type: insourcing, segment: "colocation",
+     stage: production, direction: threat,
+     share_at_risk_lo: 0.05, share_at_risk_hi: 0.15, probability: 0.35,
+     displacement_lo: 2028, displacement_hi: 2031,
+     claim: "interconnection moat vs raw capacity"}

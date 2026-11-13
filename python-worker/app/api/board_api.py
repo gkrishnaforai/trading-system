@@ -868,6 +868,15 @@ async def _j_ai_cycle() -> dict:
     return await asyncio.to_thread(cycle_tracker.refresh)
 
 
+async def _j_competitive_risk() -> dict:
+    """Competitive disruption & substitution — seeds threat claims,
+    then scores CRS per name over the approved-claims journal."""
+    from app.signals import competitive_risk
+    seeded = await asyncio.to_thread(competitive_risk.seed_threats)
+    res = await asyncio.to_thread(competitive_risk.refresh)
+    return {**res, **seeded}
+
+
 async def _j_correction_alarms() -> dict:
     """Correction alarms — revision breadth (flywheel), labor/credit
     + real yields (keyless FRED CSV), valuation decomposition.
@@ -1144,6 +1153,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "intraday-recovery": ("Intraday recovery confirm (5-min)",
                           _j_intraday_recovery),
     "ai-cycle":    ("AI cycle rotation tracker (weekly)", _j_ai_cycle),
+    "competitive-risk": ("Competitive disruption & substitution",
+                         _j_competitive_risk),
     "correction-alarms": ("Correction-alarm engine",
                           _j_correction_alarms),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
@@ -3785,6 +3796,23 @@ async def cycle_board():
     cohort aggregates. Read-only over journaled rows."""
     from app.signals import cycle_tracker
     return await asyncio.to_thread(cycle_tracker.current)
+
+
+@router.get("/competitive")
+async def competitive_board():
+    """Competitive resilience board — latest CRS per symbol: six legs,
+    revenue-at-risk range, displacement state, top threats with
+    provenance. Read-only over journaled rows."""
+    from app.signals import competitive_risk
+    return await asyncio.to_thread(competitive_risk.current)
+
+
+@router.get("/competitive/{symbol}")
+async def competitive_detail(symbol: str):
+    """One name's competitive picture — latest CRS plus every
+    journaled threat claim (source, stage, status, share range)."""
+    from app.signals import competitive_risk
+    return await asyncio.to_thread(competitive_risk.detail, symbol)
 
 
 @router.get("/cycle/{symbol}/history")

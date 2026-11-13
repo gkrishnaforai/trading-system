@@ -760,6 +760,16 @@ export type CycleRow = {
   structural_break?: boolean | null
   valuation_blocked?: boolean | null
   flags?: string[]
+  crs?: number | null
+  risk_trend?: string | null
+  displacement_confirmed?: boolean | null
+  opportunity_credit?: number | null
+  top_threats?: {
+    competitor?: string; segment?: string; type?: string;
+    stage?: string; share?: (number | null)[];
+    probability?: number | null; claim?: string;
+    source?: string; source_date?: string | null
+  }[]
   components?: Record<string, {
     score?: number | null; weight?: number;
     note?: string | null; unknown?: boolean

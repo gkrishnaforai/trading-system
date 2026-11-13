@@ -180,6 +180,19 @@ def _ctx(sym: str) -> dict:
         c["capex_score"] = _f(r[0]["score"]) if r else None
     except Exception:
         c["capex_score"] = None
+    # competitive resilience — shared health dimension via lookup()
+    try:
+        from app.signals import competitive_risk
+        cr = competitive_risk.lookup(sym)
+        c["crs"] = _f(cr["crs"]) if cr else None
+        c["opp_credit"] = _f(cr["opportunity_credit"]) if cr else None
+        c["risk_trend"] = cr.get("risk_trend") if cr else None
+        c["displacement_confirmed"] = bool(
+            cr.get("displacement_confirmed")) if cr else False
+    except Exception as exc:
+        logger.debug("cycle ctx crs %s: %s", sym, exc)
+        c["crs"] = None
+        c["displacement_confirmed"] = False
     return c
 
 
@@ -556,6 +569,34 @@ def current() -> dict:
                 r[j] = json.loads(r[j])
         for k in ("composite", "coverage_pct", "rev_peak_risk"):
             r[k] = _f(r[k])
+    # merge latest competitive-resilience per symbol (shared health
+    # dimension — same read every engine does via lookup())
+    try:
+        crs_rows = db.execute_query(
+            "SELECT DISTINCT ON (symbol) symbol, crs, risk_trend,"
+            " displacement_confirmed, opportunity_credit, top_threats"
+            " FROM competitive_scores ORDER BY symbol, as_of DESC,"
+            " id DESC")
+        crs_map = {r["symbol"]: r for r in crs_rows}
+        for r in rows:
+            cr = crs_map.get(r["symbol"]) or {}
+            r["crs"] = _f(cr.get("crs"))
+            r["risk_trend"] = cr.get("risk_trend")
+            r["displacement_confirmed"] = bool(
+                cr.get("displacement_confirmed"))
+            r["opportunity_credit"] = _f(cr.get("opportunity_credit"))
+            tt = cr.get("top_threats")
+            if isinstance(tt, str):
+                tt = json.loads(tt)
+            r["top_threats"] = tt or []
+    except Exception as exc:
+        logger.debug("cycle current crs merge: %s", exc)
+        for r in rows:
+            r["crs"] = None
+            r["risk_trend"] = None
+            r["displacement_confirmed"] = False
+            r["opportunity_credit"] = None
+            r["top_threats"] = []
     cohorts: dict[str, dict] = {}
     for r in rows:
         c = r.get("cohort") or "unclassified"
