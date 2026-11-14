@@ -400,6 +400,14 @@ async def _j_econ_cal_poll():
     return await asyncio.to_thread(poll_due)
 
 
+async def _j_agentic_infra():
+    """Agentic infrastructure engine — scores the software
+    picks-and-shovels layer for agentic AI (data plane, streaming,
+    edge, gateways, NHI, agent security, observability)."""
+    from app.signals import agentic_infra
+    return await asyncio.to_thread(agentic_infra.refresh)
+
+
 async def _j_calendar_audit():
     """Weekly calendar audit — diffs the next 45d of macro events and
     the tracked universe's earnings dates vs last week; refreshes
@@ -1115,6 +1123,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "econ-cal-verify": ("Macro calendar verification",
                         _j_econ_cal_verify),
     "calendar-audit": ("Weekly calendar audit", _j_calendar_audit),
+    "agentic-infra":  ("Agentic infrastructure engine",
+                       _j_agentic_infra),
     "econ-cal-poll":  ("Due-print watcher (hourly)",
                        _j_econ_cal_poll),
     "etf-flows":    ("ETF AUM → fund flows", _j_etf_flows),
@@ -3830,6 +3840,24 @@ async def competitive_detail(symbol: str):
     journaled threat claim (source, stage, status, share range)."""
     from app.signals import competitive_risk
     return await asyncio.to_thread(competitive_risk.detail, symbol)
+
+
+@router.get("/agentic-infra")
+async def agentic_infra_board():
+    """Agentic infrastructure board — latest AIS per symbol grouped
+    by tier: sublayer tags, monetization fit, evidence counts.
+    Read-only over journaled snapshots."""
+    from app.signals import agentic_infra
+    return await asyncio.to_thread(agentic_infra.current)
+
+
+@router.get("/agentic-infra/{symbol}")
+async def agentic_infra_detail(symbol: str):
+    """One name's agentic-infrastructure picture — AIS, legs with
+    notes, sublayers, seed status."""
+    from app.signals import agentic_infra
+    return await asyncio.to_thread(agentic_infra.evaluate_symbol,
+                                   symbol)
 
 
 @router.get("/cycle/{symbol}/history")

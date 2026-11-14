@@ -157,6 +157,47 @@ function ThreatList({ r }: { r: CycleRow }) {
  * the fired rule's note, the strongest and weakest evidence legs,
  * and the honest caveats. Nothing here is generated — every line
  * restates a journaled number or note. */
+const AGENTIC_TIER: Record<string, string> = {
+  core_infrastructure: 'bg-constructive/15 text-constructive',
+  emerging: 'bg-caution/15 text-caution',
+  watch: 'bg-hairline/60 text-muted',
+  candidate: 'bg-hairline/40 text-faint',
+}
+
+function AgenticBlock({ r }: { r: CycleRow }) {
+  if (r.ais == null && !(r.sublayers ?? []).length) return null
+  return (
+    <div className="mt-3 border-t border-hairline/50 pt-2">
+      <div className="mb-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-faint">
+          Agentic infra
+        </span>
+        {r.ais != null && (
+          <span className="text-[11px] font-mono text-ink">
+            ais {r.ais}
+          </span>
+        )}
+        {r.agentic_tier && (
+          <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase ${AGENTIC_TIER[r.agentic_tier] ?? 'bg-hairline/40 text-faint'}`}>
+            {r.agentic_tier.replace(/_/g, ' ')}
+          </span>
+        )}
+        {r.monetization && (
+          <span className="text-[10px] text-faint">
+            {r.monetization}-priced
+          </span>
+        )}
+        {(r.sublayers ?? []).map(s => (
+          <span key={s}
+                className="rounded-full bg-hairline/50 px-1.5 py-0.5 text-[9px] text-muted">
+            {s.replace(/_/g, ' ')}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function WhyPanel({ r }: { r: CycleRow }) {
   const comps = Object.entries(r.components ?? {})
   const scored = comps.filter(([, c]) => c.score != null)
@@ -301,6 +342,8 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                 title="revenue-peak risk 0-100">pkr</th>
             <th className="py-2 px-2 font-medium text-right"
                 title="competitive resilience 0-100 — click row for threats">crs</th>
+            <th className="py-2 px-2 font-medium text-right"
+                title="agentic infrastructure score 0-100 — software picks-and-shovels for agents; click row for sublayers">ais</th>
             <th className="py-2 px-2 font-medium text-center"
                 title="peaks: orders · estimates · revenue">peaks</th>
             <th className="py-2 pl-2 font-medium">demand peak</th>
@@ -372,6 +415,16 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                   {r.crs ?? <span className="text-faint/40">·</span>}
                   {r.displacement_confirmed && ' ⚠'}
                 </td>
+                <td className={`py-2 px-2 text-right font-mono ${legTone(r.ais)}`}
+                    title={r.agentic_tier
+                      ? `${r.agentic_tier.replace(/_/g, ' ')}${
+                          (r.sublayers ?? []).length
+                            ? ' — ' + (r.sublayers ?? [])
+                                .join(', ').replace(/_/g, ' ')
+                            : ''}`
+                      : undefined}>
+                  {r.ais ?? <span className="text-faint/40">·</span>}
+                </td>
                 <td className="py-2 px-2 text-center"><PeakDots r={r} /></td>
                 <td className="py-2 pl-2 font-mono text-ink">
                   {r.demand_peak_lo
@@ -394,6 +447,7 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                       className="border-b border-hairline bg-card/60 px-8 py-3">
                     <div className="mb-3">
                       <WhyPanel r={r} />
+                      <AgenticBlock r={r} />
                       <ThreatList r={r} />
                     </div>
                     <History sym={r.symbol} />

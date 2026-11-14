@@ -764,6 +764,10 @@ export type CycleRow = {
   risk_trend?: string | null
   displacement_confirmed?: boolean | null
   opportunity_credit?: number | null
+  ais?: number | null
+  agentic_tier?: string | null
+  sublayers?: string[]
+  monetization?: string | null
   top_threats?: {
     competitor?: string; segment?: string; type?: string;
     stage?: string; share?: (number | null)[];

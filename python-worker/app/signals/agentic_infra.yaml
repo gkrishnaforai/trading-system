@@ -1,0 +1,161 @@
+# Agentic Infrastructure Engine — v1
+# ==================================================
+# "Who sells the software base layer every agent needs?" — the
+# software-sector analog of CRDO/VRT/NVDA: not applications, the
+# plumbing underneath them. Sublayer tags + role + monetization model
+# are SEED PRIORS (transparent, flagged `seeded`); growth and evidence
+# legs come from journaled data. A seed score can only be upgraded to
+# evidence_backed by real claims — never by narrative.
+version: 1
+
+# sublayer vocabulary — the primitives agent workloads demand
+sublayers:
+  data_state:      "operational state, agent memory, artifacts"
+  data_analytics:  "lakehouse/analytics plane + governed semantics"
+  retrieval:       "vector + hybrid search / RAG"
+  streaming:       "event backbone, CDC, stream processing"
+  edge_runtime:    "agent runtime, queues, state at the edge"
+  api_gateway:     "API/AI gateway, model routing, tool calls"
+  identity_nhi:    "non-human identity, agent auth, secrets"
+  ai_security:     "guardrails, AI firewall, agent/data security"
+  observability:   "LLM/agent observability, evals, monitoring"
+  agent_platform:  "agent frameworks, orchestration, agentic dev"
+  cloud_ai:        "integrated cloud AI platforms (diluted)"
+
+# seed universe — role: core|adjacent|watch ; monetization:
+# consumption|hybrid|seat. Candidates discovered from the registry
+# land at 'candidate' and can never outscore watch until reviewed.
+seeds:
+  SNOW:  {sublayers: [data_analytics, retrieval, streaming], role: core,
+          monetization: consumption,
+          note: "consumption credits = cleanest agent query monetization; Cortex semantic layer"}
+  MDB:   {sublayers: [data_state, retrieval, streaming], role: core,
+          monetization: consumption,
+          note: "agent memory/state (docs), Atlas Vector Search, Voyage embeddings"}
+  NET:   {sublayers: [edge_runtime, api_gateway, retrieval], role: core,
+          monetization: consumption,
+          note: "Agents SDK, Durable Objects, AI Gateway — most agent-native runtime"}
+  CFLT:  {sublayers: [streaming], role: core, monetization: consumption,
+          note: "the only public pure-play event backbone — agent context layer"}
+  ORCL:  {sublayers: [data_state, data_analytics, streaming], role: core,
+          monetization: hybrid,
+          note: "AI Vector Search in-place on the installed base — data gravity"}
+  PLTR:  {sublayers: [agent_platform, data_analytics], role: core,
+          monetization: hybrid,
+          note: "ontology = governed semantic layer agents act through (AIP)"}
+  ESTC:  {sublayers: [retrieval, data_state], role: adjacent,
+          monetization: consumption,
+          note: "default enterprise retrieval; commoditized by pgvector/OpenSearch"}
+  FFIV:  {sublayers: [api_gateway], role: adjacent, monetization: hybrid,
+          note: "NGINX/API delivery pivoting to AI gateway"}
+  OKTA:  {sublayers: [identity_nhi], role: adjacent, monetization: hybrid,
+          note: "Auth for AI — agent identity issuance"}
+  SAIL:  {sublayers: [identity_nhi], role: adjacent, monetization: seat,
+          note: "non-human identity governance — agents need owners + scopes"}
+  PANW:  {sublayers: [ai_security, identity_nhi], role: adjacent,
+          monetization: hybrid,
+          note: "Prisma AIRS + CyberArk (pending) = agent security platform"}
+  CRWD:  {sublayers: [ai_security], role: adjacent, monetization: hybrid,
+          note: "AI-SPM; secures the agent fleet"}
+  ZS:    {sublayers: [ai_security, api_gateway], role: adjacent,
+          monetization: hybrid,
+          note: "zero-trust exchange = guardrails on agent traffic"}
+  DDOG:  {sublayers: [observability], role: adjacent,
+          monetization: consumption,
+          note: "LLM observability product line"}
+  RBRK:  {sublayers: [ai_security], role: adjacent, monetization: hybrid,
+          note: "data resilience + identity recovery for agent-touched data"}
+  MSFT:  {sublayers: [cloud_ai, agent_platform, api_gateway, identity_nhi],
+          role: adjacent, monetization: hybrid,
+          note: "Foundry/Cosmos/Entra — integrated but diluted inside Azure"}
+  AMZN:  {sublayers: [cloud_ai, streaming, data_state], role: adjacent,
+          monetization: consumption,
+          note: "Bedrock/Kinesis/Aurora — largest share of agent workloads, invisible line"}
+  GOOGL: {sublayers: [cloud_ai, api_gateway, data_analytics], role: adjacent,
+          monetization: hybrid,
+          note: "Vertex/Apigee/BigQuery — diluted inside ads+cloud"}
+  FSLY:  {sublayers: [edge_runtime], role: watch, monetization: consumption,
+          note: "edge compute + Fanout streaming — technically fit, commercially tiny"}
+  BASE:  {sublayers: [data_state, edge_runtime], role: watch,
+          monetization: consumption,
+          note: "edge/mobile sync niche"}
+  AKAM:  {sublayers: [edge_runtime, api_gateway], role: watch,
+          monetization: hybrid,
+          note: "edge + API security — thin data-plane story"}
+  DT:    {sublayers: [observability], role: watch, monetization: seat,
+          note: "agentic monitoring claims; seat-priced"}
+  GTLB:  {sublayers: [agent_platform], role: watch, monetization: seat,
+          note: "agentic SDLC — Duo agents"}
+  VRNS:  {sublayers: [ai_security], role: watch, monetization: hybrid,
+          note: "DSPM — data access governance agents need"}
+  S:     {sublayers: [ai_security, streaming], role: watch,
+          monetization: hybrid,
+          note: "Purple AI + Observo pipeline acquisition"}
+  PATH:  {sublayers: [agent_platform], role: watch, monetization: seat,
+          note: "agentic automation; displacement risk from LLM-native frameworks"}
+  AI:    {sublayers: [agent_platform], role: watch, monetization: seat,
+          note: "platform claim, weak fundamentals"}
+  TDC:   {sublayers: [data_analytics], role: watch, monetization: seat,
+          note: "declining EDW with AI labels"}
+  IBM:   {sublayers: [agent_platform, data_state], role: watch,
+          monetization: hybrid,
+          note: "watsonx/Db2 — services-led agent story"}
+  NTNX:  {sublayers: [data_state], role: watch, monetization: hybrid,
+          note: "HCI substrate — hosts the infra, not the data plane"}
+
+# scoring legs — banded first-match on the shared _cond engine.
+# Unknown legs are EXCLUDED + coverage reported, never zeroed.
+components:
+
+  role_strength:                    # 30 — how central is agentic infra
+    weight: 30
+    bands:
+      - {if: {role: "core"},      score: 85, note: "core data-plane name"}
+      - {if: {role: "adjacent"},  score: 60, note: "adjacent infra layer"}
+      - {if: {role: "watch"},     score: 35, note: "watch — thin or unproven"}
+      - {if: {role: "candidate"}, score: 20, note: "registry candidate — unreviewed"}
+
+  sublayer_diversity:               # 15 — primitives covered
+    weight: 15
+    bands:
+      - {if: {sublayers_n_gte: 3}, score: 85, note: "3+ agent primitives"}
+      - {if: {sublayers_n_gte: 2}, score: 70, note: "two primitives"}
+      - {if: {sublayers_n_gte: 1}, score: 50, note: "single primitive"}
+
+  monetization_fit:                 # 20 — agents buy usage, not seats
+    weight: 20
+    bands:
+      - {if: {monetization: "consumption"}, score: 85,
+         note: "usage-priced — agent volume lands on revenue"}
+      - {if: {monetization: "hybrid"}, score: 60,
+         note: "mixed pricing — partial agent-volume capture"}
+      - {if: {monetization: "seat"}, score: 35,
+         note: "seat-priced — agents don't buy seats"}
+
+  growth_durability:                # 20 — journaled fundamentals only
+    weight: 20
+    bands:
+      - {if: {rev_growth_gte: 0.25}, score: 85, note: ">25% revenue growth"}
+      - {if: {rev_growth_gte: 0.15}, score: 70, note: "15-25% growth"}
+      - {if: {rev_growth_gte: 0.08}, score: 55, note: "8-15% growth"}
+      - {if: {rev_growth_gte: 0.0},  score: 40, note: "growth but sub-8%"}
+      - {if: {rev_growth_lte: 0.0},  score: 25, note: "revenue shrinking"}
+
+  ai_evidence:                      # 15 — documented AI/agent claims
+    weight: 15
+    bands:
+      - {if: {evidence_n_gte: 4}, score: 85, note: "4+ documented AI evidence rows"}
+      - {if: {evidence_n_gte: 2}, score: 65, note: "2-3 AI evidence rows"}
+      - {if: {evidence_n_gte: 1}, score: 45, note: "single evidence row"}
+      - {if: {evidence_n: 0},     score: 30,
+         note: "no journaled AI evidence — seed prior, unverified"}
+
+tiers:
+  - {tier: core_infrastructure, ais_gte: 70}
+  - {tier: emerging,            ais_gte: 55}
+  - {tier: watch,               ais_gte: 0}
+
+# discovery — registry symbols in software-infra industries that are
+# tracked but not seeded land as 'candidate': visible, low-scored,
+# flagged for review; never silently promoted.
+candidate_industries: ["%Infrastructure%", "%Software%"]

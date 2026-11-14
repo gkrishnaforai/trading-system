@@ -63,6 +63,14 @@ cohorts:
     phase: deployment
     peak: {lo: 2029, hi: 2031, confidence: low}
     symbols: [PANW, CRWD, FTNT, ZS, OKTA, NET]
+  agentic_infra:
+    label: "Agentic AI infrastructure (software)"
+    phase: deployment
+    peak: {lo: 2029, hi: 2031, confidence: low}
+    # names not already held by software/security/hyperscaler
+    # cohorts — the AIS engine tags every seeded name regardless
+    symbols: [CFLT, ESTC, FSLY, BASE, SAIL, DT, GTLB, FFIV, AKAM,
+              VRNS, S, AI, TDC, NTNX, PATH, RBRK]
 
 # -------------------------------------------------------------------
 # components — 8 legs, banded first-match on the shared _cond engine.

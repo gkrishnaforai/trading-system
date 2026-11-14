@@ -597,6 +597,31 @@ def current() -> dict:
             r["displacement_confirmed"] = False
             r["opportunity_credit"] = None
             r["top_threats"] = []
+    # merge latest agentic-infra score — names tagged by the AIS
+    # engine carry ais/tier/sublayers regardless of which cycle
+    # cohort holds them (SNOW stays software, ORCL hyperscaler)
+    try:
+        ais_rows = db.execute_query(
+            "SELECT DISTINCT ON (symbol) symbol, ais, tier, sublayers,"
+            " monetization, status FROM agentic_infra_snapshots"
+            " ORDER BY symbol, as_of DESC, id DESC")
+        ais_map = {r["symbol"]: r for r in ais_rows}
+        for r in rows:
+            a = ais_map.get(r["symbol"]) or {}
+            r["ais"] = _f(a.get("ais"))
+            r["agentic_tier"] = a.get("tier")
+            sl = a.get("sublayers")
+            if isinstance(sl, str):
+                sl = json.loads(sl)
+            r["sublayers"] = sl or []
+            r["monetization"] = a.get("monetization")
+    except Exception as exc:
+        logger.debug("cycle current ais merge: %s", exc)
+        for r in rows:
+            r["ais"] = None
+            r["agentic_tier"] = None
+            r["sublayers"] = []
+            r["monetization"] = None
     cohorts: dict[str, dict] = {}
     for r in rows:
         c = r.get("cohort") or "unclassified"
