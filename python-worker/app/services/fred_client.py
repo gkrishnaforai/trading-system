@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from app.utils.http_resilience import breaker, fail, ProviderDown
+
 
 class FredClient:
     def __init__(self, api_key: Optional[str] = None, base_url: str = "https://api.stlouisfed.org/fred"):
@@ -33,9 +35,18 @@ class FredClient:
             params["observation_end"] = observation_end.isoformat()
 
         url = f"{self.base_url}/series/observations"
-        resp = requests.get(url, params=params, timeout=30)
-        resp.raise_for_status()
-        payload = resp.json() or {}
+        br = breaker("fred")
+        if not br.allow():
+            raise ProviderDown("fred circuit open — failing fast")
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            payload = resp.json() or {}
+        except Exception as exc:
+            # terminal failure → ledger + trip the shared breaker
+            fail("fred", f"observations:{series_id}", exc)
+            raise
+        br.success()
         obs = payload.get("observations") or []
         out: List[Dict[str, Any]] = []
         for o in obs:

@@ -131,16 +131,12 @@ def _provider_rows(today: date, days: int) -> Optional[List[Dict[str, Any]]]:
     if not getattr(settings, "fmp_api_key", None):
         return None
     try:
-        import requests
-        r = requests.get(
-            f"{settings.fmp_base_url}/economic-calendar",
-            params={"from": start.isoformat(),
-                    "to": (today + timedelta(days=days)).isoformat(),
-                    "apikey": settings.fmp_api_key},
-            timeout=20)
-        items = r.json()
-        if not isinstance(items, list):
-            return []
+        from app.providers.financial_modeling_prep.client import (
+            FinancialModelingPrepClient)
+        items = FinancialModelingPrepClient.from_settings() \
+            .fetch_economic_calendar(
+                start.isoformat(),
+                (today + timedelta(days=days)).isoformat())
         return [{"event": e.get("event") or "",
                  "date": str(e.get("date") or "")[:10],
                  "country": e.get("country") or "",

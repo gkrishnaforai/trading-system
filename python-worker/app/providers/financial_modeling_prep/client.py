@@ -1526,6 +1526,21 @@ class EnhancedFMPClient:
             logger.error(f"❌ Error fetching earnings calendar: {e}")
             return []
     
+    def fetch_economic_calendar(self, from_date: str = None, to_date: str = None) -> List[Dict[str, Any]]:
+        """Economic calendar (FOMC/CPI/PPI/NFP releases). Rides the
+        shared _make_request path — breaker + retry + failure ledger."""
+        try:
+            params = {}
+            if from_date:
+                params["from"] = from_date
+            if to_date:
+                params["to"] = to_date
+            data = self._make_request("/economic-calendar", params)
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"❌ Error fetching economic calendar: {e}")
+            return []
+
     def get_ipos_calendar(self) -> List[Dict[str, Any]]:
         """Get IPOs calendar"""
         try:
