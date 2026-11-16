@@ -462,4 +462,9 @@ volumes:
 
 networks:
   trading-network:
+    # fixed name — independent of the compose project name (Coolify
+    # uses the resource UUID as --project-name, which would make this
+    # <uuid>_trading-network). External joiners (custodian-watch)
+    # reference the stable name.
+    name: trading-shared
     driver: bridge

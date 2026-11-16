@@ -61,8 +61,10 @@ volumes:
     driver: local
 
 # joins the app's compose network to reach pgbouncer by service name;
-# WATCH_DB_NETWORK must match `docker network ls` on the host
+# the app pins its network name to `trading-shared` (see
+# docker-compose.yml) so this survives Coolify project-name changes.
+# WATCH_DB_NETWORK stays overridable for hosts that diverge.
 networks:
   trading-network:
     external: true
-    name: ${WATCH_DB_NETWORK:-trading-network}
+    name: ${WATCH_DB_NETWORK:-trading-shared}
