@@ -107,7 +107,9 @@ export type MorningRegime = {
     regime?: string
     ai_regime?: string
     score?: number
-    confidence?: number
+    // engine journals a band ('low'|'medium'|'high'); older snapshots
+    // used a numeric pct — accept both
+    confidence?: number | string
     buckets?: Record<string, unknown> | unknown[]
     llm?: unknown
     verdict?: RegimeVerdict | string | null

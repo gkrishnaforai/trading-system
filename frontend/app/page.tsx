@@ -160,6 +160,18 @@ export default async function RegimePage() {
   const permNotes = Array.isArray(permissions?.notes)
     ? (permissions!.notes as unknown[]).map(String)
     : []
+  // the fine permission gate can be tighter than the coarse posture
+  // flag — 'new longs ✓' is misleading when only selective setups at
+  // reduced size are permitted. Reconcile: the fine gate wins.
+  const selectiveLongsOnly =
+    permissions?.normal_long === false &&
+    permissions?.selective_long === true
+  const shortsOff =
+    permissions?.shorts_allowed === false ||
+    (p.shorts === false && permissions?.shorts_allowed !== true)
+  const sizeCut =
+    typeof permissions?.size_multiplier === 'number' &&
+    (permissions.size_multiplier as number) < 1
   const confX =
     buckets && typeof buckets._confirmation === 'object' && buckets._confirmation !== null
       ? (buckets._confirmation as Record<string, unknown>)
@@ -287,9 +299,78 @@ export default async function RegimePage() {
             {p.note}
           </p>
         )}
+        {/* layered read — the coarse 5-class label alone can mislead:
+            'neutral' can hide an engine 'transition', risk-off macro,
+            and an intraday tape break all at once */}
+        <div className="pt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[11px]">
+          {today?.regime && (
+            <span className="text-faint">
+              baseline <span className="text-muted">{today.regime.replace(/_/g, ' ')}</span>
+            </span>
+          )}
+          {canonical?.label != null && String(canonical.label) !== today?.regime && (
+            <span className="text-faint">
+              engine <span className="text-muted">
+                {String(canonical.label).replace(/_/g, ' ')}
+                {canonical.secondary ? ` + ${String(canonical.secondary).replace(/_/g, ' ')}` : ''}
+              </span>
+            </span>
+          )}
+          {today?.ai_regime && today.ai_regime !== today?.regime && (
+            <span className="text-faint">
+              ai <span className="text-muted">{today.ai_regime.replace(/_/g, ' ')}</span>
+            </span>
+          )}
+          {intraday?.state && (
+            <span className="text-faint">
+              now <span className={
+                intraday.tone === 'bad' ? 'text-defensive'
+                : intraday.tone === 'warn' ? 'text-caution'
+                : intraday.tone === 'good' ? 'text-aggressive' : 'text-muted'
+              }>{intraday.state.replace(/_/g, ' ')}</span>
+            </span>
+          )}
+          {today?.score != null && (
+            <span className="text-faint">
+              score <span className="text-ink">{today.score}</span>
+            </span>
+          )}
+          {today?.confidence != null && (
+            <span className="text-faint">
+              conf <span className={
+                String(today.confidence) === 'low' ? 'text-caution' : 'text-ink'
+              }>{String(today.confidence)}{typeof today.confidence === 'number' ? '%' : ''}</span>
+            </span>
+          )}
+        </div>
         <div className="pt-6 flex flex-wrap gap-2">
-          <Chip label={p.new_longs ? 'New longs' : 'No new longs'} on={!!p.new_longs} />
-          <Chip label="Shorts" on={!!p.shorts} />
+          <Chip
+            label={
+              !p.new_longs
+                ? 'No new longs'
+                : selectiveLongsOnly
+                  ? 'Selective longs'
+                  : 'New longs'
+            }
+            on={!!p.new_longs}
+          />
+          <Chip label={shortsOff ? 'No new shorts' : 'Shorts'} on={!shortsOff} />
+          {sizeCut && (
+            <Chip
+              label={`size ×${Number(permissions!.size_multiplier).toFixed(2)}`}
+              tone="warn"
+            />
+          )}
+          {permissions?.breakout_buying != null &&
+            permissions.breakout_buying !== 'allowed' && (
+              <Chip
+                label={`breakouts ${String(permissions.breakout_buying)}`}
+                tone="warn"
+              />
+            )}
+          {permissions?.dip_buying === false && (
+            <Chip label="dip-buying off" tone="warn" />
+          )}
           {p.hedge_on && <Chip label="Hedge on" tone="warn" />}
           {p.matched && (
             <span className="inline-flex items-center rounded-full border border-hairline px-3 py-1 text-xs font-mono text-faint">
@@ -358,6 +439,192 @@ export default async function RegimePage() {
         )}
       </section>
 
+      {/* verdict — the plain-English call + action rules */}
+      {renderVerdictCard && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+            Today's call
+          </div>
+          {verdict?.plain && (
+            <p className="pt-3 text-[15px] leading-relaxed text-ink">
+              {verdict.plain}
+            </p>
+          )}
+          {/* timing layer — the call is the daily plan; this is what
+              the live tape says to do THIS hour (refreshes intraday) */}
+          {intraday?.action && (
+            <p className="pt-2 text-[12px] leading-relaxed">
+              <span className="text-faint">right now · </span>
+              <span className={
+                intraday.tone === 'bad' ? 'text-defensive'
+                : intraday.tone === 'warn' ? 'text-caution'
+                : intraday.tone === 'good' ? 'text-aggressive' : 'text-muted'
+              }>
+                {(intraday.state ?? '').replace(/_/g, ' ')} — {intraday.action}
+              </span>
+            </p>
+          )}
+          {verdict?.rules && Object.keys(verdict.rules).length > 0 && (
+            <div className="pt-3 flex flex-wrap gap-2">
+              {Object.entries(verdict.rules)
+                .filter(([k]) => k !== 'note')
+                .map(([k, v]) => (
+                  <span
+                    key={k}
+                    className="rounded-full border border-hairline px-3 py-1 text-xs text-muted"
+                  >
+                    {k.replace(/_/g, ' ')}{' '}
+                    <span className="font-medium text-ink">
+                      {String(v).replace(/_/g, ' ')}
+                    </span>
+                  </span>
+                ))}
+            </div>
+          )}
+          {verdict?.rules?.note && (
+            <p className="pt-2 text-[11px] text-faint">
+              {verdict.rules.note}
+            </p>
+          )}
+
+          {/* regime meta — event risk, data quality, lean, changes */}
+          {Boolean(verdict?.event_risk || verdict?.data_quality || verdict?.qqq_lean ||
+            today?.ai_regime || verdict?.llm_dissent || canonicalLabel ||
+            divergent) && (
+              <div className="pt-3 flex flex-wrap gap-2">
+                {!!verdict?.event_risk && (
+                  <Chip label={`event risk ${String(verdict.event_risk)}`}
+                    tone={verdict.event_risk === 'extreme' || verdict.event_risk === 'high' ? 'warn' : 'off'} />
+                )}
+                {!!verdict?.data_quality && (
+                  <Chip label={`data ${String(verdict.data_quality)}`} tone="off" />
+                )}
+                {today?.ai_regime && (
+                  <Chip label={`ai growth ${today.ai_regime.replace(/_/g, ' ')}`} tone="off" />
+                )}
+                {!!verdict?.qqq_lean && (
+                  <Chip label={`qqq lean ${String(verdict.qqq_lean).replace(/_/g, ' ')}`} tone="off" />
+                )}
+                {!!verdict?.llm_dissent && (
+                  <Chip label="llm dissent" tone="warn" />
+                )}
+                {!!canonicalLabel && (
+                  <Chip label={canonicalLabel} tone="off" />
+                )}
+                {divergent && (
+                  <Chip label="capped — internals disagree" tone="warn" />
+                )}
+                {typeof canonical?.deterioration_score === 'number' && (
+                  <Chip
+                    label={`deterioration ${(canonical.deterioration_score as number) >= 0 ? '+' : ''}${(canonical.deterioration_score as number).toFixed(2)}`}
+                    tone={(canonical.deterioration_score as number) < -0.3 ? 'warn' : 'off'} />
+                )}
+              </div>
+            )}
+
+          {/* posture — the mechanical permission gate. Restrictions
+              show only when active; the notes say WHY it tightened
+              (independent families firing, deterioration slope, thin
+              evidence) — not the label verbs in verdict.rules */}
+          {permissions && (
+            <div className="pt-3 space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+                  posture
+                </span>
+                {typeof permissions.size_multiplier === 'number' && (
+                  <span
+                    className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono ${Number(permissions.size_multiplier) < 1
+                      ? 'border-caution/40 text-caution'
+                      : 'border-hairline text-muted'
+                      }`}
+                  >
+                    size ×{Number(permissions.size_multiplier).toFixed(2)}
+                  </span>
+                )}
+                {permissions.breakout_buying != null &&
+                  permissions.breakout_buying !== 'allowed' && (
+                    <span className="rounded-full border border-caution/40 px-2.5 py-0.5 text-[11px] font-mono text-caution">
+                      breakouts {String(permissions.breakout_buying)}
+                    </span>
+                  )}
+                {permissions.dip_buying === false && (
+                  <span className="rounded-full border border-defensive/40 px-2.5 py-0.5 text-[11px] font-mono text-defensive">
+                    dip-buying off
+                  </span>
+                )}
+                {permissions.aggressive_long === false && (
+                  <span className="rounded-full border border-hairline px-2.5 py-0.5 text-[11px] font-mono text-muted">
+                    no aggressive adds
+                  </span>
+                )}
+              </div>
+              {permNotes.map((n, i) => (
+                <p key={i} className="text-[11px] leading-relaxed text-muted">
+                  · {n}
+                </p>
+              ))}
+            </div>
+          )}
+
+          {/* cross-asset confirmation — do other markets underwrite
+              the equity move? journaled votes per asset */}
+          {confVotes && Object.keys(confVotes).length > 0 && (
+            <div className="pt-3 flex flex-wrap items-center gap-2">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+                x-asset
+              </span>
+              {Object.entries(confVotes).map(([k, v]) => (
+                <span
+                  key={k}
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono ${v === 'confirm'
+                    ? 'border-aggressive/40 text-aggressive'
+                    : 'border-defensive/40 text-defensive'
+                    }`}
+                >
+                  {k.replace(/_/g, ' ')} {v === 'confirm' ? '✓' : '✗'}
+                </span>
+              ))}
+              {!!confX?.label && (
+                <span className="text-[11px] text-faint">
+                  {String(confX.label)}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* what changed — deterministic day-over-day dimension diffs */}
+          {Array.isArray(verdict?.changes) && (verdict!.changes as unknown[]).length > 0 && (
+            <div className="pt-3 space-y-0.5">
+              {(verdict!.changes as unknown[]).slice(0, 4).map((c, i) => (
+                <p key={i} className="text-[11px] leading-relaxed text-muted">
+                  Δ {typeof c === 'string' ? c : JSON.stringify(c)}
+                </p>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* what's driving it — the deterministic driver lines (index
+          composite, breadth divergence, SMA breaks) as bullets, not
+          a JSON blob */}
+      {drivers.length > 0 && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+            What&apos;s driving it
+          </div>
+          <div className="pt-3 space-y-1">
+            {drivers.slice(0, 8).map((d, i) => (
+              <p key={i} className="text-[12px] leading-relaxed text-muted">
+                · {d}
+              </p>
+            ))}
+          </div>
+        </section>
+      )}
+
+
       {/* session tape — how today unfolded: journaled 15-min states
           with the readings at each transition (the "gapped → rallied
           → faded — why" answer) */}
@@ -374,7 +641,11 @@ export default async function RegimePage() {
           <Stat
             label="Confidence"
             value={
-              today.confidence != null ? `${today.confidence}%` : '—'
+              today.confidence != null
+                ? typeof today.confidence === 'number'
+                  ? `${today.confidence}%`
+                  : String(today.confidence)
+                : '—'
             }
           />
           <Stat
@@ -599,176 +870,6 @@ export default async function RegimePage() {
         </section>
       )}
 
-      {/* verdict — the plain-English call + action rules */}
-      {renderVerdictCard && (
-        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
-          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
-            Today's call
-          </div>
-          {verdict?.plain && (
-            <p className="pt-3 text-sm leading-relaxed text-ink">
-              {verdict.plain}
-            </p>
-          )}
-          {verdict?.rules && Object.keys(verdict.rules).length > 0 && (
-            <div className="pt-3 flex flex-wrap gap-2">
-              {Object.entries(verdict.rules)
-                .filter(([k]) => k !== 'note')
-                .map(([k, v]) => (
-                  <span
-                    key={k}
-                    className="rounded-full border border-hairline px-3 py-1 text-xs text-muted"
-                  >
-                    {k.replace(/_/g, ' ')}{' '}
-                    <span className="font-medium text-ink">
-                      {String(v).replace(/_/g, ' ')}
-                    </span>
-                  </span>
-                ))}
-            </div>
-          )}
-          {verdict?.rules?.note && (
-            <p className="pt-2 text-[11px] text-faint">
-              {verdict.rules.note}
-            </p>
-          )}
-
-          {/* regime meta — event risk, data quality, lean, changes */}
-          {Boolean(verdict?.event_risk || verdict?.data_quality || verdict?.qqq_lean ||
-            today?.ai_regime || verdict?.llm_dissent || canonicalLabel ||
-            divergent) && (
-              <div className="pt-3 flex flex-wrap gap-2">
-                {!!verdict?.event_risk && (
-                  <Chip label={`event risk ${String(verdict.event_risk)}`}
-                    tone={verdict.event_risk === 'extreme' || verdict.event_risk === 'high' ? 'warn' : 'off'} />
-                )}
-                {!!verdict?.data_quality && (
-                  <Chip label={`data ${String(verdict.data_quality)}`} tone="off" />
-                )}
-                {today?.ai_regime && (
-                  <Chip label={`ai growth ${today.ai_regime.replace(/_/g, ' ')}`} tone="off" />
-                )}
-                {!!verdict?.qqq_lean && (
-                  <Chip label={`qqq lean ${String(verdict.qqq_lean).replace(/_/g, ' ')}`} tone="off" />
-                )}
-                {!!verdict?.llm_dissent && (
-                  <Chip label="llm dissent" tone="warn" />
-                )}
-                {!!canonicalLabel && (
-                  <Chip label={canonicalLabel} tone="off" />
-                )}
-                {divergent && (
-                  <Chip label="capped — internals disagree" tone="warn" />
-                )}
-                {typeof canonical?.deterioration_score === 'number' && (
-                  <Chip
-                    label={`deterioration ${(canonical.deterioration_score as number) >= 0 ? '+' : ''}${(canonical.deterioration_score as number).toFixed(2)}`}
-                    tone={(canonical.deterioration_score as number) < -0.3 ? 'warn' : 'off'} />
-                )}
-              </div>
-            )}
-
-          {/* posture — the mechanical permission gate. Restrictions
-              show only when active; the notes say WHY it tightened
-              (independent families firing, deterioration slope, thin
-              evidence) — not the label verbs in verdict.rules */}
-          {permissions && (
-            <div className="pt-3 space-y-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
-                  posture
-                </span>
-                {typeof permissions.size_multiplier === 'number' && (
-                  <span
-                    className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono ${Number(permissions.size_multiplier) < 1
-                      ? 'border-caution/40 text-caution'
-                      : 'border-hairline text-muted'
-                      }`}
-                  >
-                    size ×{Number(permissions.size_multiplier).toFixed(2)}
-                  </span>
-                )}
-                {permissions.breakout_buying != null &&
-                  permissions.breakout_buying !== 'allowed' && (
-                    <span className="rounded-full border border-caution/40 px-2.5 py-0.5 text-[11px] font-mono text-caution">
-                      breakouts {String(permissions.breakout_buying)}
-                    </span>
-                  )}
-                {permissions.dip_buying === false && (
-                  <span className="rounded-full border border-defensive/40 px-2.5 py-0.5 text-[11px] font-mono text-defensive">
-                    dip-buying off
-                  </span>
-                )}
-                {permissions.aggressive_long === false && (
-                  <span className="rounded-full border border-hairline px-2.5 py-0.5 text-[11px] font-mono text-muted">
-                    no aggressive adds
-                  </span>
-                )}
-              </div>
-              {permNotes.map((n, i) => (
-                <p key={i} className="text-[11px] leading-relaxed text-muted">
-                  · {n}
-                </p>
-              ))}
-            </div>
-          )}
-
-          {/* cross-asset confirmation — do other markets underwrite
-              the equity move? journaled votes per asset */}
-          {confVotes && Object.keys(confVotes).length > 0 && (
-            <div className="pt-3 flex flex-wrap items-center gap-2">
-              <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
-                x-asset
-              </span>
-              {Object.entries(confVotes).map(([k, v]) => (
-                <span
-                  key={k}
-                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono ${v === 'confirm'
-                    ? 'border-aggressive/40 text-aggressive'
-                    : 'border-defensive/40 text-defensive'
-                    }`}
-                >
-                  {k.replace(/_/g, ' ')} {v === 'confirm' ? '✓' : '✗'}
-                </span>
-              ))}
-              {!!confX?.label && (
-                <span className="text-[11px] text-faint">
-                  {String(confX.label)}
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* what changed — deterministic day-over-day dimension diffs */}
-          {Array.isArray(verdict?.changes) && (verdict!.changes as unknown[]).length > 0 && (
-            <div className="pt-3 space-y-0.5">
-              {(verdict!.changes as unknown[]).slice(0, 4).map((c, i) => (
-                <p key={i} className="text-[11px] leading-relaxed text-muted">
-                  Δ {typeof c === 'string' ? c : JSON.stringify(c)}
-                </p>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* what's driving it — the deterministic driver lines (index
-          composite, breadth divergence, SMA breaks) as bullets, not
-          a JSON blob */}
-      {drivers.length > 0 && (
-        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
-          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
-            What&apos;s driving it
-          </div>
-          <div className="pt-3 space-y-1">
-            {drivers.slice(0, 8).map((d, i) => (
-              <p key={i} className="text-[12px] leading-relaxed text-muted">
-                · {d}
-              </p>
-            ))}
-          </div>
-        </section>
-      )}
 
       {/* forward — the ~20-session scenario split the engine journals:
           deeper / chop / resolves-bullish, plus the geo + defensive
