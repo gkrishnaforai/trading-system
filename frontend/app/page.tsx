@@ -1,4 +1,5 @@
 import { api, type HorizonScenario, type RegimeVerdict } from '@/lib/api'
+import { glossed } from '@/lib/terms'
 import { Chip, Kv, Section, Stat, fmtShort } from '@/components/regime'
 import { VolChips } from '@/components/vol-chips'
 import { TapeChips } from '@/components/tape-chips'
@@ -197,7 +198,7 @@ export default async function RegimePage() {
   // neutral because internals disagreed; silence would mislead
   const divergent = buckets?._divergent === true
   const canonicalLabel = canonical?.label
-    ? `engine ${String(canonical.label).replace(/_/g, ' ')}${canonical.secondary ? ' · ' + String(canonical.secondary).replace(/_/g, ' ') : ''}`
+    ? `engine ${glossed(String(canonical.label))}${canonical.secondary ? ' · ' + glossed(String(canonical.secondary)) : ''}`
     : null
   // slow structural macro regime — weeks-scale read from
   // macro_snapshots, distinct from the daily tape regime
@@ -305,20 +306,20 @@ export default async function RegimePage() {
         <div className="pt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[11px]">
           {today?.regime && (
             <span className="text-faint">
-              baseline <span className="text-muted">{today.regime.replace(/_/g, ' ')}</span>
+              baseline <span className="text-muted">{glossed(today.regime)}</span>
             </span>
           )}
           {canonical?.label != null && String(canonical.label) !== today?.regime && (
             <span className="text-faint">
               engine <span className="text-muted">
-                {String(canonical.label).replace(/_/g, ' ')}
-                {canonical.secondary ? ` + ${String(canonical.secondary).replace(/_/g, ' ')}` : ''}
+                {glossed(String(canonical.label))}
+                {canonical.secondary ? ` + ${glossed(String(canonical.secondary))}` : ''}
               </span>
             </span>
           )}
           {today?.ai_regime && today.ai_regime !== today?.regime && (
             <span className="text-faint">
-              ai <span className="text-muted">{today.ai_regime.replace(/_/g, ' ')}</span>
+              ai <span className="text-muted">{glossed(today.ai_regime)}</span>
             </span>
           )}
           {intraday?.state && (
@@ -327,7 +328,7 @@ export default async function RegimePage() {
                 intraday.tone === 'bad' ? 'text-defensive'
                 : intraday.tone === 'warn' ? 'text-caution'
                 : intraday.tone === 'good' ? 'text-aggressive' : 'text-muted'
-              }>{intraday.state.replace(/_/g, ' ')}</span>
+              }>{glossed(intraday.state)}</span>
             </span>
           )}
           {today?.score != null && (
@@ -624,7 +625,7 @@ export default async function RegimePage() {
             const verdict =
               eqDir === 'down'
                 ? nConf >= n * 0.7
-                  ? `${nConf} of ${n} markets read risk-off alongside stocks — broad bearish consensus, not a lone wobble`
+                  ? `${nConf} of ${n} markets read risk-off (money moving to safety) alongside stocks — broad bearish consensus, not a lone wobble`
                   : nConf <= n * 0.4
                     ? `only ${nConf} of ${n} markets confirm the slide — the selloff may be equity-specific; watch for divergence`
                     : `${nConf} of ${n} markets confirm the slide — partial agreement`
@@ -725,7 +726,7 @@ export default async function RegimePage() {
       {/* thin score strip */}
       {today && (
         <section className="grid grid-cols-2 sm:grid-cols-4 gap-6 rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
-          <Stat label="Regime" value={today.regime ?? '—'} />
+          <Stat label="Regime" value={glossed(today.regime)} />
           <Stat
             label="Score"
             value={today.score != null ? String(today.score) : '—'}
