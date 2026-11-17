@@ -7,6 +7,7 @@ import { TheCall } from '@/components/thecall'
 import { WatchToggle } from '@/components/watchlist'
 import { ThesisFlag } from '@/components/thesis-flag'
 import { ThesisReport } from '@/components/thesis-report'
+import { ThesisTimeline } from '@/components/thesis-timeline'
 import { SignalStrip, toneOf } from '@/components/signal-strip'
 import FvRecompute from '@/components/fv-recompute'
 
@@ -959,6 +960,7 @@ function StockSkeleton({ sym }: { sym: string }) {
 async function StockCore({ sym }: { sym: string }) {
   const card = await api.stockHealth(sym)
   const resilience = await api.resilience(sym).catch(() => null)
+  const thesisHist = await api.thesisHistory(sym).catch(() => null)
   if (!card) {
     return (
       <main className="mx-auto max-w-3xl px-5 pb-20 pt-10">
@@ -1392,6 +1394,7 @@ async function StockCore({ sym }: { sym: string }) {
               </div>
             )}
             <ThesisReport report={thesis?.report ?? null} />
+            <ThesisTimeline events={thesisHist?.events ?? []} />
           </div>
         </div>
         <div className="rounded-xl border border-hairline bg-card px-5 py-4 lg:col-span-2">

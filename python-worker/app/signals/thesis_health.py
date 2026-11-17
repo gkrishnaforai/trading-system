@@ -505,7 +505,129 @@ def evaluate(sym: str) -> dict:
          "hc": json.dumps(hyp_changes) if hyp_changes else None,
          "v": json.dumps(vetoes_fired) if vetoes_fired else None,
          "d": json.dumps(detail), "ao": row["as_of"]})
+    try:
+        _journal_change(sym, primary, row, hyps, prev_status,
+                        hyp_changes, vetoes_fired, detail)
+    except Exception:
+        logger.exception("thesis change journal failed for %s", sym)
     return row
+
+
+def _journal_change(sym: str, primary: str, row: dict,
+                    hyps: list[dict], prev_status: Optional[str],
+                    hyp_changes: list, vetoes_fired: list,
+                    detail: dict) -> None:
+    """Journal a thesis_change_events row + a thesis_change alert on
+    material movement — the timeline symbol_thesis can't hold.
+
+    event kinds:
+      coverage_start      first eval — history anchor, never alerts
+      status_transition   top-line moved up/down — alerts
+      leg_change          flat top status but a CORE hypothesis moved —
+                          the quiet deterioration the rollup hides.
+                          Journaled, not alerted: a leg that matters
+                          enough to page on moves the top status too.
+    Flat days with only optional-leg shuffles journal nothing.
+    """
+    import json
+    from app.database import db
+    status_dir = row["status_dir"]
+    status = row["status"]
+    if not prev_status:
+        kind = "coverage_start"
+    elif status_dir in ("up", "down"):
+        kind = "status_transition"
+    elif hyp_changes and any(
+            next((h for h in hyps
+                  if h["id"] == c["id"]
+                  and h["archetype"] == c["archetype"]), {})
+            .get("criticality") == "core"
+            for c in hyp_changes):
+        kind = "leg_change"
+    else:
+        return
+
+    # evidence snapshot — for each changed hypothesis, the checks that
+    # produced the move, so the row answers 'why' without reconstructing
+    changed = {(c["archetype"], c["id"]) for c in (hyp_changes or [])}
+    evidence = [
+        {"hypothesis_id": h["id"], "archetype": h["archetype"],
+         "status": h["status"], "label": h.get("label"),
+         "checks": [{"metric": c.get("metric"),
+                     "status": c.get("status"),
+                     "note": c.get("note"),
+                     "hard": bool(c.get("hard"))}
+                    for c in h.get("checks") or []]}
+        for h in hyps if (h["archetype"], h["id"]) in changed]
+
+    alert_id = None
+    if kind == "status_transition":
+        down = status_dir == "down"
+        rank = _RANK.get(status, 4)
+        fatal = any(v.get("fatal") for v in (vetoes_fired or []))
+        materiality = "HIGH" if rank <= 1 or fatal else "MEDIUM"
+        priority = (160 if rank == 0 or fatal else
+                    140 if rank == 1 else
+                    120 if down else 110)
+        # reason: the firing veto, else the worst changed leg
+        worst = None
+        for h in hyps:
+            if (h["archetype"], h["id"]) in changed and (
+                    worst is None
+                    or _RANK.get(h["status"], 4)
+                    < _RANK.get(worst["status"], 4)):
+                worst = h
+        veto = vetoes_fired[0] if vetoes_fired else None
+        reason = (veto["flag"] if veto else
+                  worst["id"].replace("_", " ") if worst else "")
+        title = (f"{sym} thesis: {prev_status} → {status}"
+                 + (f" — {reason[:90]}" if reason else ""))
+        in_book = bool(db.execute_query(
+            "SELECT 1 FROM portfolio_positions pp JOIN stocks s"
+            " ON s.id=pp.stock_id WHERE s.symbol=:s AND pp.quantity>0"
+            " LIMIT 1", {"s": sym}))
+        in_wl = bool(db.execute_query(
+            "SELECT 1 FROM watchlist_stocks ws JOIN stocks s"
+            " ON s.id=ws.stock_id WHERE s.symbol=:s LIMIT 1",
+            {"s": sym}))
+        fp = f"thesis_change:{sym}:{prev_status}:{status}:{row['as_of']}"
+        det = {"thesis": {"before": prev_status, "after": status},
+               "archetype": primary, "hyp_changes": hyp_changes,
+               "veto": veto, "score": row["score"]}
+        db.execute_update(
+            "INSERT INTO alert_items (symbol, event_type, direction,"
+            " materiality, title, detail, fingerprint, source,"
+            " source_timestamp, in_portfolio, in_watchlist, status,"
+            " priority_score) VALUES"
+            " (:s,'thesis_change',:di,:mat,:t,CAST(:de AS jsonb),:fp,"
+            " 'thesis_health',now(),:ib,:iw,'new',:pr)"
+            " ON CONFLICT (fingerprint) DO NOTHING",
+            {"s": sym, "di": "DOWN" if down else "UP",
+             "mat": materiality, "t": title,
+             "de": json.dumps(det, default=str), "fp": fp,
+             "ib": in_book, "iw": in_wl, "pr": priority})
+        aid = db.execute_query(
+            "SELECT id FROM alert_items WHERE fingerprint=:fp",
+            {"fp": fp})
+        alert_id = str(aid[0]["id"]) if aid else None
+
+    db.execute_update(
+        "INSERT INTO thesis_change_events (symbol, as_of, event_kind,"
+        " archetype, prev_status, status, status_dir, score,"
+        " hyp_changes, veto_fired, evidence, drivers, alert_id,"
+        " detail) VALUES (:s,:ao,:k,:a,:ps,:st,:sd,:sc,"
+        " CAST(:hc AS jsonb),CAST(:v AS jsonb),CAST(:e AS jsonb),"
+        " CAST(:dr AS jsonb),:aid,CAST(:d AS jsonb))"
+        " ON CONFLICT DO NOTHING",
+        {"s": sym, "ao": row["as_of"], "k": kind, "a": primary,
+         "ps": prev_status, "st": status, "sd": status_dir,
+         "sc": row["score"],
+         "hc": json.dumps(hyp_changes or []),
+         "v": json.dumps(vetoes_fired or []),
+         "e": json.dumps(evidence, default=str),
+         "dr": json.dumps(detail.get("drivers") or [], default=str),
+         "aid": alert_id,
+         "d": json.dumps(detail, default=str)})
 
 
 def _sync_watch(sym: str, arch: str, h: dict, checks: list[dict]) -> None:

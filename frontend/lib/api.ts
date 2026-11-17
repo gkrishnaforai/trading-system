@@ -34,6 +34,33 @@ export type RegimeVerdict = {
   [k: string]: unknown
 }
 
+export type ThesisChangeEvent = {
+  id?: number
+  symbol?: string
+  as_of?: string
+  event_kind?: 'coverage_start' | 'status_transition' | 'leg_change'
+  archetype?: string
+  prev_status?: string | null
+  status?: string
+  status_dir?: string
+  score?: number
+  hyp_changes?: { id?: string; archetype?: string; from?: string; to?: string }[]
+  veto_fired?: { id?: string; flag?: string; cap?: string; fatal?: boolean }[] | null
+  evidence?: {
+    hypothesis_id?: string
+    archetype?: string
+    status?: string
+    label?: string
+    checks?: { metric?: string; status?: string; note?: string; hard?: boolean }[]
+  }[]
+  drivers?: Record<string, unknown>[]
+  fv_delta_pct?: number | null
+  priced_in?: string | null
+  alert_id?: string | null
+  detail?: Record<string, unknown>
+  created_at?: string
+}
+
 export type IntradayRegime = {
   as_of?: string
   session_date?: string
@@ -619,6 +646,10 @@ export const api = {
   stockHealth: (sym: string) =>
     get<Record<string, unknown>>(
       `/symbol/${encodeURIComponent(sym)}/health`,
+    ),
+  thesisHistory: (sym: string, days = 180) =>
+    get<{ symbol?: string; events?: ThesisChangeEvent[] }>(
+      `/symbol/${encodeURIComponent(sym)}/thesis-history?days=${days}`,
     ),
   earningsCalendar: (start: string, end: string) =>
     getRaw<{ success?: boolean; count?: number; data?: EarningsRow[] }>(

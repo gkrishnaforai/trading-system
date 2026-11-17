@@ -2480,6 +2480,26 @@ async def symbol_health(sym: str):
     return out
 
 
+@router.get("/symbol/{sym}/thesis-history")
+async def symbol_thesis_history(sym: str, days: int = 180, limit: int = 50):
+    """The thesis timeline — every journaled coverage_start /
+    status_transition / leg_change for a symbol, newest first, with
+    the evidence snapshot that produced each change. Flat days are
+    absent by design: the timeline is changes, not a heartbeat."""
+    from app.database import db
+    rows = await asyncio.to_thread(
+        db.execute_query,
+        "SELECT id, symbol, as_of::text, event_kind, archetype,"
+        " prev_status, status, status_dir, score, hyp_changes,"
+        " veto_fired, evidence, drivers, fv_delta_pct, priced_in,"
+        " alert_id::text, detail, created_at::text"
+        " FROM thesis_change_events WHERE symbol=:s"
+        " AND as_of >= CURRENT_DATE - (:d * INTERVAL '1 day')"
+        " ORDER BY as_of DESC, id DESC LIMIT :n",
+        {"s": sym.upper(), "d": days, "n": limit})
+    return {"symbol": sym.upper(), "events": rows}
+
+
 @router.get("/readiness")
 async def readiness_board():
     """Board-wide readiness screen — the per-symbol swing / invest /
