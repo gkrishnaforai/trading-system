@@ -567,31 +567,123 @@ export default async function RegimePage() {
             </div>
           )}
 
-          {/* cross-asset confirmation — do other markets underwrite
-              the equity move? journaled votes per asset */}
-          {confVotes && Object.keys(confVotes).length > 0 && (
-            <div className="pt-3 flex flex-wrap items-center gap-2">
-              <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
-                x-asset
-              </span>
-              {Object.entries(confVotes).map(([k, v]) => (
-                <span
-                  key={k}
-                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono ${v === 'confirm'
-                    ? 'border-aggressive/40 text-aggressive'
-                    : 'border-defensive/40 text-defensive'
-                    }`}
-                >
-                  {k.replace(/_/g, ' ')} {v === 'confirm' ? '✓' : '✗'}
-                </span>
-              ))}
-              {!!confX?.label && (
-                <span className="text-[11px] text-faint">
-                  {String(confX.label)}
-                </span>
-              )}
-            </div>
-          )}
+          {/* cross-asset confirmation — do other markets agree with
+              the equity move? ✓ = votes the same direction as stocks,
+              which can be a bearish consensus, not a bullish one —
+              so the anchor (eq direction) is shown first */}
+          {confVotes && Object.keys(confVotes).length > 0 && (() => {
+            const spyRet5 =
+              typeof indexes?.SPY?.ret5 === 'number' ? indexes.SPY.ret5 : null
+            const eqDir = spyRet5 != null
+              ? spyRet5 > 0.005 ? 'up' : spyRet5 < -0.005 ? 'down' : 'flat'
+              : null
+            const META: Record<string, {
+              name: string; src?: string; on: string; off: string
+            }> = {
+              yields_10y: { name: '10Y', src: 'us10y',
+                on: 'yields falling — supports stocks',
+                off: 'yields rising — headwind' },
+              dollar: { name: 'DXY', src: 'dxy',
+                on: 'dollar easing — supports risk',
+                off: 'dollar strong — headwind' },
+              credit: { name: 'HYG', src: 'hyg',
+                on: 'credit bid — appetite intact',
+                off: 'credit weak — stress building' },
+              oil: { name: 'WTI', src: 'wti',
+                on: 'oil firm — growth signal',
+                off: 'oil soft — growth worry' },
+              btc: { name: 'BTC', src: 'btc',
+                on: 'crypto bid — appetite alive',
+                off: 'crypto dumped — appetite weak' },
+              vix: { name: 'VIX',
+                on: 'fear easing', off: 'fear building' },
+              duration: { name: 'TLT', src: 'tlt',
+                on: 'bonds stable',
+                off: 'rate stress / flight-to-safety' },
+            }
+            const items = Object.entries(confVotes).map(([k, v]) => {
+              const m = META[k] ?? { name: k, on: '', off: '' }
+              const src = m.src ? macroDetail?.[m.src] : null
+              let move: string | null = null
+              if (k === 'yields_10y' && src?.delta5d != null)
+                move = `${src.delta5d >= 0 ? '+' : ''}${Math.round(src.delta5d * 100)}bp`
+              else if (src?.chg5d != null)
+                move = `${src.chg5d >= 0 ? '+' : ''}${(src.chg5d * 100).toFixed(1)}%`
+              else if (k === 'vix' && p.vol?.vix != null)
+                move = `${p.vol.vix.toFixed(1)}`
+              // confirm = asset's risk read agrees with equity direction;
+              // in a down market the confirming assets are the risk-off ones
+              const riskOn =
+                eqDir === 'down' ? v !== 'confirm'
+                  : eqDir === 'up' ? v === 'confirm' : null
+              return { k, v, m, move, riskOn }
+            })
+            const nConf = items.filter((i) => i.v === 'confirm').length
+            const n = items.length
+            const dissent = items.filter((i) => i.v !== 'confirm')
+            const verdict =
+              eqDir === 'down'
+                ? nConf >= n * 0.7
+                  ? `${nConf} of ${n} markets read risk-off alongside stocks — broad bearish consensus, not a lone wobble`
+                  : nConf <= n * 0.4
+                    ? `only ${nConf} of ${n} markets confirm the slide — the selloff may be equity-specific; watch for divergence`
+                    : `${nConf} of ${n} markets confirm the slide — partial agreement`
+                : eqDir === 'up'
+                  ? nConf >= n * 0.7
+                    ? `${nConf} of ${n} markets underwrite the rally — yields, credit and risk assets agree`
+                    : nConf <= n * 0.4
+                      ? `only ${nConf} of ${n} markets underwrite the rally — thin confirmation, treat breakouts with care`
+                      : `${nConf} of ${n} markets underwrite the rally — partial support`
+                  : `${nConf} of ${n} markets agree with a flat tape`
+            return (
+              <div className="pt-3">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+                    x-asset · do other markets agree with stocks?
+                  </span>
+                  {spyRet5 != null && (
+                    <span className="font-mono text-[10px] text-faint">
+                      anchor: SPY {spyRet5 >= 0 ? '+' : ''}{(spyRet5 * 100).toFixed(1)}%/5d
+                    </span>
+                  )}
+                </div>
+                <div className="pt-2 flex flex-wrap gap-1.5">
+                  {items.map(({ k, v, m, move, riskOn }) => (
+                    <span
+                      key={k}
+                      title={v === 'confirm' ? m.off && eqDir === 'down' ? m.off : m.on : (riskOn ? m.on : m.off) + ' — does not agree with stocks'}
+                      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-mono ${
+                        v === 'confirm'
+                          ? riskOn === false
+                            ? 'border-defensive/40 text-defensive'
+                            : 'border-aggressive/40 text-aggressive'
+                          : 'border-caution/40 text-caution'
+                        }`}
+                    >
+                      {m.name}{move ? ` ${move}` : ''}{' '}
+                      <span className="text-faint">
+                        {v === 'confirm' ? '✓ agrees' : '✗ disagrees'}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+                <p className={`pt-2 text-[11px] leading-relaxed ${
+                  eqDir === 'down' && nConf >= n * 0.7
+                    ? 'text-defensive'
+                    : eqDir === 'up' && nConf >= n * 0.7
+                      ? 'text-aggressive'
+                      : 'text-muted'
+                  }`}>
+                  {verdict}
+                  {dissent.length > 0 && (
+                    <span className="text-faint">
+                      {' '}Dissent: {dissent.map((d) => `${d.m.name} (${d.riskOn ? d.m.on : d.m.off})`).join('; ')}.
+                    </span>
+                  )}
+                </p>
+              </div>
+            )
+          })()}
 
           {/* what changed — deterministic day-over-day dimension diffs */}
           {Array.isArray(verdict?.changes) && (verdict!.changes as unknown[]).length > 0 && (
