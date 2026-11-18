@@ -2609,6 +2609,20 @@ async def sector_rotation_read(etf: str, days: int = 30):
             "latest": rows[0] if rows else None, "history": rows}
 
 
+@router.get("/sector-rotation/{etf}/replay")
+async def sector_rotation_replay(etf: str, start: str, end: str):
+    """Point-in-time replay of the EW legs over a window — the
+    June-2026 acceptance test as an API surface. Reads only bars
+    <= each as_of, so no forward leakage is possible."""
+    from datetime import date
+    from app.signals import sector_rotation_ew
+    rows = sector_rotation_ew.replay(
+        etf.upper(), date.fromisoformat(start),
+        date.fromisoformat(end))
+    return {"sector": etf.upper(), "start": start, "end": end,
+            "days": len(rows), "rows": rows}
+
+
 @router.get("/journal-grades")
 async def journal_grades_read(kind: Optional[str] = None):
     """The substrate→feedback scoreboard — forward returns after
