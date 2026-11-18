@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS insider_transactions (
     price            DOUBLE PRECISION,
     transaction_date DATE,
     filing_date      DATE,
-    source           TEXT NOT NULL DEFAULT 'finnhub',
+    source           TEXT NOT NULL DEFAULT 'sec_edgar',
+    source_ref       TEXT,             -- EDGAR accession / provider id
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (symbol, insider_name, transaction_code, shares,
             transaction_date, filing_date)
