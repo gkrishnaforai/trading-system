@@ -700,6 +700,14 @@ async def _j_thesis_check() -> dict:
     return await asyncio.to_thread(thesis_health.run)
 
 
+async def _j_recovery_watch() -> dict:
+    """Recovery verdicts — Phase-1 read-only composition: reconciles
+    regime/selloff/tape/intraday/permissions/fundamental snapshots
+    into one journaled state per pilot symbol. Advises, never acts."""
+    from app.signals import recovery_verdict
+    return await asyncio.to_thread(recovery_verdict.run)
+
+
 async def _j_insider_flow() -> dict:
     """Insider flow — open-market insider buys/sells over book +
     watchlist. Journals every Form-4-style filing; clusters (≥2
@@ -1101,6 +1109,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "swing-scan":    ("Swing screener", _j_swing_scan),
     "alerts":        ("Catalyst alerts", _j_alerts),
     "insider-flow":  ("Insider buy/sell flow", _j_insider_flow),
+    "recovery-watch":("Recovery verdicts (pilot)", _j_recovery_watch),
     "after-hours":   ("Extended-hours movers", _j_after_hours),
     "pt-watch":      ("Analyst PT watch", _j_pt_watch),
     "outcomes":      ("Alert outcomes", _j_outcomes),
@@ -2558,6 +2567,28 @@ async def symbol_swing_check(sym: str):
         sym.upper(), {}, spy_bars, regime, env, svc, overlay)
     return row or {"symbol": sym.upper(),
                    "note": "insufficient bars (<200) or no setup"}
+
+
+@router.get("/symbol/{sym}/recovery-verdict")
+async def symbol_recovery_verdict(sym: str):
+    """Latest recovery verdict + 30d of journaled history — the
+    composition layer's answer: state, advisory decision, gates,
+    conflicts, required confirmation, invalidation."""
+    from app.database import db
+    s = sym.upper()
+    try:
+        rows = db.execute_query(
+            "SELECT symbol, as_of, engine_version, state, prev_state,"
+            " state_changed, transition_reason, event_type, market,"
+            " stock, recovery, decision, decision_confidence, gates,"
+            " conflicts, required_confirmation,"
+            " invalidation_conditions, evidence_refs, missing_inputs"
+            " FROM recovery_verdicts WHERE symbol=:s"
+            " ORDER BY as_of DESC, id DESC LIMIT 30", {"s": s})
+    except Exception:
+        rows = []
+    return {"symbol": s, "latest": rows[0] if rows else None,
+            "history": rows}
 
 
 @router.get("/symbol/{sym}/options-screen")

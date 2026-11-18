@@ -8,6 +8,7 @@ import { WatchToggle } from '@/components/watchlist'
 import { ThesisFlag } from '@/components/thesis-flag'
 import { ThesisReport } from '@/components/thesis-report'
 import { ThesisTimeline } from '@/components/thesis-timeline'
+import { RecoveryCard } from '@/components/recovery-card'
 import { SignalStrip, toneOf } from '@/components/signal-strip'
 import FvRecompute from '@/components/fv-recompute'
 
@@ -961,6 +962,7 @@ async function StockCore({ sym }: { sym: string }) {
   const card = await api.stockHealth(sym)
   const resilience = await api.resilience(sym).catch(() => null)
   const thesisHist = await api.thesisHistory(sym).catch(() => null)
+  const recovery = await api.recoveryVerdict(sym).catch(() => null)
   if (!card) {
     return (
       <main className="mx-auto max-w-3xl px-5 pb-20 pt-10">
@@ -1394,6 +1396,7 @@ async function StockCore({ sym }: { sym: string }) {
               </div>
             )}
             <ThesisReport report={thesis?.report ?? null} />
+            <RecoveryCard v={recovery?.latest} />
             <ThesisTimeline events={thesisHist?.events ?? []} />
           </div>
         </div>

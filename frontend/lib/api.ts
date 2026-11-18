@@ -34,6 +34,17 @@ export type RegimeVerdict = {
   [k: string]: unknown
 }
 
+export type RecoveryVerdict = {
+  symbol?: string; as_of?: string; state?: string; prev_state?: string
+  state_changed?: boolean; transition_reason?: string
+  event_type?: string; market?: Record<string, unknown>
+  stock?: Record<string, unknown>; recovery?: Record<string, unknown>
+  decision?: string; decision_confidence?: string
+  gates?: Record<string, boolean>; conflicts?: Array<Record<string, unknown>>
+  required_confirmation?: string[]; invalidation_conditions?: string[]
+  evidence_refs?: Array<Record<string, unknown>>; missing_inputs?: string[]
+}
+
 export type ThesisChangeEvent = {
   id?: number
   symbol?: string
@@ -647,6 +658,9 @@ export const api = {
     get<Record<string, unknown>>(
       `/symbol/${encodeURIComponent(sym)}/health`,
     ),
+  recoveryVerdict: (sym: string) =>
+    get<{ symbol: string; latest?: RecoveryVerdict | null; history?: RecoveryVerdict[] }>(
+      `/symbol/${encodeURIComponent(sym.toUpperCase())}/recovery-verdict`),
   thesisHistory: (sym: string, days = 180) =>
     get<{ symbol?: string; events?: ThesisChangeEvent[] }>(
       `/symbol/${encodeURIComponent(sym)}/thesis-history?days=${days}`,
