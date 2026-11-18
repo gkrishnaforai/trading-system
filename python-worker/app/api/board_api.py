@@ -700,6 +700,15 @@ async def _j_thesis_check() -> dict:
     return await asyncio.to_thread(thesis_health.run)
 
 
+async def _j_journal_grades() -> dict:
+    """Journal grading — forward returns after every journaled
+    signal (recovery states, thesis transitions, crypto stance,
+    selloff classes, insider clusters) -> journal_kind_stats.
+    The substrate→feedback bridge; descriptive, not prescriptive."""
+    from app.signals import journal_grades
+    return await asyncio.to_thread(journal_grades.run)
+
+
 async def _j_crypto_positioning() -> dict:
     """Crypto positioning — stablecoin supply, futures OI, ETF flows,
     BTC trend/leadership. Banded votes journaled daily; feeds the
@@ -1118,6 +1127,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "alerts":        ("Catalyst alerts", _j_alerts),
     "insider-flow":  ("Insider buy/sell flow", _j_insider_flow),
     "crypto-positioning": ("Crypto positioning", _j_crypto_positioning),
+    "journal-grades": ("Journal signal grading", _j_journal_grades),
     "recovery-watch":("Recovery verdicts (pilot)", _j_recovery_watch),
     "after-hours":   ("Extended-hours movers", _j_after_hours),
     "pt-watch":      ("Analyst PT watch", _j_pt_watch),
@@ -2576,6 +2586,14 @@ async def symbol_swing_check(sym: str):
         sym.upper(), {}, spy_bars, regime, env, svc, overlay)
     return row or {"symbol": sym.upper(),
                    "note": "insufficient bars (<200) or no setup"}
+
+
+@router.get("/journal-grades")
+async def journal_grades_read(kind: Optional[str] = None):
+    """The substrate→feedback scoreboard — forward returns after
+    each journaled signal bucket (5/10/20d). reliable=n>=20."""
+    from app.signals import journal_grades
+    return {"stats": journal_grades.read(kind)}
 
 
 @router.get("/symbol/{sym}/recovery-verdict")
