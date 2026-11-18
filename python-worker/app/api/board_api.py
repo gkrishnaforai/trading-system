@@ -700,6 +700,14 @@ async def _j_thesis_check() -> dict:
     return await asyncio.to_thread(thesis_health.run)
 
 
+async def _j_crypto_positioning() -> dict:
+    """Crypto positioning — stablecoin supply, futures OI, ETF flows,
+    BTC trend/leadership. Banded votes journaled daily; feeds the
+    x-asset macro read."""
+    from app.signals import crypto_positioning
+    return await asyncio.to_thread(crypto_positioning.run)
+
+
 async def _j_recovery_watch() -> dict:
     """Recovery verdicts — Phase-1 read-only composition: reconciles
     regime/selloff/tape/intraday/permissions/fundamental snapshots
@@ -1109,6 +1117,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "swing-scan":    ("Swing screener", _j_swing_scan),
     "alerts":        ("Catalyst alerts", _j_alerts),
     "insider-flow":  ("Insider buy/sell flow", _j_insider_flow),
+    "crypto-positioning": ("Crypto positioning", _j_crypto_positioning),
     "recovery-watch":("Recovery verdicts (pilot)", _j_recovery_watch),
     "after-hours":   ("Extended-hours movers", _j_after_hours),
     "pt-watch":      ("Analyst PT watch", _j_pt_watch),
