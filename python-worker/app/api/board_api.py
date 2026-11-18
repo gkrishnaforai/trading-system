@@ -700,6 +700,15 @@ async def _j_thesis_check() -> dict:
     return await asyncio.to_thread(thesis_health.run)
 
 
+async def _j_insider_flow() -> dict:
+    """Insider flow — open-market insider buys/sells over book +
+    watchlist. Journals every Form-4-style filing; clusters (≥2
+    distinct buyers / ≥3 sellers in 90d) emit 'insider' alerts that
+    feed the same NEGATIVE/HIGH gate daily_calls already enforces."""
+    from app.signals import insider_flow
+    return await asyncio.to_thread(insider_flow.run)
+
+
 async def _j_selloff() -> dict:
     """Selloff Opportunity Engine — detects market dislocation, scores
     fallen-but-sound names (price dislocation vs business integrity),
@@ -1091,6 +1100,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "momentum":      ("Momentum flags", _j_momentum),
     "swing-scan":    ("Swing screener", _j_swing_scan),
     "alerts":        ("Catalyst alerts", _j_alerts),
+    "insider-flow":  ("Insider buy/sell flow", _j_insider_flow),
     "after-hours":   ("Extended-hours movers", _j_after_hours),
     "pt-watch":      ("Analyst PT watch", _j_pt_watch),
     "outcomes":      ("Alert outcomes", _j_outcomes),

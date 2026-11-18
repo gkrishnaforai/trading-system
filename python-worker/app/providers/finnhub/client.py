@@ -219,6 +219,20 @@ class FinnhubClient:
             logger.warning(f"Failed to fetch economic calendar from Finnhub: {e}")
             return []
 
+    def fetch_insider_transactions(self, symbol: str) -> List[Dict[str, Any]]:
+        """Insider transactions — /stock/insider-transactions.
+        Returns [{name, share, change, filingDate, transactionDate,
+        transactionPrice, transactionCode}] — code P = open-market
+        purchase, S = sale (the signal codes; grants/options are noise)."""
+        try:
+            data = self._get("/stock/insider-transactions",
+                             {"symbol": symbol.upper()})
+            return list((data or {}).get("data") or [])
+        except Exception as e:
+            logger.warning(
+                f"Failed to fetch insider transactions for {symbol}: {e}")
+            return []
+
     def fetch_fundamentals(self, symbol: str) -> Dict[str, Any]:
         # Finnhub free endpoints are limited; reuse profile2 fields as a fundamentals-like payload.
         return self.fetch_symbol_details(symbol)
