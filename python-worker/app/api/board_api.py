@@ -700,6 +700,15 @@ async def _j_thesis_check() -> dict:
     return await asyncio.to_thread(thesis_health.run)
 
 
+async def _j_sector_rotation() -> dict:
+    """Sector rotation early warning — leadership deterioration legs
+    (pairwise RS, tracked-subset breadth, distribution, destination
+    leadership) journaled daily per watched leader. Flow-confirmation
+    states unreachable until a real flow source exists."""
+    from app.signals import sector_rotation_ew
+    return await asyncio.to_thread(sector_rotation_ew.run)
+
+
 async def _j_journal_grades() -> dict:
     """Journal grading — forward returns after every journaled
     signal (recovery states, thesis transitions, crypto stance,
@@ -1128,6 +1137,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "insider-flow":  ("Insider buy/sell flow", _j_insider_flow),
     "crypto-positioning": ("Crypto positioning", _j_crypto_positioning),
     "journal-grades": ("Journal signal grading", _j_journal_grades),
+    "sector-rotation": ("Sector rotation EW", _j_sector_rotation),
     "recovery-watch":("Recovery verdicts (pilot)", _j_recovery_watch),
     "after-hours":   ("Extended-hours movers", _j_after_hours),
     "pt-watch":      ("Analyst PT watch", _j_pt_watch),
@@ -2586,6 +2596,17 @@ async def symbol_swing_check(sym: str):
         sym.upper(), {}, spy_bars, regime, env, svc, overlay)
     return row or {"symbol": sym.upper(),
                    "note": "insufficient bars (<200) or no setup"}
+
+
+@router.get("/sector-rotation/{etf}")
+async def sector_rotation_read(etf: str, days: int = 30):
+    """Latest + history of the rotation early-warning journal for a
+    sector ETF — state, renormalized risk score, destination
+    leaderboard, per-leg detail, flow status."""
+    from app.signals import sector_rotation_ew
+    rows = sector_rotation_ew.read(etf.upper(), days)
+    return {"sector": etf.upper(),
+            "latest": rows[0] if rows else None, "history": rows}
 
 
 @router.get("/journal-grades")

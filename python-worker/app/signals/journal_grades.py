@@ -67,11 +67,11 @@ def _fwd(sym: str, as_of: str, days: int) -> Any:
     rows = db.execute_query(
         "SELECT "
         " (SELECT close FROM daily_bars WHERE symbol=:s"
-        "  AND bar_date <= :d::date ORDER BY bar_date DESC LIMIT 1)"
+        "  AND date <= :d::date ORDER BY date DESC LIMIT 1)"
         "  AS base,"
         " (SELECT close FROM daily_bars WHERE symbol=:s"
-        "  AND bar_date >= :d::date + (:h * INTERVAL '1 day')"
-        "  ORDER BY bar_date LIMIT 1) AS fwd",
+        "  AND date >= :d::date + (:h * INTERVAL '1 day')"
+        "  ORDER BY date LIMIT 1) AS fwd",
         {"s": sym, "d": str(as_of)[:10], "h": days})
     if not rows or rows[0].get("base") in (None, 0) \
             or rows[0].get("fwd") is None:
