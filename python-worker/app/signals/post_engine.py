@@ -196,6 +196,70 @@ def receipts_recap(days: int = 30) -> Optional[dict]:
     return None
 
 
+def learnings_receipt() -> Optional[dict]:
+    """Weekly learnings — what the signal journals taught this week.
+    Reads journal_kind_stats (the weekly forward-return grader) and
+    renders per-kind scoreboards: which buckets actually preceded
+    moves at 5/10/20d. Honest about sample size — 'collecting' rows
+    are shown as such, never presented as evidence."""
+    rows = _q(
+        "SELECT kind, bucket, horizon, n, win_rate, avg_ret,"
+        " median_ret, reliable FROM journal_kind_stats"
+        " ORDER BY kind, horizon, n DESC")
+    if not rows:
+        return None
+
+    by_kind: dict[str, list] = {}
+    for r in rows:
+        by_kind.setdefault(r["kind"], []).append(r)
+
+    KIND_TITLE = {
+        "recovery_state": "Recovery states",
+        "thesis_transition": "Thesis transitions",
+        "crypto_stance": "Crypto positioning",
+        "selloff_class": "Selloff classifications",
+        "insider_cluster": "Insider clusters",
+    }
+    total_n = sum(int(r["n"]) for r in rows)
+    reliable_kinds = [k for k, rs in by_kind.items()
+                      if any(r["reliable"] for r in rs)]
+
+    title = (f"Learnings: {len(by_kind)} signal families graded, "
+             f"{total_n} outcomes")
+    dek = ("Forward returns after each journaled signal bucket at "
+           "5/10/20 sessions — what actually preceded moves, not "
+           "what we hoped would.")
+
+    L: list[str] = []
+    L.append(
+        f"This week's grading covers **{len(by_kind)} signal "
+        f"families** — {total_n} matured outcomes across 5/10/20-"
+        f"session horizons. "
+        + ("Reliable samples (n≥20) exist for "
+           + ", ".join(reliable_kinds) + "."
+           if reliable_kinds else
+           "No family has ≥20 samples yet — everything here is "
+           "directional, not proven.\n"))
+    for kind, rs in sorted(by_kind.items()):
+        L.append(f"\n## {KIND_TITLE.get(kind, kind.replace('_', ' '))}")
+        L.append("| bucket | horizon | n | win% | avg | median |")
+        L.append("|---|---|---|---|---|---|")
+        for r in sorted(rs, key=lambda x: (x["horizon"], -(x["n"] or 0))):
+            flag = "" if r["reliable"] else " †"
+            L.append(
+                f"| {r['bucket'].replace('_',' ')} | {r['horizon']}d "
+                f"| {r['n']}{flag} | {r['win_rate']:.0f}% "
+                f"| {r['avg_ret']:+.1f}% | {r['median_ret']:+.1f}% |")
+    L.append("\n† n<20 — directional only. The misses stay in; "
+             "stats regenerate weekly from `journal-grades`.")
+
+    slug = f"learnings-{date.today().isoformat()}"
+    if _publish(slug, "receipts", title, dek, "\n".join(L),
+                [], {"kinds": list(by_kind), "n": total_n}):
+        return {"slug": slug, "title": title}
+    return None
+
+
 # --------------------------------------------------------------------- mover
 
 def mover_post(sym: str, card: dict) -> Optional[dict]:
@@ -292,4 +356,16 @@ def run() -> dict:
             out["receipts"] = r["slug"]
     except Exception as exc:
         logger.warning("receipts recap failed: %s", exc)
+    try:
+        # weekly learnings — publish once per ISO week, skip if a
+        # learnings post landed in the last 7 days
+        have = _q("SELECT slug FROM blog_posts WHERE slug LIKE 'learnings-%'"
+                  " AND published_at > now() - interval '7 days'"
+                  " LIMIT 1")
+        if not have:
+            r = learnings_receipt()
+            if r:
+                out["learnings"] = r["slug"]
+    except Exception as exc:
+        logger.warning("learnings receipt failed: %s", exc)
     return out
