@@ -23,23 +23,31 @@ function fmtDetail(d?: Record<string, unknown>): string[] {
   return out.slice(0, 5)
 }
 
-/** Latest alerts for a book's symbols — expandable in place so the
- *  action (read detail, jump to the stock) is on the same screen. */
+/** Today's alerts for a book's symbols — calendar day in ET so the
+ *  morning check shows everything since midnight, not rolling 24h.
+ *  History lives on /alerts; this strip is the daily triage. */
 export function BookAlerts({ items, symbols }: {
   items?: AlertItem[]; symbols: Set<string>
 }) {
+  const todayET = new Date().toLocaleDateString('en-CA', {
+    timeZone: 'America/New_York',
+  })
   const mine = (items ?? [])
     .filter((a) => a.symbol && symbols.has(a.symbol))
+    .filter((a) => !a.created_at
+      || new Date(a.created_at).toLocaleDateString('en-CA', {
+        timeZone: 'America/New_York',
+      }) === todayET)
     .slice(0, 12)
   if (!mine.length) return null
   return (
     <section className="rounded-xl border border-hairline bg-card px-5 py-4">
       <div className="flex items-baseline justify-between">
         <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
-          Book alerts · latest
+          Book alerts · today
         </span>
         <span className="font-mono text-[11px] text-faint">
-          {mine.length} · expand a row
+          {mine.length} · all on /alerts
         </span>
       </div>
       <div className="mt-2 divide-y divide-hairline/60">

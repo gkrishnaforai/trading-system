@@ -308,7 +308,7 @@ export default async function PortfolioPage({
   const [pulse, portfolios, alerts] = await Promise.all([
     api.portfolioPulse(),
     listPortfolios(),
-    api.alerts({ hours: 168 }).catch(() => null),
+    api.alerts({ hours: 36 }).catch(() => null),
   ])
   const tier = currentTier()
   const limit = TIER_LIMITS[tier].portfolios
