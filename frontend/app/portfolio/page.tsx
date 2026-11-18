@@ -8,6 +8,7 @@ import {
   HoldingRow as UserHoldingRow, NewPortfolioForm,
 } from '@/components/portfolio-crud'
 import { PortfolioTable } from '@/components/portfolio-table'
+import { BookAlerts } from '@/components/book-alerts'
 
 function money(v?: number | null, dec = 0) {
   if (v === null || v === undefined || !Number.isFinite(Number(v)))
@@ -304,9 +305,10 @@ export default async function PortfolioPage({
 }: {
   searchParams: { p?: string }
 }) {
-  const [pulse, portfolios] = await Promise.all([
+  const [pulse, portfolios, alerts] = await Promise.all([
     api.portfolioPulse(),
     listPortfolios(),
+    api.alerts({ hours: 168 }).catch(() => null),
   ])
   const tier = currentTier()
   const limit = TIER_LIMITS[tier].portfolios
@@ -323,6 +325,10 @@ export default async function PortfolioPage({
   const view = selected ? scoped : pulse
   const rows = view?.rows ?? []
   const book = view?.book
+  const bookSyms = new Set([
+    ...rows.map((r) => String(r.symbol ?? '').toUpperCase()),
+    ...(holdings ?? []).map((h) => String(h.symbol ?? '').toUpperCase()),
+  ])
 
   const rail = (
     <div className="flex items-stretch gap-2">
@@ -333,6 +339,8 @@ export default async function PortfolioPage({
 
   return (
     <main className="mx-auto max-w-5xl px-5 pb-20">
+      <BookAlerts items={alerts?.items ?? []}
+        symbols={bookSyms} />
       {selected ? (
         /* ---- a user book: same cockpit, scoped to the book ---- */
         <>
