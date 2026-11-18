@@ -70,25 +70,34 @@ def intraday_snapshot(sym: str) -> Snap:
     from app.database import db
     try:
         rows = db.execute_query(
-            "SELECT bar_ts, signal, detail FROM intraday_recovery_evals"
+            "SELECT bar_ts, signal, legs FROM intraday_recovery_evals"
             " WHERE symbol=:s ORDER BY bar_ts DESC LIMIT 1", {"s": sym})
     except Exception:
         return Snap(source_ref="intraday_recovery_evals")
     if not rows:
         return Snap(source_ref="intraday_recovery_evals")
     r = rows[0]
+    legs = r.get("legs") or {}
+    ctx = legs.get("ctx") or legs
     return Snap(available=True, as_of=str(r.get("bar_ts")),
                 source_ref="intraday_recovery_evals",
-                data={"signal": r.get("signal"),
-                      "detail": r.get("detail") or {}})
+                data={"signal": r.get("signal"), "detail": ctx})
 
 
 def tape_snapshot(sym: str) -> Snap:
-    """Attribution is compute-on-demand today — wrapped behind the
-    same Snap shape. Phase 2 may journal it for full replay."""
+    """Attribution is compute-on-demand today — needs the inputs
+    stock_health gathers, so best-effort with None defaults;
+    Phase 2 journals it properly for full point-in-time replay."""
+    from app.database import db
     try:
+        st = (db.execute_query(
+            "SELECT sector, fundamental_state FROM stocks"
+            " WHERE symbol=:s", {"s": sym}) or [{}])[0]
         from app.signals.tape_diagnosis import diagnose
-        d = diagnose(sym) or {}
+        d = diagnose(sym, sector=st.get("sector"),
+                     momentum_state=None, momentum_detail={},
+                     fundamental_state=st.get("fundamental_state"),
+                     priced_status=None, next_earnings=None) or {}
     except Exception:
         return Snap(source_ref="tape_diagnosis(live)")
     return Snap(available=True, as_of=str(d.get("as_of") or ""),

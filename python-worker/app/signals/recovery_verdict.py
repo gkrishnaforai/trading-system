@@ -67,7 +67,7 @@ def _conflicts(fams: dict, intra: Snap, reg: Snap) -> list[dict]:
     if fams["volume_exhaustion"] and not fams["relative_strength"]:
         out.append({"layers": ["volume_exhaustion", "relative_strength"],
                     "note": "selling exhaustion but no demand proof yet"})
-    if (i.get("signal") in ("sustained_buying", "recovery")
+    if (i.get("signal") in ("STRONG", "CONFIRMED", "sustained_buying")
             and fams["volatility_stress"]):
         out.append({"layers": ["intraday", "market_regime"],
                     "note": "buyers returning intraday while market "
@@ -112,23 +112,27 @@ def build_recovery_verdict(ticker: str, as_of: datetime,
     }
 
     # ---- candidate next state ----
+    # intraday_recovery vocabulary: STRONG/CONFIRMED = sustained
+    # buying, IMPROVING = stabilizing, WATCH, FAILED_REBOUND, DATA_BLOCKED
     sig = i.get("signal")
     held_lows = bool((i.get("detail") or {}).get("higher_lows"))
     reclaim = bool((i.get("detail") or {}).get("vwap_reclaim")
-                   or sig == "sustained_buying")
+                   or sig in ("STRONG", "CONFIRMED"))
     if thesis_bad:
         nxt = "STRUCTURAL_IMPAIRMENT"
     elif prev_state == "STRUCTURAL_IMPAIRMENT":
         nxt = ("STRUCTURAL_IMPAIRMENT"      # stays until thesis clears
                if f.get("thesis_status") == "deteriorating"
                else "NORMAL")
-    elif sig in ("failed_rebound", "selling_accelerating") or liquidation:
+    elif sig in ("FAILED_REBOUND", "failed_rebound",
+                 "selling_accelerating") or liquidation:
         nxt = "EXHAUSTION"
     elif sl.get("event_type") or fams["volume_exhaustion"]:
         nxt = "EXHAUSTION"
     elif reclaim and held_lows and fams["relative_strength"]:
         nxt = "RECOVERY"
-    elif reclaim or held_lows or sig in ("recovery", "stabilizing"):
+    elif reclaim or held_lows or sig in ("IMPROVING", "recovery",
+                                         "stabilizing"):
         nxt = "STABILIZATION"
     else:
         nxt = "NORMAL"
@@ -229,9 +233,14 @@ def evaluate(sym: str) -> dict:
     now = datetime.now()
     v = build_recovery_verdict(
         sym, now,
-        rs.regime_snapshot(), rs.selloff_snapshot(sym),
-        rs.tape_snapshot(sym), rs.intraday_snapshot(sym),
-        Snap(), rs.fundamental_snapshot(sym), prev_state, prev_at)
+        reg := (rs.regime_snapshot()),
+        rs.selloff_snapshot(sym), rs.tape_snapshot(sym),
+        rs.intraday_snapshot(sym),
+        Snap(available=bool((reg.data.get("permissions") or {})),
+             as_of=reg.as_of, source_ref="morning_regime_snapshots"
+             if (reg.data.get("permissions") or {}) else None,
+             data=reg.data.get("permissions") or {}),
+        rs.fundamental_snapshot(sym), prev_state, prev_at)
 
     db.execute_update(
         "INSERT INTO recovery_verdicts (symbol, as_of, engine_version,"
