@@ -97,19 +97,17 @@ def _smh_ew() -> Optional[dict]:
     try:
         from app.database import db
         rows = db.execute_query(
-            "SELECT as_of, rotation_risk, state, legs"
-            " FROM sector_rotation_daily WHERE source='SMH'"
+            "SELECT as_of, risk_score, state, dest_scores"
+            " FROM sector_rotation_daily WHERE sector='SMH'"
             " ORDER BY as_of DESC LIMIT 1")
         if rows:
             r = rows[0]
-            legs = r.get("legs")
-            if isinstance(legs, str):
+            dests = r.get("dest_scores") or []
+            if isinstance(dests, str):
                 import json
-                legs = json.loads(legs)
-            dests = ((legs or {}).get("destination") or {}).get(
-                "leaderboard") or []
+                dests = json.loads(dests)
             return {"as_of": str(r["as_of"]),
-                    "risk": r.get("rotation_risk"),
+                    "risk": r.get("risk_score"),
                     "state": r.get("state"),
                     "destinations": [d.get("etf") for d in dests[:3]]}
     except Exception:
