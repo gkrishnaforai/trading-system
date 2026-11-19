@@ -192,8 +192,17 @@ def _destinations(src: str, as_of: date) -> dict:
 
 # ── compose ──────────────────────────────────────────────────────────
 
+# Persistence gate — the June replay showed 'probable' is right when the
+# deterioration persists, but a one-day internals washout (late-March
+# scare: breadth+dist at 100 for 3 days, RS never moved) shouldn't
+# escalate. probable requires risk ≥55 for MIN_PERSIST consecutive
+# trading days; the raw ungated state is journaled for calibration.
+MIN_PERSIST = 2
+
+
 def evaluate(source_etf: str, as_of: date,
-             destinations: Optional[list[str]] = None) -> dict:
+             destinations: Optional[list[str]] = None,
+             prior_streak: int = 0) -> dict:
     sector_key = next((k for k, v in SECTORS.items()
                        if v.get("etf") == source_etf), None)
     dests = destinations or [d for d in DESTINATIONS if d != source_etf]
@@ -216,18 +225,23 @@ def evaluate(source_etf: str, as_of: date,
             den += w
     risk = round(num / den, 1) if den else None
     if risk is None:
-        state = "unknown"
+        raw = "unknown"
     elif risk < 25:
-        state = "healthy"
+        raw = "healthy"
     elif risk < 40:
-        state = "early_deterioration"
+        raw = "early_deterioration"
     elif risk < 55:
-        state = "rotation_developing"
+        raw = "rotation_developing"
     else:
-        state = "rotation_probable"   # capped: confirmed needs flows
+        raw = "rotation_probable"     # capped: confirmed needs flows
+    streak = (prior_streak + 1) if (risk or 0) >= 55 else 0
+    state = raw
+    if raw == "rotation_probable" and streak < MIN_PERSIST:
+        state = "rotation_developing"
     br = legs["constituent_breadth"]
     return {"sector": source_etf, "as_of": str(as_of),
-            "state": state, "risk_score": risk,
+            "state": state, "state_raw": raw, "risk_streak": streak,
+            "risk_score": risk,
             "flow_status": "unavailable",
             "dest_scores": (legs["destination_leadership"]
                             .get("leaderboard") or []),
@@ -237,24 +251,48 @@ def evaluate(source_etf: str, as_of: date,
                                if not l.get("available")]}
 
 
+def _risk_streak(sector: str) -> int:
+    """Consecutive recent journaled days with risk ≥55 — the persistence
+    input for today's gate. Reads back through weekend/holiday gaps."""
+    from app.database import db
+    try:
+        rows = db.execute_query(
+            "SELECT risk_score FROM sector_rotation_daily"
+            " WHERE sector=:s AND risk_score IS NOT NULL"
+            " ORDER BY as_of DESC LIMIT 10", {"s": sector})
+    except Exception:
+        return 0
+    n = 0
+    for r in rows:
+        if float(r["risk_score"]) >= 55:
+            n += 1
+        else:
+            break
+    return n
+
+
 def run(sources: Optional[list[str]] = None) -> dict:
     """Daily journal — watched leaders (pilot: SMH)."""
     from app.database import db
     out, errs = {}, []
     for src in (sources or list(WATCHED)):
         try:
-            v = evaluate(src, date.today())
+            v = evaluate(src, date.today(),
+                         prior_streak=_risk_streak(src))
             db.execute_update(
                 "INSERT INTO sector_rotation_daily (sector, as_of,"
-                " state, risk_score, dest_scores, legs, flow_status,"
-                " breadth_coverage, missing_inputs, detail) VALUES"
-                " (:s,:d,:st,:rs,CAST(:ds AS jsonb),CAST(:lg AS jsonb),"
+                " state, state_raw, risk_score, dest_scores, legs,"
+                " flow_status, breadth_coverage, missing_inputs,"
+                " detail) VALUES"
+                " (:s,:d,:st,:sr,:rs,CAST(:ds AS jsonb),CAST(:lg AS jsonb),"
                 " :fs,:bc,CAST(:mi AS jsonb),CAST(:dt AS jsonb))"
                 " ON CONFLICT (sector, as_of) DO UPDATE SET"
-                " state=EXCLUDED.state, risk_score=EXCLUDED.risk_score,"
+                " state=EXCLUDED.state, state_raw=EXCLUDED.state_raw,"
+                " risk_score=EXCLUDED.risk_score,"
                 " dest_scores=EXCLUDED.dest_scores,"
                 " legs=EXCLUDED.legs, detail=EXCLUDED.detail",
                 {"s": src, "d": str(date.today()), "st": v["state"],
+                 "sr": v["state_raw"],
                  "rs": v["risk_score"],
                  "ds": json.dumps(v["dest_scores"], default=str),
                  "lg": json.dumps(v["legs"], default=str),
@@ -277,15 +315,21 @@ def replay(source_etf: str, start: date, end: date) -> list[dict]:
         "SELECT DISTINCT date FROM daily_bars WHERE symbol=:s"
         " AND date BETWEEN :a AND :b ORDER BY date",
         {"s": source_etf, "a": start, "b": end})]
-    return [evaluate(source_etf, d) for d in days]
+    out, streak = [], 0
+    for d in days:
+        r = evaluate(source_etf, d, prior_streak=streak)
+        streak = r["risk_streak"]
+        out.append(r)
+    return out
 
 
 def read(sector: str, days: int = 30) -> list[dict]:
     from app.database import db
     try:
         return db.execute_query(
-            "SELECT sector, as_of, state, risk_score, dest_scores,"
-            " legs, flow_status, breadth_coverage, missing_inputs"
+            "SELECT sector, as_of, state, state_raw, risk_score,"
+            " dest_scores, legs, flow_status, breadth_coverage,"
+            " missing_inputs"
             " FROM sector_rotation_daily WHERE sector=:s"
             " ORDER BY as_of DESC LIMIT :n",
             {"s": sector, "n": days})
