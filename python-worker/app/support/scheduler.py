@@ -179,11 +179,15 @@ def sync_registry() -> int:
     from app.database import db
     from app.api.board_api import JOBS
     n = 0
-    for name, (label, _fn) in JOBS.items():
+    for name, (label, fn) in JOBS.items():
+        doc = (getattr(fn, "__doc__", "") or "").strip()
+        purpose = doc.split("\n")[0].strip() if doc else None
         db.execute_update(
-            "INSERT INTO job_definitions (name, label) VALUES (:n,:l)"
-            " ON CONFLICT (name) DO UPDATE SET label=:l",
-            {"n": name, "l": label})
+            "INSERT INTO job_definitions (name, label, purpose)"
+            " VALUES (:n,:l,:p)"
+            " ON CONFLICT (name) DO UPDATE SET label=:l,"
+            " purpose=COALESCE(job_definitions.purpose, :p)",
+            {"n": name, "l": label, "p": purpose})
         n += 1
     db.execute_update(
         "INSERT INTO job_definitions (name, label, kind)"
