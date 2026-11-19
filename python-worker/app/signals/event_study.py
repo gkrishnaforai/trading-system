@@ -52,12 +52,12 @@ def _bucket(eps_surprise: float | None) -> str:
 
 def run(sym: str | None = None) -> dict[str, Any]:
     p: dict = {}
-    sql = ("SELECT stock_symbol, earnings_date, verdict,"
+    sql = ("SELECT symbol AS stock_symbol, earnings_date, verdict,"
            "       surprise_pct, eps_actual"
            " FROM earnings_watch"
            " WHERE earnings_date IS NOT NULL")
     if sym:
-        sql += " AND stock_symbol=:s"
+        sql += " AND symbol=:s"
         p["s"] = sym.upper()
     sql += " ORDER BY earnings_date"
     rows = db.execute_query(sql, p)
