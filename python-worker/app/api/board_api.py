@@ -2802,7 +2802,13 @@ async def morning_regime_report():
         fragility = await asyncio.to_thread(frag.latest)
     except Exception:
         fragility = None
+    try:
+        from app.market_regime import movement as mv
+        movement = await asyncio.to_thread(mv.movement)
+    except Exception:
+        movement = None
     return {"today": t, "intraday": intraday, "fragility": fragility,
+            "movement": movement,
             "record": await asyncio.to_thread(morning.record)}
 
 

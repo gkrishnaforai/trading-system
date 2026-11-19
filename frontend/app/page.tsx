@@ -66,6 +66,7 @@ export default async function RegimePage() {
   const today = morning?.today
   const intraday = morning?.intraday
   const fragility = morning?.fragility
+  const movement = morning?.movement
   const record = morning?.record ?? []
 
   const tone = TONE[p.posture ?? 'neutral'] ?? 'text-neutral'
@@ -439,6 +440,69 @@ export default async function RegimePage() {
           </div>
         )}
       </section>
+
+      {/* money movement — how long this regime has run, when it
+          flipped, and which sectors are absorbing vs shedding flow.
+          Composed read-time from journaled snapshots + stored bars;
+          the SMH early-warning row appears once mig 210 lands. */}
+      {movement && (movement.regime_clock || (movement.sectors?.length ?? 0) > 0) && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+            Money movement
+          </div>
+          {movement.regime_clock && (
+            <div className="pt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px]">
+              <span className={
+                movement.regime_clock.regime === 'stress' || movement.regime_clock.regime === 'risk_off'
+                  ? 'font-medium text-defensive'
+                  : movement.regime_clock.regime === 'strong_risk_on' || movement.regime_clock.regime === 'risk_on'
+                    ? 'font-medium text-aggressive' : 'font-medium text-muted'
+              }>
+                {(movement.regime_clock.regime ?? '').replace(/_/g, ' ')}
+              </span>
+              <span className="font-mono text-muted">
+                day {movement.regime_clock.days ?? '—'} · began {movement.regime_clock.since ?? '—'}
+                {movement.regime_clock.prev && ` · was ${String(movement.regime_clock.prev).replace(/_/g, ' ')}`}
+              </span>
+            </div>
+          )}
+          {movement.smh_ew && movement.smh_ew.risk != null && (
+            <p className="pt-1.5 text-[11px] leading-relaxed text-muted">
+              <span className="text-faint">SMH leadership </span>
+              <span className={
+                (movement.smh_ew.risk ?? 0) >= 55 ? 'text-defensive'
+                : (movement.smh_ew.risk ?? 0) >= 40 ? 'text-caution' : 'text-muted'
+              }>
+                risk {movement.smh_ew.risk} · {String(movement.smh_ew.state ?? '').replace(/_/g, ' ')}
+              </span>
+              {(movement.smh_ew.destinations?.length ?? 0) > 0 &&
+                ` — capital leaning toward ${movement.smh_ew!.destinations!.join(', ')}`}
+            </p>
+          )}
+          {(movement.sectors?.length ?? 0) > 0 && (
+            <div className="pt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 font-mono text-[11px]">
+              <span className="text-faint">sectors vs SPY · 5d</span>
+              <span className="text-aggressive">
+                in {movement.sectors!.slice(0, 3).map((s) =>
+                  `${s.symbol} ${s.vs_spy5 != null && s.vs_spy5 >= 0 ? '+' : ''}${s.vs_spy5 != null ? (s.vs_spy5 * 100).toFixed(1) : '—'}%`
+                ).join('  ')}
+              </span>
+              <span className="text-defensive">
+                out {movement.sectors!.slice(-3).reverse().map((s) =>
+                  `${s.symbol} ${s.vs_spy5 != null && s.vs_spy5 >= 0 ? '+' : ''}${s.vs_spy5 != null ? (s.vs_spy5 * 100).toFixed(1) : '—'}%`
+                ).join('  ')}
+              </span>
+            </div>
+          )}
+          {(movement.flips?.length ?? 0) > 0 && (
+            <p className="pt-2 text-[10px] text-faint">
+              flips {movement.flips!.map((f) =>
+                `${f.as_of}: ${String(f.from ?? '').replace(/_/g, ' ')} → ${String(f.to ?? '').replace(/_/g, ' ')}`
+              ).join(' · ')}
+            </p>
+          )}
+        </section>
+      )}
 
       {/* verdict — the plain-English call + action rules */}
       {renderVerdictCard && (

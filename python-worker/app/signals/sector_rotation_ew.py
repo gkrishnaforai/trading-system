@@ -48,6 +48,26 @@ def _cl(bars: list[dict]) -> list[float]:
     return [float(b["close"]) for b in bars if b.get("close") is not None]
 
 
+def _ensure_bars(symbols: list[str], as_of: date) -> None:
+    """Top-up thin history once per evaluate — daily_bars only carries
+    symbols a refresh job has touched, so ETFs may have no rows until
+    the first read. One count pass + ONE batched refresh (the bars
+    module's own dedup); failures leave legs unavailable, never fake."""
+    from app.database import db
+    try:
+        rows = db.execute_query(
+            "SELECT symbol, count(*) n FROM daily_bars"
+            " WHERE symbol = ANY(:s) AND date <= :d GROUP BY symbol",
+            {"s": list(dict.fromkeys(symbols)), "d": as_of})
+        have = {r["symbol"]: int(r["n"]) for r in rows}
+        thin = [s for s in symbols if have.get(s, 0) < 25]
+        if thin:
+            from app.market_data import bars as bars_mod
+            bars_mod.refresh(thin, period="1y")
+    except Exception as exc:
+        logger.debug("sector_ew ensure_bars: %s", exc)
+
+
 def _ret(c: list[float], n: int) -> Optional[float]:
     return (c[-1] / c[-1 - n] - 1) if len(c) > n else None
 
@@ -177,6 +197,8 @@ def evaluate(source_etf: str, as_of: date,
     sector_key = next((k for k, v in SECTORS.items()
                        if v.get("etf") == source_etf), None)
     dests = destinations or [d for d in DESTINATIONS if d != source_etf]
+    theme = (SECTORS.get(sector_key or "") or {}).get("theme") or []
+    _ensure_bars([source_etf] + BENCH + dests + theme, as_of)
     legs = {
         "pairwise_rs": _pairwise_rs(source_etf, dests, as_of),
         "constituent_breadth": _breadth(sector_key or "", as_of),

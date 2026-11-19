@@ -156,6 +156,20 @@ export type MorningRegime = {
   } | null
   intraday?: IntradayRegime | null
   fragility?: Fragility | null
+  movement?: {
+    regime_clock?: {
+      regime?: string; since?: string; days?: number; prev?: string | null
+    } | null
+    flips?: Array<{ as_of?: string; from?: string; to?: string }>
+    sectors?: Array<{
+      symbol?: string; ret5?: number | null; ret20?: number | null
+      vs_spy5?: number | null; vs_spy20?: number | null
+    }>
+    smh_ew?: {
+      as_of?: string; risk?: number | null; state?: string | null
+      destinations?: string[]
+    } | null
+  } | null
   record?: Array<Record<string, unknown>>
 }
 
