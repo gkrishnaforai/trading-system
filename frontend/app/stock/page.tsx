@@ -1318,6 +1318,11 @@ async function StockCore({ sym }: { sym: string }) {
                 </span>
               </span>
               <span className="flex items-baseline gap-2">
+                {vd.timing != null && (
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-faint">
+                    {String(vd.timing).replace(/_/g, ' ')}
+                  </span>
+                )}
                 {vd.decision != null && (
                   <Chip label={`${dec.replace(/_/g, ' ')}${vd.band ? ` · ${String(vd.band).replace(/_/g, ' ')}` : ''}`}
                     tone={decChipTone as 'ok' | 'warn' | 'off'} />

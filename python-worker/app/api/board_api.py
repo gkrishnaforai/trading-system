@@ -980,6 +980,14 @@ async def _j_valuation_decision() -> dict:
     return await asyncio.to_thread(vd.run)
 
 
+async def _j_narrative_claims() -> dict:
+    """Narrative claims collector — gathers provenance-typed claims
+    from journaled engine outputs (guidance, quality flags, driver
+    commitments, revision swings) into the claims ledger."""
+    from app.signals import narrative_ledger as nl
+    return await asyncio.to_thread(nl.run)
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -1261,6 +1269,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
                     _j_priced_in),
     "valuation-decision": ("Valuation decision bands — enter/trim/exit",
                            _j_valuation_decision),
+    "narrative-claims": ("Narrative claims ledger", _j_narrative_claims),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
     "metals-pulse": ("Metals Pulse — regime + opportunity", _j_metals),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
@@ -1311,7 +1320,7 @@ _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "daily-puts", "spec-incubator", "meta",
               "sec-facts", "short-data", "short-squeeze",
               "correction-alarms", "selloff", "best-picks",
-              "priced-in", "valuation-decision",
+              "priced-in", "valuation-decision", "narrative-claims",
               "lev-etf-swings", "signal-evals", "custodian"]
 
 
@@ -1344,7 +1353,7 @@ _JOB_TIMEOUT = {
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "intraday-tape": 3 * 60, "intraday-regime": 3 * 60,
     "correction-alarms": 3 * 60, "priced-in": 5 * 60,
-    "valuation-decision": 5 * 60,
+    "valuation-decision": 5 * 60, "narrative-claims": 10 * 60,
     "best-picks": 5 * 60,
     "lev-etf-swings": 2 * 60,
     "signal-evals": 3 * 60,
@@ -2691,6 +2700,20 @@ async def symbol_valuation_decision(sym: str, days: int = 90):
         latest = await asyncio.to_thread(vd.evaluate, sym)
         return {"symbol": sym.upper(), "latest": latest, "history": []}
     return {"symbol": sym.upper(), "latest": rows[0], "history": rows}
+
+
+@router.get("/symbol/{sym}/narrative-claims")
+async def symbol_narrative_claims(sym: str, history: bool = False):
+    """What the market believes — provenance-typed claims (guidance,
+    estimates, facts, hypotheses) with evidentiary status. Claims are
+    collected from journaled engine outputs; LLM hypotheses never
+    self-promote."""
+    from app.signals import narrative_ledger as nl
+    rows = await asyncio.to_thread(nl.read, sym, history)
+    if not rows:
+        await asyncio.to_thread(nl.collect, sym)
+        rows = await asyncio.to_thread(nl.read, sym, history)
+    return {"symbol": sym.upper(), "claims": rows}
 
 
 @router.get("/journal-grades")

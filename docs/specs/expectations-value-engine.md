@@ -28,19 +28,34 @@ Locked decisions:
 
 The gap: `thesis_health` tracks hypotheses but carries no provenance
 taxonomy — a rumor and a 10-Q sentence look identical downstream.
-New table `narrative_claims`:
+New table `narrative_claims` — **type and status are separate
+dimensions, never one taxonomy.** `claim_type` is immutable
+provenance (a guidance claim stays guidance even when later data
+supports it); `status` is the mutable evidentiary state that only
+journaled evidence may move:
 
 ```
-symbol, claim, direction (positive|negative|mixed),
+claim_id (stable public id), symbol, entity?, claim,
+direction (positive|negative|mixed),
 claim_type (reported_fact|management_guidance|analyst_estimate|
-            industry_research|model_assumption|llm_hypothesis),
-source, source_date, evidence_strength 0-1, confidence 0-1,
-status (proposed|supported|confirmed|speculative|contradicted|expired),
-first_seen, last_confirmed, created_by, supersedes (parent id), as_of
+            industry_research|model_assumption|llm_hypothesis)  -- immutable
+status (proposed|supported|confirmed|speculative|contradicted|
+        expired|unresolved)                                       -- mutable
+source, source_date,
+evidence_confidence 0-1,        -- strength of evidence FOR the claim
+outcome_confidence 0-1,         -- that the predicted outcome lands;
+                                  mgmt-confirmed program ≠ produced
+                                  revenue — never collapse the two
+valid_from, valid_until,
+evidence_refs jsonb,            -- row ids behind each status change
+first_seen, last_confirmed, created_by,
+supersedes (parent claim_id), as_of
 ```
 
-Status changes are new rows with `supersedes` — the append-only
-pattern from `thesis_change_events`; the full chain stays auditable.
+**Status rule:** transitions require new journaled evidence — an LLM
+repeating a claim never confirms it; every move writes a
+`claim_reviews` row carrying the evidence row id. `speculative` and
+`contradicted` both surface; nothing silently deletes.
 
 **Writers (deterministic first):**
 - `earnings_watch` — its `release.claims` extraction already emits
@@ -71,14 +86,22 @@ review called out. `quality × priced-in` answers *what to own*;
 - expectations axis: `priced_in_attractiveness` (existing)
 - sentiment axis: composite of `tape_state`, `momentum_regime`,
   `muted_reaction`, put/call + short-interest where journaled → 0-100
-- quadrants: `best_setup | dangerous_euphoria |
-  potential_opportunity | avoid_investigate`
+- quadrants (conceptual, not buy/sell signals — thresholds need
+  calibration):
+  - low exp + positive sentiment → `recovery_improving` — check if
+    price already anticipated it
+  - high exp + positive → `crowded_optimism` — execution may be
+    priced in
+  - low exp + negative → `potential_opportunity` — only with
+    `thesis_integrity` intact
+  - high exp + negative → `expectations_breaking` — investigate
+    estimate cuts, execution, compression
 
-`potential_opportunity` = depressed expectations + negative sentiment
-+ `thesis_integrity` intact — the review's "market pessimistic,
-opportunity intact" case, explicitly gated on integrity so a falling
-knife doesn't read as opportunity. New column on `valuation_decisions`
-(mig 214 ALTER) + surfaced on the priced-in card.
+Expectations and sentiment are computed **independently** — low
+expectations is not cheap valuation; the valuation bands and
+`thesis_integrity` are gates on the quadrant, not axes in it. New
+`timing` column on `valuation_decisions` (mig 214) + surfaced on the
+priced-in card.
 
 ---
 
@@ -88,10 +111,23 @@ The gap the proposal got right: our scenarios vary *multipliers*;
 defensible scenarios should vary *drivers* — TAM, share, price,
 margin — per industry.
 
-`driver_assumptions` table: `(symbol, scenario, driver_key, value,
-unit, rationale_claim_id)` — `rationale_claim_id` links every
-assumption to a `narrative_claims` row, so a driver that loses its
-evidence can't keep anchoring a scenario silently.
+`driver_assumptions` table — every material assumption carries its
+own provenance (`assumption_type`) and forecast `confidence`; when
+`rationale_claim_id` is null the row must declare itself
+`model_assumption` — an unsupported assumption can never quietly
+become a forecast:
+
+```
+symbol, scenario (bear|base|bull), driver_key, value, unit, period,
+assumption_type (analyst_estimate|management_guidance|model_assumption|
+                 industry_research|reported_fact),
+rationale_claim_id, confidence 0-1, as_of
+```
+
+More granular than TAM × share wherever evidence allows — design
+wins vs production programs, units × revenue-per-unit, pricing/mix,
+capex/wc/dilution. The bridge explains *why* revenue grows 30%, never
+just that it might.
 
 Driver catalog keyed off the FV engine's existing `_detect_regime`
 output (no second taxonomy): semis → design_wins/content_per_system;
@@ -131,11 +167,18 @@ The five answers, pure composition over journaled rows:
 Rendered as an "Expectations" card under the priced-in card on the
 stock page — same five-section layout, `None` where a leg is missing.
 
-### `claim_reviews` journal
+### `claim_reviews` journal — three `review_kind`s
 
-Critic output + every status transition — who/what moved a claim,
-with the evidence row id. This is the ledger's own falsification
-trail and the audit answer to "why does the system believe X".
+`transition` — every status change with the evidence row id.
+`critic` — bounded LLM review of new/changed claims only: flags
+unsupported assertions, requests missing evidence, flags
+contradictions; can downgrade, never rewrite forecasts or flip
+status alone.
+`grade` — outcome grading at 3/6/12mo horizons: did the ramp
+happen, did the margin improve, did the commitment convert? This is
+what calibrates `evidence_confidence`/`outcome_confidence` priors
+over time instead of trusting arbitrary scores — the ledger's own
+falsification trail.
 
 ---
 

@@ -154,6 +154,35 @@ def _thesis_integrity(sym: str, scalars: dict) -> tuple[str, list]:
     return state, ev
 
 
+# ── expectations × sentiment quadrant ───────────────────────────────
+
+_SENT_BASE = {
+    "climax": 90, "breakout": 80, "uptrend": 72, "pullback": 62,
+    "recovery": 58, "basing": 50, "rolling_over": 35, "downtrend": 30,
+    "capitulation": 28, "knife": 20, "breakdown": 15, "unknown": 50,
+}
+
+
+def _sentiment(sym: str) -> tuple[int, Optional[str]]:
+    """Sentiment 0-100 — tape state + muted-reaction tilt. Separate
+    axis from expectations: how the market FEELS vs what it PRICES."""
+    from app.database import db
+    st = muted = None
+    try:
+        r = db.execute_query(
+            "SELECT s.momentum_state, f.muted_reaction FROM stocks s"
+            " LEFT JOIN symbol_flywheel f ON f.symbol = s.symbol"
+            " WHERE s.symbol=:s LIMIT 1", {"s": sym})
+        if r:
+            st, muted = r[0].get("momentum_state"), r[0].get("muted_reaction")
+    except Exception:
+        pass
+    score = _SENT_BASE.get(st or "unknown", 50)
+    if muted:
+        score -= 8           # good print, flat price = skeptical tape
+    return max(0, min(100, score)), st
+
+
 # ── the decision ────────────────────────────────────────────────────
 
 def evaluate(symbol: str, as_of: Optional[date] = None) -> dict:
@@ -207,6 +236,27 @@ def evaluate(symbol: str, as_of: Optional[date] = None) -> dict:
     else:
         quadrant = "wait"
 
+    # timing quadrant — expectations (priced-in score) × sentiment,
+    # independent axes; valuation bands + integrity are gates, never
+    # axes. Conceptual labels, not buy/sell signals.
+    exp = _f(pi.get("score"))
+    sent, sent_state = _sentiment(sym)
+    lo_e = exp is not None and exp < 45
+    hi_e = exp is not None and exp >= 60
+    pos_s, neg_s = sent >= 55, sent < 45
+    if lo_e and neg_s:
+        timing = ("potential_opportunity"
+                  if integrity in ("intact", "watch")
+                  else "avoid_investigate")
+    elif hi_e and neg_s:
+        timing = "expectations_breaking"
+    elif hi_e and pos_s:
+        timing = "crowded_optimism"
+    elif lo_e and pos_s:
+        timing = "recovery_improving"
+    else:
+        timing = None
+
     # bands
     mos_req = (max(_MOS_LO, min(_MOS_HI, 0.15 + _DISPERSION_K * disp))
                if disp is not None else _MOS_LO)
@@ -253,6 +303,8 @@ def evaluate(symbol: str, as_of: Optional[date] = None) -> dict:
         "priced_in_attractiveness": priced_attr,
         "thesis_integrity": integrity, "integrity_evidence": evidence,
         "quadrant": quadrant, "band": band, "decision": decision,
+        "timing": timing, "sentiment_score": sent,
+        "sentiment_state": sent_state,
         "decision_reasons": reasons, "risk_flags": risk_flags,
         "price": price, "fv_bear": fv_bear, "fv_base": fv_base,
         "fv_bull": fv_bull, "entry_zone": entry_zone,
@@ -342,10 +394,10 @@ def run(symbols: Optional[list[str]] = None) -> dict:
                 " decision, decision_reasons, risk_flags, price,"
                 " fv_bear, fv_base, fv_bull, entry_zone, mos_required,"
                 " expectation_gap, compression_drag, model_version,"
-                " missing_inputs, detail) VALUES"
+                " timing, missing_inputs, detail) VALUES"
                 " (:s,:d,:q,:a,:ti,CAST(:ie AS jsonb),:qd,:b,:de,"
                 " CAST(:dr AS jsonb),CAST(:rf AS jsonb),:p,:fb,:fv,:fu,"
-                " :ez,:mr,:eg,:cd,:mv,CAST(:mi AS jsonb),"
+                " :ez,:mr,:eg,:cd,:mv,:tm,CAST(:mi AS jsonb),"
                 " CAST(:dt AS jsonb))"
                 " ON CONFLICT (symbol, as_of) DO UPDATE SET"
                 " business_quality=EXCLUDED.business_quality,"
@@ -354,7 +406,8 @@ def run(symbols: Optional[list[str]] = None) -> dict:
                 " quadrant=EXCLUDED.quadrant, band=EXCLUDED.band,"
                 " decision=EXCLUDED.decision,"
                 " risk_flags=EXCLUDED.risk_flags,"
-                " price=EXCLUDED.price, detail=EXCLUDED.detail",
+                " price=EXCLUDED.price, timing=EXCLUDED.timing,"
+                " detail=EXCLUDED.detail",
                 {"s": sym, "d": v["as_of"], "q": v["business_quality"],
                  "a": v["priced_in_attractiveness"],
                  "ti": v["thesis_integrity"],
@@ -366,6 +419,7 @@ def run(symbols: Optional[list[str]] = None) -> dict:
                  "fu": v["fv_bull"], "ez": v["entry_zone"],
                  "mr": v["mos_required"], "eg": v["expectation_gap"],
                  "cd": v["compression_drag"], "mv": v["model_version"],
+                 "tm": v["timing"],
                  "mi": json.dumps(v["missing_inputs"]),
                  "dt": json.dumps(v, default=str)})
             out[sym] = v["decision"]
@@ -385,7 +439,7 @@ def read(symbol: str, days: int = 90) -> list[dict]:
             " integrity_evidence, quadrant, band, decision,"
             " decision_reasons, risk_flags, price, fv_bear, fv_base,"
             " fv_bull, entry_zone, mos_required, expectation_gap,"
-            " compression_drag, missing_inputs"
+            " compression_drag, timing, missing_inputs"
             " FROM valuation_decisions WHERE symbol=:s"
             " ORDER BY as_of DESC LIMIT :n",
             {"s": symbol.upper(), "n": days})
