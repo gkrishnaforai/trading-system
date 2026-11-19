@@ -11,6 +11,8 @@ import { ThesisTimeline } from '@/components/thesis-timeline'
 import { RecoveryCard } from '@/components/recovery-card'
 import { SignalStrip, toneOf } from '@/components/signal-strip'
 import FvRecompute from '@/components/fv-recompute'
+import { SyncFundamentals } from '@/components/sync-fundamentals'
+import { getUser } from '@/lib/auth'
 
 function num(v: unknown) {
   if (v === null || v === undefined || v === '') return null
@@ -965,6 +967,7 @@ async function StockCore({ sym }: { sym: string }) {
   const recovery = await api.recoveryVerdict(sym).catch(() => null)
   const pricedIn = await api.pricedIn(sym).catch(() => null)
   const valDecision = await api.valuationDecision(sym).catch(() => null)
+  const user = await getUser().catch(() => null)
   if (!card) {
     return (
       <main className="mx-auto max-w-3xl px-5 pb-20 pt-10">
@@ -1396,6 +1399,7 @@ async function StockCore({ sym }: { sym: string }) {
               </span>
             </span>
             <span className="flex items-baseline gap-2">
+              {user?.role === 'admin' && <SyncFundamentals sym={sym} />}
               <ThesisFlag thesis={thesis} />
               {typeof liquidity?.score === 'number' && (() => {
                 // market-level context + this name's sensitivity —
