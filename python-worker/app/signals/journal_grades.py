@@ -57,6 +57,16 @@ _JOURNALS: dict[str, dict] = {
                   FROM insider_transactions
                   WHERE transaction_code = 'P'""",
     },
+    "valuation_decision": {
+        "sql": """SELECT symbol, as_of, decision AS bucket
+                  FROM valuation_decisions
+                  WHERE decision IS NOT NULL""",
+    },
+    "priced_in_band": {
+        "sql": """SELECT symbol, as_of, band AS bucket
+                  FROM valuation_decisions
+                  WHERE band IS NOT NULL""",
+    },
 }
 
 

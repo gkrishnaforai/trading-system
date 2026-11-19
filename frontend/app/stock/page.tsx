@@ -963,6 +963,8 @@ async function StockCore({ sym }: { sym: string }) {
   const resilience = await api.resilience(sym).catch(() => null)
   const thesisHist = await api.thesisHistory(sym).catch(() => null)
   const recovery = await api.recoveryVerdict(sym).catch(() => null)
+  const pricedIn = await api.pricedIn(sym).catch(() => null)
+  const valDecision = await api.valuationDecision(sym).catch(() => null)
   if (!card) {
     return (
       <main className="mx-auto max-w-3xl px-5 pb-20 pt-10">
@@ -1280,6 +1282,107 @@ async function StockCore({ sym }: { sym: string }) {
           </Suspense>
         </section>
       )}
+
+      {/* priced-in / valuation decision — what growth the market
+          prices vs what we forecast, and the band rules it maps to.
+          Advisory only; the journal grades it. */}
+      {(obj(pricedIn?.latest) || obj(valDecision?.latest)) && (() => {
+        const pi = obj(pricedIn?.latest) ?? {}
+        const vd = obj(valDecision?.latest) ?? {}
+        const dec = String(vd.decision ?? '')
+        const decTone =
+          dec === 'enter' ? 'text-aggressive'
+            : ['trim', 'exit_core_review', 'exit_review', 'avoid'].includes(dec)
+              ? 'text-defensive'
+              : 'text-caution'
+        const decChipTone =
+          dec === 'enter' ? 'ok'
+            : ['trim', 'exit_core_review', 'exit_review', 'avoid'].includes(dec)
+              ? 'warn' : 'off'
+        const ti = String(vd.thesis_integrity ?? '')
+        const tiTone = ti === 'intact' ? 'text-aggressive'
+          : ti === 'watch' ? 'text-caution' : 'text-defensive'
+        const gap = num(pi.expectation_gap)
+        const drag = num(pi.compression_drag)
+        const implied = obj(pi.implied_growth)
+        return (
+          <section className="mt-2 rounded-xl border border-hairline bg-card px-5 py-4">
+            <div className="flex items-baseline justify-between">
+              <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+                Priced in
+                <span className="ml-2 normal-case tracking-normal text-faint/70">
+                  · what the market must believe
+                </span>
+              </span>
+              <span className="flex items-baseline gap-2">
+                {vd.decision != null && (
+                  <Chip label={`${dec.replace(/_/g, ' ')}${vd.band ? ` · ${String(vd.band).replace(/_/g, ' ')}` : ''}`}
+                    tone={decChipTone as 'ok' | 'warn' | 'off'} />
+                )}
+                <Fresh date={String(pi.as_of ?? vd.as_of ?? '') || null} />
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 pt-3">
+              <Stat label="Required 3y CAGR"
+                value={pi.required_cagr != null ? pct(pi.required_cagr) : '—'} />
+              <Stat label="Forecast 3y CAGR"
+                value={pi.forecast_eps_cagr != null ? pct(pi.forecast_eps_cagr) : '—'} />
+              <Stat label="Expectation gap"
+                value={gap != null ? `${gap > 0 ? '+' : ''}${(gap * 100).toFixed(1)}pp` : '—'} />
+              <Stat label="Compression drag"
+                value={drag != null ? `${(drag * 100).toFixed(1)}%/yr` : '—'} />
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 pt-3">
+              <Stat label="Business quality"
+                value={vd.business_quality != null ? String(vd.business_quality) : '—'} />
+              <Stat label="Priced-in attractiveness"
+                value={vd.priced_in_attractiveness != null
+                  ? String(vd.priced_in_attractiveness) : '—'} />
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-faint">
+                  Thesis integrity</div>
+                <div className={`font-mono text-sm ${tiTone}`}>
+                  {ti || '—'}</div>
+              </div>
+              <Stat label="Entry zone"
+                value={vd.entry_zone != null
+                  ? `≤ ${money(vd.entry_zone)}` : '—'} />
+            </div>
+            {(pi.fv_bear != null || vd.fv_bear != null) && (
+              <div className="pt-3 text-xs text-muted font-mono">
+                bands {money(pi.fv_bear ?? vd.fv_bear)} –{' '}
+                {money(pi.fv_base ?? vd.fv_base)} –{' '}
+                {money(pi.fv_bull ?? vd.fv_bull)}
+                {vd.mos_required != null &&
+                  ` · MOS req ${(Number(vd.mos_required) * 100).toFixed(0)}%`}
+                {pi.valuation_dispersion != null &&
+                  ` · dispersion ${(Number(pi.valuation_dispersion) * 100).toFixed(0)}%`}
+              </div>
+            )}
+            {implied?.implied_fcf_growth != null && (
+              <div className="pt-1 text-xs text-faint font-mono">
+                reverse DCF: market prices {pct(implied.implied_fcf_growth)} FCF growth
+                {implied.status != null && implied.status !== 'valid' &&
+                  ` (${String(implied.status).replace(/_/g, ' ')})`}
+              </div>
+            )}
+            {Array.isArray(vd.decision_reasons) && vd.decision_reasons.length > 0 && (
+              <ul className="pt-2 space-y-0.5">
+                {(vd.decision_reasons as unknown[]).map((r, i) => (
+                  <li key={i} className={`text-xs ${decTone}`}>· {String(r)}</li>
+                ))}
+              </ul>
+            )}
+            {Array.isArray(vd.risk_flags) && vd.risk_flags.length > 0 && (
+              <div className="pt-2 flex flex-wrap gap-2">
+                {(vd.risk_flags as unknown[]).map((f, i) => (
+                  <Chip key={i} label={String(f).replace(/_/g, ' ')} tone="warn" />
+                ))}
+              </div>
+            )}
+          </section>
+        )
+      })()}
 
       {/* fundamentals + tape — fundamentals carries ~3x the data,
           so it takes the wide column */}

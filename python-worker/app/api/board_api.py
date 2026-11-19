@@ -955,6 +955,15 @@ async def _j_priced_in() -> dict:
     return await asyncio.to_thread(gpi.run)
 
 
+async def _j_valuation_decision() -> dict:
+    """Valuation decision — quality × priced-in matrix + thesis
+    integrity + entry/trim/exit bands. Chained after priced-in:
+    reads its journaled rows, advisory decisions, alerts on
+    compression + expectation expansion."""
+    from app.valuation import decision as vd
+    return await asyncio.to_thread(vd.run)
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -1234,6 +1243,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
                           _j_correction_alarms),
     "priced-in":   ("Growth priced-in — required CAGR / gap / drag",
                     _j_priced_in),
+    "valuation-decision": ("Valuation decision bands — enter/trim/exit",
+                           _j_valuation_decision),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
     "metals-pulse": ("Metals Pulse — regime + opportunity", _j_metals),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
@@ -1284,7 +1295,7 @@ _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "daily-puts", "spec-incubator", "meta",
               "sec-facts", "short-data", "short-squeeze",
               "correction-alarms", "selloff", "best-picks",
-              "priced-in",
+              "priced-in", "valuation-decision",
               "lev-etf-swings", "signal-evals", "custodian"]
 
 
@@ -1317,6 +1328,7 @@ _JOB_TIMEOUT = {
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "intraday-tape": 3 * 60, "intraday-regime": 3 * 60,
     "correction-alarms": 3 * 60, "priced-in": 5 * 60,
+    "valuation-decision": 5 * 60,
     "best-picks": 5 * 60,
     "lev-etf-swings": 2 * 60,
     "signal-evals": 3 * 60,
@@ -2643,6 +2655,18 @@ async def symbol_priced_in(sym: str, days: int = 90):
     rows = await asyncio.to_thread(gpi.read, sym, days)
     if not rows:                       # thin journal — compose live
         latest = await asyncio.to_thread(gpi.evaluate, sym)
+        return {"symbol": sym.upper(), "latest": latest, "history": []}
+    return {"symbol": sym.upper(), "latest": rows[0], "history": rows}
+
+
+@router.get("/symbol/{sym}/valuation-decision")
+async def symbol_valuation_decision(sym: str, days: int = 90):
+    """Valuation decision — quality × priced-in matrix, thesis
+    integrity, entry/trim/exit bands. Advisory, journaled daily."""
+    from app.valuation import decision as vd
+    rows = await asyncio.to_thread(vd.read, sym, days)
+    if not rows:
+        latest = await asyncio.to_thread(vd.evaluate, sym)
         return {"symbol": sym.upper(), "latest": latest, "history": []}
     return {"symbol": sym.upper(), "latest": rows[0], "history": rows}
 

@@ -679,6 +679,14 @@ export const api = {
     get<{ symbol?: string; events?: ThesisChangeEvent[] }>(
       `/symbol/${encodeURIComponent(sym)}/thesis-history?days=${days}`,
     ),
+  pricedIn: (sym: string) =>
+    get<{ symbol?: string; latest?: Record<string, unknown> | null;
+          history?: Array<Record<string, unknown>> }>(
+      `/symbol/${encodeURIComponent(sym.toUpperCase())}/priced-in`),
+  valuationDecision: (sym: string) =>
+    get<{ symbol?: string; latest?: Record<string, unknown> | null;
+          history?: Array<Record<string, unknown>> }>(
+      `/symbol/${encodeURIComponent(sym.toUpperCase())}/valuation-decision`),
   earningsCalendar: (start: string, end: string) =>
     getRaw<{ success?: boolean; count?: number; data?: EarningsRow[] }>(
       `/admin/earnings-calendar?start_date=${start}&end_date=${end}`,
