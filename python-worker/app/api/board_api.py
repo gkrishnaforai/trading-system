@@ -947,6 +947,14 @@ async def _j_correction_alarms() -> dict:
             "severity": r["severity"]}
 
 
+async def _j_priced_in() -> dict:
+    """Growth priced-in — required CAGR / expectation gap / compression
+    drag / bear-base-bull bands journaled per symbol with a fresh FV
+    run. Composition over journaled runs; never re-runs the methods."""
+    from app.valuation import growth_priced_in as gpi
+    return await asyncio.to_thread(gpi.run)
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -1224,6 +1232,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
                          _j_competitive_risk),
     "correction-alarms": ("Correction-alarm engine",
                           _j_correction_alarms),
+    "priced-in":   ("Growth priced-in — required CAGR / gap / drag",
+                    _j_priced_in),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
     "metals-pulse": ("Metals Pulse — regime + opportunity", _j_metals),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
@@ -1274,6 +1284,7 @@ _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "daily-puts", "spec-incubator", "meta",
               "sec-facts", "short-data", "short-squeeze",
               "correction-alarms", "selloff", "best-picks",
+              "priced-in",
               "lev-etf-swings", "signal-evals", "custodian"]
 
 
@@ -1305,7 +1316,7 @@ _JOB_TIMEOUT = {
     "selloff": 5 * 60,
     "short-data": 75 * 60, "short-squeeze": 8 * 60,
     "intraday-tape": 3 * 60, "intraday-regime": 3 * 60,
-    "correction-alarms": 3 * 60,
+    "correction-alarms": 3 * 60, "priced-in": 5 * 60,
     "best-picks": 5 * 60,
     "lev-etf-swings": 2 * 60,
     "signal-evals": 3 * 60,
@@ -2621,6 +2632,19 @@ async def sector_rotation_replay(etf: str, start: str, end: str):
         date.fromisoformat(end))
     return {"sector": etf.upper(), "start": start, "end": end,
             "days": len(rows), "rows": rows}
+
+
+@router.get("/symbol/{sym}/priced-in")
+async def symbol_priced_in(sym: str, days: int = 90):
+    """Growth priced-in — the inverse read over the latest FV run:
+    required CAGR under our exit multiple, forecast-vs-required gap,
+    compression drag, bear/base/bull bands, 0-100 priced-in score."""
+    from app.valuation import growth_priced_in as gpi
+    rows = await asyncio.to_thread(gpi.read, sym, days)
+    if not rows:                       # thin journal — compose live
+        latest = await asyncio.to_thread(gpi.evaluate, sym)
+        return {"symbol": sym.upper(), "latest": latest, "history": []}
+    return {"symbol": sym.upper(), "latest": rows[0], "history": rows}
 
 
 @router.get("/journal-grades")
