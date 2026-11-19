@@ -317,14 +317,16 @@ export type MacroEvent = {
   [k: string]: unknown
 }
 
-async function get<T>(path: string): Promise<T | null> {
+async function get<T>(path: string, opts?: { fresh?: boolean }): Promise<T | null> {
   // one retry — a flaky 5xx/timeout shouldn't leave a whole section
   // blank; the second attempt bypasses the Data Cache in case the
-  // failed response itself was cached
+  // failed response itself was cached. `fresh` bypasses it on the
+  // first attempt too — for live signals (the tape) staleness is
+  // worse than a cache hit
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(`${BASE}/api/v1/board${path}`, {
-        ...(attempt === 0
+        ...(attempt === 0 && !opts?.fresh
           ? { next: { revalidate: 120 } }
           : { cache: 'no-store' }),
         signal: AbortSignal.timeout(20_000),
@@ -730,7 +732,7 @@ export const api = {
     get<LevSwings>(`/leveraged-swings${funds ? `?funds=${funds}` : ''}`),
   shortSqueeze: (symbol: string) =>
     get<SqueezeEval>(`/short-squeeze/${encodeURIComponent(symbol)}`),
-  intraday: () => get<IntradayTape>('/intraday'),
+  intraday: () => get<IntradayTape>('/intraday', { fresh: true }),
   fragility: () => get<Fragility>('/fragility'),
   resilience: (symbol: string) => get<ResilienceCard>(`/resilience/${symbol}`),
   readinessStates: () => get<{ as_of: string | null; use_cases: Record<string, Record<string, { symbol: string; score: number | null; rank: number | null }[]>> }>('/readiness-states'),

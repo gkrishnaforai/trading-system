@@ -1,5 +1,6 @@
 import type { IntradayTape } from '@/lib/api'
 import { TAPE_LABEL, TAPE_TONE } from '@/components/tape-chips'
+import { RefreshButton } from '@/components/refresh-button'
 
 type Tl = NonNullable<IntradayTape['timeline']>[number]
 
@@ -36,7 +37,11 @@ function readingsLine(t: Tl) {
     the readings that produced each transition: the "it gapped, rallied,
     faded — why" answer, refreshed every eval (15 min during RTH). */
 export function SessionTape({ tape }: { tape: IntradayTape | null }) {
-  const tl = tape?.timeline ?? []
+  // dedupe repeated timestamps — the job and the lazy-eval can both
+  // write the same eval when they overlap
+  const tl = (tape?.timeline ?? []).filter(
+    (t, i, a) => i === 0 || t.ts !== a[i - 1].ts,
+  )
   if (tl.length < 2) return null
 
   // collapse consecutive same-state evals into segments — each row is
@@ -55,8 +60,11 @@ export function SessionTape({ tape }: { tape: IntradayTape | null }) {
         <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
           Session tape
         </div>
-        <span className="font-mono text-[11px] text-faint">
-          {tl.length} evals · last {hhmm(lastT.ts)} ET
+        <span className="flex items-baseline gap-2">
+          <span className="font-mono text-[11px] text-faint">
+            {tl.length} evals · last {hhmm(lastT.ts)} ET
+          </span>
+          <RefreshButton />
         </span>
       </div>
 
