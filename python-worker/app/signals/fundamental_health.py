@@ -28,7 +28,16 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from decimal import Decimal
 from typing import Any, Optional
+
+
+def _flt(v):
+    """psycopg hands NUMERIC back as Decimal — coerce at the boundary
+    so downstream float math (x / 1e9, b / a - 1, round(x)) can't
+    TypeError. One impaired-goodwill NUMERIC broke the whole refresh
+    for a month. None and non-numerics pass through."""
+    return float(v) if isinstance(v, Decimal) else v
 
 logger = logging.getLogger(__name__)
 
@@ -777,13 +786,14 @@ def refresh_all(symbols: list[str] = None) -> dict:
                 " FROM driver_commitments"
                 " WHERE status='open'"
                 " AND created_at > now() - interval '180 days'"):
-            drivers.setdefault(d["symbol"], []).append(dict(d))
+            drivers.setdefault(d["symbol"], []).append(
+                {k: _flt(v) for k, v in d.items()})
     except Exception:
         pass
 
     counts: dict[str, int] = {}
     for r in rows:
-        m = {k: r.get(k) for k in _METRICS}
+        m = {k: _flt(r.get(k)) for k in _METRICS}
         m["driver_deltas"] = drivers.get(r["symbol"], [])
         state, risk, detail = classify(m, bool(r.get("cyclical")))
         detail["revision"] = _revision_grade(m, er_dist, rb_dist)

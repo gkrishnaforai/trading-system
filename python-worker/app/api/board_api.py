@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import traceback
 from datetime import date, datetime, timezone
 from typing import Any, Callable
 
@@ -1370,7 +1371,13 @@ async def _run_job(name: str):
                     f"{_JOB_TIMEOUT.get(name, 600) // 60}m")
     except Exception as exc:
         logger.error("job %s failed: %s", name, exc, exc_info=True)
-        _mark(name, running=False, error=str(exc))
+        # last_error is what the catalog/admin page shows — carry the
+        # crash site (file:line) not just the message, or every job
+        # failure needs a server log dig to even locate
+        tb = traceback.extract_tb(exc.__traceback__)
+        site = f" [{tb[-1].filename.split('/')[-1]}:{tb[-1].lineno}]" \
+            if tb else ""
+        _mark(name, running=False, error=f"{exc}{site}")
 
 
 async def _run_all():
