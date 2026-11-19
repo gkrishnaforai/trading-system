@@ -201,33 +201,64 @@ def _balance_health(fmp, sym: str) -> dict:
 
 
 def _surprises(sym: str) -> dict:
-    """yfinance earnings_dates → beat streak, avg/last surprise,
-    last report date."""
+    """yfinance earnings_dates ∪ our own earnings_data journal →
+    beat streak, avg/last surprise, last report date. The journal leg
+    is the self-heal: verified prints the earnings pipeline already
+    journaled can't freeze behind a provider outage (yf rate-limits
+    datacenter IPs) the way the bare yf read could — its failure used
+    to leave last_report_date COALESCE-frozen at last-known-good while
+    the rest of the row kept refreshing."""
     import yfinance as yf
-    ed = yf.Ticker(sym).earnings_dates
-    if ed is None or ed.empty:
+    from app.database import db
+    try:
+        ed = yf.Ticker(sym).earnings_dates
+    except Exception:
+        ed = None
+    past = (ed[ed["Reported EPS"].notna()].copy()
+            if ed is not None and not ed.empty else pd.DataFrame())
+    # union by report date — the journal wins a same-date disagreement
+    # (it's what the earnings engine actually graded)
+    merged: dict = {}
+    if not past.empty:
+        past = past.sort_index(ascending=False)
+        for ts, r in past.iterrows():
+            merged[ts.date()] = (
+                float(r["Reported EPS"]) if pd.notna(r["Reported EPS"])
+                else None,
+                float(r["Surprise(%)"]) if pd.notna(r["Surprise(%)"])
+                else None)
+    try:
+        for r in db.execute_query(
+                "SELECT earnings_date, eps_actual, surprise_percentage"
+                " FROM earnings_data WHERE stock_symbol=:s"
+                " AND eps_actual IS NOT NULL"
+                " ORDER BY earnings_date DESC LIMIT 8", {"s": sym}) or []:
+            merged[date.fromisoformat(str(r["earnings_date"])[:10])] = (
+                float(r["eps_actual"])
+                if r.get("eps_actual") is not None else None,
+                float(r["surprise_percentage"])
+                if r.get("surprise_percentage") is not None else None)
+    except Exception:
+        pass
+    if not merged:
         return {}
-    past = ed[ed["Reported EPS"].notna()].copy()
-    if past.empty:
-        return {}
-    past = past.sort_index(ascending=False)
-    surprises = [float(v) for v in past["Surprise(%)"].tolist()
-                 if pd.notna(v)][:4]
+    days = sorted(merged, reverse=True)
+    surprises = [s for d in days
+                 if (s := merged[d][1]) is not None][:4]
     streak = 0
     for v in surprises:
         if v > 0:
             streak += 1
         else:
             break
-    last_date = past.index[0].date() if len(past.index) else None
+    last_date = days[0]
     trend = (surprises[0] - surprises[-1]
              if len(surprises) >= 3 else None)   # newest - oldest
     # reported (headline) EPS — non-GAAP for most issuers. YoY on the
     # reported series vs GAAP eps growth is the accounting-effect gap:
     # both falling = real decay; reported up / GAAP down = deal
     # amortization + SBC noise, not demand deterioration.
-    rep = [float(v) for v in past["Reported EPS"].tolist()
-           if pd.notna(v)][:5]
+    rep = [v for d in days if (v := merged[d][0]) is not None][:5]
     rep_growth = (rep[0] / rep[4] - 1
                   if len(rep) >= 5 and rep[4] and rep[4] > 0.05
                   else None)
