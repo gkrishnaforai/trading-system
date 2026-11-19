@@ -38,6 +38,15 @@ export const TERM_GLOSS: Record<string, string> = {
 
   // breadth / participation
   breadth: 'how many stocks are participating, not just the index',
+
+  // sector-rotation early-warning states
+  healthy: 'sector holding its leadership',
+  early_deterioration: 'leadership starting to fade',
+  rotation_developing: 'money may be moving out of this sector',
+  rotation_probable: 'rotation likely — sector losing leadership',
+  rotation_confirmed: 'fund flows confirm the move',
+  severe: 'heavy distribution — defensive territory',
+  unknown: 'not enough data yet',
 }
 
 /** "risk_off" → "safety over growth" (bare gloss), for appending. */

@@ -458,11 +458,11 @@ export default async function RegimePage() {
                   : movement.regime_clock.regime === 'strong_risk_on' || movement.regime_clock.regime === 'risk_on'
                     ? 'font-medium text-aggressive' : 'font-medium text-muted'
               }>
-                {(movement.regime_clock.regime ?? '').replace(/_/g, ' ')}
+                {glossed(movement.regime_clock.regime)}
               </span>
               <span className="font-mono text-muted">
                 day {movement.regime_clock.days ?? '—'} · began {movement.regime_clock.since ?? '—'}
-                {movement.regime_clock.prev && ` · was ${String(movement.regime_clock.prev).replace(/_/g, ' ')}`}
+                {movement.regime_clock.prev && ` · was ${glossed(movement.regime_clock.prev)}`}
               </span>
             </div>
           )}
@@ -473,7 +473,7 @@ export default async function RegimePage() {
                 (movement.smh_ew.risk ?? 0) >= 55 ? 'text-defensive'
                 : (movement.smh_ew.risk ?? 0) >= 40 ? 'text-caution' : 'text-muted'
               }>
-                risk {movement.smh_ew.risk} · {String(movement.smh_ew.state ?? '').replace(/_/g, ' ')}
+                risk {movement.smh_ew.risk} · {glossed(movement.smh_ew.state)}
               </span>
               {(movement.smh_ew.destinations?.length ?? 0) > 0 &&
                 ` — capital leaning toward ${movement.smh_ew!.destinations!.join(', ')}`}
@@ -497,7 +497,7 @@ export default async function RegimePage() {
           {(movement.flips?.length ?? 0) > 0 && (
             <p className="pt-2 text-[10px] text-faint">
               flips {movement.flips!.map((f) =>
-                `${f.as_of}: ${String(f.from ?? '').replace(/_/g, ' ')} → ${String(f.to ?? '').replace(/_/g, ' ')}`
+                `${f.as_of}: ${glossed(f.from)} → ${glossed(f.to)}`
               ).join(' · ')}
             </p>
           )}
