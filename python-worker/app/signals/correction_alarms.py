@@ -68,7 +68,9 @@ def _fred_series(sid: str, days: int = 120) -> list[tuple[date, float]]:
     try:
         req = urllib.request.Request(
             _FRED_CSV.format(sid=sid, start=start),
-            headers={"User-Agent": "trading-system/alarms"})
+            headers={"User-Agent":
+                     "trading-system/1.0 (correction-alarms; "
+                     "contact: ops@trading-system.local)"})
         txt = urllib.request.urlopen(req, timeout=20).read().decode()
         out = []
         for row in csv.DictReader(io.StringIO(txt)):
@@ -78,6 +80,11 @@ def _fred_series(sid: str, days: int = 120) -> list[tuple[date, float]]:
         return out
     except Exception as e:                                  # noqa: BLE001
         logger.debug("fred csv %s: %s", sid, e)
+        try:                                   # terminal fetch failure →
+            from app.utils.http_resilience import fail   # ledger + breaker
+            fail("fred", f"fredgraph.csv?id={sid}", e)
+        except Exception:
+            pass
         return []
 
 
