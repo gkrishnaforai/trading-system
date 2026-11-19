@@ -1467,6 +1467,24 @@ async function StockCore({ sym }: { sym: string }) {
               >
                 report →
               </Link>
+              {(() => {
+                const fvd = obj(lastPrint.fv_delta)
+                const dp = fvd?.delta_pct != null ? Number(fvd.delta_pct) : null
+                if (!fvd || fvd.before == null || fvd.after == null) return null
+                const moved = dp != null && Math.abs(dp) >= 0.005
+                return (
+                  <div className="pt-1">
+                    <span className={moved && dp! > 0 ? 'text-aggressive' : moved ? 'text-defensive' : 'text-muted'}>
+                      FV {money(fvd.before)} → {money(fvd.after)}
+                      {dp != null && ` (${dp > 0 ? '+' : ''}${(dp * 100).toFixed(1)}%)`}
+                    </span>
+                    <span className="text-faint">
+                      {` · vs ${String(fvd.prior_run_as_of ?? 'prior run').slice(0, 10)}`}
+                      {fvd.reused ? ' · inputs unchanged' : ''}
+                    </span>
+                  </div>
+                )
+              })()}
               {Array.isArray(lastPrint.drivers) && (lastPrint.drivers as Record<string, unknown>[]).some(d => d?.delta_dir === 'cut' || d?.delta_dir === 'raised') && (
                 <div className="pt-1">
                   {(lastPrint.drivers as Record<string, unknown>[])

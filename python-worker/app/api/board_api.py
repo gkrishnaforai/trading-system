@@ -497,9 +497,24 @@ async def _j_event_day():
 
 
 async def _j_flywheel():
-    """Expectation-gap / flywheel scores for tracked symbols."""
+    """Expectation-gap / flywheel scores for tracked symbols — ordered
+    stalest-first so a timeout mid-run rotates coverage instead of
+    starving a fixed tail (alphabetical order under the 50m cap is how
+    AVGO's row fossilized at its June print)."""
     from app.signals.expectation_gap import refresh_flywheel
-    return await refresh_flywheel(await _tracked_symbols(), concurrency=8)
+    syms = await _tracked_symbols()
+    try:
+        rows = await asyncio.to_thread(
+            db.execute_query,
+            "SELECT x.symbol FROM unnest(string_to_array(:s,','))"
+            " WITH ORDINALITY AS x(symbol, ord)"
+            " LEFT JOIN symbol_flywheel f ON f.symbol = x.symbol"
+            " ORDER BY f.updated_at ASC NULLS FIRST, x.ord",
+            {"s": ",".join(syms)})
+        syms = [r["symbol"] for r in rows] or syms
+    except Exception:
+        pass
+    return await refresh_flywheel(syms, concurrency=8)
 
 
 async def _j_fwd_eps_repair():

@@ -65,6 +65,18 @@ def _fundamentals_snap_stamp(sym: str):
         return None
 
 
+def _latest_fv_run(sym: str):
+    """Latest journaled FV run — the 'before' leg of a print delta."""
+    try:
+        r = db.execute_query(
+            "SELECT run_id, fair_value, as_of, scenario_fair_values"
+            " FROM fair_value_v2_runs WHERE symbol=:s"
+            " ORDER BY as_of DESC LIMIT 1", {"s": sym})
+        return dict(r[0]) if r else None
+    except Exception:
+        return None
+
+
 def refresh_after_print(sym: str) -> Dict[str, Any]:
     """Post-print refresh: refetch the FMP fundamentals bundle (fresh
     eps_forward, estimates, TTM actuals) then re-resolve FV. Reports
@@ -72,6 +84,7 @@ def refresh_after_print(sym: str) -> Dict[str, Any]:
     re-resolving on the same inputs just stamps a fresh run on the
     same broken blend (TEM kept showing '2d old run' on 86d inputs)."""
     out: Dict[str, Any] = {"symbol": sym}
+    prior_run = _latest_fv_run(sym)
     before = _fundamentals_snap_stamp(sym)
     try:
         from app.data_management.refresh_manager import (
@@ -111,6 +124,25 @@ def refresh_after_print(sym: str) -> Dict[str, Any]:
     except Exception as exc:
         logger.warning("fv_sweep resolve %s: %s", sym, exc)
         out["fv"] = f"error: {exc}"
+    # the print's FV delta — what the market should now believe vs what
+    # it believed pre-print. Journaled runs give the before leg for
+    # free; a same-run 'after' means the resolve reused, which is
+    # honest too (inputs didn't move → FV shouldn't either)
+    try:
+        after_run = _latest_fv_run(sym)
+        if prior_run and after_run:
+            pb, pa = prior_run.get("fair_value"), after_run.get("fair_value")
+            scen = after_run.get("scenario_fair_values") or {}
+            out["fv_delta"] = {
+                "before": pb, "after": pa,
+                "delta_pct": (pa / pb - 1) if pb and pa else None,
+                "prior_run_as_of": str(prior_run.get("as_of"))[:10],
+                "new_run_id": after_run.get("run_id"),
+                "bear": scen.get("bear"), "base": scen.get("base"),
+                "bull": scen.get("bull"),
+                "reused": bool(out.get("reused"))}
+    except Exception:
+        pass
     return out
 
 

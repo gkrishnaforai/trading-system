@@ -911,6 +911,7 @@ def card(sym: str) -> dict[str, Any]:
             lpdet = _j(last_print.get("detail"))
             last_print["narrative"] = lpdet.get("narrative")
             last_print["drivers"] = lpdet.get("drivers") or []
+            last_print["fv_delta"] = lpdet.get("fv_delta")
             last_print.pop("detail", None)
     except Exception:
         pass

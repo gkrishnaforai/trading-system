@@ -513,6 +513,21 @@ def check_symbol(sym: str, day: Optional[date] = None) -> dict:
     except Exception as exc:
         logger.debug("earnings_watch fv refresh %s: %s", sym, exc)
 
+    # journal the print's FV delta onto the watch row — last_print on
+    # the stock page reads this detail, so 'the print moved FV $X → $Y'
+    # surfaces next to the surprise line
+    try:
+        fvd = fv.get("fv_delta") if isinstance(fv, dict) else None
+        if fvd:
+            _u("UPDATE earnings_watch SET"
+               " detail = COALESCE(detail,'{}'::jsonb)"
+               " || CAST(:d AS jsonb), updated_at=now()"
+               " WHERE symbol=:s AND earnings_date=:e",
+               {"d": json.dumps({"fv_delta": fvd}, default=str),
+                "s": sym, "e": today})
+    except Exception as exc:
+        logger.debug("earnings_watch fv_delta %s: %s", sym, exc)
+
     # post-print review — journal a fresh 5-question review so the
     # stock-page watch section reflects the print (new thesis status,
     # refreshed FV), not the last weekly/alert row. Calls review()

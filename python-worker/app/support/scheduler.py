@@ -148,17 +148,26 @@ async def tick(now: datetime | None = None) -> dict[str, Any]:
                      ).total_seconds() < (r["cooldown_min"] or 15) * 60:
             skipped.append(f"{name} cooldown")
             continue
-        # dependency gate — every predecessor needs a clean recent run
+        # dependency gate — every predecessor needs clean OUTPUT, not
+        # a clean ATTEMPT: gate on the dep's latest clean run (error IS
+        # NULL). A chronically-failing dep used to silence the whole
+        # chain forever (flywheel timed out nightly for a month →
+        # fund-flags/conviction/daily-sheet never fired). Now: never-
+        # produced still blocks, but a dep with older clean output
+        # fires the dependent marked stale — staleness beats silence;
+        # the dependent's own journal timestamps record the data age
         deps = r.get("depends_on") or []
-        unmet = []
+        unmet, stale_deps = [], []
         for d in deps:
             dr = db.execute_query(
-                "SELECT ran_at, error FROM job_runs WHERE name=:n"
-                " ORDER BY ran_at DESC LIMIT 1", {"n": d})
-            if not dr or dr[0].get("error") or \
-                    (now - dr[0]["ran_at"].replace(tzinfo=timezone.utc)
-                     ).total_seconds() > (r["dep_max_age_h"] or 24) * 3600:
+                "SELECT ran_at FROM job_runs WHERE name=:n"
+                " AND error IS NULL ORDER BY ran_at DESC LIMIT 1",
+                {"n": d})
+            if not dr:
                 unmet.append(d)
+            elif (now - dr[0]["ran_at"].replace(tzinfo=timezone.utc)
+                  ).total_seconds() > (r["dep_max_age_h"] or 24) * 3600:
+                stale_deps.append(d)
         if unmet:
             skipped.append(f"{name} waiting on {unmet}")
             continue
@@ -168,7 +177,9 @@ async def tick(now: datetime | None = None) -> dict[str, Any]:
         asyncio.create_task(
             _run_all() if r["kind"] == "box" else _run_job(name))
         in_flight += 1
-        fired.append(f"{name}(catchup)" if due_catchup else name)
+        tag = "(catchup)" if due_catchup else ""
+        tag += f" [stale-deps:{','.join(stale_deps)}]" if stale_deps else ""
+        fired.append(f"{name}{tag}")
     return {"fired": fired, "skipped": skipped,
             "at": now.isoformat(timespec="seconds")}
 
