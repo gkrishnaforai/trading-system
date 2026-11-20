@@ -21,6 +21,8 @@ from app.fair_value_v2.runner import FairValueRunner
 
 DEFS = os.path.join(os.path.dirname(__file__), "..",
                     "app", "fair_value_v2", "methods", "definitions")
+FEATS = os.path.join(os.path.dirname(__file__), "..",
+                     "app", "fair_value_v2", "methods", "features.yaml")
 TRAJ = yaml.safe_load(open(os.path.join(DEFS, "eps_trajectory.yaml")))
 MEGA = yaml.safe_load(open(os.path.join(DEFS, "dcf_mega_cap.yaml")))
 
@@ -142,3 +144,75 @@ class TestPerShareSanity:
         f1 = r._sanity_verdict("MGRE", TS, scalars)
         f2 = r._sanity_verdict("MGRE", TS, {})
         assert f1 == f2 and f1
+
+
+# ---------------------------------------------------------- filing-grounded TTM
+
+class TestFilingGroundedTtm:
+    """Provider TTM fields can hold a single quarter's EPS — SMCI's
+    netIncomePerShareTTM read 1.68 (one quarter) vs the real 4.75,
+    blowing derived forward_growth to 238% and fv to $218 on a $24
+    stock. eps_ttm/net_income_ttm must prefer the filing sum, and the
+    derived growth legs must consume the canonical feature."""
+
+    def test_eps_ttm_prefers_filing_sum(self):
+        feats = yaml.safe_load(open(FEATS))
+        src0 = feats["features"]["eps_ttm"]["sources"][0]
+        assert src0["type"] == "table_column_sum"
+        assert src0["table"] == "fundamental_quarterly"
+        assert src0["column"] == "eps_diluted"
+        assert src0["rows"] == 4 and src0["min_rows"] == 4
+
+    def test_net_income_ttm_prefers_filing_sum(self):
+        feats = yaml.safe_load(open(FEATS))
+        src0 = feats["features"]["net_income_ttm"]["sources"][0]
+        assert src0["type"] == "table_column_sum"
+        assert src0["column"] == "net_income"
+
+    def test_derived_growth_uses_canonical_eps_ttm(self):
+        feats = yaml.safe_load(open(FEATS))
+        fg = feats["features"]["forward_growth"]
+        d = [s for s in fg["sources"] if s.get("type") == "derived"][0]
+        assert d["params"]["eps_ttm"]["type"] == "feature_ref"
+        assert d["params"]["eps_ttm"]["name"] == "eps_ttm"
+
+    def test_sum_columns_allowlisted(self):
+        feats = yaml.safe_load(open(FEATS))
+        cols = feats["allow_table_columns"]["fundamental_quarterly"]["columns"]
+        assert "eps_diluted" in cols and "net_income" in cols
+
+    def test_min_rows_rejects_partial_ttm(self):
+        from app.fair_value_v2.feature_store.postgres_point_in_time import \
+            PostgresPointInTimeFeatureStore
+        store = PostgresPointInTimeFeatureStore.__new__(
+            PostgresPointInTimeFeatureStore)
+
+        class _Sess:
+            def execute(self, *_a, **_k):
+                class R:
+                    def fetchall(self):
+                        return [(0.5, "2025-01-01"), (0.4, "2024-10-01")]
+                return R()
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        class _DB:
+            def get_session(self): return _Sess()
+        store._get_symbol_column = lambda s, t: "symbol"
+        store._has_currency_column = lambda s, t: False
+
+        import app.fair_value_v2.feature_store.postgres_point_in_time as m
+        old = m.db
+        m.db = _DB()
+        try:
+            from datetime import datetime
+            v, ts, ccy = store.get_table_column_sum(
+                "X", datetime(2025, 6, 1), "t", "c", "d", "d",
+                limit=4, min_rows=4)
+            assert v is None            # 2 rows < min_rows 4 → reject
+            v, ts, ccy = store.get_table_column_sum(
+                "X", datetime(2025, 6, 1), "t", "c", "d", "d",
+                limit=4, min_rows=2)
+            assert v == pytest.approx(0.9)
+        finally:
+            m.db = old

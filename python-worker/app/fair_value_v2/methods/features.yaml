@@ -14,7 +14,7 @@ allow_table_columns:
     columns: [total_revenue, net_income]
   fundamental_quarterly:
     as_of_columns: [filing_date]
-    columns: [shares_diluted]
+    columns: [shares_diluted, eps_diluted, net_income]
   share_float:
     as_of_columns: [float_date]
     columns: [shares_outstanding]
@@ -169,6 +169,17 @@ features:
     type: coalesce
     max_age_days: 150
     sources:
+      # filing-grounded first — the provider TTM field can hold a
+      # single quarter's EPS (SMCI: netIncomePerShareTTM read 1.68 —
+      # the June quarter — vs the real 4.75 TTM; derived
+      # forward_growth blew to 238% and fv to $218 on a $24 stock).
+      - type: table_column_sum
+        table: fundamental_quarterly
+        column: eps_diluted
+        as_of: filing_date
+        order_by: filing_date
+        rows: 4
+        min_rows: 4
       - type: snapshot_json
         source: fmp_key_metrics_ttm
         json_root: key_metrics_ttm
@@ -592,6 +603,15 @@ features:
     type: coalesce
     max_age_days: 400
     sources:
+      # filing-grounded 4-quarter sum first — the provider income row
+      # was a stale annual figure (SMCI: 2.23B vs real TTM 3.66B).
+      - type: table_column_sum
+        table: fundamental_quarterly
+        column: net_income
+        as_of: filing_date
+        order_by: filing_date
+        rows: 4
+        min_rows: 4
       - type: snapshot_json_path
         source: fmp_fundamentals
         path: [fundamentals, statements, income, 0, netIncome]
@@ -705,32 +725,11 @@ features:
                   - epsNextYear
                   - epsEstimatedNextYear
           eps_ttm:
-            type: coalesce
-            max_age_days: 150
-            sources:
-              - type: snapshot_json
-                source: fmp_key_metrics_ttm
-                json_root: key_metrics_ttm
-                keys:
-                  - netIncomePerShareTTM
-                  - epsTTM
-                  - epsDilutedTTM
-                  - eps
-                  - netIncomePerShare
-                  - netIncomePerShareTTM
-                  - earningsPerShareTTM
-              - type: snapshot_json_path
-                source: fmp_fundamentals
-                path: [fundamentals, eps_trailing]
-              - type: snapshot_json_path
-                source: fmp_fundamentals
-                path: [fundamentals, eps]
-              - type: snapshot_json_path
-                source: fmp_fundamentals
-                path: [fundamentals, statements, income, 0, epsDiluted]
-              - type: snapshot_json_path
-                source: fmp_fundamentals
-                path: [fundamentals, statements, income, 0, eps]
+            # canonical eps_ttm (filing-grounded first) — embedding a
+            # provider-only list here re-staled the denominator and
+            # blew derived growth to 238% on SMCI.
+            type: feature_ref
+            name: eps_ttm
 
   forward_growth_pct_1y:
     type: derived
@@ -767,32 +766,8 @@ features:
                       - epsNextYear
                       - epsEstimatedNextYear
               eps_ttm:
-                type: coalesce
-                max_age_days: 150
-                sources:
-                  - type: snapshot_json
-                    source: fmp_key_metrics_ttm
-                    json_root: key_metrics_ttm
-                    keys:
-                      - netIncomePerShareTTM
-                      - epsTTM
-                      - epsDilutedTTM
-                      - eps
-                      - netIncomePerShare
-                      - netIncomePerShareTTM
-                      - earningsPerShareTTM
-                  - type: snapshot_json_path
-                    source: fmp_fundamentals
-                    path: [fundamentals, eps_trailing]
-                  - type: snapshot_json_path
-                    source: fmp_fundamentals
-                    path: [fundamentals, eps]
-                  - type: snapshot_json_path
-                    source: fmp_fundamentals
-                    path: [fundamentals, statements, income, 0, epsDiluted]
-                  - type: snapshot_json_path
-                    source: fmp_fundamentals
-                    path: [fundamentals, statements, income, 0, eps]
+                type: feature_ref
+                name: eps_ttm
 
   tnx_yield:
     type: macro_column
