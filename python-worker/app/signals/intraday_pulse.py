@@ -344,6 +344,10 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
                 "broad" if abs(spread) <= 0.004 else "defensive_led")
         ev.append(f"leadership {lead}: SMH {smh['chg_open'] * 100:+.1f}% "
                   f"vs IWM {iwm['chg_open'] * 100:+.1f}% vs open")
+    if smh.get("above_vwap") is not None:
+        ev.append(f"SMH {'above' if smh['above_vwap'] else 'below'} "
+                  f"VWAP{' held' if smh.get('vwap_held') else ''} — "
+                  f"sector reclaim read")
 
     # macro pressure — yields AND oil rising = headwind on growth.
     # On a bond-market holiday ^TNX is frozen at the prior close —
@@ -410,6 +414,8 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
            "vix_rising": vix_rising, "vix_falling": vix_falling,
            "leadership": lead, "macro_pressure": macro_press,
            "bond_closed": bond_closed,
+           "smh_above_vwap": smh.get("above_vwap"),
+           "smh_vwap_held": smh.get("vwap_held"),
            "breadth_adv_pct": adv, "breadth_n": br.get("n"),
            "evidence": ev}
     # forecast layer — direction vs conditions vs day-type, journaled
@@ -461,6 +467,8 @@ def _timeline_row(r: dict) -> dict:
             "breadth_adv_pct": rd.get("breadth_adv_pct"),
             "leadership": rd.get("leadership"),
             "macro_pressure": rd.get("macro_pressure"),
+            "smh_above_vwap": rd.get("smh_above_vwap"),
+            "smh_vwap_held": rd.get("smh_vwap_held"),
             "evidence": rd.get("evidence")}
 
 

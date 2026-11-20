@@ -1082,6 +1082,8 @@ export type IntradayTape = {
     breadth_adv_pct?: number | null
     leadership?: string | null
     macro_pressure?: boolean | null
+    smh_above_vwap?: boolean | null
+    smh_vwap_held?: boolean | null
     evidence?: string[] | null
   }[]
 }

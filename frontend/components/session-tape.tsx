@@ -28,6 +28,12 @@ function readingsLine(t: Tl) {
     bits.push(`${t.breadth_adv_pct}% green vs open`)
   if (t.leadership && t.leadership !== 'broad')
     bits.push(t.leadership === 'ai_led' ? 'AI-led' : 'defensive-led')
+  if (t.smh_above_vwap != null)
+    bits.push(
+      t.smh_above_vwap
+        ? `SMH ${t.smh_vwap_held ? 'above+held' : 'above'} VWAP`
+        : 'SMH below VWAP',
+    )
   if (t.macro_pressure)
     bits.push('rates+oil pressing')
   return bits.join(' · ')
@@ -67,6 +73,17 @@ export function SessionTape({ tape }: { tape: IntradayTape | null }) {
           <RefreshButton />
         </span>
       </div>
+
+      {lastT.smh_above_vwap != null && (
+        <div className="pt-1.5 font-mono text-[11px] text-faint">
+          sector:{' '}
+          {lastT.smh_above_vwap
+            ? lastT.smh_vwap_held
+              ? 'SMH reclaiming VWAP — rebound attempt'
+              : 'SMH above VWAP, unconfirmed'
+            : 'SMH below VWAP — sector still pressured'}
+        </div>
+      )}
 
       <div className="pt-4 space-y-2.5">
         {segments.map((seg, i) => {
