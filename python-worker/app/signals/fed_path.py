@@ -169,6 +169,26 @@ def _ctx() -> dict[str, Any]:
     except Exception:
         pass
 
+    # inflation-leg fallback — macro_snapshots has been empty in prod,
+    # so the inflation module never contributed. The Nowflation CPI
+    # gauge is a daily read on the same 0-100 scale (high = low
+    # inflation); it fills the leg only when the module is missing or
+    # stale — never overrides a real module score.
+    try:
+        mods = ctx.get("modules") or {}
+        inf_mod = mods.get("inflation") or {}
+        stale = ctx.get("modules_age") is None or ctx["modules_age"] > 45
+        if inf_mod.get("score") is None or stale:
+            from app.signals import nowflation
+            nf = nowflation.inflation_score()
+            if nf is not None:
+                mods.setdefault("inflation", {})["score"] = nf
+                mods["inflation"]["source"] = "nowflation_gauge"
+                ctx["modules"] = mods
+                ctx["inflation_score_source"] = "nowflation_gauge"
+    except Exception:
+        pass
+
     # --- calendar ----------------------------------------------------
     try:
         from app.market_events.calendar import upcoming_macro_events

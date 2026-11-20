@@ -616,6 +616,11 @@ def snapshot() -> Optional[dict[str, Any]]:
         from app.market_events.calendar import upcoming_macro_events
         events = [e for e in upcoming_macro_events(7)
                   if e["days_away"] <= 5]
+        # CPI prints carry an expected value when the Nowflation
+        # forecast journal covers the release month — the call card
+        # can say 'CPI in 6d, expected 3.8%' not just 'something soon'
+        from app.signals import nowflation
+        events = nowflation.cpi_event_expected(events)
     except Exception:
         events = []
     event_risk = _event_risk(events)
@@ -727,7 +732,8 @@ def snapshot() -> Optional[dict[str, Any]]:
                           "_event_risk": event_risk,
                           "_data_quality": data_quality,
                           "_divergent": divergent,
-                          "_stress_legs": stress_legs},
+                          "_stress_legs": stress_legs,
+                          "events": events},
                          default=str),
          "l": json.dumps(expl, default=str),
          "v": json.dumps({"regime": regime, "llm_regime": llm_regime,

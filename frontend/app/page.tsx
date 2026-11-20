@@ -275,6 +275,15 @@ export default async function RegimePage() {
     (buckets?._event_risk as string | undefined) ?? null
   const fomcDays = typeof fedFomc?.days_away === 'number'
     ? (fedFomc.days_away as number) : null
+  // journaled event window — CPI events carry an 'expected' print
+  // when the Nowflation forecast covers the release month
+  const evts = Array.isArray(buckets?.events)
+    ? (buckets.events as Record<string, unknown>[]) : []
+  const cpiEvt = evts.find((e) => e.kind === 'cpi' && typeof e.expected === 'number')
+  const catalystBits = [
+    fomcDays != null && fomcDays <= 21 ? `FOMC in ${fomcDays} days` : null,
+    cpiEvt ? `CPI in ${cpiEvt.days_away}d — Nowflation expects ${Number(cpiEvt.expected).toFixed(1)}%` : null,
+  ].filter(Boolean).join(' · ')
   const chg5 = (k: string): string | null => {
     const v = macroDetail?.[k]?.chg5d ?? macroDetail?.[k]?.delta5d
     return typeof v === 'number' && Math.abs(v) >= 0.05
@@ -329,7 +338,7 @@ export default async function RegimePage() {
   if (eventRisk === 'high' || eventRisk === 'extreme') {
     evidenceLines.push({
       label: 'Major catalysts within days', tone: 'text-caution',
-      text: `Important economic or company news is coming soon${fomcDays != null && fomcDays <= 21 ? ` — FOMC in ${fomcDays} days` : ''}, which could cause sharp price movements.`,
+      text: `Important economic or company news is coming soon${catalystBits ? ` — ${catalystBits}` : ''}, which could cause sharp price movements.`,
     })
     if (volLabel.includes('ris'))
       evidenceLines.push({

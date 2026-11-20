@@ -996,6 +996,14 @@ async def _j_driver_bridge() -> dict:
     return await asyncio.to_thread(dbx.run_all)
 
 
+async def _j_nowflation() -> dict:
+    """Nowflation daily — journals the CPI gauge/realtime read and
+    the pre-registered print forecast; fills the fed-path inflation
+    leg and enriches CPI catalysts with an expected value."""
+    from app.signals import nowflation
+    return await asyncio.to_thread(nowflation.run)
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -1279,6 +1287,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
                            _j_valuation_decision),
     "narrative-claims": ("Narrative claims ledger", _j_narrative_claims),
     "driver-bridge":   ("Driver → forecast bridge", _j_driver_bridge),
+    "nowflation":     ("Nowflation daily inflation gauge", _j_nowflation),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
     "metals-pulse": ("Metals Pulse — regime + opportunity", _j_metals),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
@@ -1364,7 +1373,7 @@ _JOB_TIMEOUT = {
     "intraday-tape": 3 * 60, "intraday-regime": 3 * 60,
     "correction-alarms": 3 * 60, "priced-in": 5 * 60,
     "valuation-decision": 5 * 60, "narrative-claims": 10 * 60,
-    "driver-bridge": 10 * 60,
+    "driver-bridge": 10 * 60, "nowflation": 2 * 60,
     "best-picks": 5 * 60,
     "lev-etf-swings": 2 * 60,
     "signal-evals": 3 * 60,
