@@ -257,6 +257,144 @@ export default async function RegimePage() {
     verdict?.plain ||
     (verdict?.rules && Object.keys(verdict.rules).length > 0))
 
+  // ---- plain-English evidence breakdown ------------------------------
+  // Each family the engine reads gets one line, written for a person
+  // not a terminal. Votes are confirm/against the equity regime
+  // signal — in a risk-off regime a 'confirm' is bad news and an
+  // 'against' is the silver lining, so the tone flips with the regime.
+  const bearishRegime = ['defensive', 'caution'].includes(label.toLowerCase()) ||
+    ['stress', 'bear', 'risk_off'].includes(String(canonical?.label ?? ''))
+  const confirmTone = bearishRegime ? 'text-defensive' : 'text-aggressive'
+  const againstTone = bearishRegime ? 'text-muted' : 'text-caution'
+
+  const volBucket =
+    buckets && typeof buckets.volatility === 'object' && buckets.volatility !== null
+      ? (buckets.volatility as Record<string, unknown>)
+      : null
+  const eventRisk = (verdict?.event_risk as string | undefined) ??
+    (buckets?._event_risk as string | undefined) ?? null
+  const fomcDays = typeof fedFomc?.days_away === 'number'
+    ? (fedFomc.days_away as number) : null
+  const chg5 = (k: string): string | null => {
+    const v = macroDetail?.[k]?.chg5d ?? macroDetail?.[k]?.delta5d
+    return typeof v === 'number' && Math.abs(v) >= 0.05
+      ? ` (${v >= 0 ? '+' : ''}${v.toFixed(1)}% /5d)` : null
+  }
+
+  type EvidenceLine = { label: string; text: string; tone: string }
+  const evidenceLines: EvidenceLine[] = []
+
+  const creditVote = confVotes?.credit
+  if (creditVote === 'confirm')
+    evidenceLines.push({
+      label: 'Credit', tone: confirmTone,
+      text: `Investors are getting more worried about companies' ability to repay debt${chg5('hyg') ?? ''}.`,
+    })
+  else if (creditVote === 'against')
+    evidenceLines.push({
+      label: 'Credit', tone: againstTone,
+      text: `Credit markets aren't showing stress — lenders aren't demanding more to hold corporate debt${chg5('hyg') ?? ''}.`,
+    })
+
+  const ratesVote = confVotes?.yields_10y ?? confVotes?.duration
+  if (ratesVote === 'confirm')
+    evidenceLines.push({
+      label: 'Rates', tone: confirmTone,
+      text: `Interest-rate conditions are putting pressure on stocks${chg5('us10y') ?? ''}.`,
+    })
+  else if (ratesVote === 'against')
+    evidenceLines.push({
+      label: 'Rates', tone: againstTone,
+      text: `Rate conditions aren't adding pressure — yields are steady or helping stocks${chg5('us10y') ?? ''}.`,
+    })
+
+  const volLabel = String(volBucket?.label ?? '')
+  if (volLabel.includes('ris')) {
+    evidenceLines.push({
+      label: 'Volatility', tone: 'text-defensive',
+      text: `Market uncertainty and fear are increasing${chg5('vvix') ?? ''}.`,
+    })
+  } else if (volLabel.includes('fall') || volLabel === 'low') {
+    evidenceLines.push({
+      label: 'Volatility', tone: 'text-aggressive',
+      text: `Market fear is receding${chg5('vvix') ?? ''}.`,
+    })
+  } else if (volLabel && volLabel !== 'normal') {
+    evidenceLines.push({
+      label: 'Volatility', tone: 'text-muted',
+      text: `Volatility reads ${volLabel.replace(/_/g, ' ')}${chg5('vvix') ?? ''}.`,
+    })
+  }
+
+  if (eventRisk === 'high' || eventRisk === 'extreme') {
+    evidenceLines.push({
+      label: 'Major catalysts within days', tone: 'text-caution',
+      text: `Important economic or company news is coming soon${fomcDays != null && fomcDays <= 21 ? ` — FOMC in ${fomcDays} days` : ''}, which could cause sharp price movements.`,
+    })
+    if (volLabel.includes('ris'))
+      evidenceLines.push({
+        label: 'Overnight gaps possible', tone: 'text-caution',
+        text: 'Stocks could open significantly higher or lower than the previous close.',
+      })
+  } else if (eventRisk === 'low' || eventRisk === 'none') {
+    evidenceLines.push({
+      label: 'Catalysts', tone: 'text-muted',
+      text: 'No major catalysts in the next few days.',
+    })
+  }
+
+  const capexAlert = String(capex?.alert ?? '')
+  if (capexAlert === 'watch' || capexAlert === 'alert' || capexAlert === 'exit') {
+    evidenceLines.push({
+      label: 'Slower structural picture', tone: capexAlert === 'watch' ? 'text-caution' : 'text-defensive',
+      text: `The longer-term outlook is also weakening — the capex cycle reads '${String(capex?.band ?? '')}' (${capexAlert.toUpperCase()}), not just short-term sentiment.`,
+    })
+  } else if (capex?.band) {
+    evidenceLines.push({
+      label: 'Structural picture', tone: 'text-aggressive',
+      text: `The longer-term picture is still holding — the capex cycle reads '${String(capex.band)}' with no alert.`,
+    })
+  }
+
+  // ---- what this means for an investor -------------------------------
+  // Action bullets derived from the mechanical gates (permissions) and
+  // the verdict rules — same source, written as plain imperatives.
+  const stanceLabel =
+    label === 'Defensive' ? 'Defensive market environment'
+    : label === 'Caution' ? 'Cautious market environment'
+    : label === 'Neutral' ? 'Mixed market environment'
+    : 'Constructive market environment'
+
+  const rules = (verdict?.rules ?? {}) as Record<string, unknown>
+  const actionBullets: string[] = []
+  if (permissions?.dip_buying === false || permissions?.dip_buying === 'off')
+    actionBullets.push('Avoid aggressively buying falling stocks — wait for selling pressure to stabilize.')
+  if (String(rules.cash ?? '').toUpperCase() === 'RAISE')
+    actionBullets.push('Keep some cash available.')
+  if (String(rules.hedge ?? '') === 'ACTIVATE_CRASH_RULES')
+    actionBullets.push('Crash rules are armed — keep hedges on.')
+  if (permissions?.normal_long === false && permissions?.selective_long === false)
+    actionBullets.push('New long entries are closed — manage existing positions only.')
+  else if (selectiveLongsOnly)
+    actionBullets.push('Only selective long setups are permitted — no broad buying.')
+  if (typeof permissions?.size_multiplier === 'number') {
+    const mult = permissions.size_multiplier as number
+    if (mult === 0)
+      actionBullets.push('Position sizing is at zero — nothing buys today.')
+    else if (mult < 1)
+      actionBullets.push(`Position sizing is reduced — run smaller than normal (×${mult.toFixed(2)}).`)
+  }
+  if (eventRisk === 'high' || eventRisk === 'extreme')
+    actionBullets.push('Be careful holding highly volatile stocks through major announcements.')
+  if (permissions?.dip_buying === false || permissions?.dip_buying === 'off' || divergent)
+    actionBullets.push('Look for confirmation before buying the dip.')
+  if (String(rules.leaps ?? '') === 'RESTRICTED')
+    actionBullets.push('Long-dated option buying is restricted.')
+  if (String(rules.core ?? '').toUpperCase() === 'HOLD' && actionBullets.length === 0)
+    actionBullets.push('Hold core positions — don\'t sell into weakness.')
+  if (actionBullets.length === 0)
+    actionBullets.push('Follow the plan — no special restrictions today.')
+
   // which feeds actually answered — a null means the section below
   // renders blank; name it instead of failing silently
   const missing = [
@@ -529,21 +667,51 @@ export default async function RegimePage() {
               </span>
             </p>
           )}
-          {verdict?.rules && Object.keys(verdict.rules).length > 0 && (
-            <div className="pt-3 flex flex-wrap gap-2">
-              {Object.entries(verdict.rules)
-                .filter(([k]) => k !== 'note')
-                .map(([k, v]) => (
-                  <span
-                    key={k}
-                    className="rounded-full border border-hairline px-3 py-1 text-xs text-muted"
-                  >
-                    {k.replace(/_/g, ' ')}{' '}
-                    <span className="font-medium text-ink">
-                      {String(v).replace(/_/g, ' ')}
-                    </span>
+
+          {/* the evidence — one plain-English line per family the
+              engine read, toned by whether it confirms the regime */}
+          {evidenceLines.length > 0 && (
+            <ul className="pt-4 space-y-1.5">
+              {evidenceLines.map((l) => (
+                <li key={l.label} className="flex gap-2 text-[13px] leading-relaxed">
+                  <span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${l.tone.replace('text-', 'bg-')}`} />
+                  <span className="text-muted">
+                    <span className="font-medium text-ink">{l.label}:</span>{' '}
+                    {l.text}
                   </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* what this means for an investor — the stance + the
+              mechanical gates written as plain imperatives */}
+          {actionBullets.length > 0 && (
+            <div className="pt-4 mt-4 border-t border-hairline">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+                What this means for an investor
+              </div>
+              <p className={`pt-2 text-[13px] font-medium ${tone}`}>
+                {stanceLabel}
+              </p>
+              <ul className="pt-2 space-y-1.5">
+                {actionBullets.map((b) => (
+                  <li key={b} className="flex gap-2 text-[13px] leading-relaxed text-muted">
+                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-faint" />
+                    <span>{b}</span>
+                  </li>
                 ))}
+              </ul>
+              {/* the raw gate verbs stay visible — the bullets are the
+                  translation, this is the deterministic source */}
+              {Object.keys(rules).filter((k) => k !== 'note').length > 0 && (
+                <p className="pt-3 font-mono text-[10px] tracking-wide text-faint">
+                  {Object.entries(rules)
+                    .filter(([k]) => k !== 'note')
+                    .map(([k, v]) => `${k} ${String(v).replace(/_/g, ' ').toLowerCase()}`)
+                    .join(' · ')}
+                </p>
+              )}
             </div>
           )}
           {verdict?.rules?.note && (
