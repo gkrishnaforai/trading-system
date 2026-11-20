@@ -116,15 +116,20 @@ def _thesis_integrity(sym: str, scalars: dict) -> tuple[str, list]:
         elif rev >= 0.05:
             ev.append({"family": "estimates", "level": "intact",
                        "note": f"fwd EPS revised +{rev*100:.0f}%"})
+    # dilution_overhang is a share-count RATIO (1.0 = baseline, the
+    # FV engine flags at >1.05) — the real overhang is dil−1, not dil
     dil = _f(scalars.get("dilution_overhang"))
-    if dil is not None and dil > 0.08:
+    oh = (dil - 1) if dil is not None else None
+    if oh is not None and oh > 0.08:
         ev.append({"family": "dilution",
-                   "level": "deteriorating" if dil > 0.15 else "watch",
-                   "note": f"dilution overhang {dil*100:.0f}%"})
+                   "level": "deteriorating" if oh > 0.15 else "watch",
+                   "note": f"dilution overhang {oh*100:.0f}%"})
     cc = _f(scalars.get("cash_conversion"))
-    if cc is not None and cc < 0.5:
+    if cc is not None and 0 <= cc < 0.5:
         ev.append({"family": "fcf_conversion", "level": "watch",
                    "note": f"cash conversion {cc*100:.0f}% — earnings not turning to cash"})
+    # cc < 0 is a denominator artifact (depressed/negative earnings on
+    # positive FCF) — ambiguous, never an integrity flag
     sbc = _f(scalars.get("sbc_to_revenue_ttm"))
     if sbc is not None and sbc > 0.15:
         ev.append({"family": "sbc", "level": "watch",
