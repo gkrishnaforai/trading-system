@@ -32,6 +32,13 @@ params:
   # projects forward from); scenarios compress/expand it
   margin_floor: 0.02
   margin_cap: 0.45
+  # a negative-margin anchor isn't "2% forever" — the trajectory
+  # carries a partial normalization glidepath: bear holds the floor
+  # (no recovery), base recovers margin_recovery of the gap to the
+  # cap, bull/explosive go further. Flat-floor was structurally ~$10
+  # for every negative-margin hypergrowth name (NET leg read $10.6
+  # on a 50% revenue-growth path).
+  margin_recovery: 0.30
   bear_margin_sub: 0.05
   bull_margin_add: 0.03
   explosive_margin_add: 0.05
@@ -82,13 +89,30 @@ formula:
       coalesce:
         - var: net_profit_margin_ttm
         - var: net_profit_margin_midcycle
+    m_neg:
+      lte: [{coalesce: [{var: m_anchor}, 0]}, 0]
+    m_recover:
+      add:
+        - param: margin_floor
+        - mul:
+            - param: margin_recovery
+            - sub: [{param: margin_cap}, {param: margin_floor}]
     m_base:
-      clamp: {value: {var: m_anchor}, lo: {param: margin_floor}, hi: {param: margin_cap}}
+      if:
+        cond: {var: m_neg}
+        then: {clamp: {value: {var: m_recover},
+               lo: {param: margin_floor}, hi: {param: margin_cap}}}
+        else: {clamp: {value: {var: m_anchor},
+               lo: {param: margin_floor}, hi: {param: margin_cap}}}
     m_bear:
-      clamp:
-        value: {sub: [{var: m_base}, {param: bear_margin_sub}]}
-        lo: {param: margin_floor}
-        hi: {param: margin_cap}
+      if:
+        cond: {var: m_neg}
+        then: {param: margin_floor}
+        else:
+          clamp:
+            value: {sub: [{var: m_base}, {param: bear_margin_sub}]}
+            lo: {param: margin_floor}
+            hi: {param: margin_cap}
     m_bull:
       clamp:
         value: {add: [{var: m_base}, {param: bull_margin_add}]}

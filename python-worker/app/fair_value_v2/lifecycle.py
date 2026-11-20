@@ -38,9 +38,9 @@ def _margin_stddev(symbol: str) -> float | None:
     try:
         rows = db.execute_query(
             "SELECT (net_income / NULLIF(revenue, 0)) AS m"
-            " FROM fundamental_quarterly WHERE stock_symbol=:s"
+            " FROM fundamental_quarterly WHERE symbol=:s"
             " AND revenue IS NOT NULL AND net_income IS NOT NULL"
-            " ORDER BY fiscal_date_ending DESC LIMIT 8",
+            " ORDER BY period_end DESC LIMIT 8",
             {"s": symbol})
     except Exception:
         return None

@@ -16,7 +16,7 @@ formula:
   fair_price:
     if:
       cond:
-        any:
+        or:
           - lte: [{var: dividends_ttm}, 0]
           - lte: [{var: shares_outstanding}, 0]
       then: null
@@ -27,7 +27,7 @@ formula:
   bear_fair_price:
     if:
       cond:
-        any:
+        or:
           - lte: [{var: dividends_ttm}, 0]
           - lte: [{var: shares_outstanding}, 0]
       then: null
@@ -38,7 +38,7 @@ formula:
   bull_fair_price:
     if:
       cond:
-        any:
+        or:
           - lte: [{var: dividends_ttm}, 0]
           - lte: [{var: shares_outstanding}, 0]
       then: null
@@ -49,7 +49,7 @@ formula:
   explosive_fair_price:
     if:
       cond:
-        any:
+        or:
           - lte: [{var: dividends_ttm}, 0]
           - lte: [{var: shares_outstanding}, 0]
       then: null

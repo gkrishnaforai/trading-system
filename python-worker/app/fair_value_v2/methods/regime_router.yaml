@@ -17,6 +17,24 @@ rules:
   # candidate — the survival tree priced it at $0.35. Missing FCF data
   # fails the numeric test and falls through to growth/standard cells:
   # 'can't price' is more honest than a fabricated distress value.
+  # going-concern escape — a large-cap the street expects to earn
+  # money next year is a turnaround, not "pre-earnings". The survival
+  # tree is built for speculative growers; it priced INTC ($290B cap,
+  # fwd EPS +$1.79, capex-cycle FCF) at $0.21 distress. Placed before
+  # pre_earnings so it only catches the names that rule would take.
+  - name: standard
+    when:
+      any:
+        - field: eps_ttm
+          lte: 0
+        - field: operating_margin_ttm
+          lte: 0
+      all:
+        - field: eps_forward
+          gte: 0.01
+        - field: market_cap
+          gte: 50000000000
+
   - name: pre_earnings
     when:
       any:

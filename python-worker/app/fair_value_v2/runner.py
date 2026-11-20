@@ -204,11 +204,69 @@ class FairValueRunner:
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
+    def _sanity_verdict(self, symbol: str, as_of_ts: datetime,
+                        scalars: Dict[str, Any]) -> set:
+        """One per-share sanity verdict per run, applied to every
+        feature dict — methods that never request EPS must still
+        lose suspect share counts (ev_fcf on a preferred's parent
+        fundamentals produced fv $896 on a $20 instrument)."""
+        v = getattr(self, "_sanity_flags", None)
+        if v is not None:
+            return v
+        v = set()
+        try:
+            probe = dict(scalars)
+            need = [k for k in ("spot_price", "market_cap",
+                                "eps_forward", "eps_ttm",
+                                "shares_outstanding")
+                    if probe.get(k) is None]
+            if need:
+                extra, _, _ = self.feature_resolver.resolve_scalars(
+                    symbol, as_of_ts, need)
+                for k, x in extra.items():
+                    if x is not None:
+                        probe[k] = x
+            spot = probe.get("spot_price")
+            epsf = probe.get("eps_forward") or probe.get("eps_ttm")
+            if spot and epsf and float(spot) > 0 and float(epsf) > 0:
+                pe = float(spot) / float(epsf)
+                # <2 = per-share data on another scale (KZT EPS vs a
+                # USD ADR — KSPI read fv $97k; parent's EPS on a $25
+                # preferred — MGRE read $557). >400 = the same class
+                # of break inverted.
+                if pe < 2.0 or pe > 400.0:
+                    v.add(f"per_share_scale_suspect:implied_pe={pe:.1f}")
+            mc, so = probe.get("market_cap"), \
+                probe.get("shares_outstanding")
+            if mc and so and spot and float(so) > 0 and float(spot) > 0:
+                r = (float(mc) / float(spot)) / float(so)
+                if r > 4.0 or r < 0.25:
+                    v.add(f"share_count_suspect:ratio={r:.2f}")
+        except Exception:
+            pass
+        self._sanity_flags = v
+        return v
+
+    _SANITY_KILL = {
+        "per_share_scale_suspect": ("eps_forward", "eps_ttm",
+                                    "book_value_per_share"),
+        "share_count_suspect": ("eps_forward", "eps_ttm",
+                                "shares_outstanding", "shares_diluted"),
+    }
+
     def _get_features_for_requires(self, symbol: str, as_of_ts: datetime, required_scalars: Any) -> FeatureRow:
         scalars, sources, quality = self.feature_resolver.resolve_scalars(symbol, as_of_ts, required_scalars)
         for qk, qv in (quality or {}).items():
             if ".fx" in str(qk) and qv:
                 self._fx_notes.setdefault(str(qv), set()).add(str(qk).split(".")[0])
+        try:
+            for flag in self._sanity_verdict(symbol, as_of_ts, scalars):
+                kill = self._SANITY_KILL.get(flag.split(":")[0], ())
+                for k in kill:
+                    if scalars.get(k) is not None:
+                        scalars[k] = None
+        except Exception:
+            pass
         return FeatureRow(
             symbol=symbol,
             as_of_ts=as_of_ts,
@@ -412,6 +470,7 @@ class FairValueRunner:
 
         warnings: List[Dict[str, Any]] = []
         self._fx_notes: Dict[str, set] = {}
+        self._sanity_flags: Optional[set] = None
 
         sector, industry = self.feature_store.get_company_classification(symbol)
         company_name, description = self.feature_store.get_company_profile_text(symbol)
@@ -691,7 +750,9 @@ class FairValueRunner:
                 rs.get("cash_and_equivalents"), rs.get("spot_price"),
                 wacc=float(dcf_params.get("wacc", 0.10)),
                 terminal_growth=float(dcf_params.get("terminal_growth", 0.03)),
-                growth_cap=float(dcf_params.get("growth_cap", 0.20)),
+                growth_cap=float(dcf_params.get(
+                    f"growth_cap_{category}",
+                    dcf_params.get("growth_cap", 0.20))),
                 fade_years=float(dcf_params.get("fade_years", 5)),
                 explicit_years=int(dcf_params.get("explicit_years", 10)),
                 total_debt=rs.get("total_debt"),
@@ -782,6 +843,11 @@ class FairValueRunner:
                 if v is not None}
         except Exception:
             decision_scalars = {}
+
+        for flag in sorted(getattr(self, "_sanity_flags", set())):
+            warnings.append({"level": "warning", "scope": "features",
+                             "reason": flag,
+                             "details": {"symbol": symbol}})
 
         return FairValueV2Result(
             run_id=run_id,

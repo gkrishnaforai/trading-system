@@ -17,6 +17,15 @@ params:
   terminal_growth: 0.03
   growth: 0.08              # fallback when revenue_growth_ttm absent
   growth_cap: 0.20
+  # per-category envelope overrides — a flat 20% cap makes every
+  # genuinely-hypergrowth name read 'beyond envelope' (NET realized
+  # 52% rev growth; implied came back at the cap, not the answer).
+  # These stay conservative — they widen the reporting envelope,
+  # never the valuation stance.
+  growth_cap_ai_infra: 0.35
+  growth_cap_technology: 0.30
+  growth_cap_growth: 0.30
+  growth_cap_fintech: 0.25
   growth_floor: 0.02
   fade_years: 5
   explicit_years: 10
