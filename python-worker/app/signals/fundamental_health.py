@@ -49,8 +49,9 @@ _METRICS = ("rev_growth", "rev_accel", "eps_growth", "eps_accel",
             # growth-expectations risk (expectation_gap._exp_risk) —
             # price-vs-estimate divergence, own-history P/E stretch,
             # back-half-loaded growth, customer concentration
-            "mult_expansion_pct", "fwd_pe_pctile", "h2_growth_load",
+            "mult_expansion_pct", "fwd_pe_pctile", "fwd_pe_pctile_n",
             "px_rev_divergence", "cust_top1_pct",
+            "rev_accel_guarded", "eps_accel_guarded",
             # SEC-derived backlog/billings evidence (symbol_sec_facts) —
             # the demand-vs-timing discriminators: backlog still building
             # while revenue decelerates = conversion delay, not demand loss
@@ -751,6 +752,8 @@ def refresh_all(symbols: list[str] = None) -> dict:
                 extra=", sf.rpo, sf.rpo_yoy, sf.crpo_share,"
                       " sf.def_rev_yoy, sf.gw_impair_fy,"
                       " f.mult_expansion_pct, f.fwd_pe_pctile,"
+                      " f.fwd_pe_pctile_n, f.rev_accel_guarded,"
+                      " f.eps_accel_guarded,"
                       " f.h2_growth_load, f.px_rev_divergence,"
                       " f.cust_top1_pct",
                 join=" LEFT JOIN symbol_sec_facts sf"

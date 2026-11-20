@@ -148,12 +148,18 @@ export function FundPanel({ d }: { d: Record<string, unknown> }) {
           <span className={`font-mono ${dirTone(n(cur.rev_accel))}`}>
             {ptsStr(cur.rev_accel)}
           </span>
+          {cur.rev_accel_guarded ? (
+            <span className="text-[10px] text-faint">normalizing — high base</span>
+          ) : null}
         </Row>
         <Row label="eps accel">
           <Arrow v={n(cur.eps_accel)} />
           <span className={`font-mono ${dirTone(n(cur.eps_accel))}`}>
             {ptsStr(cur.eps_accel)}
           </span>
+          {cur.eps_accel_guarded ? (
+            <span className="text-[10px] text-faint">normalizing — high base</span>
+          ) : null}
         </Row>
         <Row label="gross margin">
           <Arrow v={n(cur.gm_qoq)} />
@@ -211,6 +217,11 @@ export function FundPanel({ d }: { d: Record<string, unknown> }) {
               <span className={`font-mono ${n(cur.fwd_pe_pctile) !== null && n(cur.fwd_pe_pctile)! >= 0.9 ? 'text-defensive' : 'text-muted'}`}>
                 {n(cur.fwd_pe_pctile) !== null ? `${Math.round(n(cur.fwd_pe_pctile)! * 100)}th` : '—'}
               </span>
+              {n(cur.fwd_pe_pctile_n) !== null && (
+                <span className="text-[10px] text-faint">
+                  {n(cur.fwd_pe_pctile_n)} obs
+                </span>
+              )}
             </Row>
             <Row label="growth still ahead">
               <span className={`font-mono ${n(cur.h2_growth_load) !== null && n(cur.h2_growth_load)! >= 0.6 ? 'text-caution' : 'text-muted'}`}>

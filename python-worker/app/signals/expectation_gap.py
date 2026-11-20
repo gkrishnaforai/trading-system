@@ -78,24 +78,27 @@ def _fundamental_accel(fmp, sym: str) -> dict:
         if ttm_prev >= 0.10 and ttm_now > -0.5:
             eps_ttm_growth = (ttm_now / ttm_prev) - 1
     def _accel(cur, prev):
+        """→ (diff, guarded). guarded marks the 0.0 as a deliberate
+        clamp — the card can say "normalizing" instead of a bare
+        "+0pts" that reads like no data."""
         # a diff off a ~zero-base YoY level is base-effect noise, not
         # trajectory — CIEN: EPS +437% YoY "decelerated" −1911pts
         # because the prior quarter was +2350% off ~zero EPS
         if cur is None or prev is None:
-            return None
+            return None, False
         # level-relative FIRST: triple-digit growth stepping down is
         # normalization, not deterioration — NBIS +621%→+454% isn't
         # "slowing". Return 0 (not None) so it overwrites stored junk.
         if cur > 1.0 and cur < prev:
-            return 0.0
+            return 0.0, True
         # then the base-effect guard — a diff off a ~zero-base YoY
         # level is arithmetic noise (CIEN +437% vs prior +2350%).
         # Return 0 (not None): None survives via upsert COALESCE and
         # resurrects the stale stored diff — PLTR carried a -81pt eps
         # "decel" artifact into the classifier this way
         if abs(prev) > 2.0:
-            return 0.0
-        return cur - prev
+            return 0.0, True
+        return cur - prev, False
 
     # capex efficiency — for buildout-phase AI names the question is
     # whether each $1 of capex produces new gross profit, not whether
@@ -139,9 +142,12 @@ def _fundamental_accel(fmp, sym: str) -> dict:
     except Exception:
         pass
 
+    ra, ra_guarded = _accel(rev_yoy[0], rev_yoy[1])
+    ea, ea_guarded = _accel(eps_yoy[0], eps_yoy[1])
     return {
         "rev_growth": rev_yoy[0],
-        "rev_accel": _accel(rev_yoy[0], rev_yoy[1]),
+        "rev_accel": ra,
+        "rev_accel_guarded": ra_guarded,
         "gm_now": gm[0],
         "gm_slope": (gm[0] - gm[4] if gm[0] is not None
                      and gm[4] is not None else None),
@@ -151,7 +157,8 @@ def _fundamental_accel(fmp, sym: str) -> dict:
         "gm_qoq": (gm[0] - gm[1] if gm[0] is not None
                    and gm[1] is not None else None),
         "eps_growth": eps_yoy[0],
-        "eps_accel": _accel(eps_yoy[0], eps_yoy[1]),
+        "eps_accel": ea,
+        "eps_accel_guarded": ea_guarded,
         "eps_growth_ttm": eps_ttm_growth,
         "rd_rev": rd[0],
         "rd_slope": (rd[0] - rd[4] if rd[0] is not None
@@ -526,6 +533,7 @@ def _exp_risk(fmp, sym: str, m: dict) -> dict:
     """
     from app.database import db
     out = {"mult_expansion_pct": None, "fwd_pe_pctile": None,
+           "fwd_pe_pctile_n": None,
            "h2_growth_load": None, "px_rev_divergence": None,
            "cust_top1_pct": None, "cust_note": None}
 
@@ -593,6 +601,9 @@ def _exp_risk(fmp, sym: str, m: dict) -> dict:
             "AND as_of > :cut",
             {"s": sym, "cut": date.today() - timedelta(days=365)})
             if r["pe"]]
+        # journal the depth regardless — "vs history" is only honest
+        # if the card can see how much history exists
+        out["fwd_pe_pctile_n"] = len(pes)
         if m.get("fwd_pe") and len(pes) >= 20:
             out["fwd_pe_pctile"] = round(
                 sum(1 for p in pes if p <= m["fwd_pe"]) / len(pes), 2)
@@ -772,14 +783,15 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             " acq_spend_ttm, acq_rev_pct, rd_rev, rd_slope,"
             " om_now, om_qoq, om_slope, sbc_rev, eps_rep,"
             " eps_rep_growth, mult_expansion_pct, fwd_pe_pctile,"
+            " fwd_pe_pctile_n,"
             " h2_growth_load, px_rev_divergence, cust_top1_pct,"
-            " cust_note) "
+            " cust_note, rev_accel_guarded, eps_accel_guarded) "
             "VALUES (:s,:rg,:ra,:gm,:gms,:gmq,:eg,:ea,:bs,:asp,:lsp,:lrd,"
             ":fe,:fr,:na,:er,:fpe,:mr,:gs,CAST(:gd AS jsonb),"
             ":nde,:dte,:rb,:str,:roic,:roe,:ceff,:crev,:egt,"
             ":ft,:fm,:fg,:aspd,:arp,:rdr,:rds,"
             ":omn,:omq,:oms,:sbcr,:erp,:erpg,"
-            ":mexp,:ppe,:h2l,:prd,:ct1,:cn) "
+            ":mexp,:ppe,:ppn,:h2l,:prd,:ct1,:cn,:rag,:eag) "
             "ON CONFLICT (symbol) DO UPDATE SET "
             "rev_growth=COALESCE(EXCLUDED.rev_growth,"
             " symbol_flywheel.rev_growth),"
@@ -885,6 +897,14 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
             " symbol_flywheel.mult_expansion_pct),"
             " fwd_pe_pctile=COALESCE(EXCLUDED.fwd_pe_pctile,"
             " symbol_flywheel.fwd_pe_pctile),"
+            " fwd_pe_pctile_n=COALESCE(EXCLUDED.fwd_pe_pctile_n,"
+            " symbol_flywheel.fwd_pe_pctile_n),"
+            # guard flags pair with the accel COALESCE — a persisted
+            # 0.0 keeps its 'clamped, not measured' marker
+            " rev_accel_guarded=COALESCE(EXCLUDED.rev_accel_guarded,"
+            " symbol_flywheel.rev_accel_guarded),"
+            " eps_accel_guarded=COALESCE(EXCLUDED.eps_accel_guarded,"
+            " symbol_flywheel.eps_accel_guarded),"
             " h2_growth_load=COALESCE(EXCLUDED.h2_growth_load,"
             " symbol_flywheel.h2_growth_load),"
             # divergence is a CURRENT-state flag, not a metric: when
@@ -928,6 +948,9 @@ def compute_flywheel(fmp, sym: str, price: Optional[float] = None,
              "erp": m.get("eps_rep"), "erpg": m.get("eps_rep_growth"),
              "mexp": m.get("mult_expansion_pct"),
              "ppe": m.get("fwd_pe_pctile"),
+             "ppn": m.get("fwd_pe_pctile_n"),
+             "rag": m.get("rev_accel_guarded"),
+             "eag": m.get("eps_accel_guarded"),
              "h2l": m.get("h2_growth_load"),
              "prd": m.get("px_rev_divergence"),
              "ct1": m.get("cust_top1_pct"),
