@@ -43,6 +43,10 @@ def _hash(text: str) -> str:
         re.sub(r"\s+", " ", text.lower()).strip().encode()).hexdigest()[:16]
 
 
+def _sd(v) -> Optional[str]:
+    return str(v) if v else None
+
+
 def _j(o) -> Any:
     return json.loads(o) if isinstance(o, str) else o
 
@@ -77,8 +81,9 @@ def emit(symbol: str, claim: str, direction: Optional[str],
             " source_date, evidence_confidence, outcome_confidence,"
             " valid_until, evidence_refs, created_by, dedupe_key)"
             " VALUES (:c,1,:s,:cl,:di,:ty,:st,:so,"
-            " COALESCE(:sd::date, current_date),:ec,:oc,"
-            " COALESCE(:vu::timestamptz, now() + interval '180 days'),"
+            " COALESCE(CAST(:sd AS date), current_date),:ec,:oc,"
+            " COALESCE(CAST(:vu AS timestamptz),"
+            "          now() + interval '180 days'),"
             " CAST(:er AS jsonb),:cb,:dk)",
             {"c": cid, "s": sym, "cl": claim[:500], "di": direction,
              "ty": claim_type, "st": status, "so": source,
@@ -182,7 +187,7 @@ def collect(symbol: str) -> int:
                     .startswith("neg") else "mixed",
                     "management_guidance",
                     source="earnings_call",
-                    source_date=str(ew[0]["earnings_date"]),
+                    source_date=_sd(ew[0]["earnings_date"]),
                     evidence_confidence=0.8, outcome_confidence=0.6,
                     status="supported",
                     evidence_refs=[{"table": "earnings_watch",
@@ -201,7 +206,7 @@ def collect(symbol: str) -> int:
                 sym, f"earnings-quality flag: {name.replace('_',' ')}",
                 "negative", "reported_fact",
                 source="earnings_quality",
-                source_date=str(eq[0]["as_of"]),
+                source_date=_sd(eq[0]["as_of"]),
                 evidence_confidence=0.7, status="supported",
                 evidence_refs=[{"table": "symbol_earnings_quality",
                                 "as_of": str(eq[0]["as_of"])}]))
@@ -209,16 +214,18 @@ def collect(symbol: str) -> int:
         pass
     try:    # management's own forward commitments
         for d in db.execute_query(
-                "SELECT metric, period, value, delta_dir, as_of, id"
+                "SELECT metric, period, value, delta_dir,"
+                " created_at AS as_of, id"
                 " FROM driver_commitments WHERE symbol=:s"
-                " AND status='open' ORDER BY as_of DESC LIMIT 6",
+                " AND status='open' ORDER BY created_at DESC LIMIT 6",
                 {"s": sym}) or []:
             n += bool(emit(
                 sym, f"{d['metric']} {d['period']} guided "
                      f"{d['delta_dir']} to {d['value']}",
-                "positive" if d["delta_dir"] == "raised" else "negative",
+                "positive" if d["delta_dir"] == "raised" else
+                "negative" if d["delta_dir"] == "cut" else "mixed",
                 "management_guidance", source="guidance",
-                source_date=str(d.get("as_of")),
+                source_date=_sd(d.get("as_of")),
                 evidence_confidence=0.85, outcome_confidence=0.65,
                 status="supported",
                 evidence_refs=[{"table": "driver_commitments",
@@ -238,7 +245,7 @@ def collect(symbol: str) -> int:
                          f"{'up' if up else 'down'} {abs(float(er))*100:.0f}%",
                     "positive" if up else "negative",
                     "analyst_estimate", source="consensus_revisions",
-                    source_date=str(fw[0]["as_of"]),
+                    source_date=_sd(fw[0]["as_of"]),
                     evidence_confidence=0.75, status="supported",
                     evidence_refs=[{"table": "symbol_flywheel",
                                     "as_of": str(fw[0]["as_of"])}]))
