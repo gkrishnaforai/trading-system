@@ -988,6 +988,14 @@ async def _j_narrative_claims() -> dict:
     return await asyncio.to_thread(nl.run)
 
 
+async def _j_driver_bridge() -> dict:
+    """Driver bridge — seeds driver_assumptions from journaled
+    evidence (commitments, measured inputs) and collapses them to
+    driver_forecasts the priced-in layer consumes as an input leg."""
+    from app.valuation import driver_bridge as dbx
+    return await asyncio.to_thread(dbx.run_all)
+
+
 async def _j_posture_eval() -> dict:
     """Posture eval + outcome grading. Backfills evals over all
     journaled regime snapshots (dedup is first-write-per-day), then
@@ -1270,6 +1278,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "valuation-decision": ("Valuation decision bands — enter/trim/exit",
                            _j_valuation_decision),
     "narrative-claims": ("Narrative claims ledger", _j_narrative_claims),
+    "driver-bridge":   ("Driver → forecast bridge", _j_driver_bridge),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
     "metals-pulse": ("Metals Pulse — regime + opportunity", _j_metals),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
@@ -1321,6 +1330,7 @@ _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "sec-facts", "short-data", "short-squeeze",
               "correction-alarms", "selloff", "best-picks",
               "priced-in", "valuation-decision", "narrative-claims",
+              "driver-bridge",
               "lev-etf-swings", "signal-evals", "custodian"]
 
 
@@ -1354,6 +1364,7 @@ _JOB_TIMEOUT = {
     "intraday-tape": 3 * 60, "intraday-regime": 3 * 60,
     "correction-alarms": 3 * 60, "priced-in": 5 * 60,
     "valuation-decision": 5 * 60, "narrative-claims": 10 * 60,
+    "driver-bridge": 10 * 60,
     "best-picks": 5 * 60,
     "lev-etf-swings": 2 * 60,
     "signal-evals": 3 * 60,
@@ -2714,6 +2725,83 @@ async def symbol_narrative_claims(sym: str, history: bool = False):
         await asyncio.to_thread(nl.collect, sym)
         rows = await asyncio.to_thread(nl.read, sym, history)
     return {"symbol": sym.upper(), "claims": rows}
+
+
+@router.get("/symbol/{sym}/expectations-report")
+async def symbol_expectations_report(sym: str):
+    """The five answers, composed from journaled rows — what the
+    market believes, evidence-backed drivers, priced-in, FV bands,
+    and what would change the conclusion. None where a leg is
+    missing — never fabricated."""
+    from app.signals import narrative_ledger as nl
+    from app.valuation import growth_priced_in as gpi
+    from app.valuation import driver_bridge as dbx
+    s = sym.upper()
+    pi = (await asyncio.to_thread(gpi.read, s, 1) or [])
+    pi = pi[0] if pi else {}
+    claims = await asyncio.to_thread(nl.read, s)
+    dec = db.execute_query(
+        "SELECT * FROM valuation_decisions WHERE symbol=:s"
+        " ORDER BY as_of DESC LIMIT 1", {"s": s})
+    dec = dec[0] if dec else {}
+    df = await asyncio.to_thread(dbx.latest, s)
+    commits = db.execute_query(
+        "SELECT metric, period, value, delta_dir, status"
+        " FROM driver_commitments WHERE symbol=:s"
+        " AND status='open' ORDER BY created_at DESC LIMIT 6",
+        {"s": s})
+    live = [c for c in claims if c.get("status") != "expired"]
+    report = {
+        "symbol": s, "as_of": str(pi.get("as_of") or
+                                 dec.get("as_of") or ""),
+        "market_believes": {
+            "claims": [{"claim": c["claim"], "type": c["claim_type"],
+                        "status": c["status"],
+                        "direction": c["direction"],
+                        "source": c.get("source"),
+                        "source_date": str(c.get("source_date") or "")}
+                       for c in live],
+            "priced_in_score": pi.get("score"),
+            "required_cagr": pi.get("required_cagr"),
+            "implied_growth": pi.get("implied_growth"),
+            "implied_status": pi.get("implied_status"),
+            "sentiment_timing": dec.get("timing"),
+        },
+        "growth_drivers": {
+            "forecast": (df or {}).get("forecast"),
+            "provenance": (df or {}).get("provenance"),
+            "coverage": (df or {}).get("coverage"),
+            "missing_inputs": (df or {}).get("missing_inputs"),
+        },
+        "priced_in": {
+            "forecast_cagr": pi.get("forecast_cagr"),
+            "forecast_src": pi.get("forecast_src"),
+            "required_cagr": pi.get("required_cagr"),
+            "expectation_gap": pi.get("expectation_gap"),
+            "compression_drag": pi.get("compression_drag"),
+            "score": pi.get("score"),
+        },
+        "fair_value": {
+            "price": pi.get("price"),
+            "bear": pi.get("fv_bear"), "base": pi.get("fv_base"),
+            "bull": pi.get("fv_bull"),
+            "dispersion": pi.get("valuation_dispersion"),
+            "margin_of_safety": pi.get("margin_of_safety"),
+            "driver_forecast": pi.get("driver_forecast"),
+        },
+        "what_would_change": {
+            "thesis_integrity": dec.get("thesis_integrity"),
+            "integrity_evidence": dec.get("integrity_evidence"),
+            "contradicted": [{"claim": c["claim"],
+                              "status": c["status"]}
+                             for c in claims
+                             if c.get("status") == "contradicted"],
+            "open_commitments": commits,
+            "decision": dec.get("decision"),
+            "quadrant": dec.get("quadrant"),
+        },
+    }
+    return report
 
 
 @router.get("/journal-grades")

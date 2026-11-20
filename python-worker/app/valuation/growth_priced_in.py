@@ -139,11 +139,25 @@ def evaluate(symbol: str, as_of: Optional[date] = None) -> dict:
 
     required = required_eps_cagr(spot, eps_fwd, exit_pe)
 
-    # forecast CAGR — analyst 1-y consensus when present, realized ttm
-    # growth as labeled proxy. Never manufactured for negative-EPS names.
+    # forecast CAGR — a driver-bridge collapse is the preferred leg
+    # (provenance-backed, explains *why*), then analyst 1-y consensus,
+    # then realized ttm growth as labeled proxy. Never manufactured
+    # for negative-EPS names.
     forecast = _f(scalars.get("forward_growth_pct_1y"))
     forecast_src = "consensus_1y"
-    if forecast is None:
+    driver_forecast = None
+    try:
+        from app.valuation.driver_bridge import latest as _dfl
+        driver_forecast = _dfl(sym)
+    except Exception:
+        driver_forecast = None
+    drv_base = None
+    if driver_forecast:
+        drv_base = ((driver_forecast.get("forecast") or {})
+                    .get("revenue_growth") or {}).get("base")
+    if drv_base is not None:
+        forecast, forecast_src = _f(drv_base), "drivers"
+    elif forecast is None:
         forecast = _f(scalars.get("eps_growth_ttm"))
         forecast_src = "realized_ttm_proxy"
     if forecast is not None:
@@ -194,6 +208,8 @@ def evaluate(symbol: str, as_of: Optional[date] = None) -> dict:
                                  if dispersion is not None else None),
         "margin_of_safety": round(mos, 4) if mos is not None else None,
         "score": score,
+        "driver_forecast": (driver_forecast.get("forecast")
+                            if driver_forecast else None),
         "missing_inputs": missing,
     }
 
@@ -217,15 +233,17 @@ def run(symbols: Optional[list[str]] = None) -> dict:
                 " implied_status, expectation_gap, compression_drag,"
                 " expected_annual_return, fv_bear, fv_base, fv_bull,"
                 " valuation_dispersion, margin_of_safety, score,"
-                " model_version, missing_inputs, detail)"
+                " model_version, missing_inputs, driver_forecast, detail)"
                 " VALUES (:s,:d,:rid,:p,:e,:x,:pn,:fc,:fs,:rc,:ig,:is_,"
                 " :eg,:cd,:er,:fb,:fv,:fu,:vd,:mos,:sc,:mv,"
-                " CAST(:mi AS jsonb),CAST(:dt AS jsonb))"
+                " CAST(:mi AS jsonb),CAST(:df AS jsonb),"
+                " CAST(:dt AS jsonb))"
                 " ON CONFLICT (symbol, as_of) DO UPDATE SET"
                 " run_id=EXCLUDED.run_id, price=EXCLUDED.price,"
                 " required_cagr=EXCLUDED.required_cagr,"
                 " expectation_gap=EXCLUDED.expectation_gap,"
                 " compression_drag=EXCLUDED.compression_drag,"
+                " driver_forecast=EXCLUDED.driver_forecast,"
                 " score=EXCLUDED.score, detail=EXCLUDED.detail",
                 {"s": sym, "d": v["as_of"], "rid": v["run_id"],
                  "p": v["price"], "e": v["eps_fwd"], "x": v["exit_pe"],
@@ -239,6 +257,7 @@ def run(symbols: Optional[list[str]] = None) -> dict:
                  "mos": v["margin_of_safety"], "sc": v["score"],
                  "mv": v["model_version"],
                  "mi": json.dumps(v["missing_inputs"]),
+                 "df": json.dumps(v.get("driver_forecast"), default=str),
                  "dt": json.dumps(v, default=str)})
             out[sym] = v["score"]
         except Exception as exc:
@@ -255,7 +274,7 @@ def read(symbol: str, days: int = 90) -> list[dict]:
             " implied_status, expectation_gap, compression_drag,"
             " expected_annual_return, fv_bear, fv_base, fv_bull,"
             " valuation_dispersion, margin_of_safety, score,"
-            " missing_inputs"
+            " missing_inputs, driver_forecast"
             " FROM growth_priced_in_daily WHERE symbol=:s"
             " ORDER BY as_of DESC LIMIT :n",
             {"s": symbol.upper(), "n": days})

@@ -73,7 +73,14 @@ def emit(symbol: str, claim: str, direction: Optional[str],
             " WHERE symbol=:s AND dedupe_key=:d AND version=1",
             {"s": sym, "d": dk})
         if ex:
-            return ex[0]["claim_id"]
+            # re-collecting the same claim is a no-op — touch
+            # last_confirmed so the ledger knows it still stands,
+            # but return None so emitted counts stay honest
+            db.execute_update(
+                "UPDATE narrative_claims SET last_confirmed=now()"
+                " WHERE claim_id=:c",
+                {"c": ex[0]["claim_id"]})
+            return None
         cid = f"nc_{_ulid()}"
         db.execute_update(
             "INSERT INTO narrative_claims (claim_id, version, symbol,"
@@ -107,7 +114,8 @@ def emit(symbol: str, claim: str, direction: Optional[str],
 def transition(claim_id: str, new_status: str,
                evidence_refs: Optional[list] = None,
                actor: str = "collector",
-               note: Optional[str] = None) -> bool:
+               note: Optional[str] = None,
+               review_kind: str = "transition") -> bool:
     """Move a claim's evidentiary state — appends version n+1 (the old
     version's valid_until closes) and journals the evidence. The only
     sanctioned way a status changes."""
@@ -150,8 +158,9 @@ def transition(claim_id: str, new_status: str,
         db.execute_update(
             "INSERT INTO claim_reviews (claim_id, review_kind, actor,"
             " verdict, evidence_refs, note) VALUES"
-            " (:c,'transition',:a,:v,CAST(:e AS jsonb),:n)",
-            {"c": claim_id, "a": actor, "v": new_status,
+            " (:c,:rk,:a,:v,CAST(:e AS jsonb),:n)",
+            {"c": claim_id, "rk": review_kind, "a": actor,
+             "v": new_status,
              "e": json.dumps(refs, default=str),
              "n": note or f"{row['status']} → {new_status}"})
         return True
@@ -192,6 +201,36 @@ def collect(symbol: str) -> int:
                     status="supported",
                     evidence_refs=[{"table": "earnings_watch",
                                     "date": str(ew[0]["earnings_date"])}]))
+    except Exception:
+        pass
+    try:    # 8-K doc-extract claims — verbatim-grounded filing facts.
+        # earnings_watch.detail.release is only populated when the
+        # release pass ran inline; doc_analyses is the durable journal.
+        for d in db.execute_query(
+                "SELECT id, claims, created_at FROM doc_analyses"
+                " WHERE symbol=:s ORDER BY created_at DESC LIMIT 2",
+                {"s": sym}) or []:
+            for c in (_j(d.get("claims")) or [])[:8]:
+                txt = c.get("text") if isinstance(c, dict) else str(c)
+                if not txt:
+                    continue
+                ctype = (c.get("type") or "fact") if isinstance(c, dict) \
+                    else "fact"
+                cdir = (c.get("direction") or "") if isinstance(c, dict) \
+                    else ""
+                n += bool(emit(
+                    sym, txt,
+                    "negative" if ctype in ("risk", "watch")
+                    or cdir == "headwind"
+                    else "positive" if cdir == "tailwind" else "mixed",
+                    "reported_fact", source="filing_extract",
+                    source_date=_sd(d.get("created_at")),
+                    evidence_confidence=0.8, outcome_confidence=0.6,
+                    status="supported",
+                    evidence_refs=[{"table": "doc_analyses",
+                                    "id": d.get("id"),
+                                    "quote": (c.get("quote") or "")[:200]
+                                    if isinstance(c, dict) else ""}]))
     except Exception:
         pass
     try:    # accounting/quality flags — reported facts, negative
@@ -254,6 +293,39 @@ def collect(symbol: str) -> int:
     return n
 
 
+def grade() -> int:
+    """Outcome grading — resolve live claims against their source
+    journals. A commitment's lifecycle (confirmed/refuted/expired) is
+    journaled evidence; every resolved claim lands a 'grade' review."""
+    from app.database import db
+    graded = 0
+    try:
+        for c in db.execute_query(
+                "SELECT claim_id, status, evidence_refs"
+                " FROM narrative_claims"
+                " WHERE claim_type='management_guidance'"
+                " AND status IN ('proposed','supported')"):
+            for ref in (_j(c.get("evidence_refs")) or []):
+                if ref.get("table") != "driver_commitments":
+                    continue
+                dc = db.execute_query(
+                    "SELECT status FROM driver_commitments WHERE id=:i",
+                    {"i": ref.get("id")})
+                if not dc:
+                    continue
+                new = {"confirmed": "confirmed", "refuted": "contradicted",
+                       "expired": "expired"}.get(dc[0]["status"])
+                if new and new != c["status"]:
+                    graded += int(transition(
+                        c["claim_id"], new, evidence_refs=[ref],
+                        actor="grader",
+                        note=f"commitment {dc[0]['status']}",
+                        review_kind="grade"))
+    except Exception as exc:
+        logger.debug("claim grade: %s", exc)
+    return graded
+
+
 def run(symbols: Optional[list[str]] = None) -> dict:
     from app.database import db
     if symbols is None:
@@ -261,7 +333,9 @@ def run(symbols: Optional[list[str]] = None) -> dict:
             "SELECT DISTINCT symbol FROM symbol_flywheel")
         symbols = [r["symbol"] for r in rows]
     n = sum(collect(s) for s in symbols)
-    return {"symbols": len(symbols), "claims_emitted": n}
+    g = grade()
+    return {"symbols": len(symbols), "claims_emitted": n,
+            "claims_graded": g}
 
 
 def read(symbol: str, history: bool = False) -> list[dict]:
