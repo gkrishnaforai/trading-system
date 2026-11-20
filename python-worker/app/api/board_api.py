@@ -2736,6 +2736,7 @@ async def symbol_expectations_report(sym: str):
     from app.signals import narrative_ledger as nl
     from app.valuation import growth_priced_in as gpi
     from app.valuation import driver_bridge as dbx
+    from app.database import db
     s = sym.upper()
     pi = (await asyncio.to_thread(gpi.read, s, 1) or [])
     pi = pi[0] if pi else {}
