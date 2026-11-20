@@ -431,7 +431,8 @@ def _persist(o: dict[str, Any]) -> None:
     from app.database import db
     db.execute_update(
         "INSERT INTO intraday_evals (ts, state, readings)"
-        " VALUES (:ts, :st, CAST(:r AS jsonb))",
+        " VALUES (:ts, :st, CAST(:r AS jsonb))"
+        " ON CONFLICT (ts) DO NOTHING",          # job + lazy-eval same-second race
         {"ts": o["ts"], "st": o["state"],
          "r": json.dumps(o, default=str)})
 
@@ -468,7 +469,7 @@ def latest() -> dict[str, Any]:
     from app.database import db
     rows = db.execute_query(
         "SELECT ts, state, readings FROM intraday_evals"
-        " WHERE ts::date = CURRENT_DATE ORDER BY ts DESC LIMIT 48")
+        " WHERE ts::date = CURRENT_DATE ORDER BY ts DESC")
     if not rows:
         return {"state": "no_evals_today", "timeline": []}
     latest_eval = rows[0]["readings"] or {}

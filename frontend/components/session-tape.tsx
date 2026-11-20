@@ -72,29 +72,63 @@ export function SessionTape({ tape }: { tape: IntradayTape | null }) {
         {segments.map((seg, i) => {
           const t = seg.start
           const live = i === segments.length - 1
+          const lastRow = seg.rows[seg.rows.length - 1]
+          // coverage is legible: a segment isn't one record — it's N
+          // evals that held the same state, and the span proves it
+          const span = seg.rows.length > 1
+            ? live
+              ? `running since ${hhmm(t.ts)} · ${seg.rows.length} evals ▾`
+              : `ran ${hhmm(t.ts)}–${hhmm(lastRow.ts)} · ${seg.rows.length} evals ▾`
+            : null
+          const head = (
+            <>
+              <span
+                className={`text-[13px] font-medium ${TAPE_TONE[t.state] ?? 'text-muted'}`}
+              >
+                {TAPE_LABEL[t.state] ?? t.state.replace(/_/g, ' ')}
+              </span>
+              {live && (
+                <span className="ml-2 text-[10px] uppercase tracking-wider text-faint">
+                  now
+                </span>
+              )}
+              {span && (
+                <span className="ml-2 text-[11px] text-faint">{span}</span>
+              )}
+              <div className="mt-0.5 font-mono text-[11px] leading-relaxed text-muted">
+                {readingsLine(t)}
+              </div>
+            </>
+          )
           return (
             <div key={`${t.ts}-${i}`} className="flex gap-3 items-baseline">
               <span className="w-11 shrink-0 font-mono text-[11px] text-faint">
                 {hhmm(t.ts)}
               </span>
-              <div className="min-w-0">
-                <span
-                  className={`text-[13px] font-medium ${TAPE_TONE[t.state] ?? 'text-muted'}`}
-                >
-                  {TAPE_LABEL[t.state] ?? t.state.replace(/_/g, ' ')}
-                </span>
-                {live && (
-                  <span className="ml-2 text-[10px] uppercase tracking-wider text-faint">
-                    now
-                  </span>
-                )}
-                <span className="ml-2 text-[11px] text-faint">
-                  {seg.rows.length > 1 ? `${seg.rows.length} evals` : ''}
-                </span>
-                <div className="mt-0.5 font-mono text-[11px] leading-relaxed text-muted">
-                  {readingsLine(t)}
-                </div>
-              </div>
+              {seg.rows.length > 1 ? (
+                <details className="min-w-0 group">
+                  <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                    {head}
+                  </summary>
+                  <div className="mt-1.5 space-y-1 border-l border-hairline pl-3">
+                    {seg.rows.map((r) => (
+                      <div
+                        key={r.ts}
+                        className="flex gap-2 items-baseline font-mono text-[11px]"
+                      >
+                        <span className="w-11 shrink-0 text-faint">
+                          {hhmm(r.ts)}
+                        </span>
+                        <span className="text-muted">
+                          {readingsLine(r) || r.state.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              ) : (
+                <div className="min-w-0">{head}</div>
+              )}
             </div>
           )
         })}
