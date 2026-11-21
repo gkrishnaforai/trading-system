@@ -183,6 +183,17 @@ export type MorningRegime = {
     ey_spread_pp?: number | null
     spread_change_1w_bps?: number | null
     spread_change_1m_bps?: number | null
+    eps_rev_n?: number | null
+    eps_rev_up_n?: number | null
+    eps_rev_down_n?: number | null
+    eps_rev_flat_n?: number | null
+    eps_rev_breadth?: number | null
+    fwd_eps_growth_fy1_fy2?: number | null
+    fwd_eps_growth_n?: number | null
+    earnings_verdict?: string | null
+    earnings_tone?: 'ok' | 'warn' | 'bad' | null
+    earnings_headline?: string | null
+    earnings_detail?: string | null
     verdict?: string | null
     verdict_tone?: 'ok' | 'warn' | 'bad' | null
     headline?: string | null

@@ -575,6 +575,34 @@ export default async function RegimePage() {
                   `${valuation.obs_n ?? 0}d window`,
               ].filter(Boolean).join(' · ')}
             </div>
+            {valuation.earnings_verdict && (
+              <div className="pt-1.5"
+                title={valuation.earnings_detail ?? undefined}>
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+                    earnings
+                  </span>
+                  {valuation.earnings_headline && (
+                    <span className={`font-medium ${valuation.earnings_tone === 'ok'
+                      ? 'text-aggressive' : valuation.earnings_tone === 'warn'
+                        ? 'text-caution' : valuation.earnings_tone === 'bad'
+                          ? 'text-defensive' : 'text-muted'}`}>
+                      {valuation.earnings_headline}
+                    </span>
+                  )}
+                </div>
+                <div className="pt-0.5 font-mono text-[11px] text-faint">
+                  {[
+                    valuation.eps_rev_breadth != null &&
+                      `breadth ${valuation.eps_rev_breadth >= 0 ? '+' : ''}${Math.round(valuation.eps_rev_breadth * 100)}%`,
+                    valuation.eps_rev_n != null &&
+                      `30d ${valuation.eps_rev_up_n ?? 0}↑/${valuation.eps_rev_down_n ?? 0}↓/${valuation.eps_rev_flat_n ?? 0}→`,
+                    valuation.fwd_eps_growth_fy1_fy2 != null &&
+                      `FY→FY ${valuation.fwd_eps_growth_fy1_fy2 >= 0 ? '+' : ''}${Math.round(valuation.fwd_eps_growth_fy1_fy2 * 100)}%`,
+                  ].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+            )}
           </div>
         )}
         {alarms?.correction_character && (
