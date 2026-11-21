@@ -3025,9 +3025,14 @@ async def morning_regime_report():
             alarms=alarms, fed=fed_blk)
     except Exception:
         posture = None
+    try:
+        from app.signals import rates_outlook
+        rates = await asyncio.to_thread(rates_outlook.compose)
+    except Exception:
+        rates = None
     return {"today": t, "intraday": intraday, "fragility": fragility,
             "movement": movement, "valuation": valuation,
-            "posture": posture,
+            "posture": posture, "rates": rates,
             "record": await asyncio.to_thread(morning.record)}
 
 

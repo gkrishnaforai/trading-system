@@ -69,6 +69,7 @@ export default async function RegimePage() {
   const movement = morning?.movement
   const valuation = morning?.valuation
   const eqPosture = morning?.posture
+  const rates = morning?.rates
   const record = morning?.record ?? []
 
   const tone = TONE[p.posture ?? 'neutral'] ?? 'text-neutral'
@@ -642,6 +643,49 @@ export default async function RegimePage() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+        {rates && (
+          <div className="pt-2 text-xs" title={rates.rates_detail ?? undefined}>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+                rates
+              </span>
+              <span className={`font-semibold ${rates.rates_tone === 'ok'
+                ? 'text-aggressive' : rates.rates_tone === 'warn'
+                  ? 'text-caution' : rates.rates_tone === 'bad'
+                    ? 'text-defensive' : 'text-muted'}`}>
+                {rates.rates_direction
+                  ? rates.rates_direction === 'reheating'
+                    ? 'Reheating'
+                    : rates.rates_direction === 'cooling'
+                      ? 'Cooling' : 'Steady'
+                  : '—'}
+              </span>
+              {rates.rates_headline && (
+                <span className="text-muted">{rates.rates_headline}</span>
+              )}
+            </div>
+            <div className="pt-0.5 font-mono text-[11px] text-faint">
+              {[
+                rates.realtime_yoy != null &&
+                  `nowcast ${rates.realtime_yoy}%` +
+                  (rates.realtime_wow_pp != null
+                    ? ` (${rates.realtime_wow_pp > 0 ? '+' : ''}${rates.realtime_wow_pp}pp/wk)` : ''),
+                rates.official_yoy != null &&
+                  `official ${rates.official_yoy}%` +
+                  (rates.official_month ? ` (${rates.official_month})` : ''),
+                rates.print_forecast_yoy != null &&
+                  `next print ~${rates.print_forecast_yoy}%`,
+                rates.fed_expected_bps != null &&
+                  `fed ${rates.fed_expected_bps > 0 ? '+' : ''}${rates.fed_expected_bps}bp ` +
+                  `${(rates.fed_lean ?? '').replace(/_/g, ' ')}`,
+                rates.fomc_date &&
+                  `FOMC ${rates.fomc_date}` +
+                  (rates.fomc_days != null ? ` ${rates.fomc_days}d` : '') +
+                  (rates.p_hike != null ? ` · ${rates.p_hike}% hike` : ''),
+              ].filter(Boolean).join(' · ')}
+            </div>
           </div>
         )}
         {alarms?.correction_character && (

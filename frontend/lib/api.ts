@@ -214,6 +214,25 @@ export type MorningRegime = {
     posture_headline?: string | null
     posture_detail?: string | null
   } | null
+  rates?: {
+    rates_direction?: 'cooling' | 'reheating' | 'flat' | null
+    rates_tone?: 'ok' | 'warn' | 'bad' | null
+    rates_headline?: string | null
+    rates_detail?: string | null
+    nf_as_of?: string | null
+    realtime_yoy?: number | null
+    realtime_wow_pp?: number | null
+    official_yoy?: number | null
+    official_month?: string | null
+    print_forecast_yoy?: number | null
+    fed_lean?: string | null
+    fed_expected_bps?: number | null
+    fomc_date?: string | null
+    fomc_days?: number | null
+    p_hike?: number | null
+    p_hold?: number | null
+    p_cut?: number | null
+  } | null
   record?: Array<Record<string, unknown>>
 }
 
