@@ -5,9 +5,17 @@ requires:
   scalars:
     - eps_ttm
   optional_scalars:
+    - gross_margin_ttm
     - forward_growth_pct_1y
   series: []
 params:
+  # hardware-economics multiple gate — multi-year gross margin splits
+  # manufacturing from platform economics; peak-cycle hardware EPS
+  # de-rates where platform EPS doesn't
+  ems_gm_threshold: 0.18
+  hardware_gm_threshold: 0.38
+  pe_cap_ems: 18.0
+  pe_cap_hardware: 25.0
   pe_floor: 8.0
   pe_cap: 45.0
   pe_at_zero_g: 16.0          # justified PE for a no-growth name
@@ -22,6 +30,17 @@ params:
   explosive_pe_mult: 1.55
 formula:
   bindings:
+    hw_pe_cap:
+      if:
+        cond:
+          lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: ems_gm_threshold}]
+        then: {param: pe_cap_ems}
+        else:
+          if:
+            cond:
+              lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: hardware_gm_threshold}]
+            then: {param: pe_cap_hardware}
+            else: 999.0
     g:
       clamp:
         value:
@@ -33,22 +52,22 @@ formula:
         value:
           add: [{param: pe_at_zero_g}, {mul: [{param: pe_per_g}, {var: g}]}]
         lo: {param: pe_floor}
-        hi: {param: pe_cap}
+        hi: {min: [{param: pe_cap}, {var: hw_pe_cap}]}
     pe_bear:
       clamp:
         value: {mul: [{var: pe_base}, {param: bear_pe_mult}]}
         lo: {param: pe_floor}
-        hi: {param: pe_cap}
+        hi: {min: [{param: pe_cap}, {var: hw_pe_cap}]}
     pe_bull:
       clamp:
         value: {mul: [{var: pe_base}, {param: bull_pe_mult}]}
         lo: {param: pe_floor}
-        hi: {param: pe_cap}
+        hi: {min: [{param: pe_cap}, {var: hw_pe_cap}]}
     pe_explosive:
       clamp:
         value: {mul: [{var: pe_base}, {param: explosive_pe_mult}]}
         lo: {param: pe_floor}
-        hi: {param: pe_cap}
+        hi: {min: [{param: pe_cap}, {var: hw_pe_cap}]}
   fair_price:
     if:
       cond:

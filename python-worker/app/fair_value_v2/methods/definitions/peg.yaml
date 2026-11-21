@@ -5,8 +5,17 @@ requires:
   scalars:
     - eps_forward
     - forward_growth_pct_1y
+  optional_scalars:
+    - gross_margin_ttm
   series: []
 params:
+  # hardware-economics multiple gate — multi-year gross margin splits
+  # manufacturing from platform economics; peak-cycle hardware EPS
+  # de-rates where platform EPS doesn't
+  ems_gm_threshold: 0.18
+  hardware_gm_threshold: 0.38
+  pe_cap_ems: 18.0
+  pe_cap_hardware: 25.0
   peg_target: 1.2
   pe_floor: 15.0
   pe_cap: 45.0
@@ -19,6 +28,17 @@ params:
   growth_mult_explosive: 1.25
 formula:
   bindings:
+    hw_pe_cap:
+      if:
+        cond:
+          lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: ems_gm_threshold}]
+        then: {param: pe_cap_ems}
+        else:
+          if:
+            cond:
+              lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: hardware_gm_threshold}]
+            then: {param: pe_cap_hardware}
+            else: 999.0
     g:
       clamp:
         value: {var: forward_growth_pct_1y}
@@ -52,7 +72,7 @@ formula:
           - clamp:
               value: {mul: [{param: peg_target}, {var: g}]}
               lo: {param: pe_floor}
-              hi: {param: pe_cap}
+              hi: {min: [{param: pe_cap}, {var: hw_pe_cap}]}
   bear_fair_price:
     if:
       cond:
@@ -66,7 +86,7 @@ formula:
           - clamp:
               value: {mul: [{param: peg_target}, {var: g_bear}]}
               lo: {param: pe_floor}
-              hi: {param: pe_cap_bear}
+              hi: {min: [{param: pe_cap_bear}, {var: hw_pe_cap}]}
   bull_fair_price:
     if:
       cond:
@@ -80,7 +100,7 @@ formula:
           - clamp:
               value: {mul: [{param: peg_target}, {var: g_bull}]}
               lo: {param: pe_floor}
-              hi: {param: pe_cap_bull}
+              hi: {min: [{param: pe_cap_bull}, {var: hw_pe_cap}]}
   explosive_fair_price:
     if:
       cond:
@@ -94,7 +114,7 @@ formula:
           - clamp:
               value: {mul: [{param: peg_target}, {var: g_explosive}]}
               lo: {param: pe_floor}
-              hi: {param: pe_cap_explosive}
+              hi: {min: [{param: pe_cap_explosive}, {var: hw_pe_cap}]}
 validations:
   - name: growth_pct_not_decimal
     when: {gt: [{var: forward_growth_pct_1y}, 300]}

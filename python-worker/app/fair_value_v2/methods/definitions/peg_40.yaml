@@ -6,6 +6,8 @@ requires:
     - eps_forward
     - forward_growth_pct_1y
     - operating_margin_ttm
+  optional_scalars:
+    - gross_margin_ttm
   series: []
 params:
   peg_40_target: 1.1
@@ -14,6 +16,13 @@ params:
   pe_cap_bear: 40.0
   pe_cap_bull: 60.0
   pe_cap_explosive: 70.0
+  # hardware-economics multiple gate — multi-year gross margin splits
+  # manufacturing from platform economics; peak-cycle hardware EPS
+  # de-rates where platform EPS doesn't
+  ems_gm_threshold: 0.18
+  hardware_gm_threshold: 0.38
+  pe_cap_ems: 18.0
+  pe_cap_hardware: 25.0
   growth_pct_cap: 60.0
   margin_pct_floor: 0.0
   margin_pct_cap: 60.0
@@ -21,6 +30,18 @@ params:
   bull_mult: 1.15
   explosive_mult: 1.3
 formula:
+  bindings:
+    hw_pe_cap:
+      if:
+        cond:
+          lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: ems_gm_threshold}]
+        then: {param: pe_cap_ems}
+        else:
+          if:
+            cond:
+              lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: hardware_gm_threshold}]
+            then: {param: pe_cap_hardware}
+            else: 999.0
   fair_price:
     if:
       cond:
@@ -48,7 +69,7 @@ formula:
                 value:
                   mul: [{param: peg_40_target}, {var: score}]
                 lo: {param: pe_floor}
-                hi: {param: pe_cap}
+                hi: {min: [{param: pe_cap}, {var: hw_pe_cap}]}
           in:
             mul: [{var: eps_forward}, {var: pe}]
   bear_fair_price:
@@ -80,7 +101,7 @@ formula:
                     - {param: bear_mult}
                     - mul: [{param: peg_40_target}, {var: score}]
                 lo: {param: pe_floor}
-                hi: {param: pe_cap_bear}
+                hi: {min: [{param: pe_cap_bear}, {var: hw_pe_cap}]}
           in:
             mul: [{var: eps_forward}, {var: pe}]
   bull_fair_price:
@@ -112,7 +133,7 @@ formula:
                     - {param: bull_mult}
                     - mul: [{param: peg_40_target}, {var: score}]
                 lo: {param: pe_floor}
-                hi: {param: pe_cap_bull}
+                hi: {min: [{param: pe_cap_bull}, {var: hw_pe_cap}]}
           in:
             mul: [{var: eps_forward}, {var: pe}]
   explosive_fair_price:
@@ -144,7 +165,7 @@ formula:
                     - {param: explosive_mult}
                     - mul: [{param: peg_40_target}, {var: score}]
                 lo: {param: pe_floor}
-                hi: {param: pe_cap_explosive}
+                hi: {min: [{param: pe_cap_explosive}, {var: hw_pe_cap}]}
           in:
             mul: [{var: eps_forward}, {var: pe}]
 validations: []

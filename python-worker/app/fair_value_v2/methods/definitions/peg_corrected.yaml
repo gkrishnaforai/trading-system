@@ -5,9 +5,18 @@ requires:
   scalars:
     - eps_forward
     - forward_growth_pct_1y
+  optional_scalars:
+    - gross_margin_ttm
   series: []
 params:
   peg_target: 0.9
+  # hardware-economics multiple gate — multi-year gross margin splits
+  # manufacturing from platform economics; peak-cycle hardware EPS
+  # de-rates where platform EPS doesn't
+  ems_gm_threshold: 0.18
+  hardware_gm_threshold: 0.38
+  pe_cap_ems: 18.0
+  pe_cap_hardware: 25.0
   pe_floor: 15.0
   pe_floor_bear: 15.0
   pe_floor_base: 15.0
@@ -23,6 +32,17 @@ params:
   pe_cap_explosive: 45.0
 formula:
   bindings:
+    hw_pe_cap:
+      if:
+        cond:
+          lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: ems_gm_threshold}]
+        then: {param: pe_cap_ems}
+        else:
+          if:
+            cond:
+              lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: hardware_gm_threshold}]
+            then: {param: pe_cap_hardware}
+            else: 999.0
     g_raw: {var: forward_growth_pct_1y}
     g:
       clamp:
@@ -51,7 +71,7 @@ formula:
             - {param: peg_target}
             - {var: g}
         lo: {param: pe_floor_base}
-        hi: {param: pe_cap}
+        hi: {min: [{param: pe_cap}, {var: hw_pe_cap}]}
     pe_bear:
       clamp:
         value:
@@ -59,7 +79,7 @@ formula:
             - {param: peg_target}
             - {var: g_bear}
         lo: {param: pe_floor_bear}
-        hi: {param: pe_cap_bear}
+        hi: {min: [{param: pe_cap_bear}, {var: hw_pe_cap}]}
     pe_bull:
       clamp:
         value:
@@ -67,7 +87,7 @@ formula:
             - {param: peg_target}
             - {var: g_bull}
         lo: {param: pe_floor_bull}
-        hi: {param: pe_cap_bull}
+        hi: {min: [{param: pe_cap_bull}, {var: hw_pe_cap}]}
     pe_explosive:
       clamp:
         value:
@@ -75,7 +95,7 @@ formula:
             - {param: peg_target}
             - {var: g_explosive}
         lo: {param: pe_floor_explosive}
-        hi: {param: pe_cap_explosive}
+        hi: {min: [{param: pe_cap_explosive}, {var: hw_pe_cap}]}
   fair_price:
     if:
       cond:

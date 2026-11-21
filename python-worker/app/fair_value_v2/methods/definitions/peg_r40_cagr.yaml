@@ -14,9 +14,17 @@ requires:
     - revenue_growth_ttm
     - net_profit_margin_ttm
   optional_scalars:
+    - gross_margin_ttm
     - eps_forward
   series: []
 params:
+  # hardware-economics multiple gate — multi-year gross margin splits
+  # manufacturing from platform economics; peak-cycle hardware EPS
+  # de-rates where platform EPS doesn't
+  ems_gm_threshold: 0.18
+  hardware_gm_threshold: 0.38
+  pe_cap_ems: 18.0
+  pe_cap_hardware: 25.0
   cagr_cap: 0.30            # v1: cap growth at 30% — no hyperbole
   cagr_cap_bull: 0.40
   pe_cap: 60.0              # v1 target_pe cap
@@ -33,6 +41,17 @@ formula:
   fair_price:
     let:
       bindings:
+    hw_pe_cap:
+      if:
+        cond:
+          lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: ems_gm_threshold}]
+        then: {param: pe_cap_ems}
+        else:
+          if:
+            cond:
+              lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: hardware_gm_threshold}]
+            then: {param: pe_cap_hardware}
+            else: 999.0
         # eligibility: >=$100M revenue (v1 gate); low-revenue names
         # don't get a rule-of-40 multiple
         eligible:
@@ -87,7 +106,7 @@ formula:
           clamp:
             value: {mul: [{var: peg}, {var: g}]}
             lo: 0
-            hi: {param: pe_cap}
+            hi: {min: [{param: pe_cap}, {var: hw_pe_cap}]}
         eps_base:
           # v1: min(eps_forward, estimate-window start) — take the
           # more conservative of two forward EPS views
@@ -164,7 +183,7 @@ formula:
           clamp:
             value: {mul: [{var: peg}, {var: g}]}
             lo: 0
-            hi: {param: pe_cap_bear}
+            hi: {min: [{param: pe_cap_bear}, {var: hw_pe_cap}]}
         eps_base:
           if:
             cond:
@@ -236,7 +255,7 @@ formula:
           clamp:
             value: {mul: [{var: peg}, {var: g}]}
             lo: 0
-            hi: {param: pe_cap_bull}
+            hi: {min: [{param: pe_cap_bull}, {var: hw_pe_cap}]}
         eps_base:
           if:
             cond:
@@ -308,7 +327,7 @@ formula:
           clamp:
             value: {mul: [{var: peg}, {var: g}]}
             lo: 0
-            hi: {param: pe_cap_explosive}
+            hi: {min: [{param: pe_cap_explosive}, {var: hw_pe_cap}]}
         eps_base:
           if:
             cond:

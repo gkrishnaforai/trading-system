@@ -12,6 +12,7 @@ requires:
     - forward_growth
     - eps_forward
     - eps_ttm
+    - gross_margin_ttm
   series: []
 params:
   pe_floor: 10.0
@@ -24,6 +25,17 @@ params:
   growth_cap_normal: 0.50
   pe_cap_mega: 40.0
   pe_cap_normal: 60.0
+
+  # hardware-economics multiple gate — multi-year gross margin splits
+  # manufacturing from platform economics. EMS/assembly (<18% GM:
+  # Celestica, Fabrinet) and component/storage hardware (<38% GM:
+  # WDC, COHR, VRT) de-rate at peak estimates in a way platform
+  # earnings don't; paying a platform multiple on peak-cycle
+  # hardware EPS printed fantasy FVs (CLS $847 on 38x FY27)
+  ems_gm_threshold: 0.18
+  hardware_gm_threshold: 0.38
+  pe_cap_ems: 18.0
+  pe_cap_hardware: 25.0
   growth_w_mega: 2.0
   growth_w_normal: 3.0
 
@@ -55,6 +67,26 @@ formula:
       coalesce:
         - {var: eps_forward}
         - {var: eps_ttm}
+    # multiple ceiling — the min of the size-tiered cap and the
+    # margin-structure gate. Missing GM coalesces to 1.0 (platform
+    # economics) so a name without ratio rows keeps the existing caps
+    hw_pe_cap:
+      min:
+        - if:
+            cond:
+              gt: [{var: market_cap}, {param: mega_cap_threshold}]
+            then: {param: pe_cap_mega}
+            else: {param: pe_cap_normal}
+        - if:
+            cond:
+              lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: ems_gm_threshold}]
+            then: {param: pe_cap_ems}
+            else:
+              if:
+                cond:
+                  lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: hardware_gm_threshold}]
+                then: {param: pe_cap_hardware}
+                else: 999.0
   fair_price:
     if:
       cond:
@@ -105,12 +137,7 @@ formula:
                           - sub: [{var: operating_margin_ttm}, {param: margin_neutral}]
                           - param: margin_unit
               lo: {param: pe_floor}
-              hi:
-                if:
-                  cond:
-                    gt: [{var: market_cap}, {param: mega_cap_threshold}]
-                  then: {param: pe_cap_mega}
-                  else: {param: pe_cap_normal}
+              hi: {var: hw_pe_cap}
 
   bear_fair_price:
     if:
@@ -165,12 +192,7 @@ formula:
                               - sub: [{var: operating_margin_ttm}, {param: margin_neutral}]
                               - param: margin_unit
               lo: {param: pe_floor}
-              hi:
-                if:
-                  cond:
-                    gt: [{var: market_cap}, {param: mega_cap_threshold}]
-                  then: {param: pe_cap_mega}
-                  else: {param: pe_cap_normal}
+              hi: {var: hw_pe_cap}
 
   bull_fair_price:
     if:
@@ -225,12 +247,7 @@ formula:
                               - sub: [{var: operating_margin_ttm}, {param: margin_neutral}]
                               - param: margin_unit
               lo: {param: pe_floor}
-              hi:
-                if:
-                  cond:
-                    gt: [{var: market_cap}, {param: mega_cap_threshold}]
-                  then: {param: pe_cap_mega}
-                  else: {param: pe_cap_normal}
+              hi: {var: hw_pe_cap}
 
   explosive_fair_price:
     if:
@@ -285,12 +302,7 @@ formula:
                               - sub: [{var: operating_margin_ttm}, {param: margin_neutral}]
                               - param: margin_unit
               lo: {param: pe_floor}
-              hi:
-                if:
-                  cond:
-                    gt: [{var: market_cap}, {param: mega_cap_threshold}]
-                  then: {param: pe_cap_mega}
-                  else: {param: pe_cap_normal}
+              hi: {var: hw_pe_cap}
 validations:
   - name: margin_impossible
     when: {gt: [{var: operating_margin_ttm}, 1.0]}

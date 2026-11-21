@@ -11,6 +11,7 @@ requires:
     - forward_growth
     - net_profit_margin_midcycle
     - net_profit_margin_ttm
+    - gross_margin_ttm
   series: []
 params:
   horizon_years: 3
@@ -52,8 +53,28 @@ params:
   exit_pe_bull: 34.0
   exit_pe_explosive: 45.0
 
+  # hardware-economics multiple gate — multi-year gross margin splits
+  # manufacturing from platform economics; peak-cycle hardware EPS
+  # de-rates where platform EPS doesn't. Applies to the exit
+  # multiple on top of the per-scenario caps
+  ems_gm_threshold: 0.18
+  hardware_gm_threshold: 0.38
+  pe_cap_ems: 18.0
+  pe_cap_hardware: 25.0
+
 formula:
   bindings:
+    hw_pe_cap:
+      if:
+        cond:
+          lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: ems_gm_threshold}]
+        then: {param: pe_cap_ems}
+        else:
+          if:
+            cond:
+              lt: [{coalesce: [{var: gross_margin_ttm}, 1.0]}, {param: hardware_gm_threshold}]
+            then: {param: pe_cap_hardware}
+            else: 999.0
     # the revenue base the street actually prices on — forward-year
     # consensus when published, trailing as fallback (NBIS effect:
     # TTM collapses ramping names)
@@ -157,7 +178,7 @@ formula:
       then: null
       else:
         div:
-          - mul: [{var: eps_t_base}, {param: exit_pe_base}]
+          - mul: [{var: eps_t_base}, {min: [{param: exit_pe_base}, {var: hw_pe_cap}]}]
           - var: disc
 
   bear_fair_price:
@@ -169,7 +190,7 @@ formula:
       then: null
       else:
         div:
-          - mul: [{var: eps_t_bear}, {param: exit_pe_bear}]
+          - mul: [{var: eps_t_bear}, {min: [{param: exit_pe_bear}, {var: hw_pe_cap}]}]
           - var: disc
 
   bull_fair_price:
@@ -181,7 +202,7 @@ formula:
       then: null
       else:
         div:
-          - mul: [{var: eps_t_bull}, {param: exit_pe_bull}]
+          - mul: [{var: eps_t_bull}, {min: [{param: exit_pe_bull}, {var: hw_pe_cap}]}]
           - var: disc
 
   explosive_fair_price:
@@ -193,7 +214,7 @@ formula:
       then: null
       else:
         div:
-          - mul: [{var: eps_t_explosive}, {param: exit_pe_explosive}]
+          - mul: [{var: eps_t_explosive}, {min: [{param: exit_pe_explosive}, {var: hw_pe_cap}]}]
           - var: disc
 
   report:
@@ -211,7 +232,7 @@ formula:
     eps_t_explosive: {var: eps_t_explosive}
     shares_t: {var: shares_t}
     terminal_price_base:
-      mul: [{var: eps_t_base}, {param: exit_pe_base}]
+      mul: [{var: eps_t_base}, {min: [{param: exit_pe_base}, {var: hw_pe_cap}]}]
 
 validations:
   - name: growth_units_suspicious
