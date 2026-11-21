@@ -112,3 +112,90 @@ def compose(stance: Optional[str] = None,
     return _p("dip_buyer", "ok",
               "Weakness is the opportunity — stage adds into "
               "the dip", why)
+
+
+_TONE_SC = {"ok": 1, "warn": 0, "bad": -1}
+_TAPE_DIR = {
+    "aligned": 1, "buyers_in_control": 1,
+    "watch_reversal": 0.5, "sellers_exhausting": 0.5,
+    "narrow_fragile": -0.5, "fragile": -0.5,
+    "sellers_regaining": -1, "tape_breaking": -1, "defensive": -1,
+}
+_DIR_LABEL = [
+    (3, ("Upward", "ok")),
+    (1, ("Leaning up", "ok")),
+    (-1, ("Sideways", "warn")),
+    (-2, ("Leaning down", "warn")),
+    (-9, ("Downward", "bad")),
+]
+_DIR_WORD = {
+    "Upward": "a constructive tape — fundamentals and rates aligned",
+    "Leaning up": "mildly constructive — the setup tilts higher",
+    "Sideways": "a mixed tape — no dominant direction; range chop "
+                "until a leg resolves",
+    "Leaning down": "pressure near-term — weak tape or headwinds "
+                    "outweigh the fundamental case",
+    "Downward": "defensive — multiple legs against equities; "
+                "rallies are suspect",
+}
+
+
+def compose_direction(valuation=None, posture=None, rates=None,
+                      alarms=None, intraday=None):
+    """The heading — where stocks are pointed, near-term.
+
+    Weighted vote across the three journaled verdicts plus the live
+    tape and alarm severity; the note names what would flip it —
+    so 'down' always carries its upside catalyst and 'up' its risk."""
+    st_tone = (valuation or {}).get("stance_tone")
+    po_tone = (posture or {}).get("posture_tone")
+    rt_tone = (rates or {}).get("rates_tone")
+    rt_dir = (rates or {}).get("rates_direction")
+    sev = (alarms or {}).get("severity")
+    char = ((alarms or {}).get("correction_character")
+            or "none").replace("_", " ")
+    tape_state = (intraday or {}).get("state")
+
+    if st_tone is None and rt_tone is None:
+        return {}
+    base = (sum(_TONE_SC.get(t, 0)
+                for t in (st_tone, po_tone, rt_tone))
+            + _TAPE_DIR.get(tape_state or "", 0))
+    if sev == "alarm":
+        base -= 2
+    elif sev == "warning":
+        base -= 1
+
+    label = tone = None
+    for thresh, (lab, tn) in _DIR_LABEL:
+        if base >= thresh:
+            label, tone = lab, tn
+            break
+    word = _DIR_WORD[label]
+
+    # the flip catalyst — what changes this read
+    notes = []
+    if rt_dir == "cooling" and label in ("Sideways", "Leaning down",
+                                         "Downward"):
+        notes.append("upside if hike odds keep unwinding")
+    if rt_dir == "reheating" and label in ("Upward", "Leaning up",
+                                           "Sideways"):
+        notes.append("downside risk: reheating inflation")
+    if sev in ("warning", "alarm") and label != "Downward":
+        notes.append(f"downside trigger: {char} escalating")
+    if label in ("Upward", "Leaning up") and not notes:
+        notes.append("risk: positioning squeeze if tape stalls")
+
+    detail = (f"stance:{(valuation or {}).get('stance') or '—'} + "
+              f"posture:{(posture or {}).get('posture') or '—'} + "
+              f"rates:{rt_dir or '—'} + tape:{tape_state or '—'} + "
+              f"alarm:{char}/{sev or 'none'}"
+              f" → score {base:+.1f}")
+    return {
+        "direction": label.lower().replace(" ", "_"),
+        "direction_label": label,
+        "direction_tone": tone,
+        "direction_headline": word + (
+            (" — " + "; ".join(notes)) if notes else ""),
+        "direction_detail": detail,
+    }

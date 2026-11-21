@@ -245,6 +245,13 @@ export type MorningRegime = {
     bps_d7?: number | null
     compare_to?: string | null
   } | null
+  direction?: {
+    direction?: string | null
+    direction_label?: string | null
+    direction_tone?: 'ok' | 'warn' | 'bad' | null
+    direction_headline?: string | null
+    direction_detail?: string | null
+  } | null
   record?: Array<Record<string, unknown>>
 }
 

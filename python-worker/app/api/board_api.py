@@ -3033,9 +3033,19 @@ async def morning_regime_report():
         rates = await asyncio.to_thread(rates_outlook.compose, wti=wti)
     except Exception:
         rates = None
+    try:
+        # direction — the heading: weighted vote of the three
+        # journaled verdicts + live tape + alarm severity
+        from app.signals import equity_posture as _ep
+        direction = _ep.compose_direction(
+            valuation=valuation, posture=posture,
+            alarms=alarms, intraday=intraday,
+            rates=rates)
+    except Exception:
+        direction = None
     return {"today": t, "intraday": intraday, "fragility": fragility,
             "movement": movement, "valuation": valuation,
-            "posture": posture, "rates": rates,
+            "posture": posture, "rates": rates, "direction": direction,
             "record": await asyncio.to_thread(morning.record)}
 
 

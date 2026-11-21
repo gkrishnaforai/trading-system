@@ -70,6 +70,7 @@ export default async function RegimePage() {
   const valuation = morning?.valuation
   const eqPosture = morning?.posture
   const rates = morning?.rates
+  const direction = morning?.direction
   const record = morning?.record ?? []
 
   const tone = TONE[p.posture ?? 'neutral'] ?? 'text-neutral'
@@ -536,6 +537,25 @@ export default async function RegimePage() {
         <div className="pt-2">
           <TapeChips tape={tape} />
         </div>
+        {direction && (
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pt-2 text-xs"
+            title={direction.direction_detail ?? undefined}>
+            <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+              stocks
+            </span>
+            <span className={`font-semibold text-[13px] ${direction.direction_tone === 'ok'
+              ? 'text-aggressive' : direction.direction_tone === 'warn'
+                ? 'text-caution' : direction.direction_tone === 'bad'
+                  ? 'text-defensive' : 'text-muted'}`}>
+              {direction.direction_label ?? direction.direction}
+            </span>
+            {direction.direction_headline && (
+              <span className="text-muted">
+                {direction.direction_headline}
+              </span>
+            )}
+          </div>
+        )}
         {valuation && (
           <div className="pt-2 text-xs" title={valuation.detail ?? undefined}>
             {valuation.stance && (
@@ -600,7 +620,7 @@ export default async function RegimePage() {
                 valuation.tracked_ey_pct != null &&
                   `EY ${valuation.tracked_ey_pct}%`,
                 valuation.tnx_yield_pct != null &&
-                  `10Y ${valuation.tnx_yield_pct}%`,
+                  `10Y ${Number(valuation.tnx_yield_pct).toFixed(2)}%`,
                 valuation.ey_spread_pp != null &&
                   `premium ${valuation.ey_spread_pp > 0 ? '+' : ''}${valuation.ey_spread_pp}pp`,
                 valuation.spread_change_1w_bps != null &&
