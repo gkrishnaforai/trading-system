@@ -285,6 +285,81 @@ def _verdict(spread: Optional[float]) -> Dict[str, str]:
     }
 
 
+_STANCES = {
+    # (verdict_tone, earnings_verdict) → key, tone, headline, detail.
+    # A setup descriptor — what the environment rewards — never a
+    # timing signal or a "buy now".
+    ("ok", "revisions_rising"): (
+        "constructive", "ok",
+        "Valuation and earnings both support holding equity risk — "
+        "a reasonable environment for staged accumulation",
+        "positive premium + analysts raising estimates — the two "
+        "legs agree"),
+    ("ok", "revisions_flat"): (
+        "valuation_supports", "ok",
+        "Valuation pays a real premium and earnings are steady — "
+        "holding risk is supported; new adds are a sizing choice",
+        "premium cushion, no revision tailwind or headwind"),
+    ("ok", "revisions_falling"): (
+        "selective", "warn",
+        "The cushion is there but analysts are cutting — be "
+        "selective; apparent cheapness may be earning its discount",
+        "positive premium + falling estimates — value-trap check"),
+    ("warn", "revisions_rising"): (
+        "earnings_carrying", "warn",
+        "Earnings momentum is carrying a thin cushion — adds make "
+        "more sense on dips, where the premium rebuilds",
+        "rising revisions justify prices; the cushion alone does "
+        "not"),
+    ("warn", "revisions_flat"): (
+        "selective", "warn",
+        "Thin cushion and flat revisions — no margin for error. "
+        "Favor quality; add on dislocations, not strength",
+        "neutral premium + neutral revisions — fragile balance"),
+    ("warn", "revisions_falling"): (
+        "fragile", "bad",
+        "Thin cushion with analysts cutting — priced for growth "
+        "that isn't coming; this is when equity risk gets punished",
+        "neutral-to-thin premium + falling estimates"),
+    ("bad", "revisions_rising"): (
+        "priced_for_delivery", "warn",
+        "Stocks yield less than bonds but revisions are rising — "
+        "priced for delivery; the rally lives or dies on earnings "
+        "landing, so position size is the whole game",
+        "negative premium + rising estimates — momentum-justified"),
+    ("bad", "revisions_flat"): (
+        "fragile", "bad",
+        "Stocks yield less than bonds with no earnings tailwind — "
+        "equity risk pays you nothing for waiting",
+        "negative premium + flat revisions"),
+    ("bad", "revisions_falling"): (
+        "defensive", "bad",
+        "Negative premium and falling estimates — the worst setup "
+        "for equity risk; defense and cash have the better "
+        "expected return",
+        "stocks yield less than risk-free while estimates fall"),
+}
+
+
+def _stance(val_tone: Optional[str],
+            earn_verdict: Optional[str]) -> Dict[str, str]:
+    """Combined equity stance — valuation cushion x earnings
+    momentum. Derived in latest() from the two journaled legs so it
+    needs no columns and stays consistent with what was presented."""
+    if not val_tone or not earn_verdict:
+        return {}
+    s = _STANCES.get((val_tone, earn_verdict))
+    if not s:
+        return {}
+    return {
+        "stance": s[0],
+        "stance_tone": s[1],
+        "stance_headline": s[2],
+        "stance_detail": s[3] + " — a setup descriptor, not a "
+                                "timing signal",
+    }
+
+
 def evaluate(as_of: Optional[date] = None) -> Optional[Dict[str, Any]]:
     """Compute + journal today's row; returns the payload."""
     as_of = as_of or date.today()
@@ -427,6 +502,7 @@ def latest() -> Optional[Dict[str, Any]]:
                     sum(1 for v in vals if v <= cur) / len(vals), 3)
         except Exception:
             pass
+    r.update(_stance(r.get("verdict_tone"), r.get("earnings_verdict")))
     return r
 
 

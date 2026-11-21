@@ -194,6 +194,10 @@ export type MorningRegime = {
     earnings_tone?: 'ok' | 'warn' | 'bad' | null
     earnings_headline?: string | null
     earnings_detail?: string | null
+    stance?: string | null
+    stance_tone?: 'ok' | 'warn' | 'bad' | null
+    stance_headline?: string | null
+    stance_detail?: string | null
     verdict?: string | null
     verdict_tone?: 'ok' | 'warn' | 'bad' | null
     headline?: string | null
