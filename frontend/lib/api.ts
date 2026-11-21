@@ -179,7 +179,10 @@ export type MorningRegime = {
     tracked_cap_usd?: number | null
     tracked_ey_pct?: number | null
     tnx_yield_pct?: number | null
+    tnx_as_of?: string | null
     ey_spread_pp?: number | null
+    spread_change_1w_bps?: number | null
+    spread_change_1m_bps?: number | null
     verdict?: string | null
     verdict_tone?: 'ok' | 'warn' | 'bad' | null
     headline?: string | null

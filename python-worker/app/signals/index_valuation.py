@@ -103,11 +103,15 @@ def _tracked_fwd() -> Dict[str, Any]:
     }
 
 
-def _tnx() -> Optional[float]:
+def _tnx() -> tuple:
+    """Latest 10Y + its vintage — the spread is only honest if the
+    card can tell when TNX is stale vs the EY side's fresh inputs."""
     r = db.execute_query(
-        "SELECT tnx_yield FROM macro_market_data"
+        "SELECT tnx_yield, data_date FROM macro_market_data"
         " WHERE tnx_yield IS NOT NULL ORDER BY data_date DESC LIMIT 1")
-    return float(r[0]["tnx_yield"]) if r else None
+    if not r:
+        return None, None
+    return float(r[0]["tnx_yield"]), r[0]["data_date"]
 
 
 def _verdict(spread: Optional[float]) -> Dict[str, str]:
@@ -159,7 +163,7 @@ def evaluate(as_of: Optional[date] = None) -> Optional[Dict[str, Any]]:
     as_of = as_of or date.today()
     mult = _spy_multiples()
     trk = _tracked_fwd()
-    tnx = _tnx()
+    tnx, tnx_date = _tnx()
     ey = trk.get("tracked_ey_pct")
     spread = round(ey - tnx, 2) if ey is not None and tnx is not None \
         else None
@@ -173,20 +177,23 @@ def evaluate(as_of: Optional[date] = None) -> Optional[Dict[str, Any]]:
            ("tracked_fwd_pe", "tracked_names", "tracked_cap_usd",
             "tracked_ey_pct", "dropped_unit_mismatches")},
         "tnx_yield_pct": tnx,
+        "tnx_as_of": tnx_date,
         "ey_spread_pp": spread,
         **verdict,
-        "raw": {"multiples": mult, "tracked": trk},
+        "raw": {"multiples": mult, "tracked": trk,
+                "tnx_as_of": str(tnx_date)},
     }
     db.execute_query(
         """
         INSERT INTO index_valuation_daily
         (as_of, spy_pe_trailing, qqq_pe_trailing, tracked_fwd_pe,
          tracked_names, tracked_cap_usd, tracked_ey_pct, tnx_yield_pct,
-         ey_spread_pp, verdict, verdict_tone, headline, detail, raw)
+         tnx_as_of, ey_spread_pp, verdict, verdict_tone, headline,
+         detail, raw)
         VALUES (:as_of, :spy_pe_trailing, :qqq_pe_trailing,
          :tracked_fwd_pe, :tracked_names, :tracked_cap_usd,
-         :tracked_ey_pct, :tnx_yield_pct, :ey_spread_pp, :verdict,
-         :verdict_tone, :headline, :detail, :raw)
+         :tracked_ey_pct, :tnx_yield_pct, :tnx_as_of, :ey_spread_pp,
+         :verdict, :verdict_tone, :headline, :detail, :raw)
         ON CONFLICT (as_of) DO UPDATE SET
          spy_pe_trailing = EXCLUDED.spy_pe_trailing,
          qqq_pe_trailing = EXCLUDED.qqq_pe_trailing,
@@ -195,6 +202,7 @@ def evaluate(as_of: Optional[date] = None) -> Optional[Dict[str, Any]]:
          tracked_cap_usd = EXCLUDED.tracked_cap_usd,
          tracked_ey_pct = EXCLUDED.tracked_ey_pct,
          tnx_yield_pct = EXCLUDED.tnx_yield_pct,
+         tnx_as_of = EXCLUDED.tnx_as_of,
          ey_spread_pp = EXCLUDED.ey_spread_pp,
          verdict = EXCLUDED.verdict,
          verdict_tone = EXCLUDED.verdict_tone,
@@ -227,6 +235,24 @@ def latest() -> Optional[Dict[str, Any]]:
     r = dict(rows[0])
     obs = len(rows)
     r["obs_n"] = obs
+    # direction of travel — a thin cushion arrived at by widening is a
+    # different read than one arrived at by compressing. Delta vs the
+    # row nearest the lookback, in basis points.
+    if r.get("ey_spread_pp") is not None and r.get("as_of"):
+        cands = [x for x in rows
+                 if x.get("ey_spread_pp") is not None
+                 and x.get("as_of") and x["as_of"] < r["as_of"]]
+        for days, key in ((7, "spread_change_1w_bps"),
+                          (30, "spread_change_1m_bps")):
+            if cands:
+                target = r["as_of"] - timedelta(days=days)
+                prev = min(cands,
+                           key=lambda x: abs((x["as_of"] - target).days))
+                r[key] = round(
+                    (float(r["ey_spread_pp"])
+                     - float(prev["ey_spread_pp"])) * 100)
+            else:
+                r[key] = None
     # percentile-vs-own-window — same honesty convention as
     # fwd_pe_pctile: reported with the observation count so a short
     # window is never implied to be all-time context

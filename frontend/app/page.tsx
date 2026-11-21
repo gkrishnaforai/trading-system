@@ -563,6 +563,14 @@ export default async function RegimePage() {
                   `10Y ${valuation.tnx_yield_pct}%`,
                 valuation.ey_spread_pp != null &&
                   `premium ${valuation.ey_spread_pp > 0 ? '+' : ''}${valuation.ey_spread_pp}pp`,
+                valuation.spread_change_1w_bps != null &&
+                  `1w ${valuation.spread_change_1w_bps > 0 ? '+' : ''}${valuation.spread_change_1w_bps}bp`,
+                valuation.spread_change_1m_bps != null &&
+                  `1m ${valuation.spread_change_1m_bps > 0 ? '+' : ''}${valuation.spread_change_1m_bps}bp`,
+                valuation.tnx_as_of && valuation.as_of &&
+                  (Date.parse(valuation.as_of)
+                    - Date.parse(valuation.tnx_as_of)) / 864e5 > 3 &&
+                  `10Y as of ${valuation.tnx_as_of}`,
                 (valuation.obs_n ?? 0) < 40 &&
                   `${valuation.obs_n ?? 0}d window`,
               ].filter(Boolean).join(' · ')}
