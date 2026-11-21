@@ -542,12 +542,17 @@ export default async function RegimePage() {
                 <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
                   equity
                 </span>
-                <span className={`font-medium ${valuation.stance_tone === 'ok'
+                <span className={`font-semibold ${valuation.stance_tone === 'ok'
                   ? 'text-aggressive' : valuation.stance_tone === 'warn'
                     ? 'text-caution' : valuation.stance_tone === 'bad'
                       ? 'text-defensive' : 'text-muted'}`}>
-                  {valuation.stance_headline}
+                  {valuation.stance_label ?? valuation.stance.replace(/_/g, ' ')}
                 </span>
+                {valuation.stance_headline && (
+                  <span className="text-muted">
+                    {valuation.stance_headline}
+                  </span>
+                )}
               </div>
             )}
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
