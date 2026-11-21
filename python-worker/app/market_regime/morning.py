@@ -345,19 +345,29 @@ def _plain(*, canonical: str, regime: str, composite: int,
     """Deterministic plain-English read of the card — same facts that
     produced the numbers, so the words can never contradict them."""
     posture = {
-        "bull_low_vol": "Uptrend intact and volatility calm",
+        "bull_low_vol": "Uptrend intact and volatility calm — the "
+                        "trend is working for stocks; dips are "
+                        "opportunities, not threats",
         "bull_high_vol": "Uptrend intact but volatility elevated — "
-                         "expect chop, not collapse",
-        "bullish_correction": "A pullback inside an uptrend — "
-                              "normal correction, not a break",
-        "distribution_risk": "Early distribution — the index is "
-                             "holding but internals are fraying",
+                         "expect chop, not collapse; size positions "
+                         "for the swings",
+        "bullish_correction": "A pullback inside an uptrend — the "
+                              "trend still favors stocks; this is "
+                              "where staged adds get built",
+        "distribution_risk": "Early distribution — the index holds "
+                             "but internals fray; lighten the "
+                             "weakest holdings first",
         "distribution": "Distribution underway — sellers in control "
-                        "beneath the surface",
-        "macro_risk_off": "Macro-driven risk-off — the headwind is the "
-                          "environment, not the tape itself",
-        "bear": "Downtrend confirmed",
-        "transition": "Regime in flux — signals genuinely conflict",
+                        "beneath the surface; defense first, adds "
+                        "only after strength returns",
+        "macro_risk_off": "Macro-driven risk-off — the environment, "
+                          "not your stocks, is the headwind; watch "
+                          "rates and credit for the all-clear",
+        "bear": "Downtrend confirmed — rallies are for trimming, "
+                "not chasing; stocks carry the burden of proof "
+                "until the trend repairs",
+        "transition": "Regime in flux — signals genuinely conflict; "
+                      "wait for the tape to pick a direction",
     }.get(canonical, "Regime: " + regime.replace("_", " "))
 
     # tape texture — strengths from strong dims, caveat from weakest
