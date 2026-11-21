@@ -472,6 +472,61 @@ def _timeline_row(r: dict) -> dict:
             "evidence": rd.get("evidence")}
 
 
+def base_rates() -> dict[str, dict]:
+    """Conditional session outcomes — the journal's own learnings.
+
+    Per-session signature (the day's most-eval'd tape state) vs
+    same-day and next-day QQQ returns. Base rates with n disclosed;
+    honest context, never a forecast."""
+    from app.database import db
+    rows = db.execute_query(
+        "SELECT ts::date d, state, day_ret FROM intraday_evals"
+        " WHERE outcome IS NOT NULL")
+    counts: dict = {}
+    day_ret: dict = {}
+    for r in rows:
+        d = r["d"]
+        counts.setdefault(d, {})
+        counts[d][r["state"]] = counts[d].get(r["state"], 0) + 1
+        if d not in day_ret and r.get("day_ret") is not None:
+            day_ret[d] = float(r["day_ret"])
+    bars = db.execute_query(
+        "SELECT date, close FROM daily_bars WHERE symbol='QQQ'"
+        " ORDER BY date")
+    closes = {b["date"]: float(b["close"]) for b in bars}
+    order = sorted(closes)
+    ndx = {order[i]: closes[order[i + 1]] / closes[order[i]] - 1
+           for i in range(len(order) - 1)}
+    groups: dict = {}
+    for d, c in counts.items():
+        dom = max(c, key=c.get)
+        g = groups.setdefault(dom, {"n": 0, "day": [], "next": []})
+        g["n"] += 1
+        if d in day_ret:
+            g["day"].append(day_ret[d])
+        if d in ndx:
+            g["next"].append(ndx[d])
+    import statistics
+    out: dict[str, dict] = {}
+    for st, g in groups.items():
+        if g["n"] < 3:
+            continue
+        out[st] = {
+            "n": g["n"],
+            "day_median": (round(statistics.median(g["day"]), 4)
+                           if g["day"] else None),
+            "day_red_pct": (round(
+                sum(1 for x in g["day"] if x < 0) / len(g["day"]), 2)
+                if g["day"] else None),
+            "next_median": (round(statistics.median(g["next"]), 4)
+                            if g["next"] else None),
+            "next_red_pct": (round(
+                sum(1 for x in g["next"] if x < 0) / len(g["next"]), 2)
+                if g["next"] else None),
+        }
+    return out
+
+
 def latest() -> dict[str, Any]:
     """Most recent eval + today's state timeline, for the board card."""
     from app.database import db
@@ -481,8 +536,20 @@ def latest() -> dict[str, Any]:
     if not rows:
         return {"state": "no_evals_today", "timeline": []}
     latest_eval = rows[0]["readings"] or {}
+    # sessions-like-this base rate — the journal's own history
+    br = None
+    try:
+        dom_counts: dict = {}
+        for r in rows:
+            dom_counts[r["state"]] = dom_counts.get(r["state"], 0) + 1
+        dom = max(dom_counts, key=dom_counts.get)
+        hist = base_rates().get(dom)
+        if hist:
+            br = {"state": dom, **hist}
+    except Exception:
+        pass
     return {"state": rows[0]["state"], "ts": str(rows[0]["ts"]),
-            "eval": latest_eval,
+            "eval": latest_eval, "base_rate": br,
             "timeline": [_timeline_row(r)
                          for r in reversed(rows)]}
 

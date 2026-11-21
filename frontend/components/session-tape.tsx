@@ -59,6 +59,7 @@ export function SessionTape({ tape }: { tape: IntradayTape | null }) {
     else segments.push({ start: t, rows: [t] })
   }
   const lastT = tl[tl.length - 1]
+  const br = tape?.base_rate
 
   return (
     <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
@@ -82,6 +83,20 @@ export function SessionTape({ tape }: { tape: IntradayTape | null }) {
               ? 'SMH reclaiming VWAP — rebound attempt'
               : 'SMH above VWAP, unconfirmed'
             : 'SMH below VWAP — sector still pressured'}
+        </div>
+      )}
+
+      {br && br.n != null && (
+        <div className="pt-1 font-mono text-[11px] text-faint"
+          title="base rates from journaled sessions — context, not a forecast">
+          history: {br.n} sessions ending{' '}
+          {(br.state ?? '').replace(/_/g, ' ')} →{' '}
+          {br.day_median != null &&
+            `close med ${br.day_median >= 0 ? '+' : ''}${(br.day_median * 100).toFixed(1)}%`}
+          {br.day_red_pct != null &&
+            `, ${Math.round(br.day_red_pct * 100)}% red`}
+          {br.next_median != null &&
+            ` · next day med ${br.next_median >= 0 ? '+' : ''}${(br.next_median * 100).toFixed(1)}%`}
         </div>
       )}
 

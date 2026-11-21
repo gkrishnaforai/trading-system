@@ -1137,6 +1137,14 @@ export type CorrectionAlarms = {
 export type IntradayTape = {
   state?: string
   ts?: string
+  base_rate?: {
+    state?: string
+    n?: number
+    day_median?: number | null
+    day_red_pct?: number | null
+    next_median?: number | null
+    next_red_pct?: number | null
+  } | null
   eval?: {
     qqq_chg_open?: number
     above_vwap?: boolean
