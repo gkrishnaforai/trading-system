@@ -3013,8 +3013,21 @@ async def morning_regime_report():
         valuation = await asyncio.to_thread(index_valuation.latest)
     except Exception:
         valuation = None
+    try:
+        # posture = environment stance x selloff character x fed
+        # lean — the "build cash vs buy the dip" synthesis
+        from app.signals import correction_alarms as ca, equity_posture
+        alarms = await asyncio.to_thread(ca.latest)
+        fed_blk = (((t.get("buckets") if isinstance(t, dict) else None)
+                    or {}).get("structural") or {}).get("fed")
+        posture = equity_posture.compose(
+            stance=(valuation or {}).get("stance"),
+            alarms=alarms, fed=fed_blk)
+    except Exception:
+        posture = None
     return {"today": t, "intraday": intraday, "fragility": fragility,
             "movement": movement, "valuation": valuation,
+            "posture": posture,
             "record": await asyncio.to_thread(morning.record)}
 
 

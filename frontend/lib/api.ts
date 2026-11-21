@@ -207,6 +207,13 @@ export type MorningRegime = {
     spy_pe_pctile?: number | null
     ey_spread_pctile?: number | null
   } | null
+  posture?: {
+    posture?: string | null
+    posture_label?: string | null
+    posture_tone?: 'ok' | 'warn' | 'bad' | null
+    posture_headline?: string | null
+    posture_detail?: string | null
+  } | null
   record?: Array<Record<string, unknown>>
 }
 

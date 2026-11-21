@@ -68,6 +68,7 @@ export default async function RegimePage() {
   const fragility = morning?.fragility
   const movement = morning?.movement
   const valuation = morning?.valuation
+  const eqPosture = morning?.posture
   const record = morning?.record ?? []
 
   const tone = TONE[p.posture ?? 'neutral'] ?? 'text-neutral'
@@ -551,6 +552,25 @@ export default async function RegimePage() {
                 {valuation.stance_headline && (
                   <span className="text-muted">
                     {valuation.stance_headline}
+                  </span>
+                )}
+              </div>
+            )}
+            {eqPosture && (
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pb-1"
+                title={eqPosture.posture_detail ?? undefined}>
+                <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+                  posture
+                </span>
+                <span className={`font-semibold ${eqPosture.posture_tone === 'ok'
+                  ? 'text-aggressive' : eqPosture.posture_tone === 'warn'
+                    ? 'text-caution' : eqPosture.posture_tone === 'bad'
+                      ? 'text-defensive' : 'text-muted'}`}>
+                  {eqPosture.posture_label ?? eqPosture.posture}
+                </span>
+                {eqPosture.posture_headline && (
+                  <span className="text-muted">
+                    {eqPosture.posture_headline}
                   </span>
                 )}
               </div>
