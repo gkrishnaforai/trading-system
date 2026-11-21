@@ -222,9 +222,18 @@ export type MorningRegime = {
     nf_as_of?: string | null
     realtime_yoy?: number | null
     realtime_wow_pp?: number | null
+    rt_d7_pp?: number | null
+    rt_d30_pp?: number | null
+    spark?: string | null
+    drivers?: Array<{
+      key?: string; label?: string; yoy?: number
+      contribution?: number; state?: string; status?: string
+    }> | null
     official_yoy?: number | null
     official_month?: string | null
     print_forecast_yoy?: number | null
+    wti_value?: number | null
+    wti_chg5d?: number | null
     fed_lean?: string | null
     fed_expected_bps?: number | null
     fomc_date?: string | null
@@ -232,6 +241,9 @@ export type MorningRegime = {
     p_hike?: number | null
     p_hold?: number | null
     p_cut?: number | null
+    p_hike_d7?: number | null
+    bps_d7?: number | null
+    compare_to?: string | null
   } | null
   record?: Array<Record<string, unknown>>
 }

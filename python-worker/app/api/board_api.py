@@ -3027,7 +3027,10 @@ async def morning_regime_report():
         posture = None
     try:
         from app.signals import rates_outlook
-        rates = await asyncio.to_thread(rates_outlook.compose)
+        wti = (((((t.get("buckets") if isinstance(t, dict) else None)
+                  or {}).get("macro") or {}).get("detail") or {})
+               .get("wti"))
+        rates = await asyncio.to_thread(rates_outlook.compose, wti=wti)
     except Exception:
         rates = None
     return {"today": t, "intraday": intraday, "fragility": fragility,

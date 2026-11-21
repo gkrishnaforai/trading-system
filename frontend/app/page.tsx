@@ -670,20 +670,48 @@ export default async function RegimePage() {
               {[
                 rates.realtime_yoy != null &&
                   `nowcast ${rates.realtime_yoy}%` +
-                  (rates.realtime_wow_pp != null
-                    ? ` (${rates.realtime_wow_pp > 0 ? '+' : ''}${rates.realtime_wow_pp}pp/wk)` : ''),
+                  (rates.spark ? ` ${rates.spark}` : ''),
+                rates.realtime_wow_pp != null &&
+                  `wk ${rates.realtime_wow_pp > 0 ? '+' : ''}${rates.realtime_wow_pp}pp`,
+                rates.rt_d30_pp != null &&
+                  `mo ${rates.rt_d30_pp > 0 ? '+' : ''}${rates.rt_d30_pp}pp`,
                 rates.official_yoy != null &&
                   `official ${rates.official_yoy}%` +
                   (rates.official_month ? ` (${rates.official_month})` : ''),
                 rates.print_forecast_yoy != null &&
                   `next print ~${rates.print_forecast_yoy}%`,
+              ].filter(Boolean).join(' · ')}
+            </div>
+            {(rates.drivers?.length || rates.wti_value != null) && (
+              <div className="pt-0.5 font-mono text-[11px] text-faint">
+                {[
+                  rates.drivers?.length &&
+                    'drivers ' + rates.drivers.slice(0, 4).map((d) =>
+                      `${d.label ?? d.key} ${d.yoy}%` +
+                      (d.state === 'hot' ? '↑hot'
+                        : d.state === 'cool' ? '↓cool' : '')).join(' · '),
+                  rates.wti_value != null &&
+                    `oil $${rates.wti_value}` +
+                    (rates.wti_chg5d != null
+                      ? ` ${rates.wti_chg5d > 0 ? '+' : ''}${Math.round(rates.wti_chg5d * 100)}%/wk` : ''),
+                ].filter(Boolean).join(' · ')}
+              </div>
+            )}
+            <div className="pt-0.5 font-mono text-[11px] text-faint">
+              {[
                 rates.fed_expected_bps != null &&
                   `fed ${rates.fed_expected_bps > 0 ? '+' : ''}${rates.fed_expected_bps}bp ` +
-                  `${(rates.fed_lean ?? '').replace(/_/g, ' ')}`,
+                  `${(rates.fed_lean ?? '').replace(/_/g, ' ')}` +
+                  (rates.bps_d7 != null
+                    ? ` (${rates.bps_d7 > 0 ? '+' : ''}${rates.bps_d7}bp wk)` : ''),
+                rates.p_hike != null &&
+                  `hike ${rates.p_hike}%` +
+                  (rates.p_hike_d7 != null
+                    ? ` (${rates.p_hike_d7 > 0 ? '+' : ''}${rates.p_hike_d7}pts wk)` : ''),
+                rates.p_cut != null && `cut ${rates.p_cut}%`,
                 rates.fomc_date &&
                   `FOMC ${rates.fomc_date}` +
-                  (rates.fomc_days != null ? ` ${rates.fomc_days}d` : '') +
-                  (rates.p_hike != null ? ` · ${rates.p_hike}% hike` : ''),
+                  (rates.fomc_days != null ? ` ${rates.fomc_days}d` : ''),
               ].filter(Boolean).join(' · ')}
             </div>
           </div>
