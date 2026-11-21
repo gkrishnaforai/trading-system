@@ -170,6 +170,24 @@ export type MorningRegime = {
       destinations?: string[]
     } | null
   } | null
+  valuation?: {
+    as_of?: string
+    spy_pe_trailing?: number | null
+    qqq_pe_trailing?: number | null
+    tracked_fwd_pe?: number | null
+    tracked_names?: number | null
+    tracked_cap_usd?: number | null
+    tracked_ey_pct?: number | null
+    tnx_yield_pct?: number | null
+    ey_spread_pp?: number | null
+    verdict?: string | null
+    verdict_tone?: 'ok' | 'warn' | 'bad' | null
+    headline?: string | null
+    detail?: string | null
+    obs_n?: number | null
+    spy_pe_pctile?: number | null
+    ey_spread_pctile?: number | null
+  } | null
   record?: Array<Record<string, unknown>>
 }
 

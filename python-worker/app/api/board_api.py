@@ -996,6 +996,14 @@ async def _j_driver_bridge() -> dict:
     return await asyncio.to_thread(dbx.run_all)
 
 
+async def _j_index_valuation() -> dict:
+    """Index valuation — SPY/QQQ trailing P/E + tracked-universe fwd
+    P/E + earnings-yield/10Y spread, journaled daily. The market-level
+    'is the tape expensive' read."""
+    from app.signals import index_valuation
+    return await asyncio.to_thread(index_valuation.run)
+
+
 async def _j_nowflation() -> dict:
     """Nowflation daily — journals the CPI gauge/realtime read and
     the pre-registered print forecast; fills the fed-path inflation
@@ -1288,6 +1296,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "narrative-claims": ("Narrative claims ledger", _j_narrative_claims),
     "driver-bridge":   ("Driver → forecast bridge", _j_driver_bridge),
     "nowflation":     ("Nowflation daily inflation gauge", _j_nowflation),
+    "index-valuation": ("Index valuation daily", _j_index_valuation),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
     "metals-pulse": ("Metals Pulse — regime + opportunity", _j_metals),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
@@ -1383,6 +1392,7 @@ _JOB_TIMEOUT = {
     "daily-sheet": 15 * 60,
     "mover-quality": 10 * 60,
     "posture-eval": 5 * 60,
+    "index-valuation": 2 * 60,
 }
 
 
@@ -2998,8 +3008,13 @@ async def morning_regime_report():
         movement = await asyncio.to_thread(mv.movement)
     except Exception:
         movement = None
+    try:
+        from app.signals import index_valuation
+        valuation = await asyncio.to_thread(index_valuation.latest)
+    except Exception:
+        valuation = None
     return {"today": t, "intraday": intraday, "fragility": fragility,
-            "movement": movement,
+            "movement": movement, "valuation": valuation,
             "record": await asyncio.to_thread(morning.record)}
 
 

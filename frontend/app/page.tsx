@@ -67,6 +67,7 @@ export default async function RegimePage() {
   const intraday = morning?.intraday
   const fragility = morning?.fragility
   const movement = morning?.movement
+  const valuation = morning?.valuation
   const record = morning?.record ?? []
 
   const tone = TONE[p.posture ?? 'neutral'] ?? 'text-neutral'
@@ -533,6 +534,41 @@ export default async function RegimePage() {
         <div className="pt-2">
           <TapeChips tape={tape} />
         </div>
+        {valuation && (
+          <div className="pt-2 text-xs" title={valuation.detail ?? undefined}>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
+                valuation
+              </span>
+              {valuation.headline && (
+                <span className={`font-medium ${valuation.verdict_tone === 'ok'
+                  ? 'text-aggressive' : valuation.verdict_tone === 'warn'
+                    ? 'text-caution' : valuation.verdict_tone === 'bad'
+                      ? 'text-defensive' : 'text-muted'}`}>
+                  {valuation.headline}
+                </span>
+              )}
+            </div>
+            <div className="pt-0.5 font-mono text-[11px] text-faint">
+              {[
+                valuation.spy_pe_trailing != null &&
+                  `SPY ${valuation.spy_pe_trailing}× ttm`,
+                valuation.tracked_fwd_pe != null &&
+                  `fwd ${valuation.tracked_fwd_pe}×` +
+                  (valuation.tracked_names
+                    ? ` (${valuation.tracked_names} names)` : ''),
+                valuation.tracked_ey_pct != null &&
+                  `EY ${valuation.tracked_ey_pct}%`,
+                valuation.tnx_yield_pct != null &&
+                  `10Y ${valuation.tnx_yield_pct}%`,
+                valuation.ey_spread_pp != null &&
+                  `premium ${valuation.ey_spread_pp > 0 ? '+' : ''}${valuation.ey_spread_pp}pp`,
+                (valuation.obs_n ?? 0) < 40 &&
+                  `${valuation.obs_n ?? 0}d window`,
+              ].filter(Boolean).join(' · ')}
+            </div>
+          </div>
+        )}
         {alarms?.correction_character && (
           <div className="pt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
             <span className="text-[10px] uppercase tracking-[0.18em] text-faint">
