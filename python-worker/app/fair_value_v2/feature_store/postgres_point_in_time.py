@@ -577,6 +577,73 @@ class PostgresPointInTimeFeatureStore:
             "as_of": row[2],
         }
 
+    def get_eps_ttm_actuals(
+        self,
+        symbol: str,
+        as_of_ts: datetime,
+    ) -> Tuple[Optional[float], Optional[Any]]:
+        """Clean TTM EPS from journaled actuals — the trailing
+        4-quarter sum of earnings_data.eps_actual, the same basis the
+        runner's suspect guard uses. Provider GAAP TTM (fundamentals
+        netIncome/eps) carries one-time items (WDC's SanDisk gain
+        doubled it) and stale halves (MOD came in ~60% low); the
+        reported-actuals sum is the durable basis for per-share
+        methods. Requires all 4 quarters."""
+        sql = """
+        SELECT SUM(eps_actual) AS s, COUNT(*) AS n, MAX(earnings_date) AS d
+        FROM (
+          SELECT eps_actual, earnings_date
+          FROM earnings_data
+          WHERE stock_symbol = :symbol
+            AND eps_actual IS NOT NULL
+            AND earnings_date <= CAST(:as_of AS date)
+          ORDER BY earnings_date DESC
+          LIMIT 4
+        ) x
+        """
+        with db.get_session() as session:
+            row = session.execute(
+                text(sql), {"symbol": symbol, "as_of": as_of_ts.date()}
+            ).fetchone()
+        if not row or row[1] != 4 or row[0] is None:
+            return None, None
+        return float(row[0]), row[2]
+
+    def get_nearest_forward_eps(
+        self,
+        symbol: str,
+        as_of_ts: datetime,
+    ) -> Optional[Dict[str, Any]]:
+        """Nearest forward-FY consensus EPS, point-in-time — the
+        vintage-normalized 'eps_forward'. Provider epsForward fields
+        resolve to whichever fiscal year the vendor ships per symbol
+        (WDC got FY+2, COHR an interpolated year); the estimate
+        snapshot table's nearest period_end past the +60d horizon is
+        the canonical forward year, analyst-cleared at ingest."""
+        sql = """
+        SELECT DISTINCT ON (period_end)
+            period_end, eps_avg, num_analysts, as_of
+        FROM symbol_estimate_snapshots
+        WHERE symbol = :symbol
+          AND period_end > CAST(:as_of AS date) + INTERVAL '60 days'
+          AND as_of <= CAST(:as_of AS date)
+          AND eps_avg IS NOT NULL
+        ORDER BY period_end, as_of DESC
+        LIMIT 1
+        """
+        with db.get_session() as session:
+            row = session.execute(
+                text(sql), {"symbol": symbol, "as_of": as_of_ts.date()}
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "eps_avg": float(row[1]),
+            "period_end": row[0],
+            "num_analysts": int(row[2]) if row[2] is not None else None,
+            "as_of": row[3],
+        }
+
     def get_macro_scalar(
         self,
         as_of_ts: datetime,

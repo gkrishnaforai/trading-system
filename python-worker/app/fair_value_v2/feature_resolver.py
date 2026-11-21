@@ -91,7 +91,86 @@ class FeatureResolver:
             if q:
                 quality.update({f"{name}.{k}": v for k, v in q.items()})
 
+        self._eps_sanity(symbol, as_of_ts, required, scalars, sources, quality)
         return scalars, sources, quality
+
+    def _eps_sanity(
+        self,
+        symbol: str,
+        as_of_ts: datetime,
+        required: Any,
+        scalars: Dict[str, Any],
+        sources: Dict[str, str],
+        quality: Dict[str, Any],
+    ) -> None:
+        """Post-resolution corrections for the two per-share scalars
+        whose provider values are demonstrably dirty:
+
+        eps_ttm — provider GAAP TTM carries one-time items and stale
+        halves (WDC's SanDisk gain doubled it; MOD came in ~60% low).
+        On a >20% divergence from the journaled 4-quarter actuals the
+        actuals win; the provider raw stays in quality for audit.
+
+        eps_forward — provider epsForward vintages vary per symbol
+        (WDC resolved to FY+2). The nearest forward-FY row in our own
+        estimate snapshots is analyst-cleared and vintage-fixed, so it
+        is the canonical forward basis; a >25% provider divergence is
+        flagged, not silently blended.
+        """
+        req = set(required or [])
+        if "eps_ttm" in req:
+            try:
+                base, base_date = self._store.get_eps_ttm_actuals(
+                    symbol, as_of_ts)
+                v = scalars.get("eps_ttm")
+                if base is not None and base >= 0.25:
+                    if v is None:
+                        scalars["eps_ttm"] = base
+                        sources["eps_ttm"] = "earnings_data.eps_actual~sum4"
+                        quality["eps_ttm.filled_from_actuals"] = str(base_date)
+                    else:
+                        div = abs(float(v) / base - 1.0)
+                        if div > 0.20:
+                            quality["eps_ttm.provider_raw"] = v
+                            quality["eps_ttm.divergence_pct"] = round(div * 100, 1)
+                            quality["eps_ttm.one_time_distortion_override"] = True
+                            scalars["eps_ttm"] = base
+                            sources["eps_ttm"] = "earnings_data.eps_actual~sum4"
+            except Exception:
+                pass
+        if "eps_forward" in req:
+            try:
+                est = self._store.get_nearest_forward_eps(symbol, as_of_ts)
+                v = scalars.get("eps_forward")
+                if est:
+                    snap_eps = est.get("eps_avg")
+                    pe = est.get("period_end")
+                    quality["eps_forward.estimate_period_end"] = str(pe)
+                    quality["eps_forward.num_analysts"] = est.get("num_analysts")
+                    if v is None:
+                        scalars["eps_forward"] = snap_eps
+                        sources["eps_forward"] = (
+                            f"symbol_estimate_snapshots.eps_avg[{pe}]")
+                        quality["eps_forward.filled_from_snapshots"] = True
+                    elif snap_eps is not None and snap_eps > 0:
+                        div = abs(float(v) / float(snap_eps) - 1.0)
+                        if div > 0.25:
+                            quality["eps_forward.provider_raw"] = v
+                            quality["eps_forward.divergence_pct"] = round(div * 100, 1)
+                            quality["eps_forward.provider_divergence"] = True
+                        scalars["eps_forward"] = float(snap_eps)
+                        sources["eps_forward"] = (
+                            f"symbol_estimate_snapshots.eps_avg[{pe}]")
+                    else:
+                        # negative/zero consensus — vintage still
+                        # normalizes; divergence ratio is meaningless
+                        scalars["eps_forward"] = float(snap_eps)
+                        sources["eps_forward"] = (
+                            f"symbol_estimate_snapshots.eps_avg[{pe}]")
+                elif v is not None:
+                    quality["eps_forward.no_estimate_snapshot"] = True
+            except Exception:
+                pass
 
     @staticmethod
     def _stale(d: Dict[str, Any], q: Dict[str, Any],

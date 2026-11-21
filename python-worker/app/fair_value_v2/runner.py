@@ -716,6 +716,41 @@ class FairValueRunner:
             warnings.append({"level": "info", "scope": "scenarios",
                              "reason": f})
 
+        # scalar-correction provenance — the resolver's eps sanity pass
+        # overrides dirty provider per-share inputs (one-time TTM
+        # items, vendor-picked forward vintages); run-level flags so
+        # downstream consumers can say the basis was corrected rather
+        # than treat the published number as raw provider math
+        _rq = getattr(regime_features, "quality", None) or {}
+        if (_rq.get("eps_ttm.one_time_distortion_override")
+                or _rq.get("eps_ttm.filled_from_actuals")):
+            quality_flags.append("ttm_actuals_override")
+        if (_rq.get("eps_forward.provider_divergence")
+                or _rq.get("eps_forward.filled_from_snapshots")):
+            quality_flags.append("eps_forward_normalized")
+
+        # survival-collapse — a single survival-method run whose
+        # scenarios all bind the distressed floor is a residual-equity
+        # statement (debt exceeds modeled EV), not a fair-value
+        # estimate. Publish the classification instead of a bare
+        # near-zero number.
+        if ("single_method" in quality_flags
+                and ({"survival_at_risk", "distressed_floor_binds"}
+                     & set(quality_flags))):
+            _sv = [float(v) for v in (scen or {}).values()
+                   if v is not None]
+            if _sv and (max(_sv) - min(_sv)) <= \
+                    0.05 * max(abs(max(_sv)), 1.0):
+                quality_flags.append("equity_below_survival_basis")
+                warnings.append({
+                    "level": "warning", "scope": "scenarios",
+                    "reason": "equity_below_survival_basis",
+                    "details": {
+                        "note": "scenarios collapsed to the distressed"
+                                " floor — published value is residual"
+                                " equity after debt; contract/backlog"
+                                " value is outside the model's inputs"}})
+
         # FX provenance: which statement-currency fields were converted
         # (or refused) during this run — e.g. {'TWD@0.0314': [fcf_ttm…]}.
         if self._fx_notes:

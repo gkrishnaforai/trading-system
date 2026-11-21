@@ -788,6 +788,7 @@ def card(sym: str) -> dict[str, Any]:
                              .get("lifecycle"),
                 "market_expectation": (fv_detail.get("decision") or {})
                                       .get("market_expectation"),
+                "flags": fv_detail.get("flags"),
                 "as_of": fv_detail.get("as_of"),
             }
             if any(v is not None for v in fe.values()):

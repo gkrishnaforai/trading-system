@@ -289,6 +289,18 @@ function PriceMultiples({ m }: { m: Record<string, unknown> | null }) {
                       </div>
                     )
                   })()}
+                  {Array.isArray(obj(m.fv_engine)?.flags) && (() => {
+                    const fl = obj(m.fv_engine)!.flags as string[]
+                    const notes: string[] = []
+                    if (fl.includes('equity_below_survival_basis'))
+                      notes.push('below survival basis — residual equity after debt; contract value not modeled')
+                    if (fl.includes('ttm_actuals_override'))
+                      notes.push('TTM EPS corrected to reported actuals')
+                    if (fl.includes('eps_forward_normalized'))
+                      notes.push('fwd EPS normalized to nearest-FY consensus')
+                    if (!notes.length) return null
+                    return <div className="text-faint">{notes.join(' · ')}</div>
+                  })()}
                   {obj(m.fv_engine)?.confidence != null && (
                     <div className="text-faint">
                       confidence {String(obj(m.fv_engine)?.confidence)}
