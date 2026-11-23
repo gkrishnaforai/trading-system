@@ -27,6 +27,22 @@ const SIG_COLOR: Record<string, string> = {
   FAILED_REBOUND: 'text-defensive',
   DATA_BLOCKED: 'text-faint',
 }
+const SIG_DESC: Record<string, string> = {
+  STRONG_RECOVERY:
+    'strong recovery — vwap held AND institutional demand confirmed; the rebound is real, but check % ext before chasing',
+  CONFIRMED_RECOVERY:
+    'confirmed recovery — vwap hold with supporting demand; dips toward vwap are the entries',
+  IMPROVING:
+    'improving — price structure repairing but demand not yet confirmed; a setup, not an entry',
+  WATCH:
+    'watch — no confirmed recovery yet; wait for vwap hold + a demand leg',
+  DISTRIBUTION:
+    'distribution — volume is flowing out (closes near lows on volume); strength is being sold into',
+  FAILED_REBOUND:
+    'failed rebound — a recovery attempt lost vwap; prior support becomes resistance',
+  DATA_BLOCKED:
+    'data blocked — session bars missing, no read',
+}
 const SIG_BG: Record<string, string> = {
   STRONG_RECOVERY: 'bg-aggressive',
   CONFIRMED_RECOVERY: 'bg-aggressive/70',
@@ -189,33 +205,45 @@ export function RecoveryPanel({ rows, asOf, stale, participation }: {
                       <span className="text-faint">{expanded ? '▾ ' : '▸ '}</span>
                       {r.symbol}
                     </td>
-                    <td className={`py-1 pr-3 font-mono ${cls}`}>
+                    <td className={`py-1 pr-3 font-mono ${cls}`}
+                      title={SIG_DESC[sig] ?? 'recovery verdict for this session'}>
                       {sig.replace(/_/g, ' ').toLowerCase()}
                       {r.overextended ? ' ⚠' : ''}
                     </td>
-                    <td className="py-1 pr-3 font-mono text-muted">
+                    <td className="py-1 pr-3 font-mono text-muted"
+                      title={`composite recovery score ${r.score ?? '—'}/100 — vwap hold + relative strength + volume quality + structure + opening range + breadth`}>
                       {r.score ?? '—'}
                     </td>
                     <td className="py-1 pr-3 font-mono text-muted"
-                      title="price recovery — vwap hold + structure + opening range">
+                      title={`price-recovery axis ${r.recovery_score ?? '—'}/100 — did the stock recover? vwap hold + higher low + opening range + % of drop reclaimed`}>
                       rec {r.recovery_score ?? '—'}
                     </td>
                     <td className="py-1 pr-3 font-mono text-muted"
-                      title="accumulation — rs + directional volume + rvol + breadth">
+                      title={`demand axis ${r.accumulation_score ?? '—'}/100 — did institutions buy it? relative strength + directional volume + relative volume + breadth`}>
                       accum {r.accumulation_score ?? '—'}
                     </td>
-                    <td className="py-1 pr-3 font-mono text-muted">
+                    <td className="py-1 pr-3 font-mono text-muted"
+                      title={r.vwap_hold_min != null
+                        ? `held above vwap for ${r.vwap_hold_min} consecutive minutes — the strongest single confirmation`
+                        : 'not currently holding above vwap'}>
                       vwap {r.vwap_hold_min != null
                         ? `${r.vwap_hold_min}m` : '—'}
                     </td>
-                    <td className="py-1 pr-3 font-mono text-muted">
+                    <td className="py-1 pr-3 font-mono text-muted"
+                      title={r.rs30_smh != null
+                        ? `${Number(r.rs30_smh) >= 0 ? 'outperforming' : 'lagging'} SMH by ${Math.abs(Number(r.rs30_smh)).toFixed(1)}pp over the last 30 min`
+                        : '30-min relative strength vs SMH unavailable'}>
                       rs {r.rs30_smh != null
                         ? `${r.rs30_smh > 0 ? '+' : ''}${Number(r.rs30_smh).toFixed(1)}` : '—'}
                     </td>
-                    <td className="py-1 pr-3 font-mono text-muted">
+                    <td className="py-1 pr-3 font-mono text-muted"
+                      title={r.rvol != null
+                        ? `volume ${r.rvol}× the same-time-of-day average${Number(r.rvol) >= 1.5 ? ' — unusually heavy' : ''}`
+                        : 'relative volume unavailable'}>
                       rvol {r.rvol != null ? `${r.rvol}x` : '—'}
                     </td>
-                    <td className="py-1 font-mono text-muted">
+                    <td className="py-1 font-mono text-muted"
+                      title={`directional volume ${r.delta_vol != null ? (r.delta_vol > 0 ? '+' : '') + r.delta_vol : '—'} (−1…+1) — closes near bar highs on volume = accumulation, near lows = distribution${(r.ext_pct ?? 0) > 3 ? ` · stretched ${Number(r.ext_pct).toFixed(1)}% above vwap — chase risk` : ''}`}>
                       {r.delta_vol != null &&
                         `Δvol ${r.delta_vol > 0 ? '+' : ''}${r.delta_vol}`}
                       {(r.ext_pct ?? 0) > 3
