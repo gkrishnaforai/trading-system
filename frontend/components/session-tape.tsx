@@ -60,6 +60,15 @@ export function SessionTape({ tape }: { tape: IntradayTape | null }) {
   }
   const lastT = tl[tl.length - 1]
   const br = tape?.base_rate
+  const obr = tape?.open_base_rate
+  const slots = tape?.premarket?.slots ?? []
+  const pmF = slots.find((s) => s.slot === 'final')
+  const pmE = slots.find((s) => s.slot === 'early')
+  const pm = pmF ?? pmE
+  const pmDrift =
+    pmF?.qqq_gap != null && pmE?.qqq_gap != null
+      ? pmF.qqq_gap - pmE.qqq_gap
+      : null
 
   return (
     <section className="rounded-xl border border-hairline bg-card px-5 py-4 mb-2">
@@ -74,6 +83,20 @@ export function SessionTape({ tape }: { tape: IntradayTape | null }) {
           <RefreshButton />
         </span>
       </div>
+
+      {pm && (
+        <div className="pt-1.5 font-mono text-[11px] text-faint"
+          title="journaled pre-market snapshot — extended-hours gap vs prior close, crypto 24h; early→final drift shows the gap firming or fading into the open">
+          premarket{pmF ? '' : ' (early)'}:{' '}
+          {[
+            pm.qqq_gap != null && `QQQ ${pm.qqq_gap >= 0 ? '+' : ''}${(pm.qqq_gap * 100).toFixed(1)}%`,
+            pm.smh_gap != null && `SMH ${pm.smh_gap >= 0 ? '+' : ''}${(pm.smh_gap * 100).toFixed(1)}%`,
+            pm.btc_chg != null && `BTC ${pm.btc_chg >= 0 ? '+' : ''}${(pm.btc_chg * 100).toFixed(1)}%/24h`,
+          ].filter(Boolean).join(' · ') || 'no legs read'}
+          {pmDrift != null && Math.abs(pmDrift) > 0.0005 &&
+            ` — gap ${pmDrift > 0 ? 'firmed' : 'faded'} ${pmDrift >= 0 ? '+' : ''}${(pmDrift * 100).toFixed(1)}pp into open`}
+        </div>
+      )}
 
       {lastT.smh_above_vwap != null && (
         <div className="pt-1.5 font-mono text-[11px] text-faint">
@@ -97,6 +120,18 @@ export function SessionTape({ tape }: { tape: IntradayTape | null }) {
             `, ${Math.round(br.day_red_pct * 100)}% red`}
           {br.next_median != null &&
             ` · next day med ${br.next_median >= 0 ? '+' : ''}${(br.next_median * 100).toFixed(1)}%`}
+        </div>
+      )}
+
+      {obr && obr.n != null && (
+        <div className="pt-1 font-mono text-[11px] text-faint"
+          title="sessions that opened with this tape signature (first-3-evals mode) → same-day close — the journal's own measure of how early the tape becomes informative">
+          opened like this: {obr.n} sessions starting{' '}
+          {(obr.state ?? '').replace(/_/g, ' ')} →{' '}
+          {obr.day_median != null &&
+            `close med ${obr.day_median >= 0 ? '+' : ''}${(obr.day_median * 100).toFixed(1)}%`}
+          {obr.day_red_pct != null &&
+            `, ${Math.round(obr.day_red_pct * 100)}% red`}
         </div>
       )}
 

@@ -926,6 +926,15 @@ async def _j_intraday() -> dict:
     return await asyncio.to_thread(ip.evaluate)
 
 
+async def _j_premarket() -> dict:
+    """Pre-market snapshot — equity gap vs prior close (SPY/QQQ/SMH
+    extended-hours) + crypto 24h change. Fires ~8:25 and ~9:25 ET;
+    the early→final drift shows whether the gap firmed or faded into
+    the open. Journaled now so gap→outcome base rates can accrue."""
+    from app.signals import premarket
+    return await asyncio.to_thread(premarket.snapshot)
+
+
 async def _j_intraday_recovery() -> dict:
     """5-min recovery-confirmation engine — fetch session bars for the
     AI-infra watch scope, evaluate VWAP/RS/RVOL/OR/breadth on the
@@ -1279,6 +1288,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "selloff":     ("Selloff opportunity engine", _j_selloff),
     "short-data":  ("Short interest/volume pull", _j_short_data),
     "short-squeeze": ("Squeeze + covering eval", _j_short_squeeze),
+    "premarket-tape": ("Pre-market gap + crypto snapshot",
+                       _j_premarket),
     "intraday-tape": ("Intraday tape classifier", _j_intraday),
     "intraday-regime": ("Intraday regime overlay",
                         _j_intraday_regime),

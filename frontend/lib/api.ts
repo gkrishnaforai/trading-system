@@ -1147,6 +1147,22 @@ export type IntradayTape = {
     next_median?: number | null
     next_red_pct?: number | null
   } | null
+  open_base_rate?: {
+    state?: string
+    n?: number
+    day_median?: number | null
+    day_red_pct?: number | null
+    next_median?: number | null
+    next_red_pct?: number | null
+  } | null
+  premarket?: {
+    slots?: Array<{
+      slot?: string; ts?: string
+      qqq_gap?: number | null; spy_gap?: number | null
+      smh_gap?: number | null
+      btc_chg?: number | null; eth_chg?: number | null
+    }>
+  } | null
   eval?: {
     qqq_chg_open?: number
     above_vwap?: boolean

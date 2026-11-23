@@ -472,40 +472,16 @@ def _timeline_row(r: dict) -> dict:
             "evidence": rd.get("evidence")}
 
 
-def base_rates() -> dict[str, dict]:
-    """Conditional session outcomes — the journal's own learnings.
+def _mode(states: list[str]) -> Optional[str]:
+    if not states:
+        return None
+    c: dict[str, int] = {}
+    for s in states:
+        c[s] = c.get(s, 0) + 1
+    return max(c, key=c.get)
 
-    Per-session signature (the day's most-eval'd tape state) vs
-    same-day and next-day QQQ returns. Base rates with n disclosed;
-    honest context, never a forecast."""
-    from app.database import db
-    rows = db.execute_query(
-        "SELECT ts::date d, state, day_ret FROM intraday_evals"
-        " WHERE outcome IS NOT NULL")
-    counts: dict = {}
-    day_ret: dict = {}
-    for r in rows:
-        d = r["d"]
-        counts.setdefault(d, {})
-        counts[d][r["state"]] = counts[d].get(r["state"], 0) + 1
-        if d not in day_ret and r.get("day_ret") is not None:
-            day_ret[d] = float(r["day_ret"])
-    bars = db.execute_query(
-        "SELECT date, close FROM daily_bars WHERE symbol='QQQ'"
-        " ORDER BY date")
-    closes = {b["date"]: float(b["close"]) for b in bars}
-    order = sorted(closes)
-    ndx = {order[i]: closes[order[i + 1]] / closes[order[i]] - 1
-           for i in range(len(order) - 1)}
-    groups: dict = {}
-    for d, c in counts.items():
-        dom = max(c, key=c.get)
-        g = groups.setdefault(dom, {"n": 0, "day": [], "next": []})
-        g["n"] += 1
-        if d in day_ret:
-            g["day"].append(day_ret[d])
-        if d in ndx:
-            g["next"].append(ndx[d])
+
+def _br_stats(groups: dict) -> dict[str, dict]:
     import statistics
     out: dict[str, dict] = {}
     for st, g in groups.items():
@@ -527,6 +503,50 @@ def base_rates() -> dict[str, dict]:
     return out
 
 
+def base_rates() -> dict[str, dict]:
+    """Conditional session outcomes — the journal's own learnings.
+
+    Two phase-conditioned signatures per session:
+      'final' — the day's most-eval'd tape state → same-day and
+        next-day QQQ returns (the existing read).
+      'open' — mode of the session's first three evals → same-day
+        close. Answers the question the journal can settle: does the
+        opening tape predict the close better than the all-day read?
+    Base rates with n disclosed; honest context, never a forecast."""
+    from app.database import db
+    rows = db.execute_query(
+        "SELECT ts, ts::date d, state, day_ret FROM intraday_evals"
+        " WHERE outcome IS NOT NULL ORDER BY ts")
+    sessions: dict = {}
+    day_ret: dict = {}
+    for r in rows:
+        d = r["d"]
+        sessions.setdefault(d, []).append(r["state"])
+        if d not in day_ret and r.get("day_ret") is not None:
+            day_ret[d] = float(r["day_ret"])
+    bars = db.execute_query(
+        "SELECT date, close FROM daily_bars WHERE symbol='QQQ'"
+        " ORDER BY date")
+    closes = {b["date"]: float(b["close"]) for b in bars}
+    order = sorted(closes)
+    ndx = {order[i]: closes[order[i + 1]] / closes[order[i]] - 1
+           for i in range(len(order) - 1)}
+    final_g: dict = {}
+    open_g: dict = {}
+    for d, states in sessions.items():
+        for sig, groups in ((_mode(states), final_g),
+                            (_mode(states[:3]), open_g)):
+            if not sig:
+                continue
+            g = groups.setdefault(sig, {"n": 0, "day": [], "next": []})
+            g["n"] += 1
+            if d in day_ret:
+                g["day"].append(day_ret[d])
+            if d in ndx:
+                g["next"].append(ndx[d])
+    return {"final": _br_stats(final_g), "open": _br_stats(open_g)}
+
+
 def latest() -> dict[str, Any]:
     """Most recent eval + today's state timeline, for the board card."""
     from app.database import db
@@ -536,22 +556,44 @@ def latest() -> dict[str, Any]:
     if not rows:
         return {"state": "no_evals_today", "timeline": []}
     latest_eval = rows[0]["readings"] or {}
-    # sessions-like-this base rate — the journal's own history
+    # sessions-like-this base rates — the journal's own history,
+    # conditioned on today's dominant state AND its opening signature
     br = None
+    obr = None
     try:
-        dom_counts: dict = {}
-        for r in rows:
-            dom_counts[r["state"]] = dom_counts.get(r["state"], 0) + 1
-        dom = max(dom_counts, key=dom_counts.get)
-        hist = base_rates().get(dom)
+        states_today = [r["state"] for r in reversed(rows)]
+        rates = base_rates()
+        dom = _mode(states_today)
+        hist = rates.get("final", {}).get(dom)
         if hist:
             br = {"state": dom, **hist}
+        open_sig = _mode(states_today[:3])
+        ohist = rates.get("open", {}).get(open_sig)
+        if ohist and open_sig != dom:
+            obr = {"state": open_sig, **ohist}
     except Exception:
         pass
     return {"state": rows[0]["state"], "ts": str(rows[0]["ts"]),
             "eval": latest_eval, "base_rate": br,
+            "open_base_rate": obr,
+            "premarket": _premarket_today(),
             "timeline": [_timeline_row(r)
                          for r in reversed(rows)]}
+
+
+def _premarket_today() -> Optional[dict]:
+    """Today's journaled pre-market snapshot(s), if the premarket-tape
+    job has run — early vs final slots let the card show whether the
+    gap firmed or faded into the open."""
+    try:
+        from app.database import db
+        rows = db.execute_query(
+            "SELECT slot, ts, qqq_gap, spy_gap, smh_gap,"
+            " btc_chg, eth_chg FROM premarket_snapshots"
+            " WHERE date = CURRENT_DATE ORDER BY slot")
+        return {"slots": rows} if rows else None
+    except Exception:
+        return None
 
 
 def grade() -> dict[str, int]:
