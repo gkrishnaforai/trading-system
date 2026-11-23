@@ -1448,6 +1448,199 @@ def _assemble(legs: dict[str, dict], firing: list[str],
             "read": read}
 
 
+# ---- sector-level fragility ---------------------------------------
+# The market composite says WHETHER the tape is fragile; this says
+# WHERE the leverage is concentrated — the proposal's actual value-add
+# ("which sector holds the borrowed money, and is it rising fastest").
+# Same discipline as the market score: legs are observed | missing,
+# weights renormalize over what exists, nothing counts as neutral.
+
+_SECTOR_MAP = [
+    # etf, label, leveraged ETFs whose volume share proxies crowding
+    ("SMH", "semis / AI-infra", ("SOXL", "SOXS")),
+    ("XLK", "tech",            ("TECL", "TECS")),
+    ("QQQ", "nasdaq growth",   ("TQQQ", "SQQQ")),
+    ("IWM", "small caps",      ("TNA", "TZA")),
+    ("XLF", "financials",      ("FAS", "FAZ")),
+    ("XLE", "energy",          ("ERX", "ERY")),
+    ("XLC", "communication",   ()),
+    ("XLV", "health",          ("CURE",)),
+]
+# short-interest basket — SI covers single names, not ETFs; the
+# AI-infra/semis cohort is the leverage this system actually watches
+_SI_BASKET = ["NVDA", "AMD", "AVGO", "MRVL", "MU", "ARM", "TSM",
+              "VRT", "MOD", "CLS", "IREN", "NBIS", "CRWV", "APLD", "DELL"]
+_SECTOR_W = {"lev_crowding": 30, "trigger": 25, "si": 20,
+             "vol": 15, "deterioration": 10}
+
+
+def _sec_lev_crowding(etf: str, levs: tuple[str, ...],
+                      as_of: Optional[date]) -> dict[str, Any]:
+    """Lev-ETF dollar-volume share of (lev + sector-ETF) volume —
+    the same crowding proxy as the market positioning leg, scoped to
+    one sector. Percentile against the sector's own ~1y history."""
+    out: dict[str, Any] = {"status": "missing"}
+    if not levs:
+        return out
+    books = {s: _ohlcv(s, 160, as_of) for s in list(levs) + [etf]}
+    absent = [s for s, b in books.items() if len(b) < 40]
+    if absent:
+        yf = _yf_closes(" ".join(absent), "8mo")
+        for s in absent:
+            close, vol = yf.get(s, ([], None))
+            if vol and len(close) >= 40:
+                books[s] = list(zip(close, vol))
+    bench = books.get(etf) or []
+    if len(bench) < 40:
+        return out
+    series: list[Optional[float]] = []
+    for i in range(len(bench)):
+        lv = sum((books[s][i][0] * books[s][i][1])
+                 for s in levs if len(books.get(s) or []) > i)
+        bv = bench[i][0] * bench[i][1]
+        series.append(lv / (lv + bv) if (lv + bv) else None)
+    smooth = [None if any(x is None for x in series[i:i + 5]) else
+              sum(x for x in series[i:i + 5] if x is not None) / 5
+              for i in range(len(series) - 4)]
+    hist = [s for s in smooth if s is not None]
+    if len(hist) < 30:
+        return out
+    cur, prev = hist[-1], hist[-21] if len(hist) > 21 else hist[0]
+    pct = _pctile(hist[:-1], cur)
+    out.update({"status": "observed", "share": round(cur, 3),
+                "share_pctile": pct,
+                "trend": round(cur - prev, 3)})
+    return out
+
+
+def _sec_si(as_of: Optional[date]) -> dict[str, Any]:
+    """Median short-interest across the AI-infra/semis basket +
+    change vs the prior biweekly report. SI is biweekly + ~2wk
+    lagged — a slow validator, dated honestly; a feed dead >45d
+    reports stale, never silently fresh. days_to_cover stands in
+    when short_percent isn't populated."""
+    from app.database import db
+    try:
+        rows = db.execute_query(
+            "SELECT DISTINCT ON (symbol) symbol, short_percent,"
+            " days_to_cover, short_interest_date FROM short_interest"
+            " WHERE symbol = ANY(:s)"
+            " AND (short_percent IS NOT NULL"
+            "      OR days_to_cover IS NOT NULL)"
+            " ORDER BY symbol, short_interest_date DESC",
+            {"s": _SI_BASKET})
+        if len(rows) < 4:
+            return {"status": "missing", "n": len(rows)}
+        import statistics
+        vals = [float(r["short_percent"]) for r in rows
+                if r["short_percent"] is not None]
+        dtcs = [float(r["days_to_cover"]) for r in rows
+                if r["days_to_cover"] is not None]
+        med = statistics.median(vals) if vals else None
+        med_dtc = statistics.median(dtcs) if dtcs else None
+        newest = max(r["short_interest_date"] for r in rows)
+        stale = (date.today() - newest).days > 45
+        prev = db.execute_query(
+            "SELECT DISTINCT ON (symbol) symbol, short_percent"
+            " FROM short_interest WHERE symbol = ANY(:s)"
+            " AND short_percent IS NOT NULL"
+            " AND short_interest_date < :d"
+            " ORDER BY symbol, short_interest_date DESC",
+            {"s": _SI_BASKET,
+             "d": min(r["short_interest_date"] for r in rows)})
+        delta = None
+        if med is not None and len(prev) >= 4:
+            delta = round(med - statistics.median(
+                float(r["short_percent"]) for r in prev), 2)
+        hottest = (max((r for r in rows
+                        if r["short_percent"] is not None),
+                       key=lambda r: float(r["short_percent"]),
+                       default=None))
+        return {"status": "stale" if stale else "observed",
+                "median_si": round(med, 2) if med is not None else None,
+                "median_dtc": round(med_dtc, 2)
+                              if med_dtc is not None else None,
+                "si_delta": delta, "n": len(rows),
+                "as_of": str(newest),
+                "hottest": (f"{hottest['symbol']} "
+                            f"{float(hottest['short_percent']):.1f}%"
+                            if hottest else None)}
+    except Exception as exc:
+        logger.debug("sector si: %s", exc)
+        return {"status": "missing"}
+
+
+def _sector_fragility(as_of: Optional[date] = None) -> list[dict]:
+    """Per-sector leverage-concentration read — 0-100 each, same
+    bands as the market composite. Legs: lev-ETF crowding, trigger
+    proximity, short interest (semis basket only), vol regime,
+    relative deterioration vs SPY."""
+    sectors: list[dict] = []
+    spy_c = _closes("SPY", 280, as_of)
+    spy_rel = None
+    if len(spy_c) > 25:
+        spy_rel = spy_c[-1] / spy_c[-21] - 1
+    si = _sec_si(as_of)
+    for etf, label, levs in _SECTOR_MAP:
+        c = _closes(etf, 280, as_of)
+        legs: dict[str, dict] = {}
+        crow = _sec_lev_crowding(etf, levs, as_of)
+        if crow.get("status") == "observed":
+            s = _clamp((crow.get("share_pctile") or 50)
+                       + (15 if (crow.get("trend") or 0) > 0.02 else 0))
+            legs["lev_crowding"] = {"score": round(s), **crow}
+        if len(c) > 60:
+            s50, s200 = _sma(c, 50), _sma(c, 200)
+            rv = _rvol_series(c, 20)
+            t = (50 if s50 and c[-1] < s50 else 0) \
+                + (30 if s200 and c[-1] < s200 else 0)
+            vpct = _pctile(rv[:-1], rv[-1]) if len(rv) > 30 else None
+            legs["trigger"] = {"score": round(t), "status": "observed",
+                               "below_50d": bool(s50 and c[-1] < s50),
+                               "below_200d": bool(s200 and c[-1] < s200),
+                               "ret20_pct": round(
+                                   (c[-1] / c[-21] - 1) * 100, 1)
+                                   if len(c) > 21 else None}
+            if vpct is not None:
+                legs["vol"] = {"score": round(vpct),
+                               "status": "observed",
+                               "rvol20_pctile": round(vpct)}
+            if spy_rel is not None and len(c) > 21:
+                rel = c[-1] / c[-21] - 1 - spy_rel
+                legs["deterioration"] = {
+                    "score": round(_clamp(50 - rel * 1000)),
+                    "status": "observed",
+                    "vs_spy20_pct": round(rel * 100, 1)}
+        if etf == "SMH" and si.get("status") == "observed":
+            med, dtc = si.get("median_si"), si.get("median_dtc")
+            s = ((100 if med >= 15 else 75 if med >= 10 else
+                  50 if med >= 6 else 25 if med >= 3 else 10)
+                 if med is not None else
+                 (100 if dtc >= 5 else 75 if dtc >= 3.5 else
+                  50 if dtc >= 2.5 else 25 if dtc >= 1.5 else 10)
+                 if dtc is not None else None)
+            if s is not None and (si.get("si_delta") or 0) > 0.5:
+                s = _clamp(s + 20)
+            if s is not None:
+                legs["si"] = {"score": s, **si}
+        elif etf == "SMH" and si.get("status") == "stale":
+            legs["si"] = {"status": "stale",
+                          "note": f"si feed stale since {si.get('as_of')}",
+                          "n": si.get("n")}
+        scored = {k: l for k, l in legs.items() if "score" in l}
+        tot_w = sum(_SECTOR_W[k] for k in scored)
+        score = (round(sum(l["score"] * _SECTOR_W[k]
+                           for k, l in scored.items()) / tot_w)
+                 if tot_w else None)
+        sectors.append({
+            "etf": etf, "label": label, "score": score,
+            "band": _band(score) if score is not None else None,
+            "legs": legs,
+            "missing": [k for k in _SECTOR_W if k not in scored]})
+    sectors.sort(key=lambda s: s.get("score") or -1, reverse=True)
+    return sectors
+
+
 def compute(as_of: Optional[date] = None) -> dict[str, Any]:
     """Fetch → score → assemble. Everything degrades honestly: a dead
     feed becomes a missing leg, never a neutral one."""
@@ -1737,6 +1930,33 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
                                   second_risk == "HIGH"}
     row["signals"]["fear_classification"] = fclass
     row["signals"]["second_leg_down"] = row["second_leg_down"]
+
+    # ---- sector fragility — WHERE the leverage sits, with the
+    # score delta vs the last journaled row = "rising fastest" ----
+    try:
+        sectors = _sector_fragility(as_of)
+        try:
+            from app.database import db
+            prev_row = db.execute_query(
+                "SELECT signals FROM fragility_daily"
+                " ORDER BY as_of DESC LIMIT 1")
+            prev_secs = {}
+            if prev_row:
+                ps = prev_row[0].get("signals")
+                if isinstance(ps, str):
+                    ps = json.loads(ps)
+                for s in (ps or {}).get("sectors") or []:
+                    prev_secs[s["etf"]] = s.get("score")
+        except Exception:
+            prev_secs = {}
+        for s in sectors:
+            prev = prev_secs.get(s["etf"])
+            s["score_delta"] = (s["score"] - prev
+                                if s["score"] is not None
+                                and prev is not None else None)
+        row["signals"]["sectors"] = sectors
+    except Exception as exc:
+        logger.warning("sector fragility: %s", exc)
     return row
 
 
@@ -1798,6 +2018,7 @@ def latest() -> Optional[dict[str, Any]]:
         r["as_of"] = str(r["as_of"])
         # hoisted headline — persisted inside signals JSONB
         r["exhaustion"] = (r.get("signals") or {}).get("exhaustion")
+        r["sectors"] = (r.get("signals") or {}).get("sectors")
         return r
     except Exception:
         return None

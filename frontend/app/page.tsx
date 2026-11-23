@@ -1368,6 +1368,27 @@ export default async function RegimePage() {
               {fragility.read}
             </p>
           )}
+          {(fragility.sectors?.length ?? 0) > 0 && (
+            <div className="pt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[11px]">
+              <span className="text-faint"
+                title="per-sector leverage concentration — lev-ETF crowding + trigger proximity + vol regime + relative deterioration (+ short-interest where journaled). Delta = score change vs the last journaled read.">
+                fragile sectors
+              </span>
+              {fragility.sectors!.map((s) => (
+                <span key={s.etf}
+                  className={(s.band === 'critical' || s.band === 'fragile')
+                    ? 'text-defensive'
+                    : s.band === 'elevated'
+                      ? 'text-caution' : 'text-faint'}
+                  title={`${s.label} — ${s.score ?? '—'} ${s.band ?? ''}\nlegs: ${Object.entries(s.legs ?? {}).map(([k, v]) =>
+                    v?.score != null ? `${k} ${v.score}` : `${k}: ${v?.note ?? v?.status ?? 'missing'}`).join(' · ')}`}>
+                  {s.etf} {s.score ?? '—'}
+                  {s.score_delta != null && s.score_delta !== 0 &&
+                    ` (${s.score_delta > 0 ? '+' : ''}${s.score_delta})`}
+                </span>
+              ))}
+            </div>
+          )}
           {fragility.resolution?.phase && (
             <div className="pt-3 flex flex-wrap items-center gap-2">
               <span className="font-mono text-[10px] uppercase tracking-wider text-faint">

@@ -134,6 +134,13 @@ export type Fragility = {
     bottom_score?: number | null
     read?: string
   }
+  sectors?: Array<{
+    etf?: string; label?: string
+    score?: number | null; band?: string | null
+    score_delta?: number | null
+    legs?: Record<string, Record<string, unknown>>
+    missing?: string[]
+  }>
   missing?: string[]
   read?: string
   computed_at?: string
