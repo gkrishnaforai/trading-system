@@ -162,7 +162,9 @@ export type MorningRegime = {
     } | null
     flips?: Array<{ as_of?: string; from?: string; to?: string }>
     sectors?: Array<{
-      symbol?: string; ret5?: number | null; ret20?: number | null
+      symbol?: string; ret1?: number | null
+      ret5?: number | null; ret20?: number | null
+      vs_spy1?: number | null
       vs_spy5?: number | null; vs_spy20?: number | null
     }>
     smh_ew?: {

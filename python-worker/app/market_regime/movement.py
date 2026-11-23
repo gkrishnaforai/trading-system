@@ -68,6 +68,7 @@ def _sector_board() -> list[dict]:
     for r in rows:
         px.setdefault(r["symbol"], []).append(float(r["close"]))
     spy = px.get("SPY") or []
+    spy1 = spy[0] / spy[1] - 1 if len(spy) > 1 else None
     spy5 = spy[0] / spy[5] - 1 if len(spy) > 5 else None
     spy20 = spy[0] / spy[20] - 1 if len(spy) > 20 else None
     board = []
@@ -75,11 +76,15 @@ def _sector_board() -> list[dict]:
         c = px.get(s) or []
         if len(c) < 6:
             continue
+        r1 = c[0] / c[1] - 1
         r5 = c[0] / c[5] - 1
         r20 = c[0] / c[20] - 1 if len(c) > 20 else None
         board.append({
-            "symbol": s, "ret5": round(r5, 4),
+            "symbol": s, "ret1": round(r1, 4),
+            "ret5": round(r5, 4),
             "ret20": round(r20, 4) if r20 is not None else None,
+            "vs_spy1": (round(r1 - spy1, 4)
+                        if spy1 is not None else None),
             "vs_spy5": (round(r5 - spy5, 4)
                         if spy5 is not None else None),
             "vs_spy20": (round(r20 - spy20, 4)

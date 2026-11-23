@@ -71,6 +71,9 @@ export default async function RegimePage() {
   const eqPosture = morning?.posture
   const rates = morning?.rates
   const direction = morning?.direction
+  const sec1d = [...(movement?.sectors ?? [])]
+    .filter((s) => s.vs_spy1 != null)
+    .sort((a, b) => (b.vs_spy1 ?? 0) - (a.vs_spy1 ?? 0))
   const record = morning?.record ?? []
 
   const tone = TONE[p.posture ?? 'neutral'] ?? 'text-neutral'
@@ -830,18 +833,35 @@ export default async function RegimePage() {
             </p>
           )}
           {(movement.sectors?.length ?? 0) > 0 && (
-            <div className="pt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 font-mono text-[11px]">
-              <span className="text-faint">sectors vs SPY · 5d</span>
-              <span className="text-aggressive">
-                in {movement.sectors!.slice(0, 3).map((s) =>
-                  `${s.symbol} ${s.vs_spy5 != null && s.vs_spy5 >= 0 ? '+' : ''}${s.vs_spy5 != null ? (s.vs_spy5 * 100).toFixed(1) : '—'}%`
-                ).join('  ')}
-              </span>
-              <span className="text-defensive">
-                out {movement.sectors!.slice(-3).reverse().map((s) =>
-                  `${s.symbol} ${s.vs_spy5 != null && s.vs_spy5 >= 0 ? '+' : ''}${s.vs_spy5 != null ? (s.vs_spy5 * 100).toFixed(1) : '—'}%`
-                ).join('  ')}
-              </span>
+            <div className="pt-3 space-y-1 font-mono text-[11px]">
+              {sec1d.length > 0 && (
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                  <span className="text-faint">sectors vs SPY · latest</span>
+                  <span className="text-aggressive">
+                    in {sec1d.slice(0, 3).map((s) =>
+                      `${s.symbol} ${(s.vs_spy1 ?? 0) >= 0 ? '+' : ''}${((s.vs_spy1 ?? 0) * 100).toFixed(1)}%`
+                    ).join('  ')}
+                  </span>
+                  <span className="text-defensive">
+                    out {sec1d.slice(-3).reverse().map((s) =>
+                      `${s.symbol} ${(s.vs_spy1 ?? 0) >= 0 ? '+' : ''}${((s.vs_spy1 ?? 0) * 100).toFixed(1)}%`
+                    ).join('  ')}
+                  </span>
+                </div>
+              )}
+              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                <span className="text-faint">sectors vs SPY · 5d</span>
+                <span className="text-aggressive">
+                  in {movement.sectors!.slice(0, 3).map((s) =>
+                    `${s.symbol} ${s.vs_spy5 != null && s.vs_spy5 >= 0 ? '+' : ''}${s.vs_spy5 != null ? (s.vs_spy5 * 100).toFixed(1) : '—'}%`
+                  ).join('  ')}
+                </span>
+                <span className="text-defensive">
+                  out {movement.sectors!.slice(-3).reverse().map((s) =>
+                    `${s.symbol} ${s.vs_spy5 != null && s.vs_spy5 >= 0 ? '+' : ''}${s.vs_spy5 != null ? (s.vs_spy5 * 100).toFixed(1) : '—'}%`
+                  ).join('  ')}
+                </span>
+              </div>
             </div>
           )}
           {(movement.flips?.length ?? 0) > 0 && (
