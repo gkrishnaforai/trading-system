@@ -723,7 +723,7 @@ class FairValueRunner:
         # than treat the published number as raw provider math
         _rq = getattr(regime_features, "quality", None) or {}
         if (_rq.get("eps_ttm.one_time_distortion_override")
-                or _rq.get("eps_ttm.filled_from_actuals")):
+                or _rq.get("eps_ttm.basis") == "adjusted_actuals"):
             quality_flags.append("ttm_actuals_override")
         if (_rq.get("eps_forward.provider_divergence")
                 or _rq.get("eps_forward.filled_from_snapshots")):
