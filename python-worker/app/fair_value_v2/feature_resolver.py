@@ -108,8 +108,12 @@ class FeatureResolver:
 
         eps_ttm — provider GAAP TTM carries one-time items and stale
         halves (WDC's SanDisk gain doubled it; MOD came in ~60% low).
-        On a >20% divergence from the journaled 4-quarter actuals the
-        actuals win; the provider raw stays in quality for audit.
+        When all four journaled actuals exist they are THE basis —
+        the same street-adjusted convention as the forward
+        consensus, so trailing and forward never mix GAAP vs
+        adjusted inside one method. Provider GAAP stays in quality
+        as gaap_reference with divergence always recorded; when
+        actuals are missing the GAAP basis is disclosed, not silent.
 
         eps_forward — provider epsForward vintages vary per symbol
         (WDC resolved to FY+2). The nearest forward-FY row in our own
@@ -124,18 +128,30 @@ class FeatureResolver:
                     symbol, as_of_ts)
                 v = scalars.get("eps_ttm")
                 if base is not None and base >= 0.25:
-                    if v is None:
-                        scalars["eps_ttm"] = base
-                        sources["eps_ttm"] = "earnings_data.eps_actual~sum4"
-                        quality["eps_ttm.filled_from_actuals"] = str(base_date)
-                    else:
-                        div = abs(float(v) / base - 1.0)
-                        if div > 0.20:
-                            quality["eps_ttm.provider_raw"] = v
-                            quality["eps_ttm.divergence_pct"] = round(div * 100, 1)
-                            quality["eps_ttm.one_time_distortion_override"] = True
-                            scalars["eps_ttm"] = base
-                            sources["eps_ttm"] = "earnings_data.eps_actual~sum4"
+                    # street-adjusted 4q actuals are THE basis — same
+                    # non-GAAP convention as the forward consensus, so
+                    # trailing and forward legs never mix GAAP vs
+                    # adjusted inside one method. The provider GAAP
+                    # value stays in quality as the disclosed
+                    # GAAP reference, divergence always recorded.
+                    if v is not None:
+                        quality["eps_ttm.provider_raw"] = v
+                        quality["eps_ttm.gaap_reference"] = v
+                        quality["eps_ttm.divergence_pct"] = round(
+                            abs(float(v) / base - 1.0) * 100, 1)
+                        if quality["eps_ttm.divergence_pct"] > 20:
+                            quality[
+                                "eps_ttm.one_time_distortion_override"
+                            ] = True
+                    scalars["eps_ttm"] = base
+                    sources["eps_ttm"] = "earnings_data.eps_actual~sum4"
+                    quality["eps_ttm.basis"] = "adjusted_actuals"
+                    quality["eps_ttm.actuals_as_of"] = str(base_date)
+                elif v is not None:
+                    # no full 4-quarter actuals — provider GAAP stands,
+                    # basis disclosed so the mix is never silent
+                    quality["eps_ttm.basis"] = "gaap_provider"
+                    quality["eps_ttm.actuals_missing"] = True
             except Exception:
                 pass
         if "eps_forward" in req:
@@ -147,6 +163,7 @@ class FeatureResolver:
                     pe = est.get("period_end")
                     quality["eps_forward.estimate_period_end"] = str(pe)
                     quality["eps_forward.num_analysts"] = est.get("num_analysts")
+                    quality["eps_forward.basis"] = "consensus_adjusted"
                     if v is None:
                         scalars["eps_forward"] = snap_eps
                         sources["eps_forward"] = (
@@ -169,6 +186,7 @@ class FeatureResolver:
                             f"symbol_estimate_snapshots.eps_avg[{pe}]")
                 elif v is not None:
                     quality["eps_forward.no_estimate_snapshot"] = True
+                    quality["eps_forward.basis"] = "provider_consensus"
             except Exception:
                 pass
 
