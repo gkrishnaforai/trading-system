@@ -1183,6 +1183,11 @@ export type IntradayTape = {
     breadth_n?: number | null
     morning_recovery?: boolean
     evidence?: string[]
+    levels?: Record<string, {
+      close?: number; vwap?: number; dist_pct?: number
+      day_ret_pct?: number; reclaim?: number; confirm?: number
+      support?: number; warning?: number; above?: boolean
+    }>
   }
   timeline?: {
     ts: string

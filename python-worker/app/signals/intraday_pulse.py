@@ -310,6 +310,32 @@ def _fetch_all() -> dict[str, list[dict]]:
     return asyncio.run(go())
 
 
+def _levels(bars: list[dict], s: dict) -> Optional[dict]:
+    """Closing VWAP scoreboard + tomorrow's confirmation checklist.
+
+    reclaim  = session VWAP — the line a rebound must retake
+    confirm  = opening-range high — reclaiming it means the whole
+               morning rejection was absorbed
+    support  = last-hour low — where the tape stabilized
+    warning  = session low — break it and the rebound failed
+    Levels are a checklist, not a signal — the tape state and
+    posture decide whether acting on them is warranted."""
+    if not bars or not s.get("vwap"):
+        return None
+    lo60 = min(b["l"] for b in bars[-12:])        # last-hour zone
+    return {
+        "close": round(s["last"], 2), "vwap": round(s["vwap"], 2),
+        "dist_pct": round((s["last"] / s["vwap"] - 1) * 100, 2),
+        "day_ret_pct": round((s.get("chg_open") or 0) * 100, 2),
+        "reclaim": round(s["vwap"], 2),
+        "confirm": round(s.get("or_hi")
+                         or max(b["h"] for b in bars), 2),
+        "support": round(lo60, 2),
+        "warning": round(min(b["l"] for b in bars), 2),
+        "above": bool(s.get("above_vwap")),
+    }
+
+
 def evaluate(persist: bool = True) -> dict[str, Any]:
     from app.database import db
     raw = _fetch_all()
@@ -417,6 +443,12 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
            "smh_above_vwap": smh.get("above_vwap"),
            "smh_vwap_held": smh.get("vwap_held"),
            "breadth_adv_pct": adv, "breadth_n": br.get("n"),
+           "levels": {s: lv for s, lv in (
+               ("SPY", _levels(raw.get("SPY") or [], spy)),
+               ("QQQ", _levels(raw.get("QQQ") or [], qqq)),
+               ("SMH", _levels(raw.get("SMH") or [], smh)),
+               ("IWM", _levels(raw.get("IWM") or [], iwm)),
+           ) if lv},
            "evidence": ev}
     # forecast layer — direction vs conditions vs day-type, journaled
     # for the grading loop (heuristic priors, not a fitted model)

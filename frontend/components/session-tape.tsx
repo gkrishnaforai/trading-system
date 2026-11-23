@@ -98,6 +98,30 @@ export function SessionTape({ tape }: { tape: IntradayTape | null }) {
         </div>
       )}
 
+      {tape?.eval?.levels && Object.keys(tape.eval.levels).length > 0 && (
+        <div className="pt-1.5 space-y-0.5 font-mono text-[11px]">
+          <div className="text-faint"
+            title="session VWAP scoreboard + tomorrow's checklist — reclaim = vwap to retake, confirm = opening-range high, support = last-hour low, warning = session low. A checklist, not a signal.">
+            levels
+          </div>
+          {(['SMH', 'QQQ', 'SPY', 'IWM'] as const).map((sym) => {
+            const lv = tape.eval!.levels![sym]
+            if (!lv?.vwap) return null
+            return (
+              <div key={sym} className="text-faint">
+                <span className={lv.above ? 'text-aggressive' : 'text-defensive'}>
+                  {sym} {lv.dist_pct != null && `${lv.dist_pct >= 0 ? '+' : ''}${lv.dist_pct.toFixed(1)}%`} vs vwap
+                </span>
+                {' · reclaim '}{lv.reclaim}
+                {' · confirm '}{lv.confirm}
+                {' · support '}{lv.support}
+                {' · break <'}{lv.warning}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       {lastT.smh_above_vwap != null && (
         <div className="pt-1.5 font-mono text-[11px] text-faint">
           sector:{' '}
