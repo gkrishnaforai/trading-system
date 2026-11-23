@@ -132,7 +132,8 @@ export function RecoveryPanel({ rows, asOf, stale, participation }: {
         <h2 className="text-sm font-semibold tracking-wide text-ink">
           AI-infra recovery — vwap confirmation
         </h2>
-        <div className="font-mono text-[11px] text-faint">
+        <div className="font-mono text-[11px] text-faint"
+          title="participation — share of the tracked AI-infra universe above its session vwap; a rebound needs broad participation to confirm">
           {asOf
             ? new Date(asOf).toLocaleTimeString('en-US', {
                 hour: 'numeric', minute: '2-digit',
@@ -145,6 +146,35 @@ export function RecoveryPanel({ rows, asOf, stale, participation }: {
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[11px]">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wider text-faint">
+              <th className="pb-1 pr-3 text-left font-normal">symbol</th>
+              <th className="pb-1 pr-3 text-left font-normal"
+                title="recovery verdict — strong / confirmed / improving / watch / distribution / failed rebound">
+                signal</th>
+              <th className="pb-1 pr-3 text-left font-normal"
+                title="composite 0–100 — vwap hold + relative strength + volume quality + price structure + opening range + breadth">
+                score</th>
+              <th className="pb-1 pr-3 text-left font-normal"
+                title="price-recovery axis 0–100 — did the stock actually recover? (vwap hold + higher low + opening range + % of drop reclaimed)">
+                rec</th>
+              <th className="pb-1 pr-3 text-left font-normal"
+                title="demand axis 0–100 — did institutions buy it? (relative strength + directional volume + relative volume + breadth)">
+                accum</th>
+              <th className="pb-1 pr-3 text-left font-normal"
+                title="consecutive minutes held above vwap">
+                vwap</th>
+              <th className="pb-1 pr-3 text-left font-normal"
+                title="30-min return vs SMH, percentage points — leading or lagging the sector">
+                rs</th>
+              <th className="pb-1 pr-3 text-left font-normal"
+                title="relative volume — today's volume vs the same-time-of-day average (1.0x = normal)">
+                rvol</th>
+              <th className="pb-1 text-left font-normal"
+                title="Δvol directional volume (−1…+1) — closes near bar highs on volume = accumulation, near lows = distribution · +N% ext = stretched above vwap">
+                Δvol</th>
+            </tr>
+          </thead>
           <tbody>
             {rows.slice(0, 20).map((r) => {
               const sig = r.signal ?? 'WATCH'
