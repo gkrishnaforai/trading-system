@@ -199,3 +199,153 @@ def compose_direction(valuation=None, posture=None, rates=None,
             (" — " + "; ".join(notes)) if notes else ""),
         "direction_detail": detail,
     }
+
+
+# ---- horizon ladder -------------------------------------------------
+# The same evidence means different things at different scales; each
+# horizon draws only on legs that predict at that scale, and each is
+# journaled so it can be graded on its own clock (next-day verifies
+# fast, months accrue the slow track record).
+
+def _fnum(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def compose_outlook(intraday=None, fragility=None, valuation=None,
+                    rates=None, alarms=None, regime=None,
+                    fed=None) -> dict:
+    """Three horizons, each from the legs that predict at that scale:
+
+    next_day    tape state + journaled base rates + fragility
+                continuation/exhaustion 1d + the forecast legs
+    weeks_1_2   leverage-cycle phase + second-leg risk + exhaustion +
+                fragility 5d/10d probabilities — mechanical risk,
+                the horizon where forced selling lives
+    months_1_3  equity rating + rates direction + regime + fed lean —
+                valuation/earnings/rates are the only legs with any
+                business predicting months out
+    """
+    out: dict = {}
+
+    # ---- next day ---------------------------------------------------
+    tape = (intraday or {}).get("state")
+    br = (intraday or {}).get("base_rate") or {}
+    fc = (intraday or {}).get("forecast") or {}
+    probs = (fragility or {}).get("probabilities") or {}
+
+    def _p(fam: str, h: str):
+        return _fnum((probs.get(fam) or {}).get(h))
+
+    score = _TAPE_DIR.get(tape or "", 0)
+    ev: list[str] = []
+    if tape:
+        ev.append(f"tape {tape.replace('_', ' ')}")
+    nm = _fnum(br.get("next_median"))
+    if nm is not None:
+        score += 1 if nm > 0 else -1
+        ev.append(
+            f"{br.get('n')} prior sessions ending "
+            f"{(br.get('state') or '').replace('_', ' ')} → "
+            f"next-day med {nm * 100:+.1f}%")
+    cont1, exh1 = _p("continuation", "1d"), _p("exhaustion", "1d")
+    if cont1 is not None and exh1 is not None:
+        if cont1 - exh1 >= 0.05:
+            score -= 0.5
+        elif exh1 - cont1 >= 0.05:
+            score += 0.5
+        ev.append(f"fragility 1d cont {cont1 * 100:.0f}% · "
+                  f"exh {exh1 * 100:.0f}%")
+    pcg = _fnum(fc.get("prob_close_green"))
+    if pcg is not None:
+        score += (pcg - 0.5) * 2
+        ev.append(f"close-green {pcg * 100:.0f}%")
+    if not ev:
+        nd = None
+    else:
+        nd = ("leaning_up" if score >= 1 else
+              "leaning_down" if score <= -1 else "mixed")
+    out["next_day"] = {
+        "verdict": nd, "score": round(score, 2),
+        "tone": "ok" if nd == "leaning_up" else
+                "bad" if nd == "leaning_down" else "warn",
+        "evidence": ev}
+
+    # ---- 1-2 weeks --------------------------------------------------
+    lc = (fragility or {}).get("leverage_cycle") or {}
+    phase = lc.get("phase")
+    sld = ((fragility or {}).get("second_leg_down") or {}).get("risk")
+    exh_s = _fnum(((fragility or {}).get("exhaustion") or {})
+                  .get("score"))
+    vuln = _fnum((fragility or {}).get("vulnerability"))
+    band = (fragility or {}).get("band")
+    sev = (alarms or {}).get("severity")
+    char = ((alarms or {}).get("correction_character")
+            or "").replace("_", " ")
+    wk, wtone = None, None
+    if sld == "HIGH" or phase == "firing":
+        wk, wtone = "vulnerable", "bad"
+    elif phase == "discharging" and (exh_s or 0) >= 40:
+        wk, wtone = "stabilizing", "warn"
+    elif phase in ("discharging", "discharged"):
+        wk, wtone = "discharging", "warn"
+    elif vuln is not None and vuln >= 60:
+        wk, wtone = "fragile", "bad"
+    elif vuln is not None and vuln >= 40:
+        wk, wtone = "elevated", "warn"
+    elif vuln is not None:
+        wk, wtone = "calm", "ok"
+    wev = []
+    if vuln is not None:
+        wev.append(f"fragility {vuln:.0f} {band or ''}".strip())
+    if phase:
+        wev.append(f"leverage {phase}")
+    if sld:
+        wev.append(f"second-leg {str(sld).lower()}")
+    if exh_s is not None:
+        wev.append(f"exhaustion {exh_s:.0f}")
+    if char:
+        wev.append(f"{char} {sev or ''}".strip())
+    out["weeks"] = {"verdict": wk, "tone": wtone, "evidence": wev}
+
+    # ---- 1-3 months --------------------------------------------------
+    _RATING_SC = {"favorable": 2, "leaning_favorable": 1, "neutral": 0,
+                  "leaning_unfavorable": -1, "unfavorable": -2}
+    _RATE_SC = {"cooling": 1, "reheating": -1}
+    _REGIME_SC = {"strong_risk_on": 2, "risk_on": 1, "neutral": 0,
+                  "risk_off": -1, "stress": -2,
+                  "bull_low_vol": 1, "bull_high_vol": 1, "bull": 1,
+                  "bullish_correction": 0.5, "transition": 0,
+                  "distribution": -1, "distribution_risk": -1,
+                  "bear": -2, "macro_risk_off": -1}
+    _FED_SC = {"easing_priced": 1, "easing_bias": 1, "hold": 0,
+               "tightening_bias": -1, "tightening_priced": -1}
+    rating = (valuation or {}).get("stance")
+    rdir = (rates or {}).get("rates_direction")
+    reg = regime or (((valuation or {}).get("regime") or ""))
+    lean = ((fed or {}).get("lean"))
+    mscore = (_RATING_SC.get(rating or "", 0) +
+              _RATE_SC.get(rdir or "", 0) +
+              _REGIME_SC.get(reg or "", 0) +
+              _FED_SC.get(lean or "", 0))
+    mev = []
+    if rating:
+        mev.append(f"equity {rating.replace('_', ' ')}")
+    if rdir:
+        mev.append(f"rates {rdir}")
+    if reg:
+        mev.append(f"regime {reg.replace('_', ' ')}")
+    if lean:
+        mev.append(f"fed {lean.replace('_', ' ')}")
+    mo = ("constructive" if mscore >= 2 else
+          "leaning_constructive" if mscore >= 1 else
+          "cautious" if mscore <= -1 and mscore > -2 else
+          "defensive" if mscore <= -2 else "neutral")
+    out["months"] = {
+        "verdict": mo, "score": round(mscore, 1),
+        "tone": "ok" if mscore >= 1 else "bad" if mscore <= -2
+                else "warn",
+        "evidence": mev}
+    return out

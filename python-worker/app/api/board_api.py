@@ -3054,9 +3054,36 @@ async def morning_regime_report():
             rates=rates)
     except Exception:
         direction = None
+    try:
+        # horizon ladder — the same evidence at three scales;
+        # journaled once/day so each horizon grades on its own clock
+        from app.signals import equity_posture as _epo
+        from app.signals import correction_alarms as _ca2
+        _alarms = await asyncio.to_thread(_ca2.latest)
+        _fed = (((t.get("buckets") if isinstance(t, dict) else None)
+                 or {}).get("structural") or {}).get("fed")
+        outlook = _epo.compose_outlook(
+            intraday=intraday, fragility=fragility,
+            valuation=valuation, rates=rates,
+            alarms=_alarms,
+            regime=(t or {}).get("regime"), fed=_fed)
+        if outlook:
+            try:
+                from app.database import db as _odb
+                import json as _json
+                _odb.execute_update(
+                    "INSERT INTO outlook_daily (date, horizons)"
+                    " VALUES (CURRENT_DATE, :h)"
+                    " ON CONFLICT (date) DO NOTHING",
+                    {"h": _json.dumps(outlook, default=str)})
+            except Exception:
+                pass
+    except Exception:
+        outlook = None
     return {"today": t, "intraday": intraday, "fragility": fragility,
             "movement": movement, "valuation": valuation,
             "posture": posture, "rates": rates, "direction": direction,
+            "outlook": outlook,
             "record": await asyncio.to_thread(morning.record)}
 
 

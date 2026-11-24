@@ -71,6 +71,7 @@ export default async function RegimePage() {
   const eqPosture = morning?.posture
   const rates = morning?.rates
   const direction = morning?.direction
+  const outlook = morning?.outlook
   const sec1d = [...(movement?.sectors ?? [])]
     .filter((s) => s.vs_spy1 != null)
     .sort((a, b) => (b.vs_spy1 ?? 0) - (a.vs_spy1 ?? 0))
@@ -557,6 +558,29 @@ export default async function RegimePage() {
                 {direction.direction_headline}
               </span>
             )}
+          </div>
+        )}
+        {outlook && (
+          <div className="pt-2 space-y-0.5 font-mono text-[11px]"
+            title="the same evidence at three scales — each horizon uses only the legs that predict at that scale; journaled daily so each grades on its own clock">
+            {([
+              ['next day', outlook.next_day],
+              ['1-2 wks', outlook.weeks],
+              ['1-3 mos', outlook.months],
+            ] as const).map(([h, o]) => o?.verdict && (
+              <div key={h} className="flex items-baseline gap-x-2">
+                <span className="text-faint w-14 shrink-0">{h}</span>
+                <span className={`font-semibold ${
+                  o.tone === 'ok' ? 'text-aggressive'
+                  : o.tone === 'warn' ? 'text-caution'
+                  : 'text-defensive'}`}>
+                  {(o.verdict ?? '').replace(/_/g, ' ')}
+                </span>
+                <span className="text-faint">
+                  {(o.evidence ?? []).join(' · ')}
+                </span>
+              </div>
+            ))}
           </div>
         )}
         {valuation && (

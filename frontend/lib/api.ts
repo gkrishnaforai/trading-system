@@ -268,6 +268,14 @@ export type MorningRegime = {
     direction_headline?: string | null
     direction_detail?: string | null
   } | null
+  outlook?: {
+    next_day?: { verdict?: string | null; score?: number | null
+                 tone?: string; evidence?: string[] } | null
+    weeks?: { verdict?: string | null; score?: number | null
+              tone?: string; evidence?: string[] } | null
+    months?: { verdict?: string | null; score?: number | null
+               tone?: string; evidence?: string[] } | null
+  } | null
   record?: Array<Record<string, unknown>>
 }
 
