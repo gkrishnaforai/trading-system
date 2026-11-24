@@ -255,6 +255,25 @@ features:
                     json_root: key_metrics_ttm
                     keys: [earningsYieldTTM]
 
+  eps_norm_8q:
+    # mid-cycle EPS — 8-quarter mean of diluted EPS, annualized to a
+    # per-share-year basis. The through-cycle earnings base
+    # mid_cycle_pe prefers over TTM, which for a cyclical is the peak
+    # print, not the normalized one.
+    type: coalesce
+    sources:
+      - type: derived
+        name: scale
+        factor: 4.0
+        params:
+          value:
+            type: table_column_avg
+            table: fundamental_quarterly
+            column: eps_diluted
+            as_of: filing_date
+            order_by: filing_date
+            rows: 8
+
   eps_ttm_implied:
     type: derived
     max_age_days: 150

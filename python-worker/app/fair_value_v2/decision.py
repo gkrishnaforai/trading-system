@@ -257,7 +257,11 @@ def decide(category: Optional[str],
                       ("dilution_heavy", "dilution_heavy"),
                       ("distressed_floor_binds", "distressed_floor_binds"),
                       ("short_fade", "short_fade"),
-                      ("tv_dominant", "tv_dominant")):
+                      ("tv_dominant", "tv_dominant"),
+                      ("eps_forward_normalized", "eps_forward_normalized"),
+                      ("ttm_actuals_override", "ttm_actuals_override"),
+                      ("fv_premium_unsupported", "fv_premium_unsupported"),
+                      ("peak_cycle_basis", "peak_cycle_basis")):
         if flag in (quality_flags or []):
             adders_total += adders.get(key, 0); applied.append(flag)
     if scalars.get("analyst_count") in (None, 0):

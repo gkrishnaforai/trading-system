@@ -840,4 +840,25 @@ class FeatureResolver:
             q["delta_revenue"] = round(delta_rev, 2)
             return scap, src, q
 
+        if name == "scale":
+            # constant multiplier — e.g. an 8-quarter mean of quarterly
+            # EPS annualizes back to a per-share-year basis
+            v_def = (params or {}).get("value") or {}
+            v, v_src, v_q = self._resolve_one(
+                symbol, as_of_ts, "derived.value", v_def)
+            q: Dict[str, Any] = {"derived": name, "value": v}
+            for k, vv in (v_q or {}).items():
+                q[f"value.{k}"] = vv
+            if v is None:
+                return None, None, q
+            try:
+                factor = float(d.get("factor", 1.0))
+                out = float(v) * factor
+            except Exception:
+                q["derive_error"] = True
+                return None, None, q
+            src = (f"derived: {v_src} * {factor}" if v_src
+                   else "derived: scale")
+            return out, src, q
+
         return None, None, {"unsupported_derived": name}

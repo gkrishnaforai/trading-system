@@ -72,6 +72,16 @@ adders:
                                   # discounted going-concern leg
   short_fade: 0.02                # low GQ compressed the DCF advantage
                                   # period — quality gate, not penalty
+  eps_forward_normalized: 0.04    # provider forward EPS needed correction —
+                                  # the earnings basis itself is suspect
+  ttm_actuals_override: 0.03      # trailing EPS needed a one-time-item fix —
+                                  # priced input risk, not an error
+  fv_premium_unsupported: 0.06    # FV implies a premium vs peers with no
+                                  # growth edge — the ensemble disagrees
+                                  # with itself
+  peak_cycle_basis: 0.05          # est dispersion/fwd-ttm gap says the EPS
+                                  # base is mid-cycle — forward legs were
+                                  # demoted but the basis risk remains
 
 cap: 0.60                       # beyond this the name is uninvestable,
                                 # not cheap — the gate flags it instead
@@ -85,8 +95,8 @@ dispersion:
 
 # confidence roll — how much trust the fv itself deserves
 confidence:
-  high_needs:   {min_ok_methods: 2, forbid_flags: [no_scenarios, extreme_gap, tv_dominant]}
-  medium_needs: {min_ok_methods: 1, forbid_flags: [no_scenarios]}
+  high_needs:   {min_ok_methods: 2, forbid_flags: [no_scenarios, extreme_gap, tv_dominant, eps_forward_normalized, fv_premium_unsupported, peak_cycle_basis]}
+  medium_needs: {min_ok_methods: 1, forbid_flags: [no_scenarios, fv_premium_unsupported]}
 
 # decision gates on top of buy_below
 gates:

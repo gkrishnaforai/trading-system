@@ -642,6 +642,74 @@ class FairValueRunner:
                          "weight_before": w})
                     blend_inputs[idx] = (mr, w * 0.5)
 
+        # peak-cycle override — the reviewer's cyclical rule wired into
+        # the blend. Wide outer-year estimate dispersion ((hi-lo)/avg
+        # >50%) or forward EPS >1.5x trailing says the earnings basis
+        # itself is mid-cycle: a forward P/E on a peak print isn't a
+        # bargain, it's the cycle. Mid-cycle legs must vote (injected
+        # when the route didn't pick them); earnings-multiple legs
+        # priced on peak EPS get demoted. The run is flagged so the
+        # confidence roll and consumers see the basis is cyclical.
+        _peak = bool(_be)
+        if not _peak:
+            try:
+                for _dr in db.execute_query(
+                        "SELECT eps_avg, eps_low, eps_high FROM"
+                        " symbol_estimate_snapshots WHERE symbol=:s"
+                        " AND period_end > current_date + 365"
+                        " ORDER BY period_end, as_of DESC LIMIT 2",
+                        {"s": symbol}) or []:
+                    _a = _dr.get("eps_avg")
+                    _l, _h = _dr.get("eps_low"), _dr.get("eps_high")
+                    if _a and _l and _h and float(_a) > 0 and \
+                            (float(_h) - float(_l)) / float(_a) > 0.5:
+                        _peak = True
+                        break
+            except Exception:
+                pass
+        if _peak:
+            eps_suspect_flags.append("peak_cycle_basis")
+            _have = {mr.method_key for mr, _ in blend_inputs}
+            _fwd_keys = ("peg", "pe_growth", "pe_forward",
+                         "pe_technology", "pe_basic", "pe_value",
+                         "eps_trajectory", "analyst_consensus")
+            for idx, (mr, w) in enumerate(blend_inputs):
+                if w > 0 and mr.method_key.startswith(_fwd_keys) \
+                        and not (mr.metrics or {}).get(
+                            "eligibility_demoted"):
+                    (mr.metrics or {}).update(
+                        {"eligibility_demoted": "peak_cycle_basis",
+                         "weight_before": w})
+                    blend_inputs[idx] = (mr, w * 0.5)
+            try:
+                if "mid_cycle_pe" not in _have:
+                    mr, fh = self._run_method(
+                        "mid_cycle_pe", symbol, ts,
+                        extra_params=industry_params)
+                    (mr.metrics or {}).update(
+                        {"cyclical_override": "injected_primary"})
+                    method_results.append(mr)
+                    features_hashes.append(fh)
+                    blend_inputs.append((mr, 0.7))
+                else:
+                    for idx, (mr, w) in enumerate(blend_inputs):
+                        if mr.method_key == "mid_cycle_pe" and w < 0.7:
+                            (mr.metrics or {}).update(
+                                {"cyclical_override": "boosted",
+                                 "weight_before": w})
+                            blend_inputs[idx] = (mr, 0.7)
+                if "pe_cyclical" not in _have:
+                    mr, fh = self._run_method(
+                        "pe_cyclical", symbol, ts,
+                        extra_params=industry_params)
+                    (mr.metrics or {}).update(
+                        {"cyclical_override": "injected_cross"})
+                    method_results.append(mr)
+                    features_hashes.append(fh)
+                    blend_inputs.append((mr, 0.4))
+            except Exception:
+                pass
+
         # family cap applies to the recorded weight too — the breakdown
         # shows the effective share, not just the configured one
         self.blender.cap_family_weights(blend_inputs)

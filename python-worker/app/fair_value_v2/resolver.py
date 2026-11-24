@@ -237,6 +237,18 @@ class FairValueV2Resolver:
                     and "extreme_gap" not in quality_flags:
                 quality_flags.append("extreme_gap")
 
+        # peer-relative veto — the relative leg is reference-only for
+        # the blend, but an FV implying a premium vs peers with no
+        # growth edge is a disagreement the confidence roll must see:
+        # promote it into quality_flags before decide() reads them
+        try:
+            _rv_flag = (result.relative_valuation or {}).get("flag")
+            if _rv_flag == "fv_premium_unsupported" \
+                    and _rv_flag not in quality_flags:
+                quality_flags.append(_rv_flag)
+        except Exception:
+            pass
+
         # decision layer — fair value → buy price. mos_policy.yaml sets
         # the per-category discount; company-level uncertainty adds on
         # top. Persisted alongside the run so consumers gate on
