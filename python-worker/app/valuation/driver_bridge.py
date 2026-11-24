@@ -166,6 +166,17 @@ def run(symbol: str) -> dict:
                            for sc in ("bear", "base", "bull")},
         "source": "drivers" if legs else "none",
     }
+    # driver arithmetic — where the business model has an equation
+    # (neocloud first), the physical drivers multiply into a revenue
+    # path and the implied growth is checked against the standing
+    # scalar. Journaled in forecast['derived'].
+    try:
+        from app.valuation import driver_math
+        derived = driver_math.evaluate(sym, legs)
+        if derived:
+            forecast["derived"] = derived
+    except Exception as exc:
+        logger.debug("driver_math %s: %s", sym, exc)
     db.execute_update(
         "INSERT INTO driver_forecasts (symbol, as_of, regime, forecast,"
         " provenance, missing_inputs, coverage)"
