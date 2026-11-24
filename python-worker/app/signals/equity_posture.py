@@ -262,6 +262,14 @@ def compose_outlook(intraday=None, fragility=None, valuation=None,
     if pcg is not None:
         score += (pcg - 0.5) * 2
         ev.append(f"close-green {pcg * 100:.0f}%")
+    fw = ((intraday or {}).get("eval") or {}).get("forced_watch") or {}
+    nw = fw.get("n")
+    if nw and nw >= 2:
+        # warnings stack against tomorrow — 2 checks = mild drag,
+        # 5 = the full forced-unwind footprint
+        score -= min(nw - 1, 3) * 0.5
+        ev.append(f"forced-watch {nw}/5 "
+                  f"({(fw.get('verdict') or '').replace('_', ' ')})")
     if not ev:
         nd = None
     else:

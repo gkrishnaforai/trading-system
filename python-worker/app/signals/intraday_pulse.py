@@ -452,6 +452,49 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
             ev.append(f"indiscriminate tape — {100 - adv:.0f}% of "
                       f"{br['n']} names below open (90%-down proxy)")
 
+    # ---------------- forced-watch — the warning checklist ------------
+    # Individual warnings are noise; the COUNT is the signal — several
+    # firing together is the forced-unwind pattern, not profit-taking.
+    # Five checks, each journaled so the eval history grades whether
+    # warning-count predicts close direction / next-day (the 3+
+    # threshold is a prior until the journal earns it).
+    qqq_bars = raw.get("QQQ") or []
+    checks = {
+        # both indexes lost VWAP — leadership and market broken together
+        "both_below_vwap": bool(q["above_vwap"] is False and
+                                smh.get("above_vwap") is False),
+        "vix_rising": bool(vix_rising),
+        # high-beta leading the decline — SMH meaningfully under-
+        # performing SPY = crowded exposure being cut first
+        "high_beta_leading": bool(
+            red and smh.get("chg_open") is not None
+            and spy.get("chg_open") is not None
+            and smh["chg_open"] < spy["chg_open"] - 0.002),
+        # selling volume building into the afternoon — last-90min
+        # share of session volume well above uniform = distribution
+        # accelerating into the close, not exhausting
+        "pm_vol_expanding": (
+            len(qqq_bars) >= 30
+            and sum(b["v"] for b in qqq_bars) > 0
+            and (sum(b["v"] for b in qqq_bars[-18:])
+                 / sum(b["v"] for b in qqq_bars))
+                / (18 / len(qqq_bars)) > 1.25),
+        # reclaims attempted but failing — crosses mean it keeps
+        # trying, ending below means it keeps failing
+        "failed_reclaims": bool((q.get("vwap_crosses") or 0) >= 3
+                                and q["above_vwap"] is False),
+    }
+    n_warn = sum(checks.values())
+    watch_verdict = ("forced_unwind_character" if n_warn == 5 else
+                     "more_than_profit_taking" if n_warn >= 3 else
+                     "watch" if n_warn == 2 else "normal")
+    forced_watch = {"n": n_warn, "checks": checks,
+                    "verdict": watch_verdict}
+    if n_warn >= 2:
+        fired = [k for k, v in checks.items() if v]
+        ev.append(f"forced-watch {n_warn}/5 — {' · '.join(fired)} "
+                  f"({watch_verdict.replace('_', ' ')})")
+
     if q["above_vwap"] and q["vwap_held"] and breadth_ok and vix_falling:
         state = "buyers_in_control"
     elif not q["above_vwap"] and (breadth_thin or vix_rising) and red:
@@ -484,6 +527,7 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
            "breadth_adv_pct": adv, "breadth_n": br.get("n"),
            "down_day": down_day, "haven_read": haven_read,
            "haven_chgs": {k: round(v, 4) for k, v in haven_chgs.items()},
+           "forced_watch": forced_watch,
            "levels": {s: lv for s, lv in (
                ("SPY", _levels(raw.get("SPY") or [], spy)),
                ("QQQ", _levels(raw.get("QQQ") or [], qqq)),
@@ -544,6 +588,7 @@ def _timeline_row(r: dict) -> dict:
             "smh_vwap_held": rd.get("smh_vwap_held"),
             "down_day": rd.get("down_day"),
             "haven_read": rd.get("haven_read"),
+            "forced_watch": rd.get("forced_watch"),
             "evidence": rd.get("evidence")}
 
 
