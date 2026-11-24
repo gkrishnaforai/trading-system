@@ -1389,6 +1389,21 @@ export default async function RegimePage() {
                   {l.read && <span>{' — '}{l.read}</span>}
                 </div>
               ))}
+              {fragility.leverage_cycle?.phase && (
+                <div className="pt-1.5"
+                  title={`leverage cycle phase — derived from ${Object.entries(fragility.leverage_cycle.basis ?? {}).filter(([, v]) => v).map(([k]) => k.replace(/_/g, ' ')).join(', ') || 'no active flags'} · discharge ${fragility.leverage_cycle.discharge_score ?? '—'} · exhaustion ${fragility.leverage_cycle.exhaustion_score ?? '—'}`}>
+                  <span className={`font-mono text-[11px] ${
+                    fragility.leverage_cycle.phase === 'firing' || fragility.leverage_cycle.phase === 'building'
+                      ? 'text-defensive'
+                      : fragility.leverage_cycle.phase === 'discharging'
+                        ? 'text-caution' : 'text-aggressive'}`}>
+                    leverage {fragility.leverage_cycle.phase}
+                  </span>
+                  <span className="text-[12px] text-muted">
+                    {' — '}{fragility.leverage_cycle.what_to_do}
+                  </span>
+                </div>
+              )}
               {fragility.validators && (
                 <div className="text-faint pt-1"
                   title="slow/unavailable leverage feeds — disclosed, never silently absent">

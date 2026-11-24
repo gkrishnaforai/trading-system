@@ -141,6 +141,13 @@ export type Fragility = {
     legs?: Record<string, Record<string, unknown>>
     missing?: string[]
   }>
+  leverage_cycle?: {
+    phase?: string
+    what_to_do?: string
+    basis?: Record<string, boolean | null>
+    discharge_score?: number | null
+    exhaustion_score?: number | null
+  } | null
   missing?: string[]
   read?: string
   computed_at?: string

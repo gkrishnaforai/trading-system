@@ -1641,6 +1641,54 @@ def _sector_fragility(as_of: Optional[date] = None) -> list[dict]:
     return sectors
 
 
+def _leverage_cycle(ps: dict, discharge_score: Optional[float],
+                    exhaustion_score: Optional[float]) -> dict:
+    """Build-vs-discharge cycle — the 'so what' the composite score
+    can't say. Positioning flags + discharge + exhaustion resolve to
+    one phase; each phase carries what it historically rewards. The
+    guidance points at OUR checklist (vwap hold, exhaustion, tape
+    state) — never a bare buy/sell."""
+    crowded = bool(ps.get("crowded"))
+    firing = bool(ps.get("forced_liquidation"))
+    de_risk = bool(ps.get("de_risking"))
+    capit = bool(ps.get("capitulation"))
+    dis = discharge_score or 0
+    exh = exhaustion_score or 0
+    if capit or (dis >= 70 and exh >= 50):
+        phase, what = "discharged", (
+            "the leverage overhang has largely burned off — what's "
+            "left is fundamentals, not mechanics. This is the phase "
+            "staged adds exist for — on confirmation (vwap hold + "
+            "tape state), not because it's cheap.")
+    elif firing and dis < 40:
+        phase, what = "firing", (
+            "liquidation running — forced sellers hit the bid, they "
+            "don't check value. Levels alone don't hold here; the "
+            "checklist is vwap reclaim + exhaustion building, not "
+            "'it's down a lot'.")
+    elif de_risk or firing:
+        phase, what = "discharging", (
+            "leverage draining — mechanical pressure ebbing but not "
+            "cleared. The transition zone: the dip is becoming "
+            "buyable, but it's the checklist that confirms, not the "
+            "drawdown. Build the watchlist; add on confirmation.")
+    elif crowded:
+        phase, what = "building", (
+            "leverage loading — when crowded positioning unwinds, "
+            "dips get amplified. Respect selloff speed; size down "
+            "rather than chase strength.")
+    else:
+        phase, what = "quiet", (
+            "little leverage stored either way — moves are more "
+            "fundamental than mechanical.")
+    return {"phase": phase, "what_to_do": what,
+            "basis": {k: ps.get(k) for k in
+                      ("crowded", "de_risking", "forced_liquidation",
+                       "capitulation")},
+            "discharge_score": discharge_score,
+            "exhaustion_score": exhaustion_score}
+
+
 def compute(as_of: Optional[date] = None) -> dict[str, Any]:
     """Fetch → score → assemble. Everything degrades honestly: a dead
     feed becomes a missing leg, never a neutral one."""
@@ -1888,6 +1936,13 @@ def compute(as_of: Optional[date] = None) -> dict[str, Any]:
     row["signals"]["positioning_state"] = row["positioning_state"]
     row["signals"]["spiral_multiplier"] = row["spiral_multiplier"]
 
+    # leverage cycle — the phase read the user acts on: is borrowed
+    # money loading up, firing, draining, or cleared?
+    row["leverage_cycle"] = _leverage_cycle(
+        row["positioning_state"], (discharge or {}).get("score"),
+        (exhaustion or {}).get("score"))
+    row["signals"]["leverage_cycle"] = row["leverage_cycle"]
+
     # ---- fear classification — name the fear, three dimensions:
     # price/vol (vuln+breadth) + credit + whether it's already
     # resolving. Never price-only. ----
@@ -2019,6 +2074,8 @@ def latest() -> Optional[dict[str, Any]]:
         # hoisted headline — persisted inside signals JSONB
         r["exhaustion"] = (r.get("signals") or {}).get("exhaustion")
         r["sectors"] = (r.get("signals") or {}).get("sectors")
+        r["leverage_cycle"] = (r.get("signals") or {}).get(
+            "leverage_cycle")
         return r
     except Exception:
         return None
