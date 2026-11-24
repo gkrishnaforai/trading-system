@@ -51,6 +51,7 @@ symbol_map:
   MU:   memory_storage
   WDC:  memory_storage
   STX:  memory_storage
+  SNDK: memory_storage
   SMCI: server_oem
   DELL: server_oem
   HPE:  server_oem

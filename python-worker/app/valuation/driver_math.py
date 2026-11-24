@@ -134,7 +134,139 @@ def _neocloud(sym: str, legs: dict) -> dict:
     return out
 
 
-_EQUATIONS = {"neocloud": _neocloud}
+# ------------------------- memory / storage -------------------------
+# Revenue = bits shipped × blended ASP. The mix is the lever — HBM
+# carries ~5-8× commodity-DRAM revenue per bit, so a mix shift moves
+# revenue without a single extra wafer. Equation:
+#
+#   revenue_fwd = ttm × (1 + bit_growth) × (1 + blended_asp_chg)
+#   blended_asp_chg = Σ segment_share_i × asp_chg_i
+#
+# Segment shares come from driver inputs (dram_share, hbm_share, ...)
+# else the labeled mix priors below — declared, never presented as
+# segment disclosures.
+#
+# Mix priors (public segment mixes, late-2026 shapes):
+#   MU   ~68% DRAM ex-HBM · ~12% HBM · ~18% NAND
+#   WDC  pure HDD post-SNDK spin · STX pure HDD nearline
+#   SNDK pure NAND / enterprise-SSD
+_SEG_MIX_PRIORS = {
+    "MU":   {"dram": 0.68, "hbm": 0.12, "nand": 0.18, "other": 0.02},
+    "WDC":  {"hdd": 1.0},
+    "STX":  {"hdd": 1.0},
+    "SNDK": {"nand": 1.0},
+}
+
+
+def _seg_mix(sym: str, legs: dict) -> tuple[dict, str]:
+    """Segment shares — inputs first, labeled priors otherwise."""
+    shares = {}
+    for seg in ("dram", "hbm", "nand", "hdd"):
+        leg = _base(legs, f"{seg}_share")
+        if leg and leg.get("value") is not None:
+            shares[seg] = leg["value"]
+    if shares:
+        return shares, "inputs"
+    prior = _SEG_MIX_PRIORS.get(sym)
+    return (dict(prior) if prior else {}), "mix_prior"
+
+
+def _memory_compute(sym: str, legs: dict, ttm: Optional[float],
+                    overrides: Optional[dict] = None) -> dict:
+    """Shared core for evaluate() and scenario(). Overrides carry
+    caller-supplied {'asp_chg': {seg: frac}, 'bit_growth': frac} —
+    labeled scenario inputs, journaled nowhere."""
+    shares, mix_src = _seg_mix(sym, legs)
+    ovr = overrides or {}
+    if ovr.get("mix"):
+        shares = {k: v for k, v in ovr["mix"].items()}
+        mix_src = "scenario_override"
+    _tot = sum(shares.values())
+    if _tot and abs(_tot - 1.0) > 0.05:
+        shares = {k: v / _tot for k, v in shares.items()}   # renormalize
+    asp = {}
+    for seg in shares:
+        leg = _base(legs, f"{seg}_asp_chg")
+        v = leg["value"] if leg and leg.get("value") is not None else None
+        o = (ovr.get("asp_chg") or {}).get(seg)
+        if o is not None:
+            asp[seg] = {"value": o, "source": "scenario_override"}
+        elif v is not None:
+            asp[seg] = {"value": v, "source": "input"}
+        else:
+            asp[seg] = {"value": 0.0, "source": "none_assumed_flat"}
+    bit_leg = _base(legs, "bit_growth")
+    bit = ovr.get("bit_growth")
+    bit_src = "scenario_override"
+    if bit is None:
+        bit = bit_leg["value"] if bit_leg and \
+            bit_leg.get("value") is not None else 0.0
+        bit_src = "input" if bit_leg else "none_assumed_flat"
+
+    blended = sum(shares[s] * asp[s]["value"] for s in asp)
+    out: dict[str, Any] = {
+        "module": "memory_storage",
+        "formula": "ttm × (1+bit_growth) × (1+Σ share×asp_chg)",
+        "mix": {s: round(v, 3) for s, v in shares.items()},
+        "mix_source": mix_src,
+        "asp_chg": {s: {"chg": a["value"], "src": a["source"]}
+                    for s, a in asp.items()},
+        "bit_growth": {"value": bit, "src": bit_src},
+        "blended_asp_chg": round(blended, 4),
+        "per_seg_contribution": {
+            s: round(shares[s] * asp[s]["value"], 4) for s in asp},
+    }
+    if ttm:
+        fwd = ttm * (1 + bit) * (1 + blended)
+        out["ttm_revenue"] = round(ttm)
+        out["revenue_forward"] = round(fwd)
+        out["implied_growth"] = round(fwd / ttm - 1, 3)
+    return out
+
+
+def _memory_storage(sym: str, legs: dict) -> dict:
+    ttm = _ttm_revenue(sym)
+    out = _memory_compute(sym, legs, ttm)
+    standing = _base(legs, "revenue_growth")
+    if out.get("implied_growth") is not None and standing and \
+            standing.get("value") is not None:
+        out["standing_growth"] = standing["value"]
+        out["growth_divergence"] = round(
+            out["implied_growth"] - standing["value"], 3)
+    return out
+
+
+_EQUATIONS = {"neocloud": _neocloud,
+              "memory_storage": _memory_storage}
+
+
+def scenario(sym: str, overrides: dict) -> Optional[dict]:
+    """What-if driver arithmetic — caller supplies
+    {'asp_chg': {'dram': .3, 'hbm': .2}, 'bit_growth': .15} and gets
+    the implied revenue path per name. Never journaled: scenario
+    inputs are the caller's hypothesis, not evidence."""
+    try:
+        from app.research import sectors
+        module = sectors.classify_model(sym, "ai_infra")
+    except Exception:
+        return None
+    if module != "memory_storage":
+        return {"error": f"no scenario equation for {module} yet"}
+    from app.database import db
+    rows = db.execute_query(
+        "SELECT DISTINCT ON (driver_key) driver_key, value,"
+        " assumption_type, confidence FROM driver_assumptions"
+        " WHERE symbol=:s AND scenario='base'"
+        " ORDER BY driver_key, as_of DESC", {"s": sym.upper()}) or []
+    legs = {r["driver_key"]: {"base": {
+        "value": r["value"], "type": r["assumption_type"],
+        "confidence": r["confidence"]}} for r in rows}
+    out = _memory_compute(sym.upper(), legs, _ttm_revenue(sym.upper()),
+                          overrides)
+    out["symbol"] = sym.upper()
+    out["overrides"] = overrides
+    out["scenario_note"] = "unjournaled hypothesis — not evidence"
+    return out
 
 
 def evaluate(sym: str, legs: dict) -> Optional[dict]:
