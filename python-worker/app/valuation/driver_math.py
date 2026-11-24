@@ -297,8 +297,14 @@ def _project_compute(sym: str, legs: dict, ttm: Optional[float],
             fwd = sum(parts.values())
             out["components"] = {k: round(v) for k, v in parts.items()}
             out["ttm_revenue"] = round(ttm)
-            out["revenue_forward"] = round(fwd)
-            out["implied_growth"] = round(fwd / ttm - 1, 3)
+            # implied growth is only honest when the demand leg ran —
+            # a service-only number isn't a forecast, it's coverage
+            if backlog is not None:
+                out["revenue_forward"] = round(fwd)
+                out["implied_growth"] = round(fwd / ttm - 1, 3)
+            else:
+                out["revenue_partial"] = round(fwd)
+                out["coverage_note"] = "service+in-year only — no backlog"
             btb = _v("book_to_bill")
             if btb is not None:
                 out["book_to_bill"] = btb
@@ -326,15 +332,239 @@ def _project_backlog(sym: str, legs: dict) -> dict:
     return out
 
 
+# --------- mix-growth models (server_oem, optical_photonics) ---------
+# One hot AI segment on a slower base. Revenue is the blend:
+#
+#   rev_fwd = hot_rev + ttm × (1−hot_share) × (1+other_g)
+#   hot_rev resolves deep when granular drivers exist:
+#     server_oem:         rack_units × rev_per_rack
+#     optical_photonics:  ports_{gen} × asp_{gen}, summed over gens
+#   else:                 ttm × hot_share × (1+hot_g)
+#
+# The equation's job is separating the AI ramp from the legacy base —
+# a DELL growing servers 5% and AI 60% is not the same name as one
+# growing everything 20%.
+_MIX_CFG = {
+    "server_oem":         {"hot": "ai_server", "hot_share": 0.25,
+                           "hot_g": 0.50, "other_g": 0.02,
+                           "units": ["rack_units"],
+                           "price": ["rev_per_rack"]},
+    "optical_photonics":  {"hot": "ai_datacom", "hot_share": 0.55,
+                           "hot_g": 0.45, "other_g": 0.03,
+                           "units": ["ports_800g", "ports_1p6t"],
+                           "price": ["asp_800g", "asp_1p6t"]},
+}
+
+
+def _mix_growth_compute(sym: str, legs: dict, ttm: Optional[float],
+                        overrides: Optional[dict],
+                        kind: str) -> dict:
+    cfg = _MIX_CFG[kind]
+    hot = cfg["hot"]
+    ovr = overrides or {}
+    inputs: dict[str, dict] = {}
+    missing: list[str] = []
+    keys = [f"{hot}_share", f"{hot}_g", "other_g",
+            *cfg["units"], *cfg["price"]]
+    for key in keys:
+        leg = _base(legs, key)
+        o = ovr.get(key)
+        if o is not None:
+            inputs[key] = {"value": o, "source": "scenario_override"}
+        elif leg and leg.get("value") is not None:
+            inputs[key] = {"value": leg["value"], "source": "input",
+                           "type": leg["type"],
+                           "confidence": leg.get("confidence")}
+        else:
+            missing.append(key)
+
+    def _v(k, prior=None):
+        return (inputs.get(k) or {}).get("value", prior)
+
+    share = _v(f"{hot}_share", cfg["hot_share"])
+    share_src = (inputs.get(f"{hot}_share") or {}).get(
+        "source", "model_prior")
+    hot_g = _v(f"{hot}_g", cfg["hot_g"])
+    other_g = _v("other_g", cfg["other_g"])
+
+    out: dict[str, Any] = {
+        "module": kind,
+        "formula": f"{hot}_rev + ttm×(1−{hot}_share)×(1+other_g)",
+        "inputs": inputs, "missing": missing,
+        f"{hot}_share": {"value": share, "source": share_src},
+    }
+    if not ttm:
+        out["note"] = "no TTM revenue — equation can't run"
+        return out
+
+    # deep path — granular units × price when those inputs exist
+    deep = None
+    uvs = [_v(u) for u in cfg["units"]]
+    pvs = [_v(p) for p in cfg["price"]]
+    if len(cfg["units"]) == 1 and uvs[0] and pvs[0]:
+        deep = uvs[0] * pvs[0]
+    elif len(cfg["units"]) > 1 and all(uvs) and all(pvs):
+        deep = sum(u * p for u, p in zip(uvs, pvs))
+    if deep is not None:
+        hot_rev = deep
+        hot_src = "units_x_price"
+    else:
+        hot_rev = ttm * share * (1 + hot_g)
+        hot_src = "share_x_growth"
+
+    other_rev = ttm * (1 - share) * (1 + other_g)
+    fwd = hot_rev + other_rev
+    out.update({
+        f"{hot}_revenue_fwd": round(hot_rev),
+        "hot_revenue_source": hot_src,
+        "other_revenue_fwd": round(other_rev),
+        "ttm_revenue": round(ttm),
+        "revenue_forward": round(fwd),
+        "implied_growth": round(fwd / ttm - 1, 3),
+        "hot_share_fwd": round(hot_rev / fwd, 3),
+    })
+    return out
+
+
+def _server_oem(sym: str, legs: dict) -> dict:
+    out = _mix_growth_compute(sym, legs, _ttm_revenue(sym), None,
+                              "server_oem")
+    standing = _base(legs, "revenue_growth")
+    if out.get("implied_growth") is not None and standing and \
+            standing.get("value") is not None:
+        out["standing_growth"] = standing["value"]
+        out["growth_divergence"] = round(
+            out["implied_growth"] - standing["value"], 3)
+    return out
+
+
+def _optical(sym: str, legs: dict) -> dict:
+    out = _mix_growth_compute(sym, legs, _ttm_revenue(sym), None,
+                              "optical_photonics")
+    standing = _base(legs, "revenue_growth")
+    if out.get("implied_growth") is not None and standing and \
+            standing.get("value") is not None:
+        out["standing_growth"] = standing["value"]
+        out["growth_divergence"] = round(
+            out["implied_growth"] - standing["value"], 3)
+    return out
+
+
+# ------------------------- semicap_equipment --------------------------
+# WFE suppliers book orders quarters ahead of shipment; a service
+# annuity rides the installed base between cycles:
+#
+#   rev_fwd = orders_annualized × ship_conv
+#           + ttm × service_share × (1+service_growth)
+#
+# deep path when market inputs exist: rev_fwd = wfe_market × share —
+# the two should roughly agree; divergence is itself the signal.
+_SEMI_PRIORS = {"ship_conv": 0.95, "service_share": 0.28,
+                "service_growth": 0.07}
+
+
+def _semicap_compute(sym: str, legs: dict, ttm: Optional[float],
+                     overrides: Optional[dict] = None) -> dict:
+    ovr = overrides or {}
+    inputs: dict[str, dict] = {}
+    missing: list[str] = []
+    for key in ("orders_intake", "ship_conv", "service_share",
+                "service_growth", "book_to_bill",
+                "wfe_market", "wfe_share"):
+        leg = _base(legs, key)
+        o = ovr.get(key)
+        if o is not None:
+            inputs[key] = {"value": o, "source": "scenario_override"}
+        elif leg and leg.get("value") is not None:
+            inputs[key] = {"value": leg["value"], "source": "input",
+                           "type": leg["type"],
+                           "confidence": leg.get("confidence")}
+        elif key in _SEMI_PRIORS:
+            inputs[key] = {"value": _SEMI_PRIORS[key],
+                           "source": "model_prior"}
+        else:
+            missing.append(key)
+
+    def _v(k):
+        return (inputs.get(k) or {}).get("value")
+
+    out: dict[str, Any] = {
+        "module": "semicap_equipment",
+        "formula": "orders×ship_conv + ttm×service_share×(1+g)"
+                   "   [deep: wfe×share]",
+        "inputs": inputs, "missing": missing,
+    }
+    orders, conv = _v("orders_intake"), _v("ship_conv")
+    wfe, share = _v("wfe_market"), _v("wfe_share")
+    ss, sg = _v("service_share"), _v("service_growth")
+    if ttm:
+        parts = {}
+        if orders is not None and conv is not None:
+            parts["orders_shipped"] = orders * conv
+        if ss is not None:
+            parts["service"] = ttm * ss * (1 + (sg or 0.0))
+        if parts:
+            fwd = sum(parts.values())
+            out["components"] = {k: round(v) for k, v in parts.items()}
+            out["ttm_revenue"] = round(ttm)
+            # orders leg missing → parts is service-only coverage,
+            # not a forecast
+            if orders is not None:
+                out["revenue_forward"] = round(fwd)
+                out["implied_growth"] = round(fwd / ttm - 1, 3)
+            else:
+                out["revenue_partial"] = round(fwd)
+                out["coverage_note"] = "service annuity only — no orders"
+        if wfe is not None and share is not None:
+            out["wfe_path"] = {
+                "revenue_forward": round(wfe * share),
+                "implied_growth": round(wfe * share / ttm - 1, 3),
+                "note": "market-share path — compare vs orders path"}
+        btb = _v("book_to_bill")
+        if btb is not None:
+            out["book_to_bill"] = btb
+            out["trajectory"] = (
+                "orders outpacing shipments — cycle building"
+                if btb > 1.05 else
+                "orders lagging shipments — cycle draining"
+                if btb < 0.95 else "book-to-bill ~1: steady state")
+    if orders is None:
+        out["note"] = ("no orders_intake — the demand leg can't run; "
+                       "journal a bookings commitment or pass an "
+                       "override")
+    return out
+
+
+def _semicap(sym: str, legs: dict) -> dict:
+    out = _semicap_compute(sym, legs, _ttm_revenue(sym))
+    standing = _base(legs, "revenue_growth")
+    if out.get("implied_growth") is not None and standing and \
+            standing.get("value") is not None:
+        out["standing_growth"] = standing["value"]
+        out["growth_divergence"] = round(
+            out["implied_growth"] - standing["value"], 3)
+    return out
+
+
 _EQUATIONS = {"neocloud": _neocloud,
               "memory_storage": _memory_storage,
               "power_delivery": _project_backlog,
-              "thermal_cooling": _project_backlog}
+              "thermal_cooling": _project_backlog,
+              "server_oem": _server_oem,
+              "optical_photonics": _optical,
+              "semicap_equipment": _semicap}
 
 # module → core compute fn for the scenario layer
-_SCENARIO_FNS = {"memory_storage": _memory_compute,
-                 "power_delivery": _project_compute,
-                 "thermal_cooling": _project_compute}
+_SCENARIO_FNS = {
+    "memory_storage": _memory_compute,
+    "power_delivery": _project_compute,
+    "thermal_cooling": _project_compute,
+    "semicap_equipment": _semicap_compute,
+    "server_oem": lambda s, l, t, o: _mix_growth_compute(
+        s, l, t, o, "server_oem"),
+    "optical_photonics": lambda s, l, t, o: _mix_growth_compute(
+        s, l, t, o, "optical_photonics"),
+}
 
 
 def scenario(sym: str, overrides: dict) -> Optional[dict]:
