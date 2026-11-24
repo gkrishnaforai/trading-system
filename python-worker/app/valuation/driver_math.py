@@ -572,12 +572,8 @@ def scenario(sym: str, overrides: dict) -> Optional[dict]:
     {'asp_chg': {'dram': .3, 'hbm': .2}, 'bit_growth': .15} and gets
     the implied revenue path per name. Never journaled: scenario
     inputs are the caller's hypothesis, not evidence."""
-    try:
-        from app.research import sectors
-        module = sectors.classify_model(sym, "ai_infra")
-    except Exception:
-        return None
-    fn = _SCENARIO_FNS.get(module)
+    module = _module_of(sym)
+    fn = _SCENARIO_FNS.get(module) if module else None
     if not fn:
         return {"error": f"no scenario equation for {module} yet"}
     from app.database import db
@@ -597,17 +593,29 @@ def scenario(sym: str, overrides: dict) -> Optional[dict]:
     return out
 
 
+_SECTORS = ("ai_infra", "healthcare", "generic")
+
+
+def _module_of(sym: str) -> Optional[str]:
+    """Sector-generic module lookup — try every sector config; the
+    curated symbol_map wins wherever the name was mapped."""
+    from app.research import sectors
+    for sec in _SECTORS:
+        try:
+            m = sectors.classify_model(sym, sec)
+            if m and m != "unclassified":
+                return m
+        except Exception:
+            continue
+    return None
+
+
 def evaluate(sym: str, legs: dict) -> Optional[dict]:
     """Run the business-model equation for a symbol, if its module
     has one. Module comes from the sector YAML — curated symbol_map
     wins, same rule as the research layer."""
-    try:
-        from app.research import sectors
-        module = sectors.classify_model(sym, "ai_infra")
-    except Exception as exc:
-        logger.debug("driver_math classify %s: %s", sym, exc)
-        return None
-    fn = _EQUATIONS.get(module)
+    module = _module_of(sym)
+    fn = _EQUATIONS.get(module) if module else None
     if not fn:
         return None
     try:

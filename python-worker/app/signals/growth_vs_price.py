@@ -76,17 +76,66 @@ def _estimates(db) -> dict:
     return est
 
 
-def compute(symbols: Optional[list[str]] = None) -> dict[str, dict]:
-    """Three-way comparison for every name with usable estimates."""
-    from app.database import db
-    if symbols is None:
+def _universe() -> dict[str, str]:
+    """All sector universes merged — symbol → sector label. The
+    engine is sector-generic: every YAML in research/sectors/
+    contributes its curated symbol_map."""
+    import glob
+    import yaml
+    uni: dict[str, str] = {}
+    for f in glob.glob("app/research/sectors/*.yaml"):
         try:
-            import yaml
-            cfg = yaml.safe_load(open(
-                "app/research/sectors/ai_infra.yaml"))
-            symbols = sorted((cfg.get("symbol_map") or {}).keys())
+            cfg = yaml.safe_load(open(f)) or {}
+            sec = cfg.get("sector") or f.split("/")[-1][:-5]
+            for sym in (cfg.get("symbol_map") or {}):
+                uni.setdefault(sym, sec)
         except Exception:
-            symbols = []
+            continue
+    return uni
+
+
+def _revision_momentum(db, sym: str) -> dict:
+    """Consensus momentum — how the FY27/FY28 EPS and revenue
+    estimates moved over the last ~30d. Snapshots are point-in-time
+    journaled, so the delta is arithmetic: rising estimates are a
+    different signal than a static high number."""
+    out: dict[str, Any] = {}
+    try:
+        cur = db.execute_query(
+            "SELECT DISTINCT ON (period_end) period_end, eps_avg,"
+            " rev_avg FROM symbol_estimate_snapshots"
+            " WHERE symbol=:s AND period_end IS NOT NULL"
+            " ORDER BY period_end, as_of DESC", {"s": sym})
+        old = db.execute_query(
+            "SELECT DISTINCT ON (period_end) period_end, eps_avg,"
+            " rev_avg FROM symbol_estimate_snapshots"
+            " WHERE symbol=:s AND period_end IS NOT NULL"
+            " AND as_of <= current_date - 25"
+            " ORDER BY period_end, as_of DESC", {"s": sym})
+        cm = {r["period_end"].year: r for r in cur or []}
+        om = {r["period_end"].year: r for r in old or []}
+        for yr in (2027, 2028):
+            c, o = cm.get(yr), om.get(yr)
+            if not c or not o:
+                continue
+            for fld, key in (("eps_avg", "eps"), ("rev_avg", "rev")):
+                cv, ov = c.get(fld), o.get(fld)
+                if cv and ov and abs(float(ov)) > 1e-9:
+                    out[f"{key}_rev{str(yr)[2:]}_30d"] = round(
+                        float(cv) / float(ov) - 1, 3)
+    except Exception:
+        pass
+    return out
+
+
+def compute(symbols: Optional[list[str]] = None) -> dict[str, dict]:
+    """Three-way comparison for every name with usable estimates —
+    all sectors, not just ai_infra."""
+    from app.database import db
+    uni = _universe()
+    if symbols is None:
+        symbols = sorted(uni)
+    sec_of = {s: uni.get(s) for s in symbols}
     px = {r["symbol"]: float(r["close"]) for r in db.execute_query(
         "SELECT DISTINCT ON (symbol) symbol, close FROM daily_bars"
         " ORDER BY symbol, date DESC") or []}
@@ -138,6 +187,7 @@ def compute(symbols: Optional[list[str]] = None) -> dict[str, dict]:
         g1y = e28["eps"] / e27["eps"] - 1
 
         row.update({
+            "sector": sec_of.get(s),
             "price": round(p, 1),
             "pe27": round(pe27, 1), "pe28": round(pe28, 1),
             "eps27": e27["eps"], "eps28": e28["eps"],
@@ -149,6 +199,23 @@ def compute(symbols: Optional[list[str]] = None) -> dict[str, dict]:
             if cagr > 0 else None,
             "analysts": e28.get("n"),
         })
+
+        # acceleration + consistency — the review's quality split.
+        # accel = g28 - g27 (did the ramp steepen?); consistency =
+        # min of the two years (is growth sustained, not a step?).
+        rg27 = e27["rev"] / ttm_rev - 1 if e27.get("rev") and ttm_rev \
+            else None
+        rg28 = e28["rev"] / e27["rev"] - 1 if e28.get("rev") \
+            and e27.get("rev") else None
+        if rg27 is not None and rg28 is not None:
+            row["rev_g27"] = round(rg27, 3)
+            row["rev_g28"] = round(rg28, 3)
+            row["acceleration"] = round(rg28 - rg27, 3)
+            row["consistency"] = round(min(rg27, rg28), 3)
+            row["weighted_growth"] = round(0.4 * rg27 + 0.6 * rg28, 3)
+
+        # consensus momentum — rising vs falling estimates, ~30d
+        row.update(_revision_momentum(db, s))
 
         # recovery flag — FY27 EPS below TTM = the growth is
         # normalization off a dipped base, not secular
@@ -171,8 +238,24 @@ def compute(symbols: Optional[list[str]] = None) -> dict[str, dict]:
                 row["normalized_pe_proxy"] = round(p / lo, 1)
                 row["cyclical_flag"] = disp > 0.5
 
-        # derived — driver_math where an equation ran
+        # derived — driver_math where an equation ran. If the name's
+        # business model has an equation but no derived row journaled
+        # today, run the bridge so consensus-vs-derived covers every
+        # equation-able name, not just today's bridge batch.
         d = derived.get(s)
+        if d is None:
+            try:
+                from app.valuation import driver_bridge, driver_math
+                if driver_math._module_of(s):
+                    driver_bridge.seed(s)
+                    driver_bridge.run(s)
+                    dd = db.execute_query(
+                        "SELECT forecast->'derived' d FROM"
+                        " driver_forecasts WHERE symbol=:s"
+                        " AND as_of=current_date", {"s": s})
+                    d = dd[0]["d"] if dd else None
+            except Exception:
+                d = None
         if d and d.get("implied_growth") is not None:
             row["derived_implied_growth"] = d["implied_growth"]
             cons_g = (e27["rev"] / ttm_rev - 1) if (
@@ -200,9 +283,73 @@ def rankings(comp: dict[str, dict]) -> dict[str, list]:
          and not r.get("cyclical_flag")
          and (r.get("analysts") or 0) >= 8),
         key=lambda x: x[1])
+
+    # ---- growth_quality composite — the review's quality rank ------
+    # Percentile-normalized components; weights are labeled priors
+    # renormalized over whatever each name actually has — missing
+    # legs cut coverage, they never silently score zero.
+    def _pctile(vals: dict, key: str) -> dict:
+        xs = sorted((v for v in vals.values() if v is not None))
+        return {s: (xs.index(v) / max(1, len(xs) - 1))
+                for s, v in vals.items() if v is not None}
+
+    wg = _pctile({s: r.get("weighted_growth")
+                  for s, r in usable.items()}, "weighted_growth")
+    ac = _pctile({s: r.get("acceleration")
+                  for s, r in usable.items()}, "acceleration")
+    cs = _pctile({s: r.get("consistency")
+                  for s, r in usable.items()}, "consistency")
+    mo = _pctile({s: r.get("eps_rev28_30d")
+                  for s, r in usable.items()}, "eps_rev28_30d")
+    ec = _pctile({s: r.get("growth_cagr")
+                  for s, r in usable.items()}, "growth_cagr")
+    qual: dict[str, dict] = {}
+    for s, r in usable.items():
+        parts: dict[str, float] = {}
+        wts: dict[str, float] = {}
+        if s in wg:
+            parts["weighted_growth"], wts["weighted_growth"] = wg[s], .20
+        if s in ac:
+            parts["acceleration"], wts["acceleration"] = ac[s], .05
+        if s in cs:
+            parts["consistency"], wts["consistency"] = cs[s], .05
+        if s in mo:
+            parts["consensus_momentum"], wts["consensus_momentum"] = \
+                mo[s], .15
+        if r.get("consensus_vs_derived") is not None:
+            # drivers-vs-consensus: <=0 = arithmetic supports the
+            # street; >0 = consensus running ahead of drivers
+            dvd = r["consensus_vs_derived"]
+            parts["driver_validation"] = 1.0 if dvd <= 0 else \
+                max(0.0, 1 - dvd / 0.5)
+            wts["driver_validation"] = .20
+        if s in ec:
+            # rev->EPS conversion proxy: does the growth actually
+            # reach the bottom line
+            parts["eps_conversion"], wts["eps_conversion"] = ec[s], .15
+        if r.get("eps_dispersion") is not None:
+            parts["estimate_tightness"] = max(0.0,
+                                              1 - r["eps_dispersion"])
+            wts["estimate_tightness"] = .05
+        parts["coverage_depth"] = {True: 1.0, False: 0.4}[
+            (r.get("analysts") or 0) >= 8]
+        wts["coverage_depth"] = .05
+        parts["durability"] = 0.3 if r.get("cyclical_flag") or \
+            r.get("recovery_year") else 1.0
+        wts["durability"] = .10
+        tw = sum(wts.values())
+        qual[s] = {"score": round(sum(parts[k] * wts[k]
+                                      for k in parts) / tw * 100, 1),
+                   "coverage": round(tw / 1.0, 2),
+                   "parts": {k: round(v, 2) for k, v in parts.items()}}
+
+    for s, r in usable.items():
+        r["growth_quality"] = qual.get(s)
+    quality_rank = sorted(qual, key=lambda s: -qual[s]["score"])
     return {"growth_at_price": [s for s, _ in by_peg],
             "fundamental_growth": [s for s, _ in by_growth],
-            "risk_adjusted": [s for s, _ in durable]}
+            "risk_adjusted": [s for s, _ in durable],
+            "growth_quality": quality_rank}
 
 
 def run(persist: bool = True) -> dict:
