@@ -34,6 +34,7 @@ symbol_map:
   CRDO: connectivity_silicon
   ALAB: connectivity_silicon
   CBRS: connectivity_silicon      # as provided — verify ticker
+  MTSI: connectivity_silicon
   LITE: optical_photonics
   COHR: optical_photonics
   FN:   optical_photonics
