@@ -47,7 +47,8 @@ _ET = ZoneInfo("America/New_York")
 # index/vol/macro proxies — every one verified live on the Yahoo path
 _INDEX = ["SPY", "QQQ", "SMH", "IWM"]
 _VOL = ["^VIX"]
-_MACRO = ["^TNX", "CL=F"]
+_MACRO = ["^TNX", "CL=F", "TLT", "GLD"]   # TLT/GLD = haven legs of
+                                        # the scramble detector
 
 RTH_OPEN = dtime(9, 30)
 RTH_LAST_EVAL = dtime(15, 45)          # last eval before the close print
@@ -344,6 +345,7 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
     vix_bars = raw.get("^VIX") or []
     smh, iwm = _day_stats(raw.get("SMH") or []), _day_stats(raw.get("IWM") or [])
     tnx, clf = _day_stats(raw.get("^TNX") or []), _day_stats(raw.get("CL=F") or [])
+    tlt, gld = _day_stats(raw.get("TLT") or []), _day_stats(raw.get("GLD") or [])
     if not qqq.get("last"):
         return {"state": "no_data", "evidence": ["no QQQ bars today"]}
 
@@ -413,6 +415,43 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
     # ------------------- state — first match -------------------
     green = (q.get("chg_open") or 0) > 0.002
     red = (q.get("chg_open") or 0) < -0.002
+
+    # Forced-unwind footprint 1 — haven scramble. On a normal risk-off,
+    # duration and gold get BID while equities fall. When TLT AND GLD
+    # are being sold alongside stocks, institutions are raising cash —
+    # the collateral-call signature that separates forced liquidation
+    # from profit-taking.
+    haven_chgs = {n: d["chg_open"] for n, d in
+                  (("TLT", tlt), ("GLD", gld))
+                  if d.get("chg_open") is not None}
+    haven_read = None
+    if red and haven_chgs:
+        n_red = sum(1 for c in haven_chgs.values() if c < -0.001)
+        n_bid = sum(1 for c in haven_chgs.values() if c > 0.001)
+        if n_red == len(haven_chgs):
+            haven_read = "scramble"
+        elif n_bid == len(haven_chgs):
+            haven_read = "bid"
+        else:
+            haven_read = "mixed"
+        ev.append(" ".join(f"{n} {c * 100:+.1f}%" for n, c
+                           in haven_chgs.items()) +
+                  {"scramble": " — havens dumped with stocks: "
+                               "cash-raising footprint (forced unwind)",
+                   "bid": " — havens bid: orderly risk-off, not forced",
+                   "mixed": " — havens mixed"}[haven_read])
+
+    # Forced-unwind footprint 2 — indiscriminate selling. No NYSE A/D
+    # volume feed, so this is a book proxy: ≥85% of the tracked book
+    # below its open while the index is red ≈ a "90% down day" —
+    # basket liquidation, not stock-picking. Labeled proxy.
+    down_day = None
+    if adv is not None and (br.get("n") or 0) >= 50 and red:
+        down_day = (100 - adv) >= 85
+        if down_day:
+            ev.append(f"indiscriminate tape — {100 - adv:.0f}% of "
+                      f"{br['n']} names below open (90%-down proxy)")
+
     if q["above_vwap"] and q["vwap_held"] and breadth_ok and vix_falling:
         state = "buyers_in_control"
     elif not q["above_vwap"] and (breadth_thin or vix_rising) and red:
@@ -443,6 +482,8 @@ def evaluate(persist: bool = True) -> dict[str, Any]:
            "smh_above_vwap": smh.get("above_vwap"),
            "smh_vwap_held": smh.get("vwap_held"),
            "breadth_adv_pct": adv, "breadth_n": br.get("n"),
+           "down_day": down_day, "haven_read": haven_read,
+           "haven_chgs": {k: round(v, 4) for k, v in haven_chgs.items()},
            "levels": {s: lv for s, lv in (
                ("SPY", _levels(raw.get("SPY") or [], spy)),
                ("QQQ", _levels(raw.get("QQQ") or [], qqq)),
@@ -501,6 +542,8 @@ def _timeline_row(r: dict) -> dict:
             "macro_pressure": rd.get("macro_pressure"),
             "smh_above_vwap": rd.get("smh_above_vwap"),
             "smh_vwap_held": rd.get("smh_vwap_held"),
+            "down_day": rd.get("down_day"),
+            "haven_read": rd.get("haven_read"),
             "evidence": rd.get("evidence")}
 
 
