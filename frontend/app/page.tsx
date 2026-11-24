@@ -1368,6 +1368,38 @@ export default async function RegimePage() {
               {fragility.read}
             </p>
           )}
+          {fragility.legs && Object.keys(fragility.legs).length > 0 && (
+            <div className="pt-3 space-y-0.5 font-mono text-[11px]">
+              <div className="text-faint"
+                title="what's actually in the market's leverage — per-leg quantities with their honesty status. observed = measured, estimated = modeled proxy, missing = feed down (never counted as neutral).">
+                how much leverage
+              </div>
+              {Object.entries(fragility.legs).map(([k, l]) => (
+                <div key={k} className="text-faint">
+                  <span className={
+                    (l.score ?? 0) >= 60 ? 'text-defensive'
+                    : (l.score ?? 0) >= 40 ? 'text-caution' : 'text-muted'}>
+                    {k.replace(/_/g, ' ')}{l.score != null ? ` ${Math.round(l.score)}` : ' —'}
+                  </span>
+                  <span className={
+                    l.status === 'observed' ? 'text-faint'
+                    : l.status === 'estimated' ? 'text-caution' : 'text-faint'}>
+                    {' · '}{l.status}
+                  </span>
+                  {l.read && <span>{' — '}{l.read}</span>}
+                </div>
+              ))}
+              {fragility.validators && (
+                <div className="text-faint pt-1"
+                  title="slow/unavailable leverage feeds — disclosed, never silently absent">
+                  {Object.entries(fragility.validators as Record<string, {status?: string; note?: string}>)
+                    .filter(([, v]) => v?.status && v.status !== 'ok')
+                    .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v.status}`)
+                    .join(' · ')}
+                </div>
+              )}
+            </div>
+          )}
           {(fragility.sectors?.length ?? 0) > 0 && (
             <div className="pt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[11px]">
               <span className="text-faint"
