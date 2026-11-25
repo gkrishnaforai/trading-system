@@ -518,6 +518,8 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                 title="cycle composite 0–100 — weighted score over the 8 evidence legs; unknown legs excluded, never zeroed">score</th>
             <th className="py-2 pr-3 font-medium text-right"
                 title="coverage — share of the 100-pt spec answered; low % = provisional verdict">cov</th>
+            <th className="py-2 pr-2 font-medium"
+                title="selloff engine read — is this name a beaten-down stock right now? number = pf_gap (price drawdown minus estimate deterioration)">beat</th>
             {GROWTH_COLS.map(l => (
               <th key={l.h} title={l.title}
                   className="py-2 pr-2 font-medium text-right">
@@ -581,6 +583,30 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                 <td className="py-2 pr-3 text-right font-mono text-faint">
                   {r.coverage_pct != null
                     ? `${Math.round(r.coverage_pct * 100)}%` : '—'}
+                </td>
+                <td className="py-2 pr-2"
+                    title={r.sbd_class
+                      ? `${r.sbd_class.replace(/_/g, ' ')} · ${r.business_bucket ?? '?'} · pf_gap ${r.pf_gap != null ? (r.pf_gap * 100).toFixed(0) + '%' : 'n/a'} · ${r.selloff_class ?? ''} · ${r.selloff_as_of ?? ''}`
+                      : r.selloff_class
+                        ? `${r.selloff_class} (${r.selloff_decision ?? ''}) · ${r.selloff_as_of ?? ''}`
+                        : 'not a selloff candidate'}>
+                  {r.sbd_class
+                    ? <span className={`rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider whitespace-nowrap ${
+                        r.sbd_class === 'beat_down_stock' || r.sbd_class === 'confirmed_recovery_candidate'
+                          ? 'bg-aggressive/15 text-aggressive'
+                          : r.sbd_class === 'beat_down_business' || r.sbd_class === 'structural_risk'
+                            ? 'bg-defensive/15 text-defensive'
+                            : 'bg-hairline/60 text-muted'}`}>
+                        {r.sbd_class === 'beat_down_stock' ? 'beat↓stk'
+                          : r.sbd_class === 'confirmed_recovery_candidate' ? 'confirmed'
+                          : r.sbd_class === 'beat_down_business' ? 'beat↓biz'
+                          : r.sbd_class === 'turnaround_or_cyclical' ? 'turn'
+                          : r.sbd_class === 'quality_but_expensive' ? 'qual$'
+                          : r.sbd_class === 'dislocation_unconfirmed' ? 'unconf'
+                          : r.sbd_class.replace(/_/g, ' ').slice(0, 7)}
+                        {r.pf_gap != null && ` ${(r.pf_gap * 100).toFixed(0)}`}
+                      </span>
+                    : <span className="font-mono text-faint/40">·</span>}
                 </td>
                 {GROWTH_COLS.map(l => {
                   if (l.k === 'gq') {
@@ -700,7 +726,7 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
               </tr>,
               expanded && (
                 <tr key={`${r.symbol}-h`}>
-                  <td colSpan={34}
+                  <td colSpan={35}
                       className="border-b border-hairline bg-card/60 px-8 py-3">
                     <div className="mb-3">
                       <WhyPanel r={r} />

@@ -980,6 +980,12 @@ export type CycleRow = {
   implied_status?: string | null
   exposure?: string | null
   eps_g27?: number | null
+  selloff_class?: string | null
+  selloff_decision?: string | null
+  sbd_class?: string | null
+  pf_gap?: number | null
+  business_bucket?: string | null
+  selloff_as_of?: string | null
   gq?: number | null
   gq_delta?: number | null
   est_rel?: string | null

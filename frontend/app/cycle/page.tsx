@@ -255,7 +255,9 @@ export default async function CyclePage() {
             mom/mom60 FY28 EPS revisions vs 30/60d ago · rMom rev
             revisions · n analyst count · gq growth-quality 0–100 (±
             vs prior snapshot) · exp exposure state (demand-model
-            prior). Legs: dem demand · bkl backlog · rev revisions ·
+            prior) · beat selloff-engine read (class + pf_gap; hover
+            for bucket/cause/date). Legs: dem demand · bkl backlog ·
+            rev revisions ·
             mgn margin/cf · cap capacity · cus customers · fin
             financing · val valuation — dots mark unknown legs (never
             zeroed). Peak dots: orders · estimates · revenue (red =

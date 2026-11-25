@@ -722,6 +722,32 @@ def current() -> dict:
                              ).get("demand_model")
     except Exception as exc:
         logger.debug("cycle current exposure merge: %s", exc)
+    # merge latest selloff-engine read — is this cycle name currently
+    # a beaten-down stock? The fund blob carries sbd class, pf_gap and
+    # business bucket for journaled candidates; absent = not a
+    # candidate right now, never a default.
+    try:
+        so_rows = db.execute_query(
+            "SELECT DISTINCT ON (symbol) symbol, classification,"
+            " decision, fund, as_of FROM selloff_candidates"
+            " ORDER BY symbol, as_of DESC")
+        import json as _json
+        so_map = {r["symbol"]: r for r in so_rows}
+        for r in rows:
+            s = so_map.get(r["symbol"]) or {}
+            f = s.get("fund") or {}
+            if isinstance(f, str):
+                f = _json.loads(f)
+            sbd = (f.get("sbd") or {})
+            r["selloff_class"] = s.get("classification")
+            r["selloff_decision"] = s.get("decision")
+            r["sbd_class"] = sbd.get("class")
+            r["pf_gap"] = _f(f.get("pf_gap"))
+            r["business_bucket"] = f.get("business_bucket")
+            r["selloff_as_of"] = (str(s["as_of"])
+                                  if s.get("as_of") else None)
+    except Exception as exc:
+        logger.debug("cycle current selloff merge: %s", exc)
     # deterioration flags — thresholds on the merged evidence, never
     # invented values. est cuts read the revision deltas; financial
     # risk reads ctx-level fields already journaled in components.
