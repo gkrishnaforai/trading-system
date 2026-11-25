@@ -249,11 +249,16 @@ export default async function CyclePage() {
         <section className="rounded-xl border border-hairline bg-card px-4 py-3">
           <CycleTable rows={rows} />
           <p className="mt-3 text-[10px] text-faint">
-            legs: dem demand · bkl backlog · rev revisions · mgn
-            margin/cf · cap capacity · cus customers · fin financing ·
-            val valuation — dots mark unknown legs (never zeroed).
-            Peak dots: orders · estimates · revenue (red = rolled).
-            * peak window is a cohort seed — a prior, not evidence.
+            forward growth: g27/g28 FY27–28 revenue growth · eCAGR
+            EPS CAGR TTM→FY28 · peg FY28 P/E ÷ EPS CAGR · mom FY28 EPS
+            revisions vs ~30d ago · gq growth-quality 0–100 (± vs
+            prior snapshot; hover for dispersion/cyclical/driver-gap
+            caveats). Legs: dem demand · bkl backlog · rev revisions ·
+            mgn margin/cf · cap capacity · cus customers · fin
+            financing · val valuation — dots mark unknown legs (never
+            zeroed). Peak dots: orders · estimates · revenue (red =
+            rolled). * peak window is a cohort seed — a prior, not
+            evidence.
           </p>
         </section>
       )}

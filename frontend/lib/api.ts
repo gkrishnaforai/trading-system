@@ -960,6 +960,20 @@ export type CycleRow = {
   structural_break?: boolean | null
   valuation_blocked?: boolean | null
   flags?: string[]
+  g27?: number | null
+  g28?: number | null
+  rev_cagr?: number | null
+  eps_g28?: number | null
+  eps_cagr?: number | null
+  peg?: number | null
+  est_mom?: number | null
+  gq?: number | null
+  gq_delta?: number | null
+  est_rel?: string | null
+  cvd?: number | null
+  cyclical_flag?: boolean | null
+  recovery_year?: boolean | null
+  growth_as_of?: string | null
   crs?: number | null
   risk_trend?: string | null
   displacement_confirmed?: boolean | null

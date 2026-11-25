@@ -24,6 +24,56 @@ const LEG_COLS: { k: keyof CycleRow; h: string; title: string }[] = [
   { k: 'valuation_duration', h: 'val', title: 'valuation vs duration · 5' },
 ]
 
+/** forward two-year growth columns — journaled in growth_compare_daily,
+ *  merged per symbol. The reviewer's "which companies grow fastest
+ *  over the next two years" question, on the same row as the cycle
+ *  decision so growth never votes alone. */
+const GROWTH_COLS: { k: keyof CycleRow; h: string; title: string;
+                     fmt: (r: CycleRow) => string | null }[] = [
+  { k: 'g27', h: 'g27',
+    title: 'FY2027 revenue growth — consensus estimate vs TTM revenue',
+    fmt: r => pct(r.g27) },
+  { k: 'g28', h: 'g28',
+    title: 'FY2028 revenue growth — consensus estimate vs FY2027',
+    fmt: r => pct(r.g28) },
+  { k: 'eps_cagr', h: 'eCAGR',
+    title: 'EPS CAGR — trailing actuals to FY2028 consensus '
+         + '(the two-year earnings ramp, not a one-year bounce)',
+    fmt: r => pct(r.eps_cagr) },
+  { k: 'peg', h: 'peg',
+    title: 'PEG — FY2028 P/E ÷ EPS CAGR. <1 cheap for the growth, '
+         + '>1.5 paying up',
+    fmt: r => r.peg != null ? r.peg.toFixed(2) : null },
+  { k: 'est_mom', h: 'mom',
+    title: 'estimate momentum — FY2028 EPS consensus vs ~30d ago. '
+         + 'Rising estimates ≠ a static high number',
+    fmt: r => r.est_mom != null
+      ? `${r.est_mom >= 0 ? '+' : ''}${(r.est_mom * 100).toFixed(0)}%`
+      : null },
+  { k: 'gq', h: 'gq',
+    title: 'growth quality 0–100 — percentile composite: growth, '
+         + 'acceleration, consistency, estimate momentum, driver '
+         + 'validation, rev→EPS conversion, reliability, durability. '
+         + '± = vs ~30d ago snapshot',
+    fmt: r => null },  // rendered custom — carries the delta
+]
+
+function pct(v?: number | null) {
+  return v != null ? `${(v * 100).toFixed(0)}%` : null
+}
+
+function growthTone(r: CycleRow, k: keyof CycleRow): string {
+  if (k === 'peg')
+    return r.peg == null ? 'text-faint/40'
+      : r.peg < 0.6 ? 'text-aggressive'
+      : r.peg < 1.2 ? 'text-ink' : 'text-caution'
+  if (k === 'est_mom')
+    return r.est_mom == null ? 'text-faint/40'
+      : r.est_mom > 0.02 ? 'text-constructive'
+      : r.est_mom < -0.02 ? 'text-defensive' : 'text-muted'
+  return 'text-ink'
+}
+
 function legTone(v?: number | null) {
   if (v == null) return 'text-faint/50'
   return v >= 70 ? 'text-aggressive' : v >= 45 ? 'text-ink'
@@ -326,12 +376,22 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
         <thead>
           <tr className="border-b border-hairline text-left text-[10px] uppercase tracking-wider text-faint">
             <th className="py-2 pr-2 font-medium" />
-            <th className="py-2 pr-3 font-medium">symbol</th>
-            <th className="py-2 pr-3 font-medium">cohort</th>
-            <th className="py-2 pr-3 font-medium">decision</th>
-            <th className="py-2 pr-3 font-medium text-right">score</th>
+            <th className="py-2 pr-3 font-medium"
+                title="ticker — click to open the stock page; click the row for evidence + history">symbol</th>
+            <th className="py-2 pr-3 font-medium"
+                title="rotation cohort — which stage of the AI build cycle this name earns revenue in">cohort</th>
+            <th className="py-2 pr-3 font-medium"
+                title="policy posture from fired rules — composite ≥75 + peak >1yr out + no break + valuation not blocked → accumulate; advisory, never an order">decision</th>
             <th className="py-2 pr-3 font-medium text-right"
-                title="share of the 100-pt spec answered">cov</th>
+                title="cycle composite 0–100 — weighted score over the 8 evidence legs; unknown legs excluded, never zeroed">score</th>
+            <th className="py-2 pr-3 font-medium text-right"
+                title="coverage — share of the 100-pt spec answered; low % = provisional verdict">cov</th>
+            {GROWTH_COLS.map(l => (
+              <th key={l.h} title={l.title}
+                  className="py-2 pr-2 font-medium text-right">
+                {l.h}
+              </th>
+            ))}
             {LEG_COLS.map(l => (
               <th key={l.h} title={l.title}
                   className="py-2 pr-2 font-medium text-right">
@@ -346,8 +406,10 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                 title="agentic infrastructure score 0-100 — software picks-and-shovels for agents; click row for sublayers">ais</th>
             <th className="py-2 px-2 font-medium text-center"
                 title="peaks: orders · estimates · revenue">peaks</th>
-            <th className="py-2 pl-2 font-medium">demand peak</th>
-            <th className="py-2 pl-2 font-medium">move</th>
+            <th className="py-2 pl-2 font-medium"
+                title="expected demand-peak window + quarters to peak (* = cohort-seed prior, not verified evidence)">demand peak</th>
+            <th className="py-2 pl-2 font-medium"
+                title="peak-window movement vs prior quarter — pulled forward = demand peaking sooner than thought">move</th>
           </tr>
         </thead>
         <tbody>
@@ -388,6 +450,47 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                   {r.coverage_pct != null
                     ? `${Math.round(r.coverage_pct * 100)}%` : '—'}
                 </td>
+                {GROWTH_COLS.map(l => {
+                  if (l.k === 'gq') {
+                    const d = r.gq_delta
+                    return (
+                      <td key={l.h}
+                          className={`py-2 pr-2 text-right font-mono ${
+                            r.gq == null ? 'text-faint/40'
+                            : r.gq >= 70 ? 'text-aggressive'
+                            : r.gq >= 50 ? 'text-ink' : 'text-muted'}`}
+                          title={[
+                            r.est_rel === 'thin'
+                              ? 'thin estimate coverage' : null,
+                            r.est_rel === 'wide_dispersion'
+                              ? 'wide estimate dispersion' : null,
+                            r.cyclical_flag ? 'cyclical basis' : null,
+                            r.recovery_year
+                              ? 'FY27 below TTM — normalization'
+                              : null,
+                            r.cvd != null
+                              ? `consensus vs driver math ${r.cvd >= 0 ? '+' : ''}${(r.cvd * 100).toFixed(0)}%`
+                              : null,
+                          ].filter(Boolean).join(' · ') || undefined}>
+                        {r.gq ?? <span className="text-faint/40">·</span>}
+                        {d != null && (
+                          <span className={`ml-0.5 text-[9px] ${
+                            d > 0 ? 'text-constructive'
+                            : d < 0 ? 'text-defensive' : 'text-faint'}`}>
+                            {d > 0 ? '+' : ''}{d}
+                          </span>
+                        )}
+                      </td>
+                    )
+                  }
+                  const v = l.fmt(r)
+                  return (
+                    <td key={l.h}
+                        className={`py-2 pr-2 text-right font-mono ${growthTone(r, l.k)}`}>
+                      {v ?? <span className="text-faint/40">·</span>}
+                    </td>
+                  )
+                })}
                 {LEG_COLS.map(l => {
                   const v = r[l.k] as number | null | undefined
                   return (
@@ -443,7 +546,7 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
               </tr>,
               expanded && (
                 <tr key={`${r.symbol}-h`}>
-                  <td colSpan={18}
+                  <td colSpan={24}
                       className="border-b border-hairline bg-card/60 px-8 py-3">
                     <div className="mb-3">
                       <WhyPanel r={r} />

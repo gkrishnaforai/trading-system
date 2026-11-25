@@ -622,6 +622,57 @@ def current() -> dict:
             r["agentic_tier"] = None
             r["sublayers"] = []
             r["monetization"] = None
+    # merge forward two-year growth — "who grows fastest FY26→FY28"
+    # lives in growth_compare_daily (journaled daily): FY27/28 rev g,
+    # EPS CAGR, PEG, estimate momentum, growth_quality composite. The
+    # ~30d-ago journal gives the snapshot delta the screen needs —
+    # a cut estimate reads differently than a rising one.
+    try:
+        gc_rows = db.execute_query(
+            "SELECT as_of, payload FROM growth_compare_daily"
+            " ORDER BY as_of DESC LIMIT 45")
+        gc_latest = gc_prev = None
+        latest_ao = None
+        for gr in gc_rows or []:
+            p = gr.get("payload")
+            if isinstance(p, str):
+                p = json.loads(p)
+            if gc_latest is None:
+                gc_latest, latest_ao = p, gr.get("as_of")
+                continue
+            ao = gr.get("as_of")
+            if latest_ao and ao and (latest_ao - ao).days >= 25:
+                gc_prev = p
+                break
+        names = (gc_latest or {}).get("names") or {}
+        prev_names = (gc_prev or {}).get("names") or {}
+        for r in rows:
+            g = names.get(r["symbol"]) or {}
+            pg = prev_names.get(r["symbol"]) or {}
+            r["g27"] = _f(g.get("rev_g27"))
+            r["g28"] = _f(g.get("rev_g28"))
+            r["rev_cagr"] = _f(g.get("weighted_growth"))
+            r["eps_g28"] = _f(g.get("growth_1y"))
+            r["eps_cagr"] = _f(g.get("growth_cagr"))
+            r["peg"] = _f(g.get("peg_cagr"))
+            r["est_mom"] = _f(g.get("eps_rev28_30d"))
+            gq_v = g.get("growth_quality")
+            r["gq"] = _f(gq_v.get("score") if isinstance(gq_v, dict)
+                         else gq_v)
+            pg_gqv = pg.get("growth_quality")
+            pg_gq = _f(pg_gqv.get("score") if isinstance(pg_gqv, dict)
+                       else pg_gqv)
+            r["gq_delta"] = (
+                round(r["gq"] - pg_gq, 1)
+                if r["gq"] is not None and pg_gq is not None else None)
+            r["est_rel"] = g.get("est_reliability")
+            r["cvd"] = _f(g.get("consensus_vs_derived"))
+            r["cyclical_flag"] = bool(g.get("cyclical_flag"))
+            r["recovery_year"] = bool(g.get("recovery_year"))
+            r["growth_as_of"] = (
+                str(gc_rows[0]["as_of"]) if gc_rows else None)
+    except Exception as exc:
+        logger.debug("cycle current growth merge: %s", exc)
     cohorts: dict[str, dict] = {}
     for r in rows:
         c = r.get("cohort") or "unclassified"
