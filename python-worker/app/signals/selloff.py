@@ -310,6 +310,11 @@ def _sbd_classify(dims: dict, gates: list[str],
     dis = dims.get("stock_dislocation")
     v = dims.get("valuation_attractiveness")
     rec = dims.get("recovery_confirmation")
+    # effective dislocation: the tape leg reads the last-5d move; a
+    # deep price-fundamental gap is dislocation even when the fall
+    # was older and the tape leg has cooled. pf_gap −0.26 → ~65.
+    if pf_gap is not None and pf_gap < 0:
+        dis = max(dis or 0, min(100, -pf_gap * 250))
     if any("structural" in g or "repricing" in g for g in gates):
         return {"class": "structural_risk", "action": "human_review"}
     if b is None or dis is None:
