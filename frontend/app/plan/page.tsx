@@ -170,6 +170,23 @@ function SelloffRow({ c }: { c: SelloffCand }) {
               ? 'text-defensive' : 'text-caution'}`}>
             {CLASS_LABEL[c.classification ?? ''] ?? c.classification}
           </span>
+          {c.sbd?.class && (
+            <span title={`business ${c.business_bucket ?? '?'} · ${c.pf_gap_note ?? 'gap unverified'}`}
+                  className={`rounded px-1.5 py-px text-[9px] font-medium uppercase tracking-wider ${
+              c.sbd.class === 'beat_down_stock' || c.sbd.class === 'confirmed_recovery_candidate'
+                ? 'bg-aggressive/15 text-aggressive'
+                : c.sbd.class === 'beat_down_business' || c.sbd.class === 'structural_risk'
+                  ? 'bg-defensive/15 text-defensive'
+                  : 'bg-hairline/60 text-muted'}`}>
+              {(c.sbd.class ?? '').replace(/_/g, ' ')}
+            </span>
+          )}
+          {(c.bucket_notes ?? []).includes('fundamental_contradiction') && (
+            <span title="weak score but journaled fundamentals look strong — flagged for review"
+                  className="rounded bg-caution/15 px-1.5 py-px text-[9px] font-medium uppercase tracking-wider text-caution">
+              contradict
+            </span>
+          )}
           <span className="text-[10px] text-faint">{c.tier}</span>
           {c.thesis && (
             <span className="text-[10px] text-muted">
@@ -184,6 +201,12 @@ function SelloffRow({ c }: { c: SelloffCand }) {
       <div className="pl-1 pt-0.5 flex flex-wrap gap-x-3 font-mono text-[11px] text-muted">
         {c.rel_5d != null && <span>rel5 {(c.rel_5d * 100).toFixed(1)}%</span>}
         {c.dd_60d != null && <span>dd {(c.dd_60d * 100).toFixed(0)}%</span>}
+        {c.pf_gap != null && (
+          <span title="price-fundamental gap — drawdown minus estimate deterioration; deeper = more dislocated"
+                className={c.pf_gap <= -0.15 ? 'text-aggressive' : ''}>
+            gap {(c.pf_gap * 100).toFixed(0)}%
+          </span>
+        )}
         {c.rsi != null && <span>rsi {c.rsi}</span>}
         <span>{c.mom}</span>
         {c.sq_verdict === 'likely_covering' && (

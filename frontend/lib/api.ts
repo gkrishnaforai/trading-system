@@ -1330,6 +1330,21 @@ export type SelloffCand = {
   sq_covering_prob?: number | null
   fund_state?: string
   thesis?: string | null
+  dimensions?: {
+    business_health?: number | null
+    stock_dislocation?: number | null
+    valuation_attractiveness?: number | null
+    recovery_confirmation?: number | null
+  }
+  business_bucket?: string
+  bucket_notes?: string[]
+  pf_gap?: number | null
+  pf_gap_note?: string | null
+  sbd?: { class?: string; action?: string }
+  sbd_rank?: number
+  confidence?: string
+  decline_cause?: string
+  technical_flags?: string[]
   fv?: number | null
   fv_upside?: number | null
   invalidation?: number | null
