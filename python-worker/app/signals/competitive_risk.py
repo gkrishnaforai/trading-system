@@ -206,12 +206,14 @@ def _ctx(sym: str) -> dict:
     except Exception as exc:
         logger.debug("crs ctx flywheel %s: %s", sym, exc)
     try:
-        r = db.execute_query(
-            "SELECT top1_pct FROM symbol_customer_conc WHERE symbol=:s",
-            {"s": sym})
-        c["top1_pct"] = _f(r[0]["top1_pct"]) if r else None
+        from app.signals.customer_conc import customer_conc
+        cc = customer_conc(sym)
+        c["top1_pct"] = cc["top1_pct"]
+        c["cust_conc_drift"] = cc["drift_pp"]
+        c["cust_conc_flag"] = cc["flag"]
     except Exception:
-        c["top1_pct"] = None
+        c["top1_pct"] = c["cust_conc_drift"] = \
+            c["cust_conc_flag"] = None
     try:
         r = db.execute_query(
             "SELECT crpo_share FROM symbol_sec_facts WHERE symbol=:s",

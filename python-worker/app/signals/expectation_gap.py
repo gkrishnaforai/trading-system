@@ -535,15 +535,16 @@ def _exp_risk(fmp, sym: str, m: dict) -> dict:
     out = {"mult_expansion_pct": None, "fwd_pe_pctile": None,
            "fwd_pe_pctile_n": None,
            "h2_growth_load": None, "px_rev_divergence": None,
-           "cust_top1_pct": None, "cust_note": None}
+           "cust_top1_pct": None, "cust_note": None,
+           "cust_drift_pp": None, "cust_flag": None}
 
     try:
-        row = db.execute_query(
-            "SELECT top1_pct, top5_note FROM symbol_customer_conc "
-            "WHERE symbol=:s", {"s": sym})
-        if row:
-            out["cust_top1_pct"] = row[0]["top1_pct"]
-            out["cust_note"] = row[0]["top5_note"]
+        from app.signals.customer_conc import customer_conc
+        cc = customer_conc(sym, note=True)
+        out["cust_top1_pct"] = cc["top1_pct"]
+        out["cust_note"] = cc.get("top5_note")
+        out["cust_drift_pp"] = cc["drift_pp"]
+        out["cust_flag"] = cc["flag"]
     except Exception as exc:
         logger.debug("cust conc %s: %s", sym, exc)
 

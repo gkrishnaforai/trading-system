@@ -256,6 +256,20 @@ def compute_growth_quality(sym: str, as_of: Optional[date] = None) -> Dict[str, 
         eq_parts.append(_lin(fcf_g, -0.25, 0.50))
     if conv is not None:
         eq_parts.append(_lin(conv, 0.0, 1.3))
+    # incremental FCF — the reviewer's 'is growth translating into
+    # cash?' Marginal conversion = FCF growth vs revenue growth: FCF
+    # compounding faster than sales means incremental revenue is
+    # cash-rich; revenue growth outpacing FCF growth is the accrual
+    # warning. Strict ΔFCF/ΔRev needs absolute history — the growth
+    # series carries rates only, so this is the honest proxy.
+    cgg = (fcf_g - rev_g) \
+        if fcf_g is not None and rev_g is not None else None
+    if cgg is not None:
+        eq_parts.append(_lin(cgg, -0.30, 0.30))
+        if cgg < -0.10:
+            flags.append("growth_not_cashing")
+        elif cgg > 0.10:
+            flags.append("growth_cashing")
     if dil_latest is not None:
         dil_score = _lin(-dil_latest, -GATE_MAX_DILUTION, 0.0)
         eq_parts.append(dil_score if dil_score is not None else 50.0)
@@ -356,6 +370,7 @@ def compute_growth_quality(sym: str, as_of: Optional[date] = None) -> Dict[str, 
             "capex_eff": ce, "capex_rev": cr,
             "rev_cagr_3y": rev_cagr, "fcf": fcf, "fcf_growth": fcf_g,
             "fcf_conversion": conv, "dilution": dil_latest,
+            "cash_growth_gap": cgg,
             "rev_mean_delta": rev["mean_delta"],
             "rev_breadth": f"{rev['breadth_up']}/{rev['breadth_total']}",
             "analysts": rev["analysts"], "margin_trend": marg,
