@@ -243,14 +243,61 @@ def _dimensions(legs: dict) -> dict:
             "recovery_confirmation": _n("recovery", 15)}
 
 
-def _business_bucket(b: Optional[float]) -> str:
+def _fund_coverage(d: dict) -> float:
+    """Share of durability inputs actually present. Missing data
+    scores zero in the leg — this count is what stops a sparse row
+    reading as a weak business."""
+    known = sum([
+        d.get("fund_state") not in (None, "unknown"),
+        d.get("rev_growth") is not None,
+        d.get("fcf_margin") is not None,
+        d.get("est_rev") is not None,
+        d.get("thesis") not in (None, "unknown"),
+        d.get("beats") is not None])
+    return round(known / 6, 2)
+
+
+def _business_bucket(b: Optional[float], d: dict
+                     ) -> tuple[str, list[str]]:
+    """Bucket + override notes. severely_impaired requires >=2
+    independent fundamental signals — a low score built on missing
+    data is not impairment. A weak bucket contradicted by strong
+    journaled fundamentals is a false-positive flag for review,
+    not a verdict."""
+    notes: list[str] = []
     if b is None:
-        return "unknown"
-    return ("strong" if b >= 80 else
-            "healthy_with_risks" if b >= 65 else
-            "mixed_turnaround" if b >= 50 else
-            "deteriorating" if b >= 35 else
-            "severely_impaired")
+        return "unknown", notes
+    bucket = ("strong" if b >= 80 else
+              "healthy_with_risks" if b >= 65 else
+              "mixed_turnaround" if b >= 50 else
+              "deteriorating" if b >= 35 else
+              "severely_impaired")
+    if bucket == "severely_impaired":
+        sigs = sum([
+            d.get("fund_state") in ("declining", "deteriorating",
+                                    "pressured"),
+            d.get("est_rev") is not None and d["est_rev"] < -0.02,
+            d.get("rev_growth") is not None and d["rev_growth"] <= 0,
+            d.get("fcf_margin") is not None
+            and d["fcf_margin"] <= 0,
+            d.get("last_surprise") is not None
+            and d["last_surprise"] < -8,
+            d.get("thesis") in ("severely_deteriorating", "broken")])
+        if sigs < 2:
+            bucket = "deteriorating"
+            notes.append("severe_requires_corroboration")
+    if bucket in ("deteriorating", "severely_impaired",
+                  "mixed_turnaround"):
+        contra = sum([
+            d.get("rev_growth") is not None and d["rev_growth"] > 0.15,
+            d.get("est_rev") is not None and d["est_rev"] > 0.02,
+            d.get("fcf_margin") is not None
+            and d["fcf_margin"] > 0.10,
+            (d.get("beats") or 0) >= 2])
+        if contra >= 2:
+            notes.append("fundamental_contradiction")
+            bucket = "mixed_turnaround"
+    return bucket, notes
 
 
 def _sbd_classify(dims: dict, gates: list[str],
@@ -271,6 +318,9 @@ def _sbd_classify(dims: dict, gates: list[str],
         return {"class": "beat_down_business",
                 "action": "avoid_or_research"}
     if b >= 75 and dis >= 65:
+        if pf_gap is None:
+            return {"class": "dislocation_unconfirmed",
+                    "action": "watch"}
         if v is not None and v < 50:
             return {"class": "quality_but_expensive",
                     "action": "watch"}
@@ -310,7 +360,7 @@ def _classify(d: dict) -> tuple[str, str]:
     """What KIND of selloff is this? Ordered rules — first match wins.
     Returns (classification, action_bias)."""
     fund, thesis = d["fund"], d["thesis"]
-    rev_bad = (d.get("est_rev") is not None and d["est_rev"] < -5)
+    rev_bad = (d.get("est_rev") is not None and d["est_rev"] < -0.05)
     if thesis == "broken" or d["fund_state"] == "declining" and rev_bad:
         return ("structural_impairment",
                 "reject — the business itself is impaired")
@@ -363,17 +413,19 @@ def _score(d: dict) -> dict:
     legs["dislocation"] = round(min(pts, 25), 1)
 
     # 2) fundamental durability — /25. Is the business still the
-    # business?
+    # business? est_rev is a FRACTION (flywheel sanity band ±5 =
+    # ±500%); last_surprise is percent. Cyclical is a regime label,
+    # not deterioration — scores like steady, not zero.
     pts = 0
     pts += {"accelerating": 8, "growing": 6, "steady": 4,
-            "slowing": 2}.get(d["fund_state"], 0)
+            "cyclical": 4, "slowing": 2}.get(d["fund_state"], 0)
     if d.get("rev_growth") is not None:
         pts += 4 if d["rev_growth"] > 0.15 else 3 if d["rev_growth"] > 0 else -4
     if d.get("fcf_margin") is not None:
         pts += 4 if d["fcf_margin"] > 0.10 else 3 if d["fcf_margin"] > 0 else -4
     if d.get("est_rev") is not None:
-        pts += (4 if d["est_rev"] > 2 else 3 if d["est_rev"] > -2
-                else 0 if d["est_rev"] > -5 else -5)
+        pts += (4 if d["est_rev"] > 0.02 else 3 if d["est_rev"] > -0.02
+                else 0 if d["est_rev"] > -0.05 else -5)
     pts += {"on_track": 4, "improving": 3, "mixed": 1.5,
             "severely_deteriorating": 0,
             "unknown": 0.5}.get(d["thesis"] or "unknown", 0)
@@ -448,7 +500,7 @@ def _gates(d: dict) -> list[str]:
         g.append("core thesis leg failed — under review, "
                  "not a confirmed dip")
     if (d["fund_state"] in ("deteriorating", "declining")
-            and (d.get("est_rev") or 0) < -2):
+            and (d.get("est_rev") or 0) < -0.02):
         g.append("fundamentals deteriorating + estimates falling — "
                  "repricing, not mispricing")
     if d.get("earn_days") is not None and 0 <= d["earn_days"] <= 10:
@@ -716,13 +768,28 @@ def _row_to_d(r: dict, m: dict, market: dict,
                                "fundamental_repricing")
                               else "watch")
     dims = _dimensions(scored["legs"])
-    bucket = _business_bucket(dims.get("business_health"))
+    cov = _fund_coverage(d)
+    if cov < 0.4:
+        dims["business_health"] = None       # too sparse to grade
+    bucket, bucket_notes = _business_bucket(
+        dims.get("business_health"), d)
     sbd = _sbd_classify(dims, gates, d["pf_gap"])
+    tech_flags = ([d["mom"]] if d.get("mom") in
+                  ("knife", "capitulation", "breakdown", "downtrend")
+                  else [])
+    if d.get("sq_verdict") in ("new_shorts_pressing", "likely_covering"):
+        tech_flags.append(f"shorts:{d['sq_verdict']}")
     return {**d, "classification": classification,
             "action": action, **scored, "gates": gates,
             "rsi": None,
             "dimensions": dims,
             "business_bucket": bucket,
+            "bucket_notes": bucket_notes,
+            "decline_cause": classification,
+            "technical_flags": tech_flags,
+            "fund_coverage": cov,
+            "confidence": ("low" if cov < 0.4 else
+                           "medium" if cov < 0.7 else "high"),
             "pf_gap_note": _gap_note(d["pf_gap"], d["est_deterioration"],
                              d.get("dd_60d"), bucket),
             "sbd": sbd,
@@ -827,8 +894,10 @@ def for_symbol(sym: str) -> dict:
     c["legs"] = legs
     c["score"] = round(sum(legs.values()), 1)
     c["dimensions"] = _dimensions(legs)
-    c["business_bucket"] = _business_bucket(
-        c["dimensions"].get("business_health"))
+    if c["fund_coverage"] < 0.4:
+        c["dimensions"]["business_health"] = None
+    c["business_bucket"], c["bucket_notes"] = _business_bucket(
+        c["dimensions"].get("business_health"), c)
     c["pf_gap_note"] = _gap_note(c["pf_gap"], c["est_deterioration"],
                                c.get("dd_60d"), c["business_bucket"])
     c["sbd"] = _sbd_classify(c["dimensions"], c["gates"], c["pf_gap"])
@@ -908,10 +977,13 @@ def scan(funds: Optional[float] = None,
         c["legs"] = legs
         c["score"] = round(sum(legs.values()), 1)
         c["dimensions"] = _dimensions(legs)
-        c["business_bucket"] = _business_bucket(
-            c["dimensions"].get("business_health"))
-        c["pf_gap_note"] = _gap_note(c["pf_gap"], c["est_deterioration"],
-                               c.get("dd_60d"), c["business_bucket"])
+        if c["fund_coverage"] < 0.4:
+            c["dimensions"]["business_health"] = None
+        c["business_bucket"], c["bucket_notes"] = _business_bucket(
+            c["dimensions"].get("business_health"), c)
+        c["pf_gap_note"] = _gap_note(
+            c["pf_gap"], c["est_deterioration"], c.get("dd_60d"),
+            c["business_bucket"])
         c["sbd"] = _sbd_classify(c["dimensions"], c["gates"],
                                 c["pf_gap"])
         c["decision"] = ("priority" if c["score"] >= 85 else
