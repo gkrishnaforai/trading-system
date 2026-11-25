@@ -66,6 +66,8 @@ def validate_claim(c: Dict[str, Any]) -> List[str]:
         try:
             d = (datetime.fromisoformat(str(sd).replace("Z", "+00:00"))
                  if not isinstance(sd, datetime) else sd)
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
             if d > datetime.now(timezone.utc) + timedelta(days=2):
                 errs.append("source_date in the future")
         except (TypeError, ValueError):

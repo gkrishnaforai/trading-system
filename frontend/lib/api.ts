@@ -878,6 +878,29 @@ export const api = {
       peak?: { lo?: number; hi?: number; confidence?: string } | null
     }>
   }>('/cycle'),
+  aiCycleLadder: () => get<{
+    as_of?: string;
+    regime?: { regime?: string;
+               groups?: Record<string, string>;
+               up_groups?: string[];
+               down_groups?: string[] };
+    warning?: { score?: number; down_groups?: number };
+    rungs?: Record<string, {
+      stage?: string; description?: string; members?: string[];
+      tape?: { rel_5d?: number; rel_20d?: number };
+      growth?: { med_weighted_growth?: number;
+                 med_peg_cagr?: number; n_growth?: number };
+      evidence?: { n_claims?: number; axes_up?: number;
+                   axes_down?: number;
+                   axes?: Record<string, {
+                     value?: string | null; direction?: string;
+                     confidence?: string; n?: number }> };
+      profile?: { models?: Record<string, number>;
+                  monetization?: Record<string, number>;
+                  funding_worst?: string };
+      rotation_state?: string;
+    }>
+  }>('/ai-cycle-ladder'),
   transitions: () => get<{
     readiness?: { symbol: string; use_case: string;
                   prev_state?: string; state?: string;

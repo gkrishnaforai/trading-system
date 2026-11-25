@@ -96,6 +96,24 @@ symbol_priors:
   AMAT: {demand_model: capex_project,     capex_sensitivity: medium, ai_monetization: proven}
   HOOD: {demand_model: usage_consumption, capex_sensitivity: low,  ai_monetization: early}
   COIN: {demand_model: usage_consumption, capex_sensitivity: low,  ai_monetization: unknown}
+  # memory/storage — sell bits into every build, cyclical supply
+  # discipline; demand scales with tokens/context but revenue is
+  # recognized on shipment, so it still sits in the capex cohort
+  MU:   {demand_model: capex_project,    capex_sensitivity: medium, ai_monetization: scaling}
+  WDC:  {demand_model: capex_project,    capex_sensitivity: medium, ai_monetization: scaling}
+  STX:  {demand_model: capex_project,    capex_sensitivity: medium, ai_monetization: scaling}
+  SNDK: {demand_model: capex_project,    capex_sensitivity: medium, ai_monetization: early}
+  SND:  {demand_model: capex_project,    capex_sensitivity: medium, ai_monetization: early}
+  # inference data/ops layer — consumption-priced platforms; revenue
+  # follows workloads running, not capacity being built. The
+  # rotation the reviewer describes lands here if monetization
+  # evidence confirms
+  NET:  {demand_model: usage_consumption, capex_sensitivity: low,  ai_monetization: early}
+  MDB:  {demand_model: usage_consumption, capex_sensitivity: low,  ai_monetization: early}
+  CFLT: {demand_model: usage_consumption, capex_sensitivity: low,  ai_monetization: early}
+  SNOW: {demand_model: usage_consumption, capex_sensitivity: low,  ai_monetization: scaling}
+  DDOG: {demand_model: usage_consumption, capex_sensitivity: low,  ai_monetization: early}
+  ZS:   {demand_model: recurring_software, capex_sensitivity: low, ai_monetization: scaling}
 
 # ── evidence feed ────────────────────────────────────────────────
 # controlled signal vocabulary: which signals inform which axis and
@@ -298,14 +316,16 @@ demand_gate:
 # drafts and optional transcript drafts for each group.
 ingest_groups:
   hyperscalers:    [AMZN, GOOGL, MSFT, META]
-  accelerators:    [NVDA, AVGO]
+  accelerators:    [NVDA, AVGO, AMD]
   networking:      [MRVL, CRDO, ANET, ALAB, LITE, COHR]
   neoclouds:       [NBIS, CRWV, IREN, APLD]
   power:           [CEG, VST, ETN, VRT, GEV]
   semi_equipment:  [TSM, ASML, AMAT]
+  memory:          [MU, WDC, STX, SNDK]
   software:        [NOW, PANW, CRWD, RBRK, SNPS, CDNS]
+  data_layer:      [MDB, DDOG, SNOW, CFLT, NET, ZS]
   watchlist:       [NBIS, CRWV, IREN, APLD, CRDO, ALAB, ANET, MRVL,
-                    NVDA, AVGO, TSM, CEG, VRT]
+                    NVDA, AVGO, TSM, CEG, VRT, MU, NET, SNOW, DDOG]
 
 durability_by_model:
   capex_project:       discretionary   # order-driven, defers easily

@@ -26,6 +26,25 @@ const DEC_TONE: Record<string, string> = {
   research_incomplete: 'text-faint',
 }
 
+const ROT_TONE: Record<string, string> = {
+  leading: 'bg-aggressive/15 text-aggressive',
+  evidence_led: 'bg-constructive/15 text-constructive',
+  tape_led: 'bg-caution/15 text-caution',
+  lagging: 'bg-hairline/60 text-muted',
+  evidence_weak: 'bg-caution/15 text-caution',
+  fading: 'bg-defensive/15 text-defensive',
+  unknown: 'bg-hairline/60 text-faint',
+}
+
+const STAGE_ORDER = ['build', 'deploy', 'utilize']
+
+const DIR_TONE: Record<string, string> = {
+  up: 'text-constructive',
+  down: 'text-defensive',
+  conflict: 'text-caution',
+  flat: 'text-faint',
+}
+
 const SPAN_LO = 2026
 const SPAN_HI = 2032
 
@@ -49,6 +68,7 @@ function PeakBar({ lo, hi, conf }: {
 
 export default async function CyclePage() {
   const d = await api.cycle()
+  const ladder = await api.aiCycleLadder()
   if (!d) {
     return (
       <main className="mx-auto max-w-6xl px-6 py-8">
@@ -123,6 +143,100 @@ export default async function CyclePage() {
               </div>
             </div>
           ))}
+        </section>
+      )}
+
+      {ladder?.rungs && Object.keys(ladder.rungs).length > 0 && (
+        <section className="mb-6">
+          <div className="mb-2 flex flex-wrap items-baseline gap-x-4">
+            <h2 className="text-[13px] font-semibold text-ink">
+              Cycle ladder — where the cycle moves next
+            </h2>
+            <span className="text-[10px] font-mono text-faint">
+              regime {ladder.regime?.regime ?? 'unknown'}
+              {ladder.warning?.score != null &&
+                ` · warning ${ladder.warning.score}`}
+              {ladder.as_of && ` · ${ladder.as_of}`}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {STAGE_ORDER.flatMap(stage =>
+              Object.entries(ladder.rungs ?? {})
+                .filter(([, r]) => r.stage === stage)
+                .map(([k, r]) => {
+                  const ev = r.evidence
+                  const axes = Object.entries(ev?.axes ?? {})
+                  return (
+                    <div key={k}
+                         className="rounded-xl border border-hairline bg-card px-4 py-3">
+                      <div className="mb-1 flex items-baseline justify-between">
+                        <span className="text-[12px] font-semibold text-ink">
+                          {k.replace(/_/g, ' ')}
+                        </span>
+                        <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider ${ROT_TONE[r.rotation_state ?? 'unknown']}`}>
+                          {(r.rotation_state ?? 'unknown').replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-faint">
+                        {r.description}
+                      </div>
+                      <div className="mt-1.5 font-mono text-[10px] text-muted truncate">
+                        {(r.members ?? []).join(' ')}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono">
+                        {r.tape?.rel_20d != null && (
+                          <span className={r.tape.rel_20d >= 0
+                            ? 'text-constructive' : 'text-defensive'}>
+                            20d {r.tape.rel_20d >= 0 ? '+' : ''}
+                            {(r.tape.rel_20d * 100).toFixed(1)}%
+                          </span>
+                        )}
+                        {r.growth?.med_weighted_growth != null && (
+                          <span className="text-ink">
+                            fwd g {(r.growth.med_weighted_growth * 100)
+                              .toFixed(0)}%
+                          </span>
+                        )}
+                        {r.growth?.med_peg_cagr != null && (
+                          <span className="text-faint">
+                            peg {r.growth.med_peg_cagr}
+                          </span>
+                        )}
+                        {ev?.n_claims != null && (
+                          <span className="text-faint">
+                            {ev.n_claims} claims
+                          </span>
+                        )}
+                        {r.profile?.funding_worst &&
+                          r.profile.funding_worst !== 'low' && (
+                          <span className="text-defensive">
+                            funding {r.profile.funding_worst}
+                          </span>
+                        )}
+                      </div>
+                      {axes.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono">
+                          {axes.map(([a, v]) => (
+                            <span key={a}
+                                  className={DIR_TONE[v.direction ?? 'flat']}>
+                              {a.replace(/_/g, ' ')}{' '}
+                              {v.direction === 'conflict' ? '⚡'
+                                : v.direction === 'up' ? '↑'
+                                : v.direction === 'down' ? '↓' : '·'}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                }))}
+          </div>
+          <p className="mt-2 text-[10px] text-faint">
+            evidence-led = disclosures improving while tape lags — the
+            forward-looking rotation signal · tape-led = price moving
+            without confirmed disclosures (unconfirmed momentum) ·
+            axes from approved claims only; unknown stays unknown.
+          </p>
         </section>
       )}
 

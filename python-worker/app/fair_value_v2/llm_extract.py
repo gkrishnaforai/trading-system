@@ -45,7 +45,7 @@ def extract_claims(symbol: str, text: str, source: str,
     unconfigured. Caller persists via demand_evidence.record_claim —
     drafts only, nothing here is auto-applied."""
     try:
-        from litellm import completion
+        from app.llm.client import llm_completion
     except ImportError:
         return None
     from app.config import settings
@@ -78,7 +78,7 @@ if the excerpt states a metric period, put it in value.period.
 EXCERPT:
 {text[:6000]}"""
     try:
-        resp = completion(
+        resp = llm_completion(
             model=getattr(settings, "llm_model", "gpt-4o-mini"),
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1, max_tokens=1200)

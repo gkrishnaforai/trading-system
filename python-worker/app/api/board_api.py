@@ -10,7 +10,7 @@ import asyncio
 import logging
 import traceback
 from datetime import date, datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException
 
@@ -952,6 +952,36 @@ async def _j_ai_cycle() -> dict:
     return await asyncio.to_thread(cycle_tracker.refresh)
 
 
+async def _j_demand_evidence() -> dict:
+    """Demand-evidence feed — deterministic capex + FCF claims per
+    ingest group auto-approved; news extraction lands as drafts for
+    review. Feeds market_ai_regime + the cycle ladder's evidence leg.
+    Was dormant: run before expecting regime/rotation to grade."""
+    from app.fair_value_v2.demand_ingest import (
+        ingest_group, ingest_groups)
+    out: dict = {}
+    for g in sorted(ingest_groups()):
+        try:
+            r = await asyncio.to_thread(
+                ingest_group, g, True, False)
+            out[g] = {"approved": r.get("approved_claims"),
+                      "drafts": r.get("draft_claims")}
+        except Exception as exc:
+            out[g] = {"error": str(exc)}
+    return out
+
+
+async def _j_ai_cycle_ladder() -> dict:
+    """AI-cycle theme ladder — per-stage rungs (build → deploy →
+    utilize) with tape/growth/evidence/funding legs + rotation_state,
+    journaled daily to ai_cycle_ladder_daily."""
+    from app.signals import inference_ladder
+    out = await asyncio.to_thread(inference_ladder.run)
+    return {"as_of": out.get("as_of"),
+            "regime": (out.get("regime") or {}).get("regime"),
+            "rungs": len(out.get("rungs") or {})}
+
+
 async def _j_competitive_risk() -> dict:
     """Competitive disruption & substitution — seeds threat claims,
     then scores CRS per name over the approved-claims journal."""
@@ -1296,6 +1326,10 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "intraday-recovery": ("Intraday recovery confirm (5-min)",
                           _j_intraday_recovery),
     "ai-cycle":    ("AI cycle rotation tracker (weekly)", _j_ai_cycle),
+    "demand-evidence": ("Demand-evidence feed (capex/FCF + news drafts)",
+                        _j_demand_evidence),
+    "ai-cycle-ladder": ("AI cycle theme ladder (daily)",
+                        _j_ai_cycle_ladder),
     "competitive-risk": ("Competitive disruption & substitution",
                          _j_competitive_risk),
     "correction-alarms": ("Correction-alarm engine",
@@ -4227,6 +4261,22 @@ async def cycle_board():
     cohort aggregates. Read-only over journaled rows."""
     from app.signals import cycle_tracker
     return await asyncio.to_thread(cycle_tracker.current)
+
+
+@router.get("/ai-cycle-ladder")
+async def ai_cycle_ladder():
+    """AI-cycle theme ladder — where the cycle is and where it's
+    moving next (6-12m). Per-stage rungs (build → deploy → utilize)
+    with four checkable legs: tape vs SPY, forward growth, approved
+    demand-evidence axes, funding worst-case. rotation_state is the
+    honest verdict: evidence_led = disclosures improving while tape
+    lags (the rotation signal), tape_led = price moving unconfirmed.
+    Lazy-evals on an empty journal."""
+    from app.signals import inference_ladder
+    latest = await asyncio.to_thread(inference_ladder.latest)
+    if latest is None:
+        latest = await asyncio.to_thread(inference_ladder.run)
+    return latest or {}
 
 
 @router.get("/competitive")

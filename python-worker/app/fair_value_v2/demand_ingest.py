@@ -96,6 +96,47 @@ def capex_claim(symbol: str,
     }
 
 
+def fcf_claim(symbol: str,
+              rows: Optional[List[Dict[str, Any]]] = None
+              ) -> Optional[Dict[str, Any]]:
+    """Measured FCF sign → financing-group claim. Positive FCF is a
+    funding fact; negative FCF alone is NOT a negative signal — it can
+    be an investment phase, and inventing the adverse reading would
+    violate the facts-not-conclusions contract."""
+    if rows is None:
+        from app.providers.financial_modeling_prep.client import (
+            get_fmp_client)
+        rows = get_fmp_client().get_cash_flow_statement(
+            symbol, period="quarter")
+    q = [r for r in rows or [] if r.get("date")]
+    q.sort(key=lambda r: str(r.get("date")))
+    if len(q) < 4:
+        return None
+    last4 = q[-4:]
+    ocf = sum(float(r.get("operatingCashFlow") or 0) for r in last4)
+    capex = sum(abs(float(r.get("capitalExpenditure") or 0))
+                for r in last4)
+    fcf = ocf - capex
+    if fcf <= 0:
+        return None
+    period = f"{last4[-1].get('period') or ''} {last4[-1].get('fiscalYear') or ''}".strip()
+    return {
+        "symbol": symbol.upper(),
+        "axis": "capital_funding_risk",
+        "signal": "fcf_positive",
+        "claim": (f"{symbol.upper()} trailing-4Q FCF "
+                  f"${fcf/1e9:.1f}B ({period or str(last4[-1].get('date'))[:10]})"),
+        "value": {"fcf_usd": fcf, "ocf_usd": ocf, "capex_usd": capex,
+                  "period": period or None},
+        "source": "fmp_cashflow",
+        "source_ref": f"fmp cash-flow {last4[-1].get('date')}",
+        "source_date": str(last4[-1].get("date")),
+        "confidence": "high",
+        "status": "approved",
+        "extractor_version": "fcf_actuals_v1",
+    }
+
+
 # ── text extraction (drafts only) ──────────────────────────────────
 
 def news_claims(symbol: str, max_articles: int = 5
@@ -156,11 +197,25 @@ def ingest_group(group: str, include_news: bool = True,
     for sym in symbols:
         got = {"capex": 0, "news_drafts": 0, "transcript_drafts": 0}
         try:
-            c = capex_claim(sym)
+            rows = None
+            try:
+                from app.providers.financial_modeling_prep.client \
+                    import get_fmp_client
+                rows = get_fmp_client().get_cash_flow_statement(
+                    sym, period="quarter")
+            except Exception:
+                rows = None
+            c = capex_claim(sym, rows)
             if c:
                 res = record_claim(c)
                 if res.get("ok"):
                     got["capex"] = 1
+                    approved += 1
+            f = fcf_claim(sym, rows)
+            if f:
+                res = record_claim(f)
+                if res.get("ok"):
+                    got["fcf"] = 1
                     approved += 1
         except Exception as exc:
             logger.warning("capex ingest failed for %s: %s", sym, exc)
