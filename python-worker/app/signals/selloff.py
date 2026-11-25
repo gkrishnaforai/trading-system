@@ -380,7 +380,8 @@ _SBD_ORDER = {
 def _rank_key(c: dict) -> tuple:
     """SBD-aware sort. Rejects always sink; within a tier, deeper
     pf_gap (price fell further than estimates did) ranks above a
-    shallow one, then stronger business health, then raw score."""
+    shallow one, then business health, then growth quality — the
+    'high growth rebound' tiebreak — then raw score."""
     if c.get("decision") == "reject":
         return (99, 0.0, 0, 0)
     order = _SBD_ORDER.get((c.get("sbd") or {}).get("class"), 6)
@@ -388,7 +389,30 @@ def _rank_key(c: dict) -> tuple:
     bh = dims.get("business_health") or 0
     gap = c.get("pf_gap")          # more negative = deeper dislocation
     return (order, gap if gap is not None else 9.9,
-            -bh, -(c.get("score") or 0))
+            -bh, -(c.get("growth_quality") or 0),
+            -(c.get("score") or 0))
+
+
+def _reason(d: dict) -> str:
+    """One-line case for the row — the gap arithmetic and what the
+    valuation evidence says. Journaled fields only; never asserts
+    what the data doesn't show."""
+    bits: list[str] = []
+    est, gap = d.get("est_deterioration"), d.get("pf_gap")
+    if gap is not None and est is not None:
+        dd = d.get("dd_60d")
+        bits.append(
+            f"price {dd * 100:.0f}% vs FY28 ests {est * 100:+.0f}%"
+            if dd is not None else
+            f"FY28 ests {est * 100:+.0f}%")
+    if (d.get("fv_upside") or 0) > 0:
+        bits.append(f"FV upside {d['fv_upside'] * 100:+.0f}%")
+    if d.get("req_cagr") is not None and d.get("implied_status"):
+        bits.append(f"mkt requires {d['req_cagr'] * 100:.0f}% "
+                    f"CAGR ({str(d['implied_status']).replace('_', ' ')})")
+    if d.get("cyclical_flag"):
+        bits.append("cyclical-basis estimates")
+    return " · ".join(bits)
 
 
 # ------------------------------ classification -------------------------------
@@ -829,6 +853,7 @@ def _row_to_d(r: dict, m: dict, market: dict,
                            "medium" if cov < 0.7 else "high"),
             "pf_gap_note": _gap_note(d["pf_gap"], d["est_deterioration"],
                              d.get("dd_60d"), bucket),
+            "reason": _reason(d),
             "sbd": sbd,
             "entry_plan": _entry_plan(d)}
 

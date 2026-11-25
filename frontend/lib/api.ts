@@ -1345,6 +1345,8 @@ export type SelloffCand = {
   confidence?: string
   decline_cause?: string
   technical_flags?: string[]
+  reason?: string
+  growth_quality?: number | null
   fv?: number | null
   fv_upside?: number | null
   invalidation?: number | null

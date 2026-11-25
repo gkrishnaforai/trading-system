@@ -230,6 +230,11 @@ function SelloffRow({ c }: { c: SelloffCand }) {
           <span className="text-caution">⚠EPS{c.earn_days}d</span>
         )}
       </div>
+      {c.reason && (
+        <div className="pl-1 pt-0.5 text-[10px] text-muted">
+          {c.reason}
+        </div>
+      )}
       {c.action && c.decision !== 'pass' && c.decision !== 'reject' && (
         <div className="pl-1 pt-0.5 text-[10px] text-faint">
           {c.action}
