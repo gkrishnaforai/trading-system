@@ -1810,6 +1810,56 @@ export default async function RegimePage() {
               ))}
             </div>
           )}
+          {/* flow destination + sub-scores + recovery ladder — where
+              is money actually going, kept as separate reads per the
+              spec (never averaged into the headline) */}
+          {(() => {
+            const fm = liq.flow_matrix as Record<string, unknown> | undefined
+            const subs = liq.sub_scores as Record<string, number | null> | undefined
+            const rec = liq.recovery as Record<string, unknown> | undefined
+            const steps = (rec?.steps as Array<Record<string, unknown>>) || []
+            return (
+              <>
+                {fm?.destination != null && (
+                  <div className="pt-2 text-[11px]">
+                    <span className="text-faint">flow destination </span>
+                    <span className={liqChipTone(String(fm.destination).includes('safety') || String(fm.destination).includes('outflow') ? 'decelerating' : 'improving')}>
+                      {String(fm.destination).replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                )}
+                {subs && (
+                  <div className="pt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono">
+                    {(['liquidity', 'credit_stress', 'equity_flows',
+                       'market_confirmation', 'recovery'] as const)
+                      .filter(k => subs[k] != null)
+                      .map(k => (
+                        <span key={k}>
+                          <span className="text-faint">{k.replace(/_/g, ' ')} </span>
+                          <span className={(subs[k] as number) >= 65 ? 'text-aggressive'
+                            : (subs[k] as number) >= 45 ? 'text-caution' : 'text-defensive'}>
+                            {String(subs[k])}
+                          </span>
+                        </span>
+                      ))}
+                  </div>
+                )}
+                {steps.length > 0 && (
+                  <div className="pt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px]"
+                    title="recovery confirmation sequence — partial order is honest, not a verdict">
+                    <span className="text-faint">recovery </span>
+                    {steps.map(s => (
+                      <span key={String(s.step)}
+                        title={String(s.detail || '')}
+                        className={s.met ? 'text-aggressive' : 'text-faint'}>
+                        {s.met ? '✓' : '·'} {String(s.step).replace(/_/g, ' ')}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </>
+            )
+          })()}
           {/* M2 — context only, deliberately unscored: broad money
               isn't money allocated to equities */}
           {typeof (liq.context as Record<string, unknown> | undefined)

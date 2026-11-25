@@ -42,6 +42,23 @@ _COMPONENTS = [
 _BUCKETS = [(80, "strong_expansion"), (65, "expansion"),
             (45, "neutral"), (25, "tightening"), (0, "severe")]
 
+# ETF flow groups — where money is going, not just whether it left.
+# Price/RS is a PROXY for flows (real creations/redemptions need a
+# paid feed); grouped so a defensive bid reads differently from a
+# risk bid. Order = defensive → risk for the destination label.
+_FLOW_GROUPS = {
+    "cash_duration": ["BIL", "SHY", "IEF", "TLT"],
+    "gold":          ["GLD", "IAU", "SLV"],
+    "broad_equity":  ["SPY", "VOO", "RSP"],
+    "small_cap":     ["IWM", "IJR"],
+    "growth_tech":   ["QQQ", "IGV"],
+    "semis_ai":      ["SMH", "SOXX"],
+    "crypto":        ["IBIT", "BITO"],
+}
+_RISK_GROUPS = ("broad_equity", "small_cap", "growth_tech",
+                "semis_ai", "crypto")
+_SAFE_GROUPS = ("cash_duration", "gold")
+
 
 def _pct_chg(pts: list[tuple[date, float]], back: int) -> Optional[float]:
     """% change over `back` observations — weekly series: back=4 ≈
@@ -145,6 +162,156 @@ def _equity_legs() -> dict[str, Any]:
     return out
 
 
+def _flow_matrix() -> dict[str, Any]:
+    """The reviewer's core question — where is money going? 5d and
+    ~1m (21-bar) returns per ETF group + relative strength vs SPY.
+    A defensive group leading while risk lags = withdrawal into
+    safety; semis leading = deployment; all falling together =
+    deleveraging, not rotation."""
+    try:
+        from app.database import db
+        syms = sorted({s for syms_ in _FLOW_GROUPS.values()
+                      for s in syms_} | {"SPY"})
+        rows = db.execute_query(
+            "SELECT symbol, date, close FROM daily_bars"
+            " WHERE symbol = ANY(:s)"
+            " AND date > (SELECT max(date) FROM daily_bars) - 45"
+            " ORDER BY symbol, date", {"s": syms})
+    except Exception as exc:
+        logger.debug("liq flow matrix: %s", exc)
+        return {"groups": {}, "destination": None}
+    px: dict[str, list[float]] = {}
+    dates: dict[str, str] = {}
+    for r in rows:
+        px.setdefault(r["symbol"], []).append(float(r["close"]))
+        dates[r["symbol"]] = str(r["date"])
+    groups: dict[str, dict] = {}
+    spy = px.get("SPY") or []
+    spy_5d = spy[-1] / spy[-6] - 1 if len(spy) >= 6 else None
+    spy_1m = spy[-1] / spy[-22] - 1 if len(spy) >= 22 else None
+    for g, syms_ in _FLOW_GROUPS.items():
+        r5, r1 = [], []
+        for s in syms_:
+            b = px.get(s) or []
+            if len(b) >= 6:
+                r5.append(b[-1] / b[-6] - 1)
+            if len(b) >= 22:
+                r1.append(b[-1] / b[-22] - 1)
+        if not r5 and not r1:
+            continue
+        groups[g] = {
+            "ret_5d": round(sum(r5) / len(r5), 4) if r5 else None,
+            "ret_1m": round(sum(r1) / len(r1), 4) if r1 else None,
+            "rs_spy_5d": (round(sum(r5) / len(r5) - spy_5d, 4)
+                        if r5 and spy_5d is not None else None),
+            "rs_spy_1m": (round(sum(r1) / len(r1) - spy_1m, 4)
+                        if r1 and spy_1m is not None else None),
+            "n": len(set(syms_) & set(px)),
+        }
+    # destination — the group with the best 5d relative move, labeled
+    dest = None
+    scored = [(g, v["rs_spy_5d"] if v["rs_spy_5d"] is not None
+               else v["ret_5d"]) for g, v in groups.items()
+              if (v.get("rs_spy_5d") or v.get("ret_5d")) is not None]
+    if scored:
+        top = max(scored, key=lambda t: t[1])
+        risk_ret = [groups[g]["ret_5d"] for g in _RISK_GROUPS
+                    if groups.get(g, {}).get("ret_5d") is not None]
+        safe_rs = [groups[g]["rs_spy_5d"] for g in _SAFE_GROUPS
+                   if groups.get(g, {}).get("rs_spy_5d") is not None]
+        all_risk_down = bool(risk_ret) and all(r < 0 for r in risk_ret)
+        if all_risk_down and safe_rs and all(v > 0 for v in safe_rs):
+            dest = "deleveraging_to_safety"
+        elif top[0] in _SAFE_GROUPS and top[1] > 0:
+            dest = "rotation_to_safety"
+        elif top[0] == "semis_ai" and top[1] > 0:
+            dest = "deployment_ai_semis"
+        elif top[0] in _RISK_GROUPS and top[1] > 0:
+            dest = "deployment_equities"
+        elif all_risk_down and (not safe_rs
+                                or all(v <= 0 for v in safe_rs)):
+            dest = "broad_outflow"
+        else:
+            dest = "mixed_rotation"
+    return {"groups": groups, "destination": dest,
+            "spy_5d": round(spy_5d, 4) if spy_5d is not None else None,
+            "bar_date": dates.get("SPY")}
+
+
+def _credit_depth() -> dict[str, Any]:
+    """Credit beyond HY: IG spreads + VIX — the reviewer's credit
+    stress leg deepened. HY widening + IG widening + VIX elevated =
+    real stress; HY alone can be sector noise."""
+    out: dict[str, Any] = {}
+    ig = _fred_series("BAMLC0A0CM", days=120)      # IG OAS, daily
+    if ig:
+        igc = _pct_chg(ig, 20)
+        out["ig_oas"] = round(ig[-1][1], 2)
+        out["ig_chg_20d"] = round(igc, 4) if igc is not None else None
+        out["ig_obs"] = str(ig[-1][0])
+        # IG level bands are tighter than HY: <1.2 calm, >2.0 stress
+        v = ig[-1][1]
+        out["ig_score"] = (90 if v <= 1.0 else 75 if v <= 1.3 else
+                           60 if v <= 1.6 else 40 if v <= 2.0 else 20)
+    vx = _fred_series("VIXCLS", days=60)
+    if vx:
+        out["vix"] = round(vx[-1][1], 1)
+        out["vix_obs"] = str(vx[-1][0])
+        v = vx[-1][1]
+        out["vix_score"] = (90 if v <= 14 else 75 if v <= 18 else
+                            60 if v <= 22 else 40 if v <= 28 else
+                            20 if v <= 35 else 10)
+    sc = [s for s in (out.get("ig_score"), out.get("vix_score"))
+          if s is not None]
+    out["credit_depth_score"] = (round(sum(sc) / len(sc))
+                               if sc else None)
+    return out
+
+
+def _recovery_sequence(comps: list[dict], flow: dict,
+                       breadth: dict) -> dict[str, Any]:
+    """The 5-step confirmation ladder from the spec — each step a
+    bool computed from legs already computed; a partial sequence is
+    journaled, never forced to a verdict."""
+    get = lambda n: next((c for c in comps if c["name"] == n), {})
+    hy = get("credit_conditions")
+    hy_chg = hy.get("chg_pct")
+    groups = flow.get("groups") or {}
+    semis = groups.get("semis_ai") or {}
+    broad = groups.get("broad_equity") or {}
+    p50 = breadth.get("pct_above_50")
+    steps = [
+        {"step": "credit_stabilizes",
+         "met": (hy_chg is not None and hy_chg <= 0.005),
+         "detail": f"HY Δ {round(hy_chg*100,2)}%" if hy_chg is not None
+                  else "no HY data"},
+        {"step": "outflows_slow",
+         "met": (broad.get("ret_5d") is not None
+                 and broad["ret_5d"] >= -0.01),
+         "detail": (f"broad 5d {round(broad['ret_5d']*100,1)}%"
+                    if broad.get("ret_5d") is not None
+                    else "no broad-equity bars")},
+        {"step": "semis_lead",
+         "met": (semis.get("rs_spy_5d") is not None
+                 and semis["rs_spy_5d"] > 0),
+         "detail": (f"SMH grp RS {round(semis['rs_spy_5d']*100,1)}%"
+                    if semis.get("rs_spy_5d") is not None
+                    else "no semis bars")},
+        {"step": "breadth_improves",
+         "met": isinstance(p50, (int, float)) and p50 >= 45,
+         "detail": (f"{round(p50)}% > 50dma" if isinstance(p50,
+                    (int, float)) else "no breadth")},
+        {"step": "risk_groups_bid",
+         "met": (sum(1 for g in _RISK_GROUPS
+                     if (groups.get(g) or {}).get("ret_5d", -1) > 0)
+                 >= 2),
+         "detail": "≥2 risk groups positive 5d"},
+    ]
+    met = sum(1 for s in steps if s["met"])
+    return {"steps": steps, "met": met, "of": len(steps),
+            "recovery_score": round(met / len(steps) * 100)}
+
+
 def _equity_score(legs: dict) -> tuple[Optional[int], Optional[int]]:
     """(fund-flows-proxy score, breadth score) — each 0-100 or None."""
     rel = (legs.get("rel_1m") or {})
@@ -202,7 +369,23 @@ def evaluate() -> dict[str, Any]:
     comps.append({"name": "financial_conditions", "weight": 0,
                   "series": "NFCI", "score": nfci,
                   "note": "level, part of credit leg"})
+    credit_x = _credit_depth()
+    if credit_x.get("ig_score") is not None:
+        comps.append({"name": "ig_spread", "weight": 0,
+                      "series": "BAMLC0A0CM",
+                      "score": credit_x["ig_score"],
+                      "level": credit_x.get("ig_oas"),
+                      "obs": credit_x.get("ig_obs"),
+                      "note": "IG OAS — credit leg, level-scored"})
+    if credit_x.get("vix_score") is not None:
+        comps.append({"name": "vix_level", "weight": 0,
+                      "series": "VIXCLS",
+                      "score": credit_x["vix_score"],
+                      "level": credit_x.get("vix"),
+                      "obs": credit_x.get("vix_obs"),
+                      "note": "fear leg — level, unscored in headline"})
     legs = _equity_legs()
+    flow = _flow_matrix()
     flow_sc, breadth_sc, flow_char = _equity_score(legs)
     comps.append({"name": "equity_flows_proxy", "weight": 15,
                   "series": "SMH/QQQ/IWM vs SPY",
@@ -261,7 +444,40 @@ def evaluate() -> dict[str, Any]:
     except Exception:
         pass
 
+    recovery = _recovery_sequence(comps, flow, legs.get("breadth")
+                                  or {})
+
+    # separate scores per the spec — combined only in the headline,
+    # never averaged away: a strong composite can hide a failing leg
+    def _sub(*names: str) -> Optional[int]:
+        sc = [c for c in comps if c["name"] in names
+              and c.get("score") is not None]
+        return round(sum(c["score"] * c["weight"] for c in sc)
+                     / sum(c["weight"] for c in sc)) \
+            if sc and sum(c["weight"] for c in sc) else \
+            (round(sum(c["score"] for c in sc) / len(sc)) if sc
+             else None)
+
+    hy_sc = next((c["score"] for c in comps
+                  if c["name"] == "credit_conditions"), None)
+    cd = credit_x.get("credit_depth_score")
+    sub_scores = {
+        "liquidity": _sub("fed_balance_sheet", "tga", "reverse_repo",
+                          "bank_reserves", "bank_credit"),
+        "credit_stress": (round(0.6 * hy_sc + 0.4 * cd)
+                         if hy_sc is not None and cd is not None
+                         else _sub("credit_conditions",
+                                   "financial_conditions")),
+        "equity_flows": _sub("equity_flows_proxy"),
+        "market_confirmation": _sub("market_breadth"),
+        "recovery": recovery["recovery_score"],
+    }
+
     return {"liquidity_score": score, "band": band,
+            "sub_scores": sub_scores,
+            "flow_matrix": flow,
+            "credit_depth": credit_x,
+            "recovery": recovery,
             "context": context,
             "coverage": coverage,
             "components": comps,
@@ -301,17 +517,25 @@ def _prior_score(days: int = 30) -> Optional[int]:
 
 
 def run() -> dict[str, Any]:
-    """Compute + journal a liquidity_snapshots row. Weekly cadence —
-    the heavy series (WALCL/WRESBAL/WTREGEN) print weekly."""
+    """Compute + journal a liquidity_snapshots row. Daily post-close
+    — market legs move daily; weekly FRED prints just repeat (obs_age
+    discloses staleness)."""
     from app.database import db
     st = evaluate()
     prev = _prior_score()
+    prev7 = _prior_score(7)
     st["liquidity_acceleration"] = (
         "accelerating" if prev is not None and st["liquidity_score"]
         is not None and st["liquidity_score"] - prev >= 5 else
         "decelerating" if prev is not None and st["liquidity_score"]
         is not None and st["liquidity_score"] - prev <= -5 else
         "stable")
+    # numeric delta — the reviewer's acceleration score; a poor-but-
+    # improving read is the early-recovery signal a label can't show
+    st["score_delta_7d"] = (
+        st["liquidity_score"] - prev7
+        if prev7 is not None and st["liquidity_score"] is not None
+        else None)
     try:
         db.execute_update(
             "INSERT INTO liquidity_snapshots (as_of, score, band,"
