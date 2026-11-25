@@ -354,6 +354,38 @@ def _gap_note(pf_gap: Optional[float], est_chg: Optional[float],
     return "partial_dislocation"
 
 
+# Ranking order — the board should surface genuine beaten-down
+# businesses first: strong business + verified dislocation on top,
+# mixed-quality turnarounds in the middle, deteriorating businesses
+# and gated rejects at the bottom. Within a tier, the deeper the
+# price-fundamental gap the better the rebound candidate.
+_SBD_ORDER = {
+    "confirmed_recovery_candidate": 0,
+    "beat_down_stock": 1,
+    "dislocation_unconfirmed": 2,
+    "turnaround_or_cyclical": 3,
+    "quality_but_expensive": 4,
+    "no_clear_dislocation": 5,
+    "research_incomplete": 6,
+    "beat_down_business": 7,
+    "structural_risk": 8,
+}
+
+
+def _rank_key(c: dict) -> tuple:
+    """SBD-aware sort. Rejects always sink; within a tier, deeper
+    pf_gap (price fell further than estimates did) ranks above a
+    shallow one, then stronger business health, then raw score."""
+    if c.get("decision") == "reject":
+        return (99, 0.0, 0, 0)
+    order = _SBD_ORDER.get((c.get("sbd") or {}).get("class"), 6)
+    dims = c.get("dimensions") or {}
+    bh = dims.get("business_health") or 0
+    gap = c.get("pf_gap")          # more negative = deeper dislocation
+    return (order, gap if gap is not None else 9.9,
+            -bh, -(c.get("score") or 0))
+
+
 # ------------------------------ classification -------------------------------
 
 def _classify(d: dict) -> tuple[str, str]:
@@ -908,6 +940,8 @@ def for_symbol(sym: str) -> dict:
         c["decision"] = "watch" if not any(
             "structural" in g or "repricing" in g
             for g in c["gates"]) else "reject"
+    c["sbd_rank"] = _SBD_ORDER.get(
+        (c.get("sbd") or {}).get("class"), 6)
     c["candidate"] = True
     c["as_of"] = str(date.today())
     return c
@@ -969,8 +1003,10 @@ def scan(funds: Optional[float] = None,
                                sq_flags.get(sym) or {},
                                gj=gj, pi=pi))
 
-    # RSI only for shortlisted names — bound the reads
-    cands.sort(key=lambda c: -c["score"])
+    # RSI only for shortlisted names — bound the reads. Shortlist
+    # by SBD rank so a true dislocation with a modest composite
+    # doesn't get crowded out by a big-drop deteriorating business.
+    cands.sort(key=_rank_key)
     for c in cands[:40]:
         c["rsi"] = _rsi(c["symbol"])
         legs = _score(c)["legs"]          # rescore with RSI present
@@ -993,15 +1029,20 @@ def scan(funds: Optional[float] = None,
             c["decision"] = "watch" if not any(
                 "structural" in g or "repricing" in g
                 for g in c["gates"]) else "reject"
-    cands.sort(key=lambda c: -c["score"])
+    for c in cands:
+        c["sbd_rank"] = _SBD_ORDER.get(
+            (c.get("sbd") or {}).get("class"), 6)
+    cands.sort(key=_rank_key)
 
     if persist and cands:
         _persist(market, cands)
     return {"as_of": str(date.today()), "market": market,
             "candidates": cands[:30],
-            "note": ("dip vs deterioration — buys are staged and "
-                     "invalidation-bounded; a low score means 'not "
-                     "mispriced', not 'bad company'")}
+            "note": ("ranked by SBD class — beaten-down businesses "
+                     "with verified dislocation first, turnarounds "
+                     "next, deteriorating businesses and rejects at "
+                     "the bottom; a low score means 'not mispriced', "
+                     "not 'bad company'")}
 
 
 def _persist(market: dict, cands: list[dict]) -> None:
