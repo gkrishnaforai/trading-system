@@ -967,6 +967,19 @@ export type CycleRow = {
   eps_cagr?: number | null
   peg?: number | null
   est_mom?: number | null
+  est_mom60?: number | null
+  rev_mom?: number | null
+  analysts?: number | null
+  disp?: number | null
+  coverage_shift?: number | null
+  rank_growth?: number | null
+  rank_gq?: number | null
+  rank_gap?: number | null
+  req_cagr?: number | null
+  exp_gap?: number | null
+  implied_status?: string | null
+  exposure?: string | null
+  eps_g27?: number | null
   gq?: number | null
   gq_delta?: number | null
   est_rel?: string | null

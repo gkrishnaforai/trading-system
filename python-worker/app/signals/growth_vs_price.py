@@ -112,17 +112,47 @@ def _revision_momentum(db, sym: str) -> dict:
             " WHERE symbol=:s AND period_end IS NOT NULL"
             " AND as_of <= current_date - 25"
             " ORDER BY period_end, as_of DESC", {"s": sym})
+        old60 = db.execute_query(
+            "SELECT DISTINCT ON (period_end) period_end, eps_avg,"
+            " rev_avg, num_analysts FROM symbol_estimate_snapshots"
+            " WHERE symbol=:s AND period_end IS NOT NULL"
+            " AND as_of <= current_date - 55"
+            " ORDER BY period_end, as_of DESC", {"s": sym})
         cm = {r["period_end"].year: r for r in cur or []}
         om = {r["period_end"].year: r for r in old or []}
+        o60 = {r["period_end"].year: r for r in old60 or []}
         for yr in (2027, 2028):
-            c, o = cm.get(yr), om.get(yr)
-            if not c or not o:
-                continue
-            for fld, key in (("eps_avg", "eps"), ("rev_avg", "rev")):
-                cv, ov = c.get(fld), o.get(fld)
-                if cv and ov and abs(float(ov)) > 1e-9:
-                    out[f"{key}_rev{str(yr)[2:]}_30d"] = round(
-                        float(cv) / float(ov) - 1, 3)
+            c = cm.get(yr)
+            for prev, tag in ((om.get(yr), "30d"), (o60.get(yr), "60d")):
+                if not c or not prev:
+                    continue
+                for fld, key in (("eps_avg", "eps"), ("rev_avg", "rev")):
+                    cv, ov = c.get(fld), prev.get(fld)
+                    if cv and ov and abs(float(ov)) > 1e-9:
+                        out[f"{key}_rev{str(yr)[2:]}_{tag}"] = round(
+                            float(cv) / float(ov) - 1, 3)
+        # coverage shift — a mechanically-shifted consensus (analysts
+        # joining/leaving) isn't a revision. Flag it so a 'cut' driven
+        # by coverage churn doesn't masquerade as deterioration.
+        try:
+            n_cur = db.execute_query(
+                "SELECT num_analysts FROM symbol_estimate_snapshots"
+                " WHERE symbol=:s AND period_end IS NOT NULL"
+                " ORDER BY as_of DESC, period_end DESC LIMIT 1",
+                {"s": sym})
+            n_old = db.execute_query(
+                "SELECT num_analysts FROM symbol_estimate_snapshots"
+                " WHERE symbol=:s AND period_end IS NOT NULL"
+                " AND as_of <= current_date - 25"
+                " ORDER BY as_of DESC, period_end DESC LIMIT 1",
+                {"s": sym})
+            if n_cur and n_old:
+                dn = int(n_cur[0]["num_analysts"] or 0) - \
+                    int(n_old[0]["num_analysts"] or 0)
+                if abs(dn) >= 2:
+                    out["coverage_shift"] = dn
+        except Exception:
+            pass
     except Exception:
         pass
     return out
@@ -192,6 +222,8 @@ def compute(symbols: Optional[list[str]] = None) -> dict[str, dict]:
             "pe27": round(pe27, 1), "pe28": round(pe28, 1),
             "eps27": e27["eps"], "eps28": e28["eps"],
             "growth_1y": round(g1y, 3),
+            "eps_g27": (round(e27["eps"] / ttm_eps - 1, 3)
+                        if ttm_eps and ttm_eps > 0 else None),
             "growth_cagr": round(cagr, 3),
             "cagr_base": base_lbl,
             "peg_1y": round(pe28 / (g1y * 100), 2) if g1y > 0 else None,

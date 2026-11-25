@@ -36,6 +36,15 @@ const GROWTH_COLS: { k: keyof CycleRow; h: string; title: string;
   { k: 'g28', h: 'g28',
     title: 'FY2028 revenue growth — consensus estimate vs FY2027',
     fmt: r => pct(r.g28) },
+  { k: 'rev_cagr', h: 'rCAGR',
+    title: 'two-year revenue growth — 0.4·g27 + 0.6·g28 blend',
+    fmt: r => pct(r.rev_cagr) },
+  { k: 'eps_g27', h: 'eG27',
+    title: 'FY2027 EPS growth — consensus FY27 EPS vs TTM EPS',
+    fmt: r => pct(r.eps_g27) },
+  { k: 'eps_g28', h: 'eG28',
+    title: 'FY2028 EPS growth — consensus FY28 vs FY27 EPS',
+    fmt: r => pct(r.eps_g28) },
   { k: 'eps_cagr', h: 'eCAGR',
     title: 'EPS CAGR — trailing actuals to FY2028 consensus '
          + '(the two-year earnings ramp, not a one-year bounce)',
@@ -44,19 +53,56 @@ const GROWTH_COLS: { k: keyof CycleRow; h: string; title: string;
     title: 'PEG — FY2028 P/E ÷ EPS CAGR. <1 cheap for the growth, '
          + '>1.5 paying up',
     fmt: r => r.peg != null ? r.peg.toFixed(2) : null },
+  { k: 'req_cagr', h: 'reqC',
+    title: 'required CAGR — growth the current price demands under '
+         + 'the engine\'s exit multiple; vs eCAGR = expectation gap',
+    fmt: r => r.req_cagr != null
+      ? `${(r.req_cagr * 100).toFixed(0)}%` : null },
   { k: 'est_mom', h: 'mom',
     title: 'estimate momentum — FY2028 EPS consensus vs ~30d ago. '
          + 'Rising estimates ≠ a static high number',
     fmt: r => r.est_mom != null
       ? `${r.est_mom >= 0 ? '+' : ''}${(r.est_mom * 100).toFixed(0)}%`
       : null },
+  { k: 'est_mom60', h: 'mom60',
+    title: 'estimate momentum — FY2028 EPS consensus vs ~60d ago',
+    fmt: r => r.est_mom60 != null
+      ? `${r.est_mom60 >= 0 ? '+' : ''}${(r.est_mom60 * 100).toFixed(0)}%`
+      : null },
+  { k: 'rev_mom', h: 'rMom',
+    title: 'revenue estimate momentum — FY2028 revenue consensus '
+         + 'vs ~30d ago',
+    fmt: r => r.rev_mom != null
+      ? `${r.rev_mom >= 0 ? '+' : ''}${(r.rev_mom * 100).toFixed(0)}%`
+      : null },
+  { k: 'analysts', h: 'n',
+    title: 'analyst count on FY2028 — reliability context for the '
+         + 'revisions (dispersion in tooltip)',
+    fmt: r => r.analysts != null ? String(r.analysts) : null },
   { k: 'gq', h: 'gq',
     title: 'growth quality 0–100 — percentile composite: growth, '
          + 'acceleration, consistency, estimate momentum, driver '
          + 'validation, rev→EPS conversion, reliability, durability. '
          + '± = vs ~30d ago snapshot',
     fmt: r => null },  // rendered custom — carries the delta
+  { k: 'exposure', h: 'exp',
+    title: 'exposure state — where the growth comes from '
+         + '(demand-model prior unless evidence reclassified): '
+         + 'does this name keep growing if hyperscaler capex slows?',
+    fmt: r => null },  // rendered custom — chip
 ]
+
+const EXPOSURE_LABEL: Record<string, string> = {
+  capex_project: 'new build',
+  capacity_rental: 'capacity rental',
+  usage_consumption: 'usage/inference',
+  recurring_software: 'recurring sw',
+  maintenance_services: 'installed base',
+  power_generation: 'power',
+  replacement_cycle: 'replacement',
+  mixed: 'mixed',
+  speculative: 'speculative',
+}
 
 function pct(v?: number | null) {
   return v != null ? `${(v * 100).toFixed(0)}%` : null
@@ -67,10 +113,16 @@ function growthTone(r: CycleRow, k: keyof CycleRow): string {
     return r.peg == null ? 'text-faint/40'
       : r.peg < 0.6 ? 'text-aggressive'
       : r.peg < 1.2 ? 'text-ink' : 'text-caution'
-  if (k === 'est_mom')
-    return r.est_mom == null ? 'text-faint/40'
-      : r.est_mom > 0.02 ? 'text-constructive'
-      : r.est_mom < -0.02 ? 'text-defensive' : 'text-muted'
+  if (k === 'est_mom' || k === 'est_mom60' || k === 'rev_mom') {
+    const v = r[k] as number | null | undefined
+    return v == null ? 'text-faint/40'
+      : v > 0.02 ? 'text-constructive'
+      : v < -0.02 ? 'text-defensive' : 'text-muted'
+  }
+  if (k === 'req_cagr')
+    return r.exp_gap == null ? 'text-ink'
+      : r.exp_gap > 0.1 ? 'text-constructive'
+      : r.exp_gap < -0.1 ? 'text-defensive' : 'text-ink'
   return 'text-ink'
 }
 
@@ -130,6 +182,16 @@ const FLAG_TXT: Record<string, string> = {
     'competitive resilience is deteriorating quarter over quarter',
   insourcing_beneficiary:
     'customer insourcing may expand this company\u2019s opportunity',
+  eps_estimate_cut:
+    'FY28 EPS consensus cut >3% in the last ~30d',
+  revenue_estimate_cut:
+    'FY28 revenue consensus cut >3% in the last ~30d',
+  coverage_shift:
+    'analyst coverage changed materially — the consensus move may be coverage churn, not a real revision',
+  cyclical_basis:
+    'wide estimate dispersion — peak-cycle earnings may be treated as the floor',
+  normalization_year:
+    'FY27 EPS below TTM — FY28 growth is normalization, not secular',
 }
 
 const STAGE_TONE: Record<string, string> = {
@@ -368,10 +430,80 @@ function History({ sym }: { sym: string }) {
   )
 }
 
+const SORTS: { k: string; label: string; fn: (r: CycleRow) => number }[] = [
+  { k: 'decision', label: 'decision', fn: () => 0 },
+  { k: 'gq', label: 'growth quality',
+    fn: r => -(r.gq ?? -1) },
+  { k: 'eps_cagr', label: 'EPS CAGR',
+    fn: r => -(r.eps_cagr ?? -9) },
+  { k: 'rev_cagr', label: 'rev growth',
+    fn: r => -(r.rev_cagr ?? -9) },
+  { k: 'peg', label: 'PEG (cheap first)',
+    fn: r => r.peg ?? 99 },
+  { k: 'mom', label: 'estimate momentum',
+    fn: r => -(r.est_mom ?? -9) },
+  { k: 'composite', label: 'cycle score',
+    fn: r => -(r.composite ?? -1) },
+]
+
+const FILTERS: { k: string; label: string; fn: (r: CycleRow) => boolean }[] = [
+  { k: 'all', label: 'all', fn: () => true },
+  { k: 'improving', label: 'improving estimates',
+    fn: r => (r.est_mom ?? 0) > 0.02 },
+  { k: 'deteriorating', label: 'deteriorating',
+    fn: r => (r.est_mom ?? 0) <= -0.03 || (r.rev_mom ?? 0) <= -0.03 },
+  { k: 'quality', label: 'high quality growth',
+    fn: r => (r.gq ?? 0) >= 70 },
+  { k: 'priced_in', label: 'growth priced in',
+    fn: r => r.exp_gap != null && r.exp_gap < -0.1 },
+  { k: 'flags', label: 'flags raised',
+    fn: r => (r.flags ?? []).some(f =>
+      ['eps_estimate_cut', 'revenue_estimate_cut', 'cyclical_basis',
+       'order_peak_warning'].includes(f)) },
+]
+
 export function CycleTable({ rows }: { rows: CycleRow[] }) {
   const [open, setOpen] = useState<string | null>(null)
+  const [sort, setSort] = useState<string>('decision')
+  const [filter, setFilter] = useState<string>('all')
+
+  const f = FILTERS.find(x => x.k === filter) ?? FILTERS[0]
+  const s = SORTS.find(x => x.k === sort) ?? SORTS[0]
+  const shown = sort === 'decision'
+    ? rows.filter(r => f.fn(r))
+    : [...rows].filter(r => f.fn(r)).sort(
+        (a, b) => s.fn(a) - s.fn(b))
+
   return (
     <div className="overflow-x-auto">
+      <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <div className="flex items-center gap-1.5 text-[10px]">
+          <span className="text-faint">filter</span>
+          {FILTERS.map(x => (
+            <button key={x.k}
+                    onClick={() => setFilter(x.k)}
+                    className={`rounded-full px-2 py-0.5 transition-colors ${
+                      filter === x.k
+                        ? 'bg-accent/15 text-accent'
+                        : 'text-muted hover:text-ink'}`}>
+              {x.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1.5 text-[10px]">
+          <span className="text-faint">sort</span>
+          <select value={sort}
+                  onChange={e => setSort(e.target.value)}
+                  className="rounded border border-hairline bg-card px-1.5 py-0.5 text-[10px] text-ink">
+            {SORTS.map(x => (
+              <option key={x.k} value={x.k}>{x.label}</option>
+            ))}
+          </select>
+          <span className="font-mono text-faint">
+            {shown.length}/{rows.length}
+          </span>
+        </div>
+      </div>
       <table className="w-full text-[12px]">
         <thead>
           <tr className="border-b border-hairline text-left text-[10px] uppercase tracking-wider text-faint">
@@ -413,7 +545,7 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map(r => {
+          {shown.map(r => {
             const expanded = open === r.symbol
             const seeded = r.peak_source === 'cohort_seed'
             return [
@@ -483,9 +615,31 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
                       </td>
                     )
                   }
+                  if (l.k === 'exposure') {
+                    const lbl = r.exposure
+                      ? (EXPOSURE_LABEL[r.exposure] ??
+                         r.exposure.replace(/_/g, ' '))
+                      : null
+                    return (
+                      <td key={l.h} className="py-2 pr-2 text-right">
+                        {lbl
+                          ? <span className="rounded bg-hairline/50 px-1.5 py-0.5 text-[9px] font-medium text-muted whitespace-nowrap"
+                                  title={`demand model: ${r.exposure}`}>
+                              {lbl}
+                            </span>
+                          : <span className="font-mono text-faint/40">·</span>}
+                      </td>
+                    )
+                  }
                   const v = l.fmt(r)
+                  const title = l.k === 'analysts' && r.disp != null
+                    ? `estimate dispersion ${(r.disp * 100).toFixed(0)}%`
+                      + (r.coverage_shift
+                          ? ` · coverage shift ${r.coverage_shift > 0 ? '+' : ''}${r.coverage_shift}`
+                          : '')
+                    : undefined
                   return (
-                    <td key={l.h}
+                    <td key={l.h} title={title}
                         className={`py-2 pr-2 text-right font-mono ${growthTone(r, l.k)}`}>
                       {v ?? <span className="text-faint/40">·</span>}
                     </td>
@@ -546,7 +700,7 @@ export function CycleTable({ rows }: { rows: CycleRow[] }) {
               </tr>,
               expanded && (
                 <tr key={`${r.symbol}-h`}>
-                  <td colSpan={24}
+                  <td colSpan={34}
                       className="border-b border-hairline bg-card/60 px-8 py-3">
                     <div className="mb-3">
                       <WhyPanel r={r} />

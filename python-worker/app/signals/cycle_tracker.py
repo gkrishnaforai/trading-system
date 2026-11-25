@@ -646,16 +646,35 @@ def current() -> dict:
                 break
         names = (gc_latest or {}).get("names") or {}
         prev_names = (gc_prev or {}).get("names") or {}
+        # three independent ranks, journaled as sorted lists —
+        # invert to per-name positions so no single rank ever
+        # speaks for investment attractiveness
+        ranks = (gc_latest or {}).get("rankings") or {}
+        rank_of: dict[str, dict[str, int]] = {}
+        for rk in ("fundamental_growth", "growth_at_price",
+                   "growth_quality", "risk_adjusted"):
+            for i, s in enumerate(ranks.get(rk) or []):
+                rank_of.setdefault(s, {})[rk] = i + 1
         for r in rows:
             g = names.get(r["symbol"]) or {}
             pg = prev_names.get(r["symbol"]) or {}
             r["g27"] = _f(g.get("rev_g27"))
             r["g28"] = _f(g.get("rev_g28"))
             r["rev_cagr"] = _f(g.get("weighted_growth"))
+            r["eps_g27"] = _f(g.get("eps_g27"))
             r["eps_g28"] = _f(g.get("growth_1y"))
             r["eps_cagr"] = _f(g.get("growth_cagr"))
             r["peg"] = _f(g.get("peg_cagr"))
             r["est_mom"] = _f(g.get("eps_rev28_30d"))
+            r["est_mom60"] = _f(g.get("eps_rev28_60d"))
+            r["rev_mom"] = _f(g.get("rev_rev28_30d"))
+            r["analysts"] = g.get("analysts")
+            r["disp"] = _f(g.get("eps_dispersion"))
+            r["coverage_shift"] = g.get("coverage_shift")
+            rk = rank_of.get(r["symbol"]) or {}
+            r["rank_growth"] = rk.get("fundamental_growth")
+            r["rank_gq"] = rk.get("growth_quality")
+            r["rank_gap"] = rk.get("growth_at_price")
             gq_v = g.get("growth_quality")
             r["gq"] = _f(gq_v.get("score") if isinstance(gq_v, dict)
                          else gq_v)
@@ -673,6 +692,54 @@ def current() -> dict:
                 str(gc_rows[0]["as_of"]) if gc_rows else None)
     except Exception as exc:
         logger.debug("cycle current growth merge: %s", exc)
+    # merge growth-priced-in — required CAGR / expectation gap from
+    # growth_priced_in_daily. The Q4 leg made visible: growth you see
+    # next to growth the price demands.
+    try:
+        pi_rows = db.execute_query(
+            "SELECT DISTINCT ON (symbol) symbol, required_cagr,"
+            " expectation_gap, implied_status"
+            " FROM growth_priced_in_daily"
+            " ORDER BY symbol, as_of DESC")
+        pi_map = {r["symbol"]: r for r in pi_rows}
+        for r in rows:
+            p = pi_map.get(r["symbol"]) or {}
+            r["req_cagr"] = _f(p.get("required_cagr"))
+            r["exp_gap"] = _f(p.get("expectation_gap"))
+            r["implied_status"] = p.get("implied_status")
+    except Exception as exc:
+        logger.debug("cycle current priced-in merge: %s", exc)
+    # exposure state — where the growth comes from, from the journaled
+    # demand_model. Answers "does this name keep growing if hyperscaler
+    # capex stops accelerating". A prior unless evidence reclassified.
+    try:
+        dm_rows = db.execute_query(
+            "SELECT symbol, demand_model, ai_monetization"
+            " FROM company_demand_profile")
+        dm_map = {r["symbol"]: r for r in dm_rows}
+        for r in rows:
+            r["exposure"] = (dm_map.get(r["symbol"]) or {}
+                             ).get("demand_model")
+    except Exception as exc:
+        logger.debug("cycle current exposure merge: %s", exc)
+    # deterioration flags — thresholds on the merged evidence, never
+    # invented values. est cuts read the revision deltas; financial
+    # risk reads ctx-level fields already journaled in components.
+    for r in rows:
+        flags = r.get("flags")
+        if not isinstance(flags, list):
+            flags = []
+            r["flags"] = flags
+        if r.get("est_mom") is not None and r["est_mom"] <= -0.03:
+            flags.append("eps_estimate_cut")
+        if r.get("rev_mom") is not None and r["rev_mom"] <= -0.03:
+            flags.append("revenue_estimate_cut")
+        if r.get("coverage_shift"):
+            flags.append("coverage_shift")
+        if r.get("cyclical_flag"):
+            flags.append("cyclical_basis")
+        if r.get("recovery_year"):
+            flags.append("normalization_year")
     cohorts: dict[str, dict] = {}
     for r in rows:
         c = r.get("cohort") or "unclassified"
