@@ -710,6 +710,11 @@ export default async function PlanPage({
                 ` · breadth ${so.market.breadth_score.toFixed(0)}`}
               {so?.market?.spy_5d != null &&
                 ` · spy5d ${(so.market.spy_5d * 100).toFixed(1)}%`}
+              {so?.as_of && (
+                <span className="text-faint">
+                  {' '}· ran {so.as_of}
+                </span>
+              )}
             </span>
           </div>
           <div className="pt-2">
