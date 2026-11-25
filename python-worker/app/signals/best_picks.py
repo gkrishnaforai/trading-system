@@ -186,6 +186,7 @@ def _bulk_ctx() -> dict[str, dict]:
                cv.future_score, cv.lane AS conv_lane,
                so.classification AS selloff_class,
                so.tape AS selloff_tape,
+               so.fund AS selloff_fund,
                ew.verdict AS last_print,
                sq.verdict AS sq_verdict
         FROM stocks s
@@ -220,7 +221,7 @@ def _bulk_ctx() -> dict[str, dict]:
             WHERE c.symbol = s.symbol
             ORDER BY c.snap_date DESC LIMIT 1) cv ON true
         LEFT JOIN LATERAL (
-            SELECT classification, tape FROM selloff_candidates so
+            SELECT classification, tape, fund FROM selloff_candidates so
             WHERE so.symbol = s.symbol
             ORDER BY so.as_of DESC LIMIT 1) so ON true
         LEFT JOIN LATERAL (
@@ -480,6 +481,8 @@ def _bulk_ctx() -> dict[str, dict]:
             "future_score": _num(r.get("future_score")),
             "conv_lane": r.get("conv_lane"),
             "selloff_class": r.get("selloff_class"),
+            "sbd_class": ((_j(r.get("selloff_fund")) or {}).get("sbd")
+                          or {}).get("class"),
             "sq_verdict": r.get("sq_verdict"),
             "earn_days": earn_days,
             "alert_neg_72h": sym in neg,

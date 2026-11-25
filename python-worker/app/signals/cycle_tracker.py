@@ -455,10 +455,40 @@ def evaluate_symbol(sym: str, as_of: Optional[date] = None) -> dict:
     vb_when = _spec().get("valuation_blocked_when") or {}
     ctx["valuation_blocked"], _ = _eval_when(
         ctx, vb_when, _spec().get("groups") or {})
+    # selloff-engine read — a name the dip engine calls a beat-down
+    # BUSINESS (or structural risk) must never read accumulate/add:
+    # buying the dip on a deteriorating business is the trap the SBD
+    # overlay exists to prevent. Journaled fields only; absent = not
+    # a candidate, never a veto.
+    try:
+        from app.database import db
+        so_r = db.execute_query(
+            "SELECT classification, decision, fund"
+            " FROM selloff_candidates WHERE symbol=:s"
+            " ORDER BY as_of DESC LIMIT 1", {"s": sym.upper()})
+        if so_r:
+            ctx["selloff_class"] = so_r[0]["classification"]
+            f = so_r[0].get("fund") or {}
+            if isinstance(f, str):
+                f = json.loads(f)
+            ctx["sbd_class"] = (f.get("sbd") or {}).get("class")
+    except Exception as exc:
+        logger.debug("cycle ctx selloff %s: %s", sym, exc)
     # accumulate/add_on_pullback read quarters_to_peak from any window
     # (seeds are the framework's map); the trim-proximity rule reads
     # sourced_qtp — claim-backed only, seeds can't auto-trim
     decision, detail, flags = _decide(ctx)
+    if decision in ("accumulate", "add_on_pullback") and (
+            ctx.get("sbd_class") in ("beat_down_business",
+                                     "structural_risk")
+            or ctx.get("selloff_class") in ("structural_impairment",
+                                            "fundamental_repricing")):
+        detail.setdefault("conditions", [])
+        detail["selloff_veto"] = (
+            f"{ctx.get('sbd_class') or ctx.get('selloff_class')} — "
+            "dip is deterioration, not dislocation")
+        flags = flags + ["beat_down_business"]
+        decision = "hold"
 
     return {
         "symbol": sym.upper(), "quarter_label": qlabel,
@@ -766,6 +796,11 @@ def current() -> dict:
             flags.append("cyclical_basis")
         if r.get("recovery_year"):
             flags.append("normalization_year")
+        # mirrors the evaluate_symbol veto — a stale-DB row decided
+        # before the guard still shows the trap on the board
+        if r.get("sbd_class") in ("beat_down_business",
+                                 "structural_risk"):
+            flags.append("beat_down_business")
     cohorts: dict[str, dict] = {}
     for r in rows:
         c = r.get("cohort") or "unclassified"

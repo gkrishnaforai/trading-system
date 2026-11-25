@@ -196,6 +196,7 @@ groups:
   fund_soft:         [slowing, pressured]
   selloff_edge:      [macro_panic, sector_contagion, positioning_unwind]
   selloff_trap:      [fundamental_repricing, structural_impairment]
+  sbd_trap:          [beat_down_business, structural_risk]
   priced_room:       [not_priced, partial]
   priced_full:       [substantial, full, beyond_lt_avg]
   thesis_alive:      [on_track, improving, mixed]
@@ -253,6 +254,10 @@ growth_swing:
     - name: selloff_trap
       when: {selloff_class_in: selloff_trap}
       why: "down WITH cause ({selloff_class}) — repricing, not opportunity"
+    - name: beaten_business
+      when: {sbd_class_in: sbd_trap}
+      why: "SBD {sbd_class} — the business fell, not just the stock;
+            a dip on deteriorating fundamentals is a trap"
     - name: alert_veto
       when: {alert_neg_72h: true}
       why: "negative high-materiality alert <72h"
@@ -503,6 +508,10 @@ long_term:
     - name: selloff_trap
       when: {selloff_class_in: selloff_trap}
       why: "down WITH cause ({selloff_class})"
+    - name: beaten_business
+      when: {sbd_class_in: sbd_trap}
+      why: "SBD {sbd_class} — the business fell, not just the stock;
+            a dip on deteriorating fundamentals is a trap"
     - name: alert_veto
       when: {alert_neg_72h: true}
       why: "negative high-materiality alert <72h"
@@ -757,6 +766,10 @@ compounder_3_5y:
     - name: selloff_trap
       when: {selloff_class_in: selloff_trap}
       why: "down WITH cause ({selloff_class})"
+    - name: beaten_business
+      when: {sbd_class_in: sbd_trap}
+      why: "SBD {sbd_class} — the business fell, not just the stock;
+            a dip on deteriorating fundamentals is a trap"
     - name: alert_veto
       when: {alert_neg_72h: true}
       why: "negative high-materiality alert <72h"
