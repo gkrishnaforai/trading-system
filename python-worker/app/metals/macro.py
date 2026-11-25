@@ -85,6 +85,23 @@ def classify(m: dict[str, Any]) -> dict[str, Any]:
         drivers.append("liquidity expanding")
     elif liq_d == "deteriorating":
         drivers.append("liquidity deteriorating")
+    # flow destination — where money is actually going. A defensive/
+    # gold-led destination is a direct haven bid; a risk-led one is
+    # the headwind no amount of macro support overrides.
+    flow_dest = m.get("flow_destination")
+    fwd_hint = m.get("liq_forward_hint_8w")
+    safety_bid = flow_dest in ("rotation_to_safety",
+                               "deleveraging_to_safety")
+    risk_bid = isinstance(flow_dest, str) and \
+        flow_dest.startswith("deployment")
+    if safety_bid:
+        drivers.append("flows rotating to safety — haven bid")
+    elif risk_bid:
+        drivers.append("flows deploying to risk — gold headwind")
+    if fwd_hint in ("caution", "defensive"):
+        drivers.append(f"8w liquidity outlook {fwd_hint}")
+    elif fwd_hint == "supportive":
+        drivers.append("8w liquidity outlook supportive")
 
     # ---- classification — stress states win over benign ones -------------
     label = "neutral"
@@ -103,10 +120,13 @@ def classify(m: dict[str, Any]) -> dict[str, Any]:
     # precious_bullish MINUS the credit stress: expansion + soft
     # dollar + calm credit. Stress alone = risk_off regardless of
     # what gold is doing.
-    if credit_stress:
+    if credit_stress or flow_dest in ("deleveraging_to_safety",
+                                      "broad_outflow"):
         crypto_label = "risk_off"
     elif (yields_falling or liq_d == "improving"
-          or (liq_s is not None and liq_s >= 65)) \
+          or (liq_s is not None and liq_s >= 65)
+          or flow_dest == "deployment_equities"
+          or fwd_hint == "supportive") \
             and not dollar_firm:
         crypto_label = "liquidity_sponge"
     else:

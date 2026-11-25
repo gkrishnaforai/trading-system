@@ -1311,6 +1311,14 @@ export type SelloffScan = {
     reason?: string
   }
   candidates?: SelloffCand[]
+  context?: {
+    stability_label?: string | null
+    stable_sessions?: number | null
+    recovery_status?: string | null
+    forward_hint_8w?: string | null
+    flow_destination?: string | null
+    liquidity_score?: number | null
+  }
 }
 
 export type SelloffCand = {

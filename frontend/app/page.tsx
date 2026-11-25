@@ -108,6 +108,18 @@ export default async function RegimePage() {
     structural && typeof structural.liquidity === 'object' && structural.liquidity !== null
       ? (structural.liquidity as Record<string, unknown>)
       : null
+  const liqFwd =
+    structural && typeof structural.liquidity_forward === 'object' && structural.liquidity_forward !== null
+      ? (structural.liquidity_forward as Record<string, unknown>)
+      : null
+  const stab =
+    structural && typeof structural.market_stability === 'object' && structural.market_stability !== null
+      ? (structural.market_stability as Record<string, unknown>)
+      : null
+  const synth =
+    structural && typeof structural.market_synthesis === 'object' && structural.market_synthesis !== null
+      ? (structural.market_synthesis as Record<string, unknown>)
+      : null
   const liqComps = Array.isArray(liq?.components)
     ? (liq!.components as Record<string, unknown>[])
       .filter((c) => typeof c.score === 'number' && (c.weight as number) > 0)
@@ -1860,6 +1872,85 @@ export default async function RegimePage() {
               </>
             )
           })()}
+          {/* forward outlook — projected liquidity at 4/8/12w,
+              labeled 'projected' (uncalibrated); confidence shown
+              beside, never merged into the live score */}
+          {liqFwd && (() => {
+            const hz = (liqFwd.horizons ?? {}) as Record<string, Record<string, unknown>>
+            const sched = (liqFwd.scheduled ?? {}) as Record<string, unknown>
+            return (
+              <div className="pt-3 border-t border-hairline mt-2">
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px]">
+                  <span className="text-faint uppercase tracking-wider text-[10px]">forward</span>
+                  {(['4w', '8w', '12w'] as const).map(h => {
+                    const v = hz[h] || {}
+                    const s = v.projected_liquidity_score as number | null
+                    const c = v.projected_liquidity_confidence as number | null
+                    return s != null ? (
+                      <span key={h} title={`band ${String(v.band ?? '')} — confidence ${c ?? '?'} (uncalibrated)`}>
+                        <span className="text-faint">{h} </span>
+                        <span className={s >= 65 ? 'text-aggressive' : s >= 45 ? 'text-caution' : 'text-defensive'}>
+                          {String(s)}
+                        </span>
+                        <span className="text-faint text-[10px]">·{c != null ? Math.round(c * 100) + '%' : '?'}</span>
+                      </span>
+                    ) : null
+                  })}
+                  {liqFwd.posture_hint != null && (
+                    <span>
+                      <span className="text-faint">8w hint </span>
+                      <span className={liqChipTone(String(liqFwd.posture_hint) === 'supportive' ? 'improving' : String(liqFwd.posture_hint) === 'defensive' || String(liqFwd.posture_hint) === 'caution' ? 'decelerating' : '')}>
+                        {String(liqFwd.posture_hint).replace(/_/g, ' ')}
+                      </span>
+                    </span>
+                  )}
+                </div>
+                {sched && (
+                  <div className="pt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-faint">
+                    {sched.weeks_to_rrp_zero != null &&
+                      <span>RRP empties ~{String(sched.weeks_to_rrp_zero)}wk</span>}
+                    {sched.rrp_buffer_depleted === true &&
+                      <span className="text-caution">RRP buffer empty</span>}
+                    {sched.tga_refill_b_wk != null && Number(sched.tga_refill_b_wk) > 0 &&
+                      <span>TGA refill {String(sched.tga_refill_b_wk)}B/wk</span>}
+                    {sched.qt_measured_b_wk != null && Number(sched.qt_measured_b_wk) > 0 &&
+                      <span>QT ~{String(sched.qt_measured_b_wk)}B/wk</span>}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+          {/* market stability — are buyers returning TODAY; raw
+              observations, separate question from the forward read */}
+          {stab && stab.stability_label != null && (
+            <div className="pt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px]">
+              <span className="text-faint uppercase tracking-wider text-[10px]">stability</span>
+              <span className={liqChipTone(stab.stability_label === 'stable' ? 'improving' : stab.stability_label === 'unstable' ? 'decelerating' : '')}>
+                {String(stab.stability_label)}
+              </span>
+              {stab.qqq_minutes_above_vwap != null &&
+                <span className="text-faint">QQQ {String(stab.qqq_minutes_above_vwap)}m{'>'}vwap</span>}
+              {stab.vix != null &&
+                <span className="text-faint">vix {String(stab.vix)}</span>}
+              {stab.breadth_adv_pct != null &&
+                <span className="text-faint">breadth {String(stab.breadth_adv_pct)}%</span>}
+              {stab.stable_sessions != null && Number(stab.stable_sessions) > 0 &&
+                <span className="text-aggressive">{String(stab.stable_sessions)}d stable</span>}
+              {stab.journaled_mark != null &&
+                <span className="text-faint text-[10px]">@{String(stab.journaled_mark)}</span>}
+            </div>
+          )}
+          {/* synthesis — the three-question verdict, shadow mode */}
+          {synth?.regime != null && (
+            <div className="pt-2 text-[11px]">
+              <span className="text-faint">regime </span>
+              <span className={liqChipTone(synth.regime === 'recovery_attempt' ? 'improving' : synth.regime === 'severe_warning' || synth.regime === 'defensive' ? 'decelerating' : '')}>
+                {String(synth.regime).replace(/_/g, ' ')}
+              </span>
+              {synth.posture_hint != null &&
+                <span className="text-faint"> — {String(synth.posture_hint)}</span>}
+            </div>
+          )}
           {/* M2 — context only, deliberately unscored: broad money
               isn't money allocated to equities */}
           {typeof (liq.context as Record<string, unknown> | undefined)

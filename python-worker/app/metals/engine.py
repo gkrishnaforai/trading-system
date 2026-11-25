@@ -139,12 +139,19 @@ def _macro_inputs(bars: dict) -> dict[str, Any]:
         except Exception:                                   # noqa: BLE001
             m["indpro_yoy"] = None
     try:
-        from app.signals import liquidity_engine
+        from app.signals import liquidity_engine, liquidity_forward
         liq = liquidity_engine.read() or {}
         m["liquidity_score"] = liq.get("liquidity_score")
         m["liquidity_direction"] = liq.get("liquidity_direction")
+        # where money is actually going — a defensive/gold-led
+        # destination is a direct metals bid signal, not a proxy
+        m["flow_destination"] = ((liq.get("flow_matrix") or {})
+                                 .get("destination"))
+        fwd = liquidity_forward.read() or {}
+        m["liq_forward_hint_8w"] = fwd.get("posture_hint")
     except Exception:                                       # noqa: BLE001
-        m["liquidity_score"] = m["liquidity_direction"] = None
+        m["liquidity_score"] = m["liquidity_direction"] = \
+            m["flow_destination"] = m["liq_forward_hint_8w"] = None
     if bars.get("dxy"):
         m["dxy_chg20"] = _pct_chg_bars(bars["dxy"], 20)
     if bars.get("china"):

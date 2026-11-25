@@ -853,8 +853,25 @@ async def _j_liquidity() -> dict:
     score journaled to liquidity_snapshots. Answers 'is liquidity
     becoming more supportive AND is it reaching stocks' — informs
     aggressiveness, never picks names."""
-    from app.signals import liquidity_engine
-    return await asyncio.to_thread(liquidity_engine.run)
+    from app.signals import liquidity_engine, liquidity_forward
+    st = await asyncio.to_thread(liquidity_engine.run)
+    try:
+        fwd = await asyncio.to_thread(liquidity_forward.run)
+        st["forward"] = {"posture_hint": fwd.get("posture_hint"),
+                         "h8": ((fwd.get("horizons") or {})
+                                .get("8w") or {})
+                         .get("projected_liquidity_score")}
+    except Exception:
+        pass                                # forward is additive —
+    return st                               # never fails the live job
+
+
+async def _j_market_stability() -> dict:
+    """Market stability — are buyers actually returning TODAY? QQQ/
+    SMH VWAP persistence, VIX, breadth, AI leadership, credit tone,
+    session persistence → raw fields journaled at fixed marks."""
+    from app.signals import market_stability
+    return await asyncio.to_thread(market_stability.run)
 
 
 async def _j_metals() -> dict:
@@ -1343,6 +1360,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "nowflation":     ("Nowflation daily inflation gauge", _j_nowflation),
     "index-valuation": ("Index valuation daily", _j_index_valuation),
     "liquidity":   ("Liquidity & new-money flow", _j_liquidity),
+    "market-stability": ("Market stability — buyers returning?",
+                         _j_market_stability),
     "metals-pulse": ("Metals Pulse — regime + opportunity", _j_metals),
     "fv-sweep":    ("Weekly fair-value sweep", _j_fv_sweep),
     "universe-fill": ("Universe snapshot chunked fill",
@@ -3023,10 +3042,14 @@ async def morning_regime_report():
         # so a fresh fed_predictions write shows today, not tomorrow
         try:
             import json as _j
-            from app.signals import fed_path, liquidity_engine
+            from app.signals import (
+                fed_path, liquidity_engine, liquidity_forward,
+                market_stability)
             fed = await asyncio.to_thread(fed_path.read)
             liq = await asyncio.to_thread(liquidity_engine.read)
-            if fed or liq:
+            liq_fwd = await asyncio.to_thread(liquidity_forward.read)
+            stab = await asyncio.to_thread(market_stability.read)
+            if fed or liq or liq_fwd or stab:
                 b = t.get("buckets")
                 if isinstance(b, str):
                     b = _j.loads(b)
@@ -3038,6 +3061,57 @@ async def morning_regime_report():
                         st["fed"] = fed
                     if liq:
                         st["liquidity"] = liq
+                    if liq_fwd:
+                        st["liquidity_forward"] = liq_fwd
+                    if stab:
+                        st["market_stability"] = stab
+                    # synthesis — the reviewer's three-question frame
+                    # kept separate: financial liquidity (4-12w
+                    # terrain) vs market stability (buyers back
+                    # today). Non-override BOTH ways: intraday
+                    # strength can't paper over a severe liquidity
+                    # warning; a poor 8w outlook can't veto a genuine
+                    # stabilization.
+                    if liq or liq_fwd or stab:
+                        fin = (liq.get("band")
+                               if liq else None) or "unknown"
+                        stab_lbl = ((stab or {}).get("stability_label")
+                                    or "insufficient_evidence")
+                        credit = ((liq or {}).get("sub_scores") or {}) \
+                            .get("credit_stress")
+                        fwd_hint = (liq_fwd or {}).get("posture_hint")
+                        severe = (fin == "severe"
+                                  or (isinstance(credit, (int, float))
+                                      and credit < 25))
+                        stab_pos = stab_lbl in ("stable",
+                                                "stabilizing")
+                        if severe:
+                            regime = "severe_warning"
+                        elif fwd_hint == "defensive" and not stab_pos:
+                            regime = "defensive"
+                        elif stab_pos and (fwd_hint
+                                           in ("supportive",
+                                               "neutral", "caution",
+                                               None)):
+                            regime = "recovery_attempt"
+                        elif fwd_hint == "caution":
+                            regime = "caution"
+                        else:
+                            regime = fin
+                        st["market_synthesis"] = {
+                            "financial_liquidity": fin,
+                            "forward_hint_8w": fwd_hint,
+                            "market_stability": stab_lbl,
+                            "regime": regime,
+                            "posture_hint":
+                                ("capital preservation" if severe else
+                                 "demand confirmation" if regime
+                                 in ("defensive", "caution") else
+                                 "tactical entries permitted, sized"
+                                 if regime == "recovery_attempt" else
+                                 "selective"),
+                            "calibration": {"mode": "shadow",
+                                            "decision_weight": 0}}
                     b["structural"] = st
                     t["buckets"] = b
         except Exception:
@@ -3819,8 +3893,29 @@ async def selloff_scan():
     ranked candidates: fallen-but-sound names scored on price
     dislocation vs business integrity, with classification, gates and
     staged entry plans. Advisory only."""
-    from app.signals import selloff
-    return await asyncio.to_thread(selloff.scan)
+    from app.signals import (selloff, market_stability,
+                             liquidity_forward, liquidity_engine)
+    out = await asyncio.to_thread(selloff.scan)
+    # the third-question context: dip names + whether buyers are
+    # actually returning. Journaled reads — display context, the
+    # scan itself stays advisory and ungated on it.
+    try:
+        stab = await asyncio.to_thread(market_stability.read)
+        fwd = await asyncio.to_thread(liquidity_forward.read)
+        liq = await asyncio.to_thread(liquidity_engine.read)
+        out["context"] = {
+            "stability_label": (stab or {}).get("stability_label"),
+            "stable_sessions": (stab or {}).get("stable_sessions"),
+            "recovery_status": (stab or {}).get("recovery_status"),
+            "forward_hint_8w": (fwd or {}).get("posture_hint"),
+            "flow_destination":
+                ((liq or {}).get("flow_matrix") or {})
+                .get("destination"),
+            "liquidity_score": (liq or {}).get("liquidity_score"),
+        }
+    except Exception:
+        pass
+    return out
 
 
 @router.get("/short-squeeze")

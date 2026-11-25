@@ -722,6 +722,29 @@ export default async function PlanPage({
               )}
             </span>
           </div>
+          {/* context — are buyers returning + the 8w liquidity hint.
+              Display context only; the candidates' own SBD tier does
+              the ranking */}
+          {so?.context && (
+            <div className="pt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono text-faint">
+              {so.context.stability_label != null && (
+                <span className={so.context.stability_label === 'stable'
+                  ? 'text-aggressive'
+                  : so.context.stability_label === 'unstable'
+                    ? 'text-defensive' : ''}>
+                  tape {String(so.context.stability_label)}
+                  {(so.context.stable_sessions ?? 0) > 0 &&
+                    ` ·${so.context.stable_sessions}d`}
+                </span>
+              )}
+              {so.context.flow_destination != null && (
+                <span>flows {String(so.context.flow_destination).replace(/_/g, ' ')}</span>
+              )}
+              {so.context.forward_hint_8w != null && (
+                <span>8w {String(so.context.forward_hint_8w).replace(/_/g, ' ')}</span>
+              )}
+            </div>
+          )}
           <div className="pt-2">
             {(so?.candidates ?? []).filter((c) => c.decision !== 'reject')
               .slice(0, 10)

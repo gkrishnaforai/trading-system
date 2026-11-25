@@ -1,0 +1,37 @@
+# liquidity_forward.yaml — scheduled-input config for the 1–3 month
+# liquidity outlook. MANUAL inputs — updated each quarterly refunding
+# and each FOMC that changes runoff. Absent values degrade confidence
+# honestly; nothing is fabricated.
+
+scheduled:
+  # Treasury General Account — the announced target from the latest
+  # quarterly refunding statement. None → projection falls back to
+  # the trailing 4-week TGA trend and journaled as a caveat.
+  tga_target_b: null
+  tga_weeks_to_target: 8        # assumed refill runway when target set
+
+  # QT — the announced runoff cap in $B/week (FOMC statement).
+  # qt_measured (WALCL slope) is computed, not configured; divergence
+  # between the two is a finding, journaled as qt_divergence.
+  qt_announced_b_wk: null
+
+  # What fraction of RRP decline lands in bank reserves — a scenario
+  # estimate, never silently 1.0. MMF-to-bills flows bypass reserves.
+  rrp_to_reserves_share: 0.3
+
+  # Refunding week flag — set true during quarterly refunding weeks.
+  refunding_flag: false
+
+# projection mechanics — reviewer-corrected: positive magnitudes with
+# explicit directional names; no signed-flow arithmetic ambiguity.
+projection:
+  damp: 0.85            # per-week decay on trend extrapolation
+  hy_persistence: 0.9   # base-scenario mean-reversion per week
+  hy_stress_widen: 0.10 # stress adds 10% of current level per horizon
+  hy_recovery_persistence: 0.8
+  vix_persistence: 0.9
+  rrp_depleted_b: 75    # below this the buffer is effectively empty
+
+confidence:
+  horizon_reliability: {4w: 1.0, 8w: 0.85, 12w: 0.72}
+  uncalibrated_multiplier: 0.5  # until the calibration harness earns more
