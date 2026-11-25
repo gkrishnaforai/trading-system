@@ -31,11 +31,13 @@ logger = logging.getLogger(__name__)
 # invert=True → a FALLING series is the positive leg (TGA/RRP drawdown
 # releases reserves; HY narrowing = easing conditions)
 _COMPONENTS = [
-    ("fed_balance_sheet", 20, "WALCL",      4,  False),
-    ("tga",               15, "WTREGEN",    4,  True),
-    ("reverse_repo",      10, "RRPONTSYD", 20,  True),
-    ("bank_reserves",      8, "WRESBAL",    4,  False),
-    ("bank_credit",        7, "TOTBKCR",    4,  False),
+    ("fed_asset_trend_4w", 20, "WALCL",         4,  False),
+    ("tga",               15, "WTREGEN",       4,  True),
+    ("on_rrp",            10, "RRPONTSYD",    20,  True),
+    ("bank_reserves",      8, "WRESBAL",       4,  False),
+    ("bank_credit",        4, "TOTBKCR",       4,  False),
+    ("bank_loans",         3, "TOTLL",         4,  False),
+    ("bank_deposits",      3, "DPSACBW027SBOG", 4, False),
     ("credit_conditions", 15, "BAMLH0A0HYM2", 20, True),
 ]
 
@@ -69,6 +71,14 @@ def _pct_chg(pts: list[tuple[date, float]], back: int) -> Optional[float]:
     if not a:
         return None
     return (b - a) / abs(a)
+
+
+def _delta(pts: list[tuple[date, float]], back: int) -> Optional[float]:
+    """Absolute change over `back` observations (same units as the
+    series) — for $B detail fields, not scoring."""
+    if len(pts) < back + 1:
+        return None
+    return pts[-1][1] - pts[-back - 1][1]
 
 
 def _band(chg: Optional[float], invert: bool) -> Optional[int]:
@@ -118,6 +128,80 @@ _HY_LEVEL = [(3.0, 85), (3.5, 75), (4.0, 65), (5.0, 45), (6.0, 30)]
 _RRP_DEPLETED_B = 75.0
 
 
+def _first_series(ids: list[str], days: int):
+    """Try candidate FRED series ids in order — H.4.1 component
+    tickers vary; first one that resolves wins, rest stay honest
+    gaps."""
+    for sid in ids:
+        try:
+            pts = _fred_series(sid, days=days)
+            if pts:
+                return sid, pts
+        except Exception:
+            continue
+    return None, []
+
+
+def _structural_detail() -> dict[str, Any]:
+    """The reviewer's verified fields — each with its own frequency
+    and sign, never blended into one 'fed contracting' label:
+
+    WALCL trend vs SOMA securities runoff (they can disagree — WALCL
+    includes loans/discount window); TGA at 1w AND 4w on the SAME
+    Wednesday series (snapshot vs weekly-average gave conflicting
+    reads); RRP remaining vs its 1w delta (depleted is a structural
+    warning, not an ongoing drain); reserves level + 1w + 4w.
+    H.4.1 dollar series are $MILLIONS → /1000 = $B."""
+    out: dict[str, Any] = {}
+
+    walcl = _fred_series("WALCL", days=220)
+    if walcl:
+        d = _delta(walcl, 4)
+        out["fed_asset_trend_4w_b"] = round(d / 1000, 1) \
+            if d is not None else None
+
+    sid, secs = _first_series(["WSHOSHO", "TREAST"], days=220)
+    _, mbs = _first_series(["WSHOMCB"], days=220)
+    soma_delta = _delta(secs, 4) if secs else None
+    mbs_delta = _delta(mbs, 4) if mbs else None
+    if soma_delta is not None:
+        out["soma_series"] = sid
+        out["soma_delta_4w_b"] = round(soma_delta / 1000, 1)
+        # QT measured on securities held outright: positive = runoff.
+        # Negative = net purchases/reinvestment — journaled, not
+        # forced into 'contracting'
+        out["qt_runoff_actual_b_wk"] = round(-soma_delta / 4 / 1000, 2)
+    if mbs_delta is not None:
+        out["mbs_delta_4w_b"] = round(mbs_delta / 1000, 1)
+
+    tga = _fred_series("WTREGEN", days=220)
+    if tga:
+        d1, d4 = _delta(tga, 1), _delta(tga, 4)
+        out["tga_delta_1w_b"] = round(d1 / 1000, 1) if d1 else None
+        out["tga_delta_4w_b"] = round(d4 / 1000, 1) if d4 else None
+        out["tga_level_b"] = round(tga[-1][1] / 1000, 1)
+        out["tga_frequency"] = ("wed-to-wed snapshots — both horizons "
+                                "off the same series (weekly-average "
+                                "conflict noted)")
+
+    rrp = _fred_series("RRPONTSYD", days=120)
+    if rrp:                                          # already $B
+        out["on_rrp_remaining_b"] = round(rrp[-1][1], 2)
+        d1 = _delta(rrp, 5)                          # daily series
+        out["on_rrp_delta_1w_b"] = round(d1, 2) if d1 else None
+        out["buffer_depleted"] = rrp[-1][1] < _RRP_DEPLETED_B
+
+    res = _fred_series("WRESBAL", days=220)
+    if res:
+        out["reserves_level_t"] = round(res[-1][1] / 1e6, 2)
+        d1, d4 = _delta(res, 1), _delta(res, 4)
+        out["reserves_delta_1w_b"] = round(d1 / 1000, 1) \
+            if d1 is not None else None
+        out["reserves_delta_4w_b"] = round(d4 / 1000, 1) \
+            if d4 is not None else None
+    return out
+
+
 def _hy_level(v: Optional[float]) -> Optional[int]:
     if v is None:
         return None
@@ -142,7 +226,8 @@ def _equity_legs() -> dict[str, Any]:
         from app.database import db
         rows = db.execute_query(
             "SELECT symbol, close FROM daily_bars"
-            " WHERE symbol IN ('SPY','QQQ','SMH','IWM')"
+            " WHERE symbol IN ('SPY','QQQ','SMH','IWM','RSP','QQQE',"
+            "                 'ONEQ','XSD','SOXX')"
             " AND date > (SELECT max(date) FROM daily_bars) - 40"
             " ORDER BY date")
         px: dict[str, list[float]] = {}
@@ -157,6 +242,22 @@ def _equity_legs() -> dict[str, Any]:
                 if s and len(s) >= 22:
                     out["rel_1m"][etf] = round(
                         (s[-1] / s[-22] - 1) - spy_r, 4)
+        # breadth split — the reviewer's 'NYSE vs Nasdaq vs semis'
+        # ask via equal-weight-vs-cap-weight RS proxies (adv/dec
+        # internals per exchange aren't journaled; labeled proxy)
+        def _rs(a: str, b: str) -> Optional[float]:
+            x, y = px.get(a), px.get(b)
+            if x and y and len(x) >= 22 and len(y) >= 22:
+                return round((x[-1] / x[-22] - 1)
+                             - (y[-1] / y[-22] - 1), 4)
+            return None
+        out["breadth_detail"] = {
+            "nyse": _rs("RSP", "SPY"),
+            "nasdaq": _rs("QQQE", "QQQ") or _rs("ONEQ", "QQQ"),
+            "semis": _rs("XSD", "SMH") or _rs("SOXX", "SMH"),
+            "basis": "equal-weight vs cap-weight RS 1m — proxy, not "
+                     "exchange adv/dec",
+        }
     except Exception as exc:
         logger.debug("liq rel strength: %s", exc)
     return out
@@ -239,10 +340,25 @@ def _flow_matrix() -> dict[str, Any]:
 
 
 def _credit_depth() -> dict[str, Any]:
-    """Credit beyond HY: IG spreads + VIX — the reviewer's credit
-    stress leg deepened. HY widening + IG widening + VIX elevated =
-    real stress; HY alone can be sector noise."""
+    """Credit beyond HY: CCC + IG + VIX + the NFCI credit subindex —
+    the reviewer's 'HY, CCC, IG and CDS' ask. No public CDS series
+    exists on FRED: labeled unavailable, never proxied silently. HY
+    widening + CCC widening + IG widening + elevated VIX = real
+    stress; HY alone can be sector noise."""
     out: dict[str, Any] = {}
+    hy = _fred_series("BAMLH0A0HYM2", days=60)
+    if hy:
+        d10 = _delta(hy, 10)
+        out["hy_delta_bp_10d"] = round(d10 * 100, 0) \
+            if d10 is not None else None   # % pts → bp
+    ccc = _fred_series("BAMLH0A3HYC", days=120)    # CCC OAS, daily
+    if ccc:
+        cc = _pct_chg(ccc, 20)
+        out["ccc_oas"] = round(ccc[-1][1], 2)
+        out["ccc_chg_20d"] = round(cc, 4) if cc is not None else None
+        v = ccc[-1][1]
+        out["ccc_score"] = (85 if v <= 6.0 else 75 if v <= 7.5 else
+                            60 if v <= 9.0 else 40 if v <= 11.0 else 20)
     ig = _fred_series("BAMLC0A0CM", days=120)      # IG OAS, daily
     if ig:
         igc = _pct_chg(ig, 20)
@@ -253,6 +369,20 @@ def _credit_depth() -> dict[str, Any]:
         v = ig[-1][1]
         out["ig_score"] = (90 if v <= 1.0 else 75 if v <= 1.3 else
                            60 if v <= 1.6 else 40 if v <= 2.0 else 20)
+    nc = _fred_series("NFCICREDIT", days=200)      # weekly credit sub
+    if nc:
+        ncc = _pct_chg(nc, 8)
+        out["nfci_credit"] = round(nc[-1][1], 3)
+        out["nfci_credit_chg_8w"] = round(ncc, 4) \
+            if ncc is not None else None
+        v = nc[-1][1]
+        out["nfci_credit_score"] = (85 if v <= -0.15 else
+                                    70 if v <= 0 else
+                                    55 if v <= 0.10 else
+                                    40 if v <= 0.20 else 20)
+    out["cds"] = {"available": False,
+                  "note": "no public CDX/iTraxx series on FRED — "
+                          "left unmeasured, not proxied"}
     vx = _fred_series("VIXCLS", days=60)
     if vx:
         out["vix"] = round(vx[-1][1], 1)
@@ -261,7 +391,9 @@ def _credit_depth() -> dict[str, Any]:
         out["vix_score"] = (90 if v <= 14 else 75 if v <= 18 else
                             60 if v <= 22 else 40 if v <= 28 else
                             20 if v <= 35 else 10)
-    sc = [s for s in (out.get("ig_score"), out.get("vix_score"))
+    sc = [s for s in (out.get("ig_score"), out.get("ccc_score"),
+                      out.get("nfci_credit_score"),
+                      out.get("vix_score"))
           if s is not None]
     out["credit_depth_score"] = (round(sum(sc) / len(sc))
                                if sc else None)
@@ -358,12 +490,16 @@ def evaluate() -> dict[str, Any]:
             if lvl is not None and comp["score"] is not None:
                 comp["score"] = round(0.6 * lvl + 0.4 * comp["score"])
                 comp["level"] = round(pts[-1][1], 2)
-        if name == "reverse_repo" and pts \
+        if name == "on_rrp" and pts \
                 and pts[-1][1] < _RRP_DEPLETED_B:
-            # facility near-empty — nothing left to drain or release;
-            # tiny changes around zero are noise, not contraction
-            comp["score"] = 40
-            comp["note"] = "facility depleted"
+            # facility empty — the buffer that used to absorb TGA/QT
+            # moves is gone. That's a structural warning (journaled
+            # as a flag), NOT an ongoing drain — an empty facility
+            # cannot keep contracting, so the score reads neutral
+            # while the flag carries the risk.
+            comp["score"] = 50
+            comp["buffer_depleted"] = True
+            comp["note"] = "buffer empty — structural, not a drain"
         comps.append(comp)
     nfci = _nfci()
     comps.append({"name": "financial_conditions", "weight": 0,
@@ -387,10 +523,11 @@ def evaluate() -> dict[str, Any]:
     legs = _equity_legs()
     flow = _flow_matrix()
     flow_sc, breadth_sc, flow_char = _equity_score(legs)
-    comps.append({"name": "equity_flows_proxy", "weight": 15,
+    comps.append({"name": "equity_risk_appetite_proxy", "weight": 15,
                   "series": "SMH/QQQ/IWM vs SPY",
                   "score": flow_sc,
-                  "note": flow_char,
+                  "note": f"{flow_char or ''} — price/RS proxy, "
+                          "not measured fund flows".strip(),
                   "rel_1m": legs.get("rel_1m")})
     comps.append({"name": "market_breadth", "weight": 10,
                   "series": "universe internals",
@@ -462,33 +599,114 @@ def evaluate() -> dict[str, Any]:
                   if c["name"] == "credit_conditions"), None)
     cd = credit_x.get("credit_depth_score")
     sub_scores = {
-        "liquidity": _sub("fed_balance_sheet", "tga", "reverse_repo",
-                          "bank_reserves", "bank_credit"),
+        "liquidity": _sub("fed_asset_trend_4w", "tga", "on_rrp",
+                          "bank_reserves", "bank_credit",
+                          "bank_loans", "bank_deposits"),
         "credit_stress": (round(0.6 * hy_sc + 0.4 * cd)
                          if hy_sc is not None and cd is not None
                          else _sub("credit_conditions",
                                    "financial_conditions")),
-        "equity_flows": _sub("equity_flows_proxy"),
+        "equity_flows": _sub("equity_risk_appetite_proxy"),
         "market_confirmation": _sub("market_breadth"),
         "recovery": recovery["recovery_score"],
     }
+
+    structural = _structural_detail()
+
+    # the divergence the reviewer flagged FIRST: funding pipes can be
+    # stable while risk appetite collapses — reserves up + AI tape
+    # weak is the defining Nov-25 pattern, and it needs its own flag
+    res_ok = (
+        (structural.get("reserves_delta_4w_b") or 0) >= 0
+        or (sub_scores["liquidity"] or 0) >= 55)
+    semis_rs = (rel.get("SMH") or 0)
+    semis_ew = (legs.get("breadth_detail") or {}).get("semis")
+    risk_weak = (
+        (flow_sc is not None and flow_sc < 45)
+        or (semis_rs < 0 and (rel.get("QQQ") or 0) < 0)
+        # equal-weight semis lagging cap-weight by >2%/m — the AI
+        # breadth crack the cap-weighted proxy hides
+        or (isinstance(semis_ew, (int, float)) and semis_ew < -0.02))
+    divergence = bool(res_ok and risk_weak)
+
+    # three clocks, never mixed: weekly structure can't be overwritten
+    # by a daily tape flick; healthy reserves can't veto a credit
+    # deterioration. Each clock reports ITS score + ITS evidence.
+    clocks = {
+        "structural_weekly": {
+            "score": sub_scores["liquidity"],
+            "legs": ["fed_asset_trend_4w", "tga", "on_rrp",
+                     "bank_reserves", "bank_credit", "bank_loans",
+                     "bank_deposits"],
+            "basis": "weekly H.4.1/H.8 — obs_age disclosed"},
+        "credit_daily": {
+            "score": sub_scores["credit_stress"],
+            "legs": ["HY", "CCC", "IG", "NFCI-credit", "VIX"],
+            "basis": "daily spreads + weekly NFCI subindex"},
+        "market_daily": {
+            "score": (round(((sub_scores["equity_flows"] or 0)
+                             + (sub_scores["market_confirmation"] or 0))
+                            / 2)
+                      if sub_scores["equity_flows"] is not None
+                      or sub_scores["market_confirmation"] is not None
+                      else None),
+            "legs": ["equity_risk_appetite_proxy", "market_breadth"],
+            "basis": "daily tape — confirmation, not a liquidity "
+                     "measure"},
+    }
+
+    # regime read — the reviewer's mapping, derived not hardcoded:
+    # stable funding + deteriorating credit + weak risk appetite =
+    # neutral, selective, defensive bias. Other combos still map.
+    credit_s = sub_scores["credit_stress"]
+    risk_s = sub_scores["equity_flows"]
+    if res_ok and risk_weak and (credit_s is None or credit_s < 55):
+        regime_read = {
+            "label": "neutral_selective_defensive_bias",
+            "action": "avoid aggressive deployment into speculative "
+                      "AI infrastructure; permit small staged "
+                      "entries in high-quality names after "
+                      "stabilization; require stronger confirmation "
+                      "before leveraged or capital-intensive AI adds"}
+    elif risk_weak and (credit_s or 50) < 40:
+        regime_read = {
+            "label": "defensive",
+            "action": "credit deteriorating with weak risk appetite "
+                      "— capital preservation; no new adds"}
+    elif divergence is False and not risk_weak \
+            and (credit_s or 50) >= 55:
+        regime_read = {
+            "label": "constructive",
+            "action": "funding + credit + tape agree — plan stands"}
+    else:
+        regime_read = {"label": "mixed",
+                       "action": "signals conflict across clocks — "
+                                 "trade the weakest clock, not the "
+                                 "composite"}
 
     return {"liquidity_score": score, "band": band,
             "sub_scores": sub_scores,
             "flow_matrix": flow,
             "credit_depth": credit_x,
             "recovery": recovery,
+            "structural": structural,
+            "clocks": clocks,
+            "regime_read": regime_read,
+            "liquidity_vs_risk_appetite_divergence": divergence,
             "context": context,
             "coverage": coverage,
             "components": comps,
             "impulses": {
-                "fed": impulse("fed_balance_sheet"),
-                "treasury": impulse("tga"),
-                "reverse_repo": impulse("reverse_repo"),
-                "bank_credit": impulse("bank_reserves", "bank_credit"),
-                "financial_conditions": impulse("credit_conditions",
-                                               "financial_conditions"),
-                "equity_flows": impulse("equity_flows_proxy")},
+                "fed_asset_trend_4w": impulse("fed_asset_trend_4w"),
+                "tga": impulse("tga"),
+                "on_rrp": impulse("on_rrp"),
+                "reserves_bank_credit":
+                    impulse("bank_reserves", "bank_credit",
+                            "bank_loans", "bank_deposits"),
+                "credit": impulse("credit_conditions",
+                                  "financial_conditions"),
+                "equity_risk_appetite":
+                    impulse("equity_risk_appetite_proxy")},
             "liquidity_direction": direction,
             "equity_transmission": transmission,
             "flow_character": flow_char,
@@ -501,7 +719,8 @@ def evaluate() -> dict[str, Any]:
                 "oldest_age_days": max(
                     (c.get("obs_age") or 0 for c in comps), default=0),
             },
-            "breadth": legs.get("breadth") or {}}
+            "breadth": legs.get("breadth") or {},
+            "breadth_detail": legs.get("breadth_detail") or {}}
 
 
 def _prior_score(days: int = 30) -> Optional[int]:

@@ -1841,6 +1841,80 @@ export default async function RegimePage() {
               ))}
             </div>
           )}
+          {/* three clocks — weekly structure, daily credit, daily
+              tape: each scores on its own frequency; none overwrites
+              another. Plus the verified structural numbers and the
+              funding-vs-risk divergence flag */}
+          {(() => {
+            const cl = liq.clocks as Record<string, {score?: number | null; basis?: string}> | undefined
+            const sd = liq.structural as Record<string, unknown> | undefined
+            const rr = liq.regime_read as {label?: string; action?: string} | undefined
+            const div = liq.liquidity_vs_risk_appetite_divergence === true
+            return (
+              <>
+                {cl && (
+                  <div className="pt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono"
+                    title="structural = weekly Fed/TGA/RRP/reserves · credit = daily spreads · market = daily tape. No clock overwrites another.">
+                    {(['structural_weekly', 'credit_daily', 'market_daily'] as const)
+                      .filter(k => cl[k]?.score != null)
+                      .map(k => (
+                        <span key={k}>
+                          <span className="text-faint">{k.replace(/_/g, ' ')} </span>
+                          <span className={(cl[k]!.score as number) >= 60 ? 'text-aggressive'
+                            : (cl[k]!.score as number) >= 45 ? 'text-caution' : 'text-defensive'}>
+                            {String(cl[k]!.score)}
+                          </span>
+                        </span>
+                      ))}
+                    {div && (
+                      <span title="funding pipes stable/improving while equity risk appetite deteriorates — the Nov-25 pattern"
+                        className="text-caution">
+                        ⚠ funding≠risk divergence
+                      </span>
+                    )}
+                  </div>
+                )}
+                {rr?.label && (
+                  <div className="pt-1.5 text-[11px]"
+                    title={rr.action}>
+                    <span className="text-faint">regime read </span>
+                    <span className={rr.label === 'defensive' ? 'text-defensive'
+                      : rr.label === 'constructive' ? 'text-aggressive' : 'text-caution'}>
+                      {rr.label.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                )}
+                {sd && (
+                  <div className="pt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono text-faint"
+                    title="verified structural numbers — each at its own frequency, signed">
+                    {sd.fed_asset_trend_4w_b != null &&
+                      <span>WALCL 4w {Number(sd.fed_asset_trend_4w_b) > 0 ? '+' : ''}{String(sd.fed_asset_trend_4w_b)}B</span>}
+                    {sd.qt_runoff_actual_b_wk != null &&
+                      <span>SOMA runoff {Number(sd.qt_runoff_actual_b_wk) > 0 ? '' : '+'}{String(-(sd.qt_runoff_actual_b_wk as number))}B/wk</span>}
+                    {sd.tga_delta_1w_b != null &&
+                      <span>TGA 1w {Number(sd.tga_delta_1w_b) > 0 ? '+' : ''}{String(sd.tga_delta_1w_b)}B</span>}
+                    {sd.tga_delta_4w_b != null &&
+                      <span>4w {Number(sd.tga_delta_4w_b) > 0 ? '+' : ''}{String(sd.tga_delta_4w_b)}B</span>}
+                    {sd.on_rrp_remaining_b != null &&
+                      <span>RRP ${Number(sd.on_rrp_remaining_b) < 1 ? Math.round(Number(sd.on_rrp_remaining_b) * 1000) + 'M' : String(sd.on_rrp_remaining_b) + 'B'}{sd.buffer_depleted === true ? ' ⚠' : ''}</span>}
+                    {sd.reserves_delta_1w_b != null &&
+                      <span>res 1w {Number(sd.reserves_delta_1w_b) > 0 ? '+' : ''}{String(sd.reserves_delta_1w_b)}B</span>}
+                    {sd.reserves_delta_4w_b != null &&
+                      <span>4w {Number(sd.reserves_delta_4w_b) > 0 ? '+' : ''}{String(sd.reserves_delta_4w_b)}B</span>}
+                    {(() => {
+                      const bd = liq.breadth_detail as Record<string, unknown> | undefined
+                      return bd && (['nyse', 'nasdaq', 'semis'] as const).map(k => bd[k] != null && (
+                        <span key={k} title={`${k} breadth proxy — equal-weight vs cap-weight RS 1m`}
+                          className={Number(bd[k]) < 0 ? 'text-defensive' : ''}>
+                          {k} {Number(bd[k]) > 0 ? '+' : ''}{(Number(bd[k]) * 100).toFixed(1)}%
+                        </span>
+                      ))
+                    })()}
+                  </div>
+                )}
+              </>
+            )
+          })()}
           {/* flow destination + sub-scores + recovery ladder — where
               is money actually going, kept as separate reads per the
               spec (never averaged into the headline) */}
