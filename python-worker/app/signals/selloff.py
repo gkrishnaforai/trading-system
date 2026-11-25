@@ -164,6 +164,146 @@ def _rsi(sym: str) -> Optional[float]:
     return round(100 - 100 / (1 + ag / al), 1)
 
 
+# ---------------------- growth journal + priced-in merges --------------------
+
+def _growth_names() -> dict:
+    """Latest growth_compare_daily payload — journaled FY27/28
+    revisions, growth quality, dispersion, cyclical flags. Missing
+    journal = empty dict, never a fabricated neutral."""
+    from app.database import db
+    import json
+    try:
+        r = db.execute_query(
+            "SELECT payload FROM growth_compare_daily"
+            " ORDER BY as_of DESC LIMIT 1")
+        if not r:
+            return {}
+        p = r[0]["payload"]
+        if isinstance(p, str):
+            p = json.loads(p)
+        return p.get("names") or {}
+    except Exception:
+        return {}
+
+
+def _priced_in_map() -> dict:
+    """Latest growth_priced_in_daily per symbol — required CAGR vs
+    forecast. What the price demands next to what analysts expect."""
+    from app.database import db
+    try:
+        rows = db.execute_query(
+            "SELECT DISTINCT ON (symbol) symbol, required_cagr,"
+            " expectation_gap, implied_status"
+            " FROM growth_priced_in_daily"
+            " ORDER BY symbol, as_of DESC")
+        return {r["symbol"]: r for r in rows}
+    except Exception:
+        return {}
+
+
+def _pf_gap(dd_60d: Optional[float], g: dict
+            ) -> Optional[tuple[float, float]]:
+    """Price-fundamental gap — how much further the price fell than
+    the forward estimates did. Negative gap = dislocation (price
+    overreaction); gap tracking the drawdown = the price is
+    repricing real deterioration. Returns (gap, est_chg): the gap
+    is dd_60d minus a weighted blend of FY28 EPS (0.6) and revenue
+    (0.4) revisions — EPS-led because earnings drive multiples.
+    30d window preferred, 60d at half weight. No estimate history
+    → None, never zero."""
+    if dd_60d is None:
+        return None
+    e30, e60 = _f(g.get("eps_rev28_30d")), _f(g.get("eps_rev28_60d"))
+    r30, r60 = _f(g.get("rev_rev28_30d")), _f(g.get("rev_rev28_60d"))
+    eps_chg = e30 if e30 is not None else \
+        (e60 * 0.5 if e60 is not None else None)
+    rev_chg = r30 if r30 is not None else \
+        (r60 * 0.5 if r60 is not None else None)
+    parts = [x for x in (
+        (eps_chg, 0.6), (rev_chg, 0.4)) if x[0] is not None]
+    if not parts:
+        return None
+    wsum = sum(w for _, w in parts)
+    est_chg = sum(v * w for v, w in parts) / wsum
+    return round(dd_60d - est_chg, 3), round(est_chg, 3)
+
+
+# ------------------- SBD overlay: four independent dimensions -----------------
+
+def _dimensions(legs: dict) -> dict:
+    """Normalize the score legs into the reviewer's four independent
+    0-100 dimensions — business health cannot be compensated by
+    dislocation, recovery is timing not quality."""
+    def _n(leg: str, mx: float) -> Optional[float]:
+        v = legs.get(leg)
+        return round(v / mx * 100, 1) if v is not None else None
+    return {"business_health": _n("durability", 25),
+            "stock_dislocation": _n("dislocation", 25),
+            "valuation_attractiveness": _n("valuation", 20),
+            "recovery_confirmation": _n("recovery", 15)}
+
+
+def _business_bucket(b: Optional[float]) -> str:
+    if b is None:
+        return "unknown"
+    return ("strong" if b >= 80 else
+            "healthy_with_risks" if b >= 65 else
+            "mixed_turnaround" if b >= 50 else
+            "deteriorating" if b >= 35 else
+            "severely_impaired")
+
+
+def _sbd_classify(dims: dict, gates: list[str],
+                  pf_gap: Optional[float]) -> dict:
+    """SBD decision table — health × dislocation × valuation →
+    bucket + action. Runs alongside our causal classification;
+    never issues a buy. A big drawdown alone cannot score this —
+    the business-health threshold is independent."""
+    b = dims.get("business_health")
+    dis = dims.get("stock_dislocation")
+    v = dims.get("valuation_attractiveness")
+    rec = dims.get("recovery_confirmation")
+    if any("structural" in g or "repricing" in g for g in gates):
+        return {"class": "structural_risk", "action": "human_review"}
+    if b is None or dis is None:
+        return {"class": "research_incomplete", "action": "watch"}
+    if b < 50:
+        return {"class": "beat_down_business",
+                "action": "avoid_or_research"}
+    if b >= 75 and dis >= 65:
+        if v is not None and v < 50:
+            return {"class": "quality_but_expensive",
+                    "action": "watch"}
+        if rec is not None and rec >= 70:
+            return {"class": "confirmed_recovery_candidate",
+                    "action": "review_for_entry"}
+        return {"class": "beat_down_stock",
+                "action": "watch_for_confirmation"}
+    if dis >= 65:
+        return {"class": "turnaround_or_cyclical",
+                "action": "research"}
+    return {"class": "no_clear_dislocation",
+            "action": "hold_or_watch"}
+
+
+def _gap_note(pf_gap: Optional[float], est_chg: Optional[float],
+              dd: Optional[float], bucket: str) -> Optional[str]:
+    """The Stock A vs Stock B reading — same drawdown, different
+    meaning. If most of the fall is explained by estimate cuts it
+    is deterioration, not dislocation; a strong business whose
+    estimates barely moved while the price fell is the candidate."""
+    if pf_gap is None:
+        return None
+    if est_chg is not None and est_chg >= 0:
+        return "potential_dislocation"
+    if dd and est_chg is not None and dd < -0.01 \
+            and abs(est_chg) / abs(dd) >= 0.6:
+        return "deterioration_explains_most_of_fall"
+    if pf_gap <= -0.10 and bucket in ("strong", "healthy_with_risks"):
+        return "potential_dislocation"
+    return "partial_dislocation"
+
+
 # ------------------------------ classification -------------------------------
 
 def _classify(d: dict) -> tuple[str, str]:
@@ -323,6 +463,21 @@ def _gates(d: dict) -> list[str]:
     if d.get("sq_verdict") == "new_shorts_pressing":
         g.append("short-sale ratio rising — shorts are pressing "
                  "into strength, not covering")
+    # journaled estimate deterioration — a consensus cut this sharp
+    # means the dip is a repricing, not a mispricing
+    if d.get("eps_rev28_30d") is not None and \
+            d["eps_rev28_30d"] <= -0.10:
+        g.append("FY28 EPS cut >10% in 30d — estimate repricing, "
+                 "verify the business before treating as a dip")
+    if d.get("rev_rev28_30d") is not None and \
+            d["rev_rev28_30d"] <= -0.08:
+        g.append("FY28 revenue cut >8% in 30d — forward demand "
+                 "is falling with the price")
+    if d.get("coverage_shift") is not None and \
+            abs(d["coverage_shift"]) >= 2:
+        g.append(f"analyst coverage shifted "
+                 f"{d['coverage_shift']:+d} — the revision move may "
+                 "be coverage churn, not a consensus change")
     return g
 
 
@@ -458,7 +613,9 @@ _ROWS_SCOPE = (" WHERE s.is_active AND s.momentum_state IS NOT NULL"
 
 
 def _row_to_d(r: dict, m: dict, market: dict,
-              sec_med: dict, sq: dict) -> dict:
+              sec_med: dict, sq: dict,
+              gj: Optional[dict] = None,
+              pi: Optional[dict] = None) -> dict:
     """Row + tape metrics → the evidence dict, classified, scored,
     gated, with the staged entry plan. Shared by scan() (bulk) and
     for_symbol() (one name on the stock page) — same rules, same
@@ -526,6 +683,27 @@ def _row_to_d(r: dict, m: dict, market: dict,
         "sq_fuel": sq.get("fuel"),
         "sq_covering_prob": sq.get("covering_probability"),
     }
+    # growth journal + priced-in merges — the forward-estimate detail
+    # the durability leg's flywheel aggregate doesn't see
+    g = (gj or {}).get(sym) or {}
+    p = (pi or {}).get(sym) or {}
+    d.update({
+        "eps_rev28_30d": _f(g.get("eps_rev28_30d")),
+        "eps_rev28_60d": _f(g.get("eps_rev28_60d")),
+        "rev_rev28_30d": _f(g.get("rev_rev28_30d")),
+        "rev_rev28_60d": _f(g.get("rev_rev28_60d")),
+        "growth_quality": (_f(g["growth_quality"].get("score"))
+                           if isinstance(g.get("growth_quality"), dict)
+                           else _f(g.get("growth_quality"))),
+        "coverage_shift": g.get("coverage_shift"),
+        "cyclical_flag": bool(g.get("cyclical_flag")),
+        "peg_cagr": _f(g.get("peg_cagr")),
+        "req_cagr": _f(p.get("required_cagr")),
+        "exp_gap": _f(p.get("expectation_gap")),
+        "implied_status": p.get("implied_status"),
+    })
+    _pg = _pf_gap(d.get("dd_60d"), g)
+    d["pf_gap"], d["est_deterioration"] = _pg if _pg else (None, None)
     d["fund"] = _score({**d, "est_rev": d["est_rev"]})["legs"][
         "durability"]
     classification, action = _classify(d)
@@ -537,9 +715,17 @@ def _row_to_d(r: dict, m: dict, market: dict,
                               ("structural_impairment",
                                "fundamental_repricing")
                               else "watch")
+    dims = _dimensions(scored["legs"])
+    bucket = _business_bucket(dims.get("business_health"))
+    sbd = _sbd_classify(dims, gates, d["pf_gap"])
     return {**d, "classification": classification,
             "action": action, **scored, "gates": gates,
             "rsi": None,
+            "dimensions": dims,
+            "business_bucket": bucket,
+            "pf_gap_note": _gap_note(d["pf_gap"], d["est_deterioration"],
+                             d.get("dd_60d"), bucket),
+            "sbd": sbd,
             "entry_plan": _entry_plan(d)}
 
 
@@ -633,11 +819,19 @@ def for_symbol(sym: str) -> dict:
     except Exception:
         pass
     market = {**market, "spy_5d": spy5}
-    c = _row_to_d(r, m, market, sec_med, sq)
+    c = _row_to_d(r, m, market, sec_med, sq,
+                  gj={s: (_growth_names().get(s) or {})},
+                  pi={s: (_priced_in_map().get(s) or {})})
     c["rsi"] = _rsi(s)
     legs = _score(c)["legs"]            # rescore with RSI present
     c["legs"] = legs
     c["score"] = round(sum(legs.values()), 1)
+    c["dimensions"] = _dimensions(legs)
+    c["business_bucket"] = _business_bucket(
+        c["dimensions"].get("business_health"))
+    c["pf_gap_note"] = _gap_note(c["pf_gap"], c["est_deterioration"],
+                               c.get("dd_60d"), c["business_bucket"])
+    c["sbd"] = _sbd_classify(c["dimensions"], c["gates"], c["pf_gap"])
     c["decision"] = ("priority" if c["score"] >= 85 else
                      "starter" if c["score"] >= 75 else
                      "watch" if c["score"] >= 65 else "pass")
@@ -684,6 +878,9 @@ def scan(funds: Optional[float] = None,
     except Exception:                                       # noqa: BLE001
         sq_flags = {}
 
+    gj = _growth_names()
+    pi = _priced_in_map()
+
     cands = []
     for r in rows:
         sym = r["symbol"]
@@ -700,7 +897,8 @@ def scan(funds: Optional[float] = None,
                 and dd60 > -0.10:
             continue
         cands.append(_row_to_d(r, m, market, sec_med,
-                               sq_flags.get(sym) or {}))
+                               sq_flags.get(sym) or {},
+                               gj=gj, pi=pi))
 
     # RSI only for shortlisted names — bound the reads
     cands.sort(key=lambda c: -c["score"])
@@ -709,6 +907,13 @@ def scan(funds: Optional[float] = None,
         legs = _score(c)["legs"]          # rescore with RSI present
         c["legs"] = legs
         c["score"] = round(sum(legs.values()), 1)
+        c["dimensions"] = _dimensions(legs)
+        c["business_bucket"] = _business_bucket(
+            c["dimensions"].get("business_health"))
+        c["pf_gap_note"] = _gap_note(c["pf_gap"], c["est_deterioration"],
+                               c.get("dd_60d"), c["business_bucket"])
+        c["sbd"] = _sbd_classify(c["dimensions"], c["gates"],
+                                c["pf_gap"])
         c["decision"] = ("priority" if c["score"] >= 85 else
                          "starter" if c["score"] >= 75 else
                          "watch" if c["score"] >= 65 else "pass")
@@ -755,9 +960,13 @@ def _persist(market: dict, cands: list[dict]) -> None:
                                  "vol_ratio", "d_sma50", "rsi", "mom",
                                  "sq_verdict", "sq_fuel")},
                                default=str),
-              "fd": json.dumps({k: c[k] for k in
+              "fd": json.dumps({k: c.get(k) for k in
                                 ("fund_state", "thesis", "fv", "fv_upside",
-                                 "est_rev", "fcf_margin", "rev_growth")},
+                                 "est_rev", "fcf_margin", "rev_growth",
+                                 "pf_gap", "pf_gap_note", "est_deterioration",
+                                 "eps_rev28_30d", "rev_rev28_30d",
+                                 "dimensions", "business_bucket",
+                                 "sbd", "coverage_shift")},
                                default=str),
               "de": c["decision"], "g": json.dumps(c["gates"]),
               "ep": json.dumps(c["entry_plan"], default=str)}
