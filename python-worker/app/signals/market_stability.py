@@ -265,6 +265,24 @@ def evaluate() -> dict[str, Any]:
     return readings
 
 
+def _candidate_bars(syms: list[str]) -> dict[str, list[dict]]:
+    """5m bars for the selloff candidates — same service as
+    _fetch_extended, fetched only when the journal says these names
+    are today's dislocations."""
+    import asyncio
+    from app.signals import intraday_pulse as ip
+    from app.market_data import MarketDataService
+    svc = MarketDataService()
+
+    async def go():
+        return {s: await ip._bars(svc, s) for s in syms}
+    try:
+        return asyncio.run(go())
+    except Exception as exc:
+        logger.debug("stability cand bars: %s", exc)
+        return {}
+
+
 def run() -> dict[str, Any]:
     """Compute + journal at the current session mark. ON CONFLICT on
     (session_date, mark) keeps the LATEST snapshot per mark — a 10:35
@@ -273,6 +291,36 @@ def run() -> dict[str, Any]:
     r = evaluate()
     if r.get("state") == "no_data":
         return r
+    # session entries — score the journaled selloff candidates
+    # against today's tape: who is ACCUMULATING vs just bouncing.
+    # The SBD journal supplies the fundamental leg; this adds the
+    # per-stock tape the candidates page can't see.
+    try:
+        cands = db.execute_query(
+            "SELECT DISTINCT ON (symbol) symbol, fund, decision,"
+            " classification FROM selloff_candidates"
+            " ORDER BY symbol, as_of DESC LIMIT 30")
+        top = [c for c in cands
+               if c.get("decision") not in ("reject",)]
+        top = top[:12]                     # fetch budget bound
+        if top:
+            # selloff journal → the fields stock_accumulation needs
+            for c in top:
+                f = c.get("fund") or {}
+                if isinstance(f, str):
+                    f = json.loads(f)
+                c["sbd"] = f.get("sbd")
+                c["dimensions"] = f.get("dimensions")
+                c["business_bucket"] = f.get("business_bucket")
+            raw = _fetch_extended()
+            raw.update(_candidate_bars(
+                [c["symbol"] for c in top
+                 if c["symbol"] not in raw]))
+            from app.signals import session_entry as se
+            r["session_entries"] = se.evaluate_candidates(
+                top, raw, r)
+    except Exception as exc:
+        logger.debug("stability session entries: %s", exc)
     try:
         db.execute_update(
             "INSERT INTO market_stability_snapshots"

@@ -187,6 +187,36 @@ function SelloffRow({ c }: { c: SelloffCand }) {
               contradict
             </span>
           )}
+          {/* session entry — the staged-entry verdict from the
+              stability job: WHO is accumulating right now, and how
+              much of the intended position the tape supports */}
+          {c.session_entry &&
+            ['starter_position', 'add', 'complete_position',
+             'consolidate_wait'].includes(c.session_entry.suggested_action ?? '') && (
+            <span
+              title={[
+                c.session_entry.reason,
+                c.session_entry.add_conditions?.length
+                  ? `add when: ${c.session_entry.add_conditions.join(' · ')}` : null,
+                c.session_entry.invalidation_conditions?.length
+                  ? `out if: ${c.session_entry.invalidation_conditions.join(' · ')}` : null,
+              ].filter(Boolean).join('\n')}
+              className={`rounded px-1.5 py-px text-[9px] font-medium uppercase tracking-wider ${
+                c.session_entry.suggested_action === 'complete_position'
+                  ? 'bg-aggressive/20 text-aggressive'
+                  : c.session_entry.suggested_action === 'consolidate_wait'
+                    ? 'bg-hairline/60 text-muted'
+                    : c.session_entry.suggested_action === 'starter_position'
+                      ? 'bg-caution/15 text-caution'
+                      : 'bg-accent/15 text-accent'}`}>
+              {c.session_entry.suggested_action === 'starter_position' ? 'starter'
+                : c.session_entry.suggested_action === 'complete_position' ? 'complete'
+                : c.session_entry.suggested_action === 'consolidate_wait' ? 'wait-retest'
+                : 'add'}
+              {(c.session_entry.suggested_allocation_pct ?? 0) > 0 &&
+                ` ${c.session_entry.suggested_allocation_pct}%`}
+            </span>
+          )}
           <span className="text-[10px] text-faint">{c.tier}</span>
           {c.thesis && (
             <span className="text-[10px] text-muted">

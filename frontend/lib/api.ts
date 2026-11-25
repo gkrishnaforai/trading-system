@@ -1353,6 +1353,18 @@ export type SelloffCand = {
   business_bucket?: string
   bucket_notes?: string[]
   pf_gap?: number | null
+  session_entry?: {
+    entry_state?: string
+    suggested_action?: string
+    suggested_allocation_pct?: number | null
+    allocation_band?: number[]
+    market_stability_score?: number | null
+    stock_accumulation_score?: number | null
+    add_conditions?: string[]
+    invalidation_conditions?: string[]
+    confidence?: string
+    reason?: string
+  }
   pf_gap_note?: string | null
   sbd?: { class?: string; action?: string }
   sbd_rank?: number

@@ -3912,7 +3912,20 @@ async def selloff_scan():
                 ((liq or {}).get("flow_matrix") or {})
                 .get("destination"),
             "liquidity_score": (liq or {}).get("liquidity_score"),
+            "market_stability_score":
+                ((stab or {}).get("session_entries") or {})
+                .get("market_stability_score"),
         }
+        # session entries — per-candidate staged-entry verdicts from
+        # the stability job's last run; attached to scan rows by
+        # symbol so /plan shows WHO is accumulating, not just who fell
+        entries = ((stab or {}).get("session_entries") or {}) \
+            .get("entries") or {}
+        if entries:
+            for c in out.get("candidates") or []:
+                e = entries.get(c.get("symbol"))
+                if e:
+                    c["session_entry"] = e
     except Exception:
         pass
     return out
