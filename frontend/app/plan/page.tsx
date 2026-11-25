@@ -773,6 +773,18 @@ export default async function PlanPage({
               {so.context.forward_hint_8w != null && (
                 <span>8w {String(so.context.forward_hint_8w).replace(/_/g, ' ')}</span>
               )}
+              {/* engine record — graded rebound outcomes per SBD
+                  cohort. Shadow mode: advisory, never auto-applied */}
+              {(so.context.engine_record?.cohorts?.by_sbd ?? [])
+                .filter((r) => (r.n ?? 0) >= 5 && r.avg_rel10 != null)
+                .slice(0, 2)
+                .map((r) => (
+                  <span key={r.k}
+                    title={`engine record · ${r.k}: avg ${r.avg_rel10}% vs QQQ @10d, ${r.rel_hit10}% beat-rate, median ${r.med_days_p10 ?? '—'}d to +10% (n=${r.n}). Advisory — the engine never rewrites itself.`}
+                    className={(r.avg_rel10 ?? 0) > 0 ? 'text-aggressive' : 'text-defensive'}>
+                    {String(r.k).replace(/_/g, ' ')} {(r.avg_rel10 ?? 0) > 0 ? '+' : ''}{r.avg_rel10}%·n{r.n}
+                  </span>
+                ))}
             </div>
           )}
           <div className="pt-2">

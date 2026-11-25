@@ -1318,6 +1318,21 @@ export type SelloffScan = {
     forward_hint_8w?: string | null
     flow_destination?: string | null
     liquidity_score?: number | null
+    market_stability_score?: number | null
+    engine_record?: {
+      as_of?: string
+      n_graded?: number
+      cohorts?: {
+        by_sbd?: { k?: string; n?: number; avg_rel10?: number | null;
+                   rel_hit10?: number | null; med_days_p10?: number | null;
+                   avg_mae?: number | null }[]
+      }
+      suggestions?: { field?: string; value?: string; n?: number;
+                      suggest?: string; confidence?: string }[]
+      fastest?: { symbol?: string; sbd_class?: string; rel_ret_10d?: number | null;
+                  mfe_20d?: number | null; days_to_mfe?: number | null }[]
+      calibration?: { mode?: string; decision_weight?: number }
+    } | null
   }
 }
 

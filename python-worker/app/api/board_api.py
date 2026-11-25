@@ -177,10 +177,15 @@ async def _j_outcomes():
         picks = await evaluate_pick_outcomes()
     except Exception:                       # forward returns
         picks = None
+    try:                                    # selloff candidates → did
+        from app.signals import selloff_review
+        so = await asyncio.to_thread(selloff_review.grade)
+    except Exception:                       # the beat-downs rebound?
+        so = None
     return {"alerts": out, "patterns": pat, "board": bd, "puts": puts,
             "calls": calls, "regime": reg, "crash_alpha": alpha,
             "rotation": rot, "event_day": ev, "morning": mr,
-            "picks": picks}
+            "picks": picks, "selloff": so}
 
 
 async def _j_rule_breakers():
@@ -3894,7 +3899,8 @@ async def selloff_scan():
     dislocation vs business integrity, with classification, gates and
     staged entry plans. Advisory only."""
     from app.signals import (selloff, market_stability,
-                             liquidity_forward, liquidity_engine)
+                             liquidity_forward, liquidity_engine,
+                             selloff_review)
     out = await asyncio.to_thread(selloff.scan)
     # the third-question context: dip names + whether buyers are
     # actually returning. Journaled reads — display context, the
@@ -3915,6 +3921,7 @@ async def selloff_scan():
             "market_stability_score":
                 ((stab or {}).get("session_entries") or {})
                 .get("market_stability_score"),
+            "engine_record": selloff_review.read_report(),
         }
         # session entries — per-candidate staged-entry verdicts from
         # the stability job's last run; attached to scan rows by
