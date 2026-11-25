@@ -276,6 +276,19 @@ export type MorningRegime = {
     months?: { verdict?: string | null; score?: number | null
                tone?: string; evidence?: string[] } | null
   } | null
+  // session-tape overlay on the daily call — refreshes at each 15m
+  // stability mark; never rewrites the regime verdict itself
+  tape?: {
+    label?: string | null
+    mss?: number | null
+    recovery_status?: string | null
+    stable_sessions?: number | null
+    mark?: string | null
+    n_actionable?: number
+    alignment?: 'improving' | 'improving_tentative' | 'confirming'
+                | 'contradicts' | 'neutral'
+    call?: string
+  } | null
   record?: Array<Record<string, unknown>>
 }
 

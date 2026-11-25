@@ -354,3 +354,85 @@ def read() -> Optional[dict[str, Any]]:
         return rd
     except Exception:
         return None
+
+
+_HOSTILE = ("bear", "distribution", "distribution_risk",
+            "macro_risk_off")
+_CONSTRUCTIVE = ("bull_low_vol", "bull_high_vol", "bullish_correction")
+
+
+def tape_overlay(canonical: Optional[str]) -> Optional[dict]:
+    """Intraday refresh of the TACTICAL overlay on the daily regime
+    call. The regime verdict is a once-a-day decision — the tape
+    never overwrites it; this says whether today's session supports
+    or undercuts the tactical part of the call. Non-override both
+    ways: a green tape doesn't repair a downtrend, a hostile regime
+    doesn't forbid a small starter when the tape + the stock's own
+    accumulation genuinely confirm."""
+    st = read()
+    if not st or st.get("session_date") != str(date.today()):
+        return None
+    label = st.get("stability_label")
+    se = st.get("session_entries") or {}
+    mss = se.get("market_stability_score")
+    status = st.get("recovery_status")
+    sessions = st.get("stable_sessions") or 0
+    mark = st.get("journaled_mark")
+    entries = se.get("entries") or {}
+    n_actionable = sum(
+        1 for e in entries.values()
+        if (e or {}).get("suggested_action") in
+        ("starter_position", "add", "complete_position"))
+
+    constructive = st.get("stability_label") in ("stable", "stabilizing")
+    multi = status in ("confirmed", "multi_session") or sessions >= 2
+    out = {"label": label, "mss": mss, "recovery_status": status,
+           "stable_sessions": sessions, "mark": mark,
+           "n_actionable": n_actionable}
+    tail = (f" — {n_actionable} candidate"
+            f"{'s' if n_actionable != 1 else ''} accumulating"
+            if n_actionable else "")
+    canon = (canonical or "").lower()
+    if canon in _HOSTILE:
+        if constructive and (mss or 0) >= 65:
+            out["alignment"] = "improving"
+            out["call"] = (
+                "Session tape improving — buyers returning"
+                f"{f' (mss {mss})' if mss else ''}. The morning call "
+                "stands — still build cash — but starter-sized "
+                "entries in names showing their own accumulation "
+                "are permitted"
+                + ("; a second constructive session would upgrade "
+                   "the read" if not multi else
+                   "; multi-session confirmation building")
+                + tail + ".")
+        elif constructive:
+            out["alignment"] = "improving_tentative"
+            out["call"] = (
+                "Tape attempting to stabilize"
+                f"{f' (mss {mss})' if mss else ''} — an attempt, not "
+                "confirmation. The morning call stands; if it holds "
+                "into the close, starters get permitted next "
+                "session" + tail + ".")
+        else:
+            out["alignment"] = "confirming"
+            out["call"] = ("Tape confirms the caution — rallies "
+                           "remain for trimming, not chasing.")
+    elif canon in _CONSTRUCTIVE:
+        if constructive:
+            out["alignment"] = "confirming"
+            out["call"] = ("Tape confirms the morning read"
+                           + (" — multi-session confirmation "
+                              "building" if multi else "")
+                           + tail + ".")
+        else:
+            out["alignment"] = "contradicts"
+            out["call"] = (
+                "Tape is breaking down — the morning call is stale "
+                "for today. Pause adds until the session "
+                "re-stabilizes" + tail + ".")
+    else:
+        out["alignment"] = "neutral"
+        out["call"] = (f"Tape reads {label or 'unread'}"
+                       f"{f' (mss {mss})' if mss else ''}" + tail + ".")
+    return out

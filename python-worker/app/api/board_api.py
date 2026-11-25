@@ -3193,10 +3193,19 @@ async def morning_regime_report():
                 pass
     except Exception:
         outlook = None
+    try:
+        # tape overlay — the session-tape verdict on the daily call:
+        # refreshes at each 15m mark; never overwrites the regime
+        # verdict, only the tactical part of "so today:"
+        from app.signals import market_stability as _ms
+        tape_overlay = await asyncio.to_thread(
+            _ms.tape_overlay, (t or {}).get("regime"))
+    except Exception:
+        tape_overlay = None
     return {"today": t, "intraday": intraday, "fragility": fragility,
             "movement": movement, "valuation": valuation,
             "posture": posture, "rates": rates, "direction": direction,
-            "outlook": outlook,
+            "outlook": outlook, "tape": tape_overlay,
             "record": await asyncio.to_thread(morning.record)}
 
 

@@ -72,6 +72,7 @@ export default async function RegimePage() {
   const rates = morning?.rates
   const direction = morning?.direction
   const outlook = morning?.outlook
+  const tapeOverlay = morning?.tape
   const sec1d = [...(movement?.sectors ?? [])]
     .filter((s) => s.vs_spy1 != null)
     .sort((a, b) => (b.vs_spy1 ?? 0) - (a.vs_spy1 ?? 0))
@@ -932,6 +933,24 @@ export default async function RegimePage() {
                 : intraday.tone === 'good' ? 'text-aggressive' : 'text-muted'
               }>
                 {(intraday.state ?? '').replace(/_/g, ' ')} — {intraday.action}
+              </span>
+            </p>
+          )}
+          {/* tape overlay — the 15m session-stability verdict on the
+              daily call: never rewrites the regime, only refreshes
+              what today's tape permits tactically */}
+          {tapeOverlay?.call && (
+            <p className="pt-1.5 text-[12px] leading-relaxed">
+              <span className="text-faint">
+                session tape{tapeOverlay.mark ? ` ·${tapeOverlay.mark}` : ''} ·{' '}
+              </span>
+              <span className={
+                tapeOverlay.alignment === 'contradicts' ? 'text-defensive'
+                : tapeOverlay.alignment === 'improving_tentative' ? 'text-caution'
+                : tapeOverlay.alignment === 'improving' || tapeOverlay.alignment === 'confirming'
+                  ? 'text-aggressive' : 'text-muted'
+              }>
+                {tapeOverlay.call}
               </span>
             </p>
           )}
