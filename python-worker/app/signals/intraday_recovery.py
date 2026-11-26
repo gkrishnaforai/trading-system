@@ -808,7 +808,7 @@ def rollup_day(d: Optional[date] = None) -> int:
                 " end_delta_vol, end_rvol, n_evals,"
                 " n_transitions, signals, first_eval, last_eval)"
                 " VALUES (:s,:d,:fs,:fsc,:rs,:as,:mh,:cm,:dv,:rv,"
-                " :ne,:nt,:sig::jsonb,:fe,:le)"
+                " :ne,:nt,CAST(:sig AS jsonb),:fe,:le)"
                 " ON CONFLICT (symbol, as_of) DO UPDATE SET"
                 " final_signal=EXCLUDED.final_signal,"
                 " final_score=EXCLUDED.final_score,"
