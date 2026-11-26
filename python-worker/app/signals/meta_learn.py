@@ -92,7 +92,10 @@ def _weight_num(key: str, default: float) -> float:
 
 def run() -> dict[str, Any]:
     from app.database import db
-    from app.signals.weights import put
+    from app.signals.weights import put as _put
+
+    def put(key: str, payload: dict[str, Any]) -> None:
+        _put(key, payload, "meta_learn")
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rep: dict[str, Any] = {"at": now, "writes": [], "notes": []}
