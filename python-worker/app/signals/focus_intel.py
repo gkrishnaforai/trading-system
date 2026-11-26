@@ -1,5 +1,5 @@
-"""Focus book intelligence — per-symbol development tracking for the
-conviction bucket (focus_members).
+"""Focus intelligence — per-symbol development tracking for the book
+(book_symbols: held positions ∪ holdings ∪ watchlist).
 
 The generic board only surfaces a name when today's screens bless it.
 The focus book watches its members on their own merits: press/news for
@@ -82,9 +82,11 @@ def _ts(v) -> Optional[datetime]:
 
 
 def members() -> list[str]:
+    """Coverage = the canonical book — every held or watched name gets
+    the deep watcher. No hand-maintained list to drift from reality."""
     from app.database import db
     rows = db.execute_query(
-        "SELECT symbol FROM focus_members WHERE active ORDER BY symbol")
+        "SELECT symbol FROM book_symbols ORDER BY symbol")
     return [r["symbol"] for r in rows]
 
 

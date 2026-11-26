@@ -28,8 +28,7 @@ def run(max_rows: int = 40) -> dict[str, Any]:
         "SELECT DISTINCT ON (symbol) symbol, close FROM daily_bars"
         " ORDER BY symbol, date DESC")}
     held = {r["symbol"] for r in db.execute_query(
-        "SELECT s.symbol FROM portfolio_positions pp"
-        " JOIN stocks s ON s.id = pp.stock_id")}
+        "SELECT symbol FROM held_symbols")}
     watched = {r["symbol"] for r in db.execute_query(
         "SELECT s.symbol FROM watchlist_stocks ws"
         " JOIN stocks s ON s.id = ws.stock_id")}

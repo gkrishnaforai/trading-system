@@ -583,9 +583,8 @@ def _journal_change(sym: str, primary: str, row: dict,
         title = (f"{sym} thesis: {prev_status} → {status}"
                  + (f" — {reason[:90]}" if reason else ""))
         in_book = bool(db.execute_query(
-            "SELECT 1 FROM portfolio_positions pp JOIN stocks s"
-            " ON s.id=pp.stock_id WHERE s.symbol=:s AND pp.quantity>0"
-            " LIMIT 1", {"s": sym}))
+            "SELECT 1 FROM held_symbols WHERE symbol=:s LIMIT 1",
+            {"s": sym}))
         in_wl = bool(db.execute_query(
             "SELECT 1 FROM watchlist_stocks ws JOIN stocks s"
             " ON s.id=ws.stock_id WHERE s.symbol=:s LIMIT 1",
@@ -684,13 +683,8 @@ def _universe() -> list[str]:
     have = {r["symbol"] for r in db.execute_query(
         "SELECT symbol FROM symbol_thesis")}
     try:
-        tracked = ("SELECT symbol FROM rule_breaker_members"
-                   " UNION SELECT symbol FROM smallcap_members"
-                   " UNION SELECT s.symbol FROM stocks s"
-                   "   JOIN portfolio_positions pp"
-                   "   ON pp.stock_id=s.id AND pp.quantity>0"
-                   " UNION SELECT s.symbol FROM stocks s"
-                   "   JOIN watchlist_stocks ws ON ws.stock_id=s.id")
+        from app.signals import symbol_tiers
+        tracked = symbol_tiers._active_sql()
         # tracked ∩ has-thesis-source-data — skip names with nothing
         # to check against (every leg would read 'not populated')
         covered = {r["symbol"] for r in db.execute_query(

@@ -3463,50 +3463,90 @@ async def fund_flags(symbols: str = ""):
 
 @router.get("/focus/members")
 async def focus_members():
-    """Active focus-book members with their theses."""
+    """Book coverage — every symbol the deep watcher tracks, with the
+    book(s) that make it a member (real portfolio names, or
+    'watchlist')."""
     from app.database import db
-    return await asyncio.to_thread(
-        db.execute_query,
-        "SELECT symbol, thesis, added_at::text AS added_at "
-        "FROM focus_members WHERE active ORDER BY symbol")
+    q = """
+        SELECT s.symbol,
+               string_agg(DISTINCT x.book, ', ' ORDER BY x.book) AS books
+        FROM stocks s
+        JOIN (
+            SELECT pp.stock_id AS sid, p.name AS book
+            FROM portfolio_positions pp
+            JOIN portfolios p ON p.id = pp.portfolio_id
+            WHERE pp.quantity > 0
+            UNION
+            SELECT st2.id, p2.name
+            FROM portfolio_holdings h
+            JOIN portfolios p2 ON p2.id = h.portfolio_id
+            JOIN stocks st2 ON st2.symbol = h.symbol
+            WHERE h.status IN ('active', 'inactive')
+            UNION
+            SELECT ws.stock_id, 'watchlist'
+            FROM watchlist_stocks ws
+        ) x ON x.sid = s.id
+        GROUP BY s.symbol ORDER BY s.symbol
+    """
+    return await asyncio.to_thread(db.execute_query, q)
 
 
 @router.post("/focus/{symbol}")
 async def focus_add(symbol: str, thesis: str = ""):
-    """Add (or reactivate) a focus-book member. Also vivifies a stocks
-    row so momentum/board scoring can pick it up on the next refresh."""
+    """Track a name you don't hold — writes a tracking unit into the
+    `futureStocks` book, which makes the symbol canonical coverage
+    (book_symbols → every job, incl. the deep watcher)."""
     sym = symbol.upper().strip()
     if not (1 <= len(sym) <= 10 and sym.replace(".", "").isalnum()):
         raise HTTPException(400, f"bad symbol '{symbol}'")
     from app.database import db
-
-    def _go():
-        db.execute_query(
-            "INSERT INTO stocks (symbol) VALUES (:s) "
-            "ON CONFLICT (symbol) DO NOTHING", {"s": sym})
-        return db.execute_query(
-            "INSERT INTO focus_members (symbol, thesis, active) "
-            "VALUES (:s, :t, TRUE) "
-            "ON CONFLICT (symbol) DO UPDATE SET active=TRUE, "
-            "thesis=COALESCE(NULLIF(:t,''), focus_members.thesis) "
-            "RETURNING symbol, thesis",
-            {"s": sym, "t": thesis.strip()})
-    out = await asyncio.to_thread(_go)
-    return {"added": out}
+    from app.signals import symbol_tiers
+    db.execute_query(
+        "INSERT INTO stocks (symbol) VALUES (:s) "
+        "ON CONFLICT (symbol) DO NOTHING", {"s": sym})
+    ok = await asyncio.to_thread(
+        symbol_tiers.promote, sym, f"focus:{thesis.strip() or 'manual'}")
+    return {"tracked": sym, "promoted": ok}
 
 
 @router.delete("/focus/{symbol}")
 async def focus_remove(symbol: str):
-    """Deactivate a focus-book member (keeps its event history)."""
+    """Stop tracking a name — removes its watchlist row or futureStocks
+    tracking unit. Real positions stay: you can't unwatch a holding,
+    its membership comes from the book itself."""
     sym = symbol.upper().strip()
     from app.database import db
-    out = await asyncio.to_thread(
-        db.execute_query,
-        "UPDATE focus_members SET active=FALSE WHERE symbol=:s "
-        "RETURNING symbol", {"s": sym})
-    if not out:
-        raise HTTPException(404, f"{sym} not in focus book")
-    return {"removed": sym}
+    from app.signals import symbol_tiers
+
+    def _go():
+        held = db.execute_query(
+            "SELECT p.name FROM portfolio_positions pp"
+            " JOIN portfolios p ON p.id = pp.portfolio_id"
+            " JOIN stocks s ON s.id = pp.stock_id"
+            " WHERE s.symbol = :s AND pp.quantity > 0"
+            " AND p.name <> :f",
+            {"s": sym, "f": symbol_tiers.FUTURES_BOOK})
+        if held:
+            return {"held_in": [r["name"] for r in held]}
+        rm_wl = db.execute_update(
+            "DELETE FROM watchlist_stocks ws USING stocks s"
+            " WHERE ws.stock_id = s.id AND s.symbol = :s", {"s": sym})
+        rm_trk = db.execute_update(
+            "DELETE FROM portfolio_positions pp USING stocks s,"
+            " portfolios p WHERE pp.stock_id = s.id"
+            " AND pp.portfolio_id = p.id AND p.name = :f"
+            " AND s.symbol = :s",
+            {"s": sym, "f": symbol_tiers.FUTURES_BOOK})
+        return {"removed_watchlist": bool(rm_wl),
+                "removed_tracking": bool(rm_trk)}
+    out = await asyncio.to_thread(_go)
+    if out.get("held_in"):
+        raise HTTPException(
+            409, f"{sym} is held in {out['held_in']} — a position can't "
+                 "be unwatched; sell it or archive the position instead")
+    if not (out["removed_watchlist"] or out["removed_tracking"]):
+        raise HTTPException(404, f"{sym} has no tracking membership")
+    return {"untracked": sym, **out}
 
 
 @router.get("/track-record")

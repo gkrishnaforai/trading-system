@@ -276,12 +276,7 @@ class UniversalScheduler:
             if wildcard:
                 return None
             rows = await asyncio.to_thread(db.execute_query, """
-                SELECT s.symbol FROM stocks s
-                  JOIN portfolio_positions pp ON pp.stock_id = s.id
-                  AND pp.quantity > 0
-                UNION
-                SELECT s.symbol FROM stocks s
-                  JOIN watchlist_stocks w ON w.stock_id = s.id
+                SELECT symbol FROM book_symbols
                 UNION
                 SELECT DISTINCT sym AS symbol FROM universal_alerts ua,
                   jsonb_array_elements_text(ua.entity_filters->'symbols') sym

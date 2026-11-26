@@ -49,6 +49,13 @@ def universe() -> dict[str, dict]:
         FROM stocks s
         JOIN watchlist_stocks ws ON ws.stock_id = s.id
         GROUP BY s.symbol
+        UNION ALL
+        SELECT s.symbol, true AS in_portfolio,
+               COALESCE(max(h.shares_held), 0) AS qty
+        FROM stocks s
+        JOIN portfolio_holdings h ON h.symbol = s.symbol
+        WHERE h.status IN ('active', 'inactive')
+        GROUP BY s.symbol
         """
     )
     result: dict[str, dict] = {}

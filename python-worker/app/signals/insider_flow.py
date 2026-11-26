@@ -173,11 +173,7 @@ def _edgar_transactions(symbol: str, max_filings: int = 8) -> list[dict]:
 
 def _universe() -> list[str]:
     from app.database import db
-    rows = db.execute_query(
-        "SELECT DISTINCT s.symbol FROM ("
-        " SELECT stock_id FROM portfolio_positions WHERE quantity>0"
-        " UNION SELECT stock_id FROM watchlist_stocks) x"
-        " JOIN stocks s ON s.id=x.stock_id")
+    rows = db.execute_query("SELECT symbol FROM book_symbols")
     return [r["symbol"] for r in rows]
 
 
@@ -231,9 +227,8 @@ def _alert(sym: str, direction: str, materiality: str, priority: int,
     from app.database import db
     fp = f"insider:{sym}:{direction}:{latest}"
     in_book = bool(db.execute_query(
-        "SELECT 1 FROM portfolio_positions pp JOIN stocks s"
-        " ON s.id=pp.stock_id WHERE s.symbol=:s AND pp.quantity>0"
-        " LIMIT 1", {"s": sym}))
+        "SELECT 1 FROM held_symbols WHERE symbol=:s LIMIT 1",
+        {"s": sym}))
     in_wl = bool(db.execute_query(
         "SELECT 1 FROM watchlist_stocks ws JOIN stocks s"
         " ON s.id=ws.stock_id WHERE s.symbol=:s LIMIT 1",

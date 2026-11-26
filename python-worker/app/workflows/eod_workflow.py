@@ -284,10 +284,13 @@ class EODWorkflow:
         return result and result[0]['status'] == 'completed'
     
     def _get_all_portfolios(self) -> List[dict]:
-        """Get all portfolios"""
-        return db.execute_query("SELECT portfolio_id FROM portfolios WHERE is_archived = 0")
+        """Get all active portfolios"""
+        return db.execute_query(
+            "SELECT id AS portfolio_id FROM portfolios WHERE is_active")
     
     def _get_all_watchlists(self) -> List[dict]:
-        """Get all watchlists"""
-        return db.execute_query("SELECT watchlist_id FROM watchlists WHERE is_archived = 0")
+        """Get all non-archived watchlists"""
+        return db.execute_query(
+            "SELECT id AS watchlist_id FROM watchlists"
+            " WHERE is_archived = FALSE")
 

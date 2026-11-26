@@ -907,6 +907,10 @@ async def tracked_phase_scan(concurrency: int = 6) -> dict:
             UNION SELECT s.symbol, 'portfolio'
                 FROM stocks s JOIN portfolio_positions pp
                     ON pp.stock_id = s.id AND pp.quantity > 0
+            UNION SELECT s.symbol, 'portfolio'
+                FROM portfolio_holdings h JOIN stocks s
+                    ON s.symbol = h.symbol
+                WHERE h.status IN ('active','inactive')
             UNION SELECT s.symbol, 'watchlist'
                 FROM stocks s JOIN watchlist_stocks ws
                     ON ws.stock_id = s.id

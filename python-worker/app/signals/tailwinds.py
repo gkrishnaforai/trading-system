@@ -173,8 +173,7 @@ def _alert(sym: str, channel: str, direction: str, tier: str,
     'make a move' event — emit it into the live alert feed."""
     from app.database import db
     watch = db.execute_query(
-        "SELECT EXISTS(SELECT 1 FROM portfolio_positions pp"
-        "  JOIN stocks s2 ON s2.id=pp.stock_id WHERE s2.symbol=:s) pf,"
+        "SELECT EXISTS(SELECT 1 FROM held_symbols WHERE symbol=:s) pf,"
         " EXISTS(SELECT 1 FROM watchlist_stocks ws"
         "  JOIN stocks s3 ON s3.id=ws.stock_id WHERE s3.symbol=:s) wl",
         {"s": sym})

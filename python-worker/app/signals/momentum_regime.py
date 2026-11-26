@@ -458,16 +458,9 @@ def refresh_momentum_all() -> dict:
     from app.database import db
     from app.options.leaps import _technicals, _macd_hist_prev
 
+    from app.signals import symbol_tiers
     syms = [r["symbol"] for r in db.execute_query(
-        """WITH t AS (
-            SELECT symbol FROM rule_breaker_members
-            UNION SELECT symbol FROM smallcap_members
-            UNION SELECT s.symbol FROM stocks s
-                JOIN portfolio_positions pp
-                    ON pp.stock_id = s.id AND pp.quantity > 0
-            UNION SELECT s.symbol FROM stocks s
-                JOIN watchlist_stocks ws ON ws.stock_id = s.id)
-           SELECT symbol FROM t""")]
+        symbol_tiers._active_sql())]
     if not syms:
         return {"refreshed": 0}
     # ONE batched fetch, canonical store — every other consumer reads

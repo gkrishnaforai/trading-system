@@ -461,12 +461,7 @@ def run_universe(symbols: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     Percentiles are what the UI shows — ranking beats cutoffs."""
     from app.database import db
     if symbols is None:
-        rows = db.execute_query(
-            """SELECT DISTINCT symbol FROM (
-                 SELECT symbol FROM portfolio_holdings WHERE status<>'sold'
-                 UNION
-                 SELECT s.symbol FROM watchlist_stocks ws
-                   JOIN stocks s ON s.id=ws.stock_id) t""")
+        rows = db.execute_query("SELECT symbol FROM book_symbols")
         symbols = [r["symbol"] for r in rows]
     results = []
     for s in symbols:

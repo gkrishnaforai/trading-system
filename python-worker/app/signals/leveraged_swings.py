@@ -121,13 +121,21 @@ def _leaders_earning(spec: dict) -> dict[str, Any]:
 
 
 def _portfolio_mv() -> Optional[float]:
-    """Current portfolio market value for default sizing."""
+    """Current book market value for default sizing — positions plus
+    holdings rows that carry shares but no position record."""
     from app.database import db
     r = db.execute_query(
         "SELECT COALESCE(SUM(COALESCE(current_value,"
         " quantity * avg_price)), 0) mv"
         " FROM portfolio_positions")[0]
-    mv = float(r["mv"] or 0)
+    h = db.execute_query(
+        "SELECT COALESCE(SUM(h.shares_held * h.average_cost), 0) mv"
+        " FROM portfolio_holdings h"
+        " WHERE h.status IN ('active','inactive')"
+        " AND NOT EXISTS (SELECT 1 FROM portfolio_positions pp"
+        "  JOIN stocks s ON s.id=pp.stock_id AND pp.quantity>0"
+        "  WHERE s.symbol=h.symbol AND pp.portfolio_id=h.portfolio_id)")[0]
+    mv = float(r["mv"] or 0) + float(h["mv"] or 0)
     return mv if mv > 0 else None
 
 

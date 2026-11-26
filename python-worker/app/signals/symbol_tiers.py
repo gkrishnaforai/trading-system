@@ -130,11 +130,16 @@ def _futures_portfolio() -> Any:
         return r[0]["id"]
     import uuid
     pid = uuid.uuid4()
-    owner = _q("SELECT user_id FROM portfolios"
-               " WHERE name IN ('GridTech','QualityUnderValued')"
-               " LIMIT 1") or _q(
-        "SELECT user_id, COUNT(*) n FROM portfolios"
-        " GROUP BY user_id ORDER BY n DESC LIMIT 1")
+    # Owner resolution by book, not by hard-coded book names: the
+    # base portfolio's owner, else the owner of the most-positioned book.
+    owner = _q("SELECT p.user_id FROM portfolios p"
+               " JOIN portfolio_positions pp ON pp.portfolio_id = p.id"
+               " WHERE p.name = 'base-portfolio' LIMIT 1") or _q(
+        "SELECT p.user_id, COUNT(*) n FROM portfolios p"
+        " JOIN portfolio_positions pp ON pp.portfolio_id = p.id"
+        " WHERE p.name <> :f"
+        " GROUP BY p.user_id ORDER BY n DESC LIMIT 1",
+        {"f": FUTURES_BOOK})
     _u("INSERT INTO portfolios (id,user_id,name,description,"
        " portfolio_type,is_active)"
        " VALUES (:i,:u,:n,:d,'custom',true)",
