@@ -163,6 +163,11 @@ ctx:
                    #   down WITHOUT fundamental change (the edge)
                    # fundamental_repricing|structural_impairment =
                    #   down WITH cause (the trap)
+  sbd_class:       latest selloff_candidates.fund.sbd.class —
+                   # beat_down_stock|confirmed_recovery_candidate =
+                   #   business intact, price fell (accumulable)
+                   # beat_down_business|structural_risk = the business
+                   #   fell, not just the stock — veto adds
   sq_verdict:      latest short_squeeze_evals.verdict —
                    # squeeze_setup|likely_covering|new_shorts_pressing|—
   earn_days:       derived — stocks.next_earnings_date − today.
