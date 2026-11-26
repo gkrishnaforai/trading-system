@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import traceback
+import uuid
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -34,12 +36,14 @@ _jobs: dict[str, dict[str, Any]] = {}
 _fv_heal_last: dict[str, float] = {}
 
 
-def _mark(job: str, **kw):
+def _mark(job: str, run_id: str = "", **kw):
     at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if kw.get("running"):
-        _jobs[job] = {"at": at, "started_at": at, **kw}
+        _jobs[job] = {"at": at, "started_at": at,
+                      "run_id": run_id or None, **kw}
         return
     started = (_jobs.get(job) or {}).get("started_at")
+    rid = run_id or (_jobs.get(job) or {}).get("run_id") or None
     dur = None
     if started:
         try:
@@ -48,7 +52,7 @@ def _mark(job: str, **kw):
                         .total_seconds(), 1)
         except Exception:
             pass
-    _jobs[job] = {"at": at, **kw}
+    _jobs[job] = {"at": at, "run_id": rid, **kw}
     # durable ledger — last-run staleness must survive worker restarts
     try:
         from app.database import db
@@ -76,10 +80,11 @@ def _mark(job: str, **kw):
             payload = json.dumps({"_raw": str(res)[:1500]})
         db.execute_update(
             "INSERT INTO job_runs (name, ran_at, duration_s, error,"
-            " result) VALUES (:n, now(), :d, :e, CAST(:r AS jsonb))",
+            " result, run_id) VALUES (:n, now(), :d, :e,"
+            " CAST(:r AS jsonb), :rid)",
             {"n": job, "d": dur, "e": (kw.get("error") or "")[:500]
              or None,
-             "r": payload})
+             "r": payload, "rid": rid})
     except Exception:
         pass
 
@@ -1467,13 +1472,23 @@ _JOB_TIMEOUT = {
 
 async def _run_job(name: str):
     label, fn = JOBS[name]
-    _mark(name, running=True)
+    # run_id — minted here, journaled into job_runs, and stamped on the
+    # JOB_START/END/FAIL log markers so an external watchdog can
+    # correlate ledger rows with log lines end to end.
+    run_id = uuid.uuid4().hex[:12]
+    logger.info("JOB_START job=%s run=%s", name, run_id)
+    _mark(name, run_id=run_id, running=True)
+    t0 = time.monotonic()
     try:
         res = await asyncio.wait_for(
             fn(), timeout=_JOB_TIMEOUT.get(name, 10 * 60))
+        dur = round(time.monotonic() - t0, 1)
         _mark(name, running=False, result=res)
+        logger.info("JOB_END job=%s run=%s ok=true duration_s=%.1f",
+                    name, run_id, dur)
     except asyncio.TimeoutError:
-        logger.error("job %s timed out", name)
+        logger.error("JOB_FAIL job=%s run=%s error=timeout",
+                     name, run_id)
         _mark(name, running=False,
               error=f"timed out after "
                     f"{_JOB_TIMEOUT.get(name, 600) // 60}m")
@@ -1485,6 +1500,8 @@ async def _run_job(name: str):
         tb = traceback.extract_tb(exc.__traceback__)
         site = f" [{tb[-1].filename.split('/')[-1]}:{tb[-1].lineno}]" \
             if tb else ""
+        logger.error("JOB_FAIL job=%s run=%s error=%.300r site=%s",
+                     name, run_id, exc, site.strip())
         _mark(name, running=False, error=f"{exc}{site}")
 
 
@@ -3319,10 +3336,26 @@ async def job_runs(limit: int = 50):
     from app.database import db
     rows = await asyncio.to_thread(
         db.execute_query,
-        "SELECT name, ran_at, duration_s, error, result"
+        "SELECT run_id, name, ran_at, duration_s, error, result"
         " FROM job_runs ORDER BY ran_at DESC LIMIT :n",
         {"n": min(limit, 200)})
     return {"runs": rows}
+
+
+@router.get("/jobs/failures")
+async def job_failures(hours: float = 24, limit: int = 50):
+    """Failed runs in the window — the external watchdog contract.
+    Poll this, alert on new run_ids, then grep the worker log for
+    `JOB_FAIL`/`run=<run_id>` to pull the traceback context."""
+    from app.database import db
+    rows = await asyncio.to_thread(
+        db.execute_query,
+        "SELECT run_id, name, ran_at, duration_s, error"
+        " FROM job_runs WHERE error IS NOT NULL"
+        " AND ran_at >= now() - CAST(:h || ' hours' AS interval)"
+        " ORDER BY ran_at DESC LIMIT :n",
+        {"h": hours, "n": min(limit, 200)})
+    return {"failures": rows, "hours": hours}
 
 
 @router.get("/incidents")
