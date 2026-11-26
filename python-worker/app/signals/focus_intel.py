@@ -44,7 +44,8 @@ _BULL: list[tuple[str, list[str], int]] = [
                      r"\bCXL\b", r"PCIe", r"optical", r"connectivity"], 3),
 ]
 _BEAR = [r"downgrade", r"lowers?", r"cut(?:s|ting)?", r"miss(?:es|ed)?",
-         r"delay", r"cancel", r"lawsuit", r"probe", r"resign", r"depart",
+         r"delay", r"cancel", r"lawsuit", r"\bsued\b|\bsues\b", r"\bfraud\b",
+         r"\bindict\w*", r"probe", r"resign", r"depart",
          r"weak guidance", r"loss of", r"loses", r"inventory correction",
          r"push-?out"]
 _HI_RE = [(t, [re.compile(p, re.I) for p in pats], m) for t, pats, m in _BULL]

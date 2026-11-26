@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from app.catalyst_intelligence.engine import assess_catalyst, classify_headline
+from app.catalyst_intelligence.models import CatalystDirection
 from app.database import db
 from app.market_data import MarketDataService
 
@@ -27,6 +28,10 @@ logger = logging.getLogger(__name__)
 _MATERIALITY_SCORE = {"HIGH": 100.0, "MODERATE": 60.0, "LOW": 30.0}
 EPS_REVISION_MIN_PCT = 5.0
 EPS_REVISION_HIGH_PCT = 10.0
+
+# Headline kinds that are inherently negative events regardless of
+# directional keywords — a lawsuit headline says "sued", not "falls".
+_NEG_INHERENT_KINDS = {"legal", "dilution", "layoffs"}
 
 
 def universe() -> dict[str, dict]:
@@ -242,7 +247,23 @@ async def collect_catalysts(
             earnings_list = list(earnings)
             snap = assess_catalyst(symbol, earnings_list, news)
             if snap.direction.value not in {"POSITIVE", "NEGATIVE"}:
-                return None
+                # An actionable headline of an inherently-negative kind IS
+                # the signal — a fraud-claim headline can share the window
+                # with an earnings beat (aggregate MIXED) or carry no
+                # directional keyword at all (NEUTRAL). The legal/dilution/
+                # layoff event still stands; don't let the aggregate veto
+                # it. Skip when the headline's own direction is POSITIVE
+                # ("settles suit, rallies").
+                override = any(
+                    _published_within(
+                        n.get("published_at"), news_freshness_hours)
+                    and classify_headline(n.get("title") or "")[0]
+                        in _NEG_INHERENT_KINDS
+                    and n.get("headline_direction") != "POSITIVE"
+                    for n in snap.recent_news)
+                if not override:
+                    return None
+                snap.direction = CatalystDirection.NEGATIVE
 
             # Fresh headlines in the 12h window (not the engine's 7d context).
             # Keep (title, direction) pairs — actionable kinds can fire on a

@@ -11,6 +11,10 @@ from .models import CatalystDirection, CatalystSeverity, CatalystSnapshot
 
 _POSITIVE = ("beat", "raised", "upgrade", "contract", "partnership", "approval", "record", "growth", "bitcoin", "crypto", "tokenized", "exemption")
 _NEGATIVE = ("miss", "cut", "downgrade", "lawsuit", "investigation", "recall", "warning", "layoff", "sells", "falls", "risk")
+# Word-bounded negatives — substring matching can't carry these safely
+# ("issued" contains "sued"; "issues" contains "sues").
+_NEG_WORD_RX = re.compile(
+    r"\b(?:sued|sues|fraud(?:ulent)?|indict\w*|subpoena\w*)\b", re.I)
 
 # Institutional-disclosure filler ("X Buys/Sells N Shares of Y", 13F filings,
 # stake/position reports) — routine portfolio moves, not directional news.
@@ -200,7 +204,8 @@ def _headline_direction(title: str) -> str:
     positive = ("rallied", "buys", "upgrade", "raises", "growth", "adds", "support", "approval", "beat", "positive", "bitcoin", "crypto")
     negative = _NEGATIVE
     has_positive = any(word in text for word in positive)
-    has_negative = any(word in text for word in negative)
+    has_negative = (any(word in text for word in negative)
+                    or bool(_NEG_WORD_RX.search(text)))
     if has_positive and has_negative:
         return "MIXED"
     if has_positive:
@@ -227,7 +232,9 @@ def _surprise(actual: Optional[float], estimate: Optional[float]) -> Optional[fl
 def _direction(values: list[float], news_titles: list[str]) -> CatalystDirection:
     signal_titles = [t for t in news_titles if not is_filler_headline(t)]
     positive = sum(value > 0.02 for value in values) + sum(any(k in title for k in _POSITIVE) for title in signal_titles)
-    negative = sum(value < -0.02 for value in values) + sum(any(k in title for k in _NEGATIVE) for title in signal_titles)
+    negative = sum(value < -0.02 for value in values) + sum(
+        any(k in title for k in _NEGATIVE) or bool(_NEG_WORD_RX.search(title))
+        for title in signal_titles)
     if positive and negative:
         return CatalystDirection.MIXED
     if positive:
