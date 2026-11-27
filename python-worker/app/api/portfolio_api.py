@@ -262,11 +262,11 @@ async def login_user(login_data: LoginRequest, db=Depends(get_db)):
     )
     
     # Create access token — embed the role claim so get_admin_user /
-    # role-gated surfaces actually work. MP_ADMIN_USERS (comma-sep
+    # role-gated surfaces actually work. MP_PLATFORM_ADMINS (comma-sep
     # usernames) overrides the stored role — survives DB resets for the
     # device-local account.
     admin_users = {u.strip() for u in
-                   os.getenv("MP_ADMIN_USERS", "").split(",") if u.strip()}
+                   os.getenv("MP_PLATFORM_ADMINS", "").split(",") if u.strip()}
     role = ("admin" if user_data['username'] in admin_users
             else (user_data['role'] or "user"))
     access_token = create_access_token(data={

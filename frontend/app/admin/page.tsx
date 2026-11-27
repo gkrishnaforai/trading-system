@@ -121,7 +121,7 @@ export default async function AdminPage() {
         <section className="rounded-xl border border-hairline bg-card px-5 py-6 text-sm text-muted">
           This surface is admin-only. The current session
           {u.username ? ` (${u.username})` : ''} isn&apos;t an admin —
-          add the username to <span className="font-mono text-xs">MP_ADMIN_USERS</span>{' '}
+          add the username to <span className="font-mono text-xs">MP_PLATFORM_ADMINS</span>{' '}
           on the worker or set <span className="font-mono text-xs">role=admin</span>{' '}
           on the user row, then reload.
         </section>

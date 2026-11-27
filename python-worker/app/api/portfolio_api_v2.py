@@ -191,11 +191,11 @@ class SignupRequest(BaseModel):
 
 
 def _admin_override(user: dict) -> str:
-    """MP_ADMIN_USERS (comma-sep usernames or emails) elevates the
+    """MP_PLATFORM_ADMINS (comma-sep usernames or emails) elevates the
     stored role — survives DB resets for operator accounts."""
     import os
     admins = {u.strip().lower() for u in
-              os.getenv("MP_ADMIN_USERS", "").split(",") if u.strip()}
+              os.getenv("MP_PLATFORM_ADMINS", "").split(",") if u.strip()}
     if (user.get("username") or "").lower() in admins or \
        (user.get("email") or "").lower() in admins:
         return "admin"
