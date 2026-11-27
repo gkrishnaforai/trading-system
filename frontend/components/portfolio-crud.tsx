@@ -125,14 +125,19 @@ export function NewPortfolioForm({ used, limit }: {
       <button
         onClick={() => !full && setOpen(true)}
         disabled={full}
-        title={full ? `${limit} portfolios on this plan` : 'new book'}
-        className={`flex min-w-[9rem] flex-col items-center justify-center gap-0.5 rounded-xl border border-dashed px-3.5 py-2.5 text-xs font-medium transition-colors ${full
-          ? 'border-hairline text-faint'
-          : 'border-accent/50 text-accent hover:bg-accent/[0.06]'
+        title={full ? `${limit} portfolios on this plan` : 'create a portfolio'}
+        className={`group relative flex min-w-[10rem] flex-col items-center justify-center gap-0.5 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all ${full
+          ? 'border border-hairline text-faint'
+          : 'bg-gradient-to-br from-accent to-[#c2410c] text-white shadow-[0_2px_14px_-2px_rgba(234,88,12,0.55)] hover:shadow-[0_4px_20px_-2px_rgba(234,88,12,0.7)] hover:brightness-110 active:scale-[0.98]'
           }`}
       >
         <span className="text-base leading-none">＋</span>
-        <span>new book</span>
+        <span>New book</span>
+        {!full && (
+          <span className="text-[9px] font-normal tracking-wide text-white/75">
+            create a portfolio
+          </span>
+        )}
       </button>
     )
   }
@@ -263,7 +268,7 @@ export function AddPositionDock({ books }: {
   if (books.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-hairline px-5 py-4 text-xs text-muted">
-        No books yet — hit <span className="text-accent">＋ new book</span>{' '}
+        No books yet — hit <span className="font-semibold text-accent">＋ New book</span>{' '}
         above, then add positions to it here.
       </div>
     )
