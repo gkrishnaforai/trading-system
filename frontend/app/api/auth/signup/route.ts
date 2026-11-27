@@ -47,6 +47,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: `password needs ${weak.join(', ')}` }, { status: 400 })
   }
+  if (body.agreed_terms !== true) {
+    return NextResponse.json(
+      { error: 'you must agree to the Terms of Use' }, { status: 400 })
+  }
   const res = await signUp(first, last, email, password)
   if (!res) {
     return NextResponse.json(

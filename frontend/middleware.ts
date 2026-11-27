@@ -11,16 +11,17 @@ import { NextRequest, NextResponse } from 'next/server'
     Flip AUTH_PROVIDER to 'supabase' later — this gate only needs a
     valid session cookie + role claim, whichever backend minted it. */
 
-const PUBLIC_PATHS = ['/login', '/signup']
+const PUBLIC_PATHS = ['/login', '/signup', '/terms']
 const PUBLIC_API = ['/api/auth/']
 
-/** Paths a 'basic' session may reach — the portfolio page and the
-    APIs it needs. Everything else redirects to /portfolio. */
+/** Paths a 'basic' session may reach — the portfolio page, its APIs,
+    and the legal documents every user must be able to read. */
 const BASIC_ALLOWED = [
   '/portfolio',
   '/api/portfolio/',
   '/api/me',
   '/api/auth/',
+  '/terms',
 ]
 
 function decode(token: string): Record<string, unknown> | null {

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { Nav } from '@/components/nav'
 import './globals.css'
 
@@ -30,6 +31,25 @@ export default function RootLayout({
       <body className="bg-canvas text-ink font-sans antialiased">
         <Nav />
         {children}
+        {/* persistent legal disclosure — "not investment advice" must
+            be visible on every page, not buried in a linked document */}
+        <footer className="border-t border-hairline">
+          <div className="mx-auto flex max-w-3xl flex-wrap items-baseline justify-between gap-x-6 gap-y-1 px-5 py-4 text-[11px] text-faint">
+            <span>
+              Research &amp; education platform — not investment advice.
+              Investing involves risk, including loss of principal.
+            </span>
+            <span className="flex gap-4">
+              <Link href="/terms" className="hover:text-ink">Terms</Link>
+              <Link href="/terms#affiliate" className="hover:text-ink">
+                Affiliate disclosure
+              </Link>
+              <Link href="/terms#privacy" className="hover:text-ink">
+                Privacy
+              </Link>
+            </span>
+          </div>
+        </footer>
       </body>
     </html>
   )

@@ -29,6 +29,7 @@ export default function SignupPage() {
   const [form, setForm] = useState({
     first_name: '', last_name: '', email: '', password: '',
   })
+  const [agreed, setAgreed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -45,7 +46,7 @@ export default function SignupPage() {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, agreed_terms: agreed }),
       })
       const j = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -111,10 +112,26 @@ export default function SignupPage() {
               })}
             </ul>
           )}
+          <label className="flex items-start gap-2 px-1 pt-1 text-[12px] text-muted">
+            <input
+              type="checkbox" required checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              className="mt-0.5 accent-[#EA580C]"
+            />
+            <span>
+              I agree to the{' '}
+              <Link href="/terms" className="text-accent hover:underline">
+                Terms of Use &amp; disclosures
+              </Link>
+              , including that this platform provides research and
+              education — not investment advice.
+            </span>
+          </label>
           {err && <p className="text-xs text-defensive">{err}</p>}
           <button
             type="submit"
-            disabled={busy || !RULES.every((r) => r.ok(form.password))}
+            disabled={busy || !agreed ||
+              !RULES.every((r) => r.ok(form.password))}
             className="w-full rounded-full bg-ink px-4 py-2.5 text-sm font-medium text-canvas transition-colors hover:bg-accent disabled:opacity-40"
           >
             {busy ? 'creating…' : 'create account'}

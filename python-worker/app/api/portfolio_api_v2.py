@@ -176,6 +176,11 @@ async def register_user(user_data: UserCreate, db=Depends(get_db)):
         created_at=user['created_at'] if 'created_at' in user else datetime.now()
     )
 
+# legal document version accepted at signup — journaled on the audit
+# row; bump when /terms changes so consent can be re-collected
+_TERMS_VERSION = "2025-11-01"
+
+
 # Signup — the human-facing account creation path. Role is always
 # 'basic' server-side: privilege is never taken from the request.
 class SignupRequest(BaseModel):
@@ -247,7 +252,7 @@ async def signup_user(body: SignupRequest, request: Request,
         "SELECT id, username, email, full_name, role, is_active,"
         " created_at FROM users WHERE email = $1", [email])[0]
     audit_event(db, "signup", user_id=user["id"], email=email,
-                request=request)
+                detail={"terms_version": _TERMS_VERSION}, request=request)
     return LoginResponse(
         access_token=_session_token(user), token_type="bearer",
         user=UserResponse(id=str(user["id"]), username=user["username"],
