@@ -117,17 +117,37 @@ def _day_stats(bars: list[dict]) -> dict[str, Any]:
     held = (above and len(bars) >= 4
             and all(b["l"] > vw * 0.998 for b in bars[-3:]))
     crosses = 0
+    reclaim_bar = None               # first bar closing above VWAP
+                                     # after having opened below it
     if vw:
         for i in range(1, len(bars)):
             if (bars[i - 1]["c"] - vw) * (bars[i]["c"] - vw) < 0:
                 crosses += 1
+            if (reclaim_bar is None and bars[0]["c"] < vw
+                    and bars[i]["c"] > vw):
+                reclaim_bar = i
+    hi = max(b["h"] for b in bars)
+    lo = min(b["l"] for b in bars)
+    above_n = sum(1 for b in bars if vw and b["c"] > vw)
+    up_v = sum(b["v"] for b in bars if b["c"] >= b["o"])
+    dn_v = sum(b["v"] for b in bars if b["c"] < b["o"])
     # first-30-min direction vs now → the morning-down→green pattern
     early = or_bars[-1]["c"]
     return {"last": last, "vwap": vw, "above_vwap": above,
             "vwap_held": held, "vwap_crosses": crosses,
+            "vwap_reclaim_bar": reclaim_bar,
+            "vwap_above_pct": (round(above_n / len(bars) * 100, 1)
+                               if vw else None),
             "or_hi": or_hi, "or_lo": or_lo,
             "above_or": last > or_hi, "below_or": last < or_lo,
             "chg_open": chg_open,
+            "first_30m_ret": (early / first - 1 if first else None),
+            "session_hi": hi, "session_lo": lo,
+            "close_location": ((last - lo) / (hi - lo)
+                               if hi > lo else None),
+            "drawdown": (lo / hi - 1 if hi else None),
+            "low_to_close": (last / lo - 1 if lo else None),
+            "up_down_vol": (round(up_v / dn_v, 2) if dn_v > 0 else None),
             "morning_down_now_green": early < prev_close_proxy
             and last > prev_close_proxy,
             "n_bars": len(bars)}

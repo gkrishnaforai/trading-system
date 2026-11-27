@@ -983,6 +983,15 @@ async def _j_intraday_recovery() -> dict:
     return await asyncio.to_thread(intraday_recovery.run)
 
 
+async def _j_session_forecast() -> dict:
+    """Session-to-session forecast — after the close journals a
+    baseline row (tape quality → next session's prior); before the
+    open updates it with overnight futures/gaps; grades every past
+    call against the actual return. Stage follows the clock."""
+    from app.signals import session_forecast
+    return await asyncio.to_thread(session_forecast.run)
+
+
 async def _j_ai_cycle() -> dict:
     """AI cycle rotation tracker — quarterly per-name composite over
     journaled evidence: 8 component legs, three-peak detection,
@@ -1374,6 +1383,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
                         _j_intraday_regime),
     "intraday-recovery": ("Intraday recovery confirm (5-min)",
                           _j_intraday_recovery),
+    "session-forecast": ("Session-to-session direction forecast",
+                         _j_session_forecast),
     "ai-cycle":    ("AI cycle rotation tracker (weekly)", _j_ai_cycle),
     "demand-evidence": ("Demand-evidence feed (capex/FCF + news drafts)",
                         _j_demand_evidence),

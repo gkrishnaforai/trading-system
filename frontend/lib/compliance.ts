@@ -36,6 +36,10 @@ export const COMPLIANCE_FLAGS = {
   /** order routing / execution — broker-dealer territory */
   live_trading: on(process.env.FF_LIVE_TRADING),
 
+  /** next-session market direction score — a model-generated market
+      forecast; stays internal/admin until reviewed */
+  market_forecast: on(process.env.FF_MARKET_FORECAST),
+
   /** paid promotion of securities — Section 17(b) exposure */
   sponsored_stock_promotions:
     on(process.env.FF_SPONSORED_STOCK_PROMOTIONS),
