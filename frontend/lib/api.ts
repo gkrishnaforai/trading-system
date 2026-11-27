@@ -358,6 +358,14 @@ export type ThemeCard = {
   thesis?: string
   opportunity?: number | null
   verdict?: string
+  why?: {
+    summary?: string
+    basis?: { name?: string; value?: unknown; unit?: string; source?: string }[]
+    drivers?: string[]
+    counter?: string[]
+    refs?: { table?: string; symbol?: string }[]
+    rule?: string
+  } | null
   expected?: number
   downside?: number
   robustness?: number

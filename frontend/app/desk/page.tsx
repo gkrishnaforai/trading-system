@@ -226,7 +226,9 @@ function ConvictionSection({ c }: { c: Record<string, unknown> | null }) {
                   </span>
                 )}
                 <span className="flex-1 text-xs text-muted truncate">
-                  {fmtShort(r.themes ?? r.sources ?? r.parts).slice(0, 90)}
+                  {obj(r.why)?.summary != null
+                    ? String(obj(r.why)!.summary)
+                    : fmtShort(r.themes ?? r.sources ?? r.parts).slice(0, 90)}
                 </span>
                 {r.fwd_pe != null && (
                   <span className="font-mono text-[11px] text-faint">

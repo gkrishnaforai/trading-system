@@ -172,6 +172,8 @@ def evaluate() -> dict[str, Any]:
     spy = facts.pop("__spy__", {})
     probs = _sc.probabilities(_macro_inputs())
 
+    from app.support.why import explain as _why, coverage as _cov
+
     themes: dict[str, Any] = {}
     for key, t in reg.items():
         mems = []
@@ -186,6 +188,24 @@ def evaluate() -> dict[str, Any]:
                 "spy_ret60": spy.get("ret60")}
         sc_eval = _sc.evaluate_theme(key, probs)
         opp = _opp.score(key, legs, sc_eval["expected"])
+        # explainability contract — theme direction carries its why:
+        # the legs that drove the score, the honest counter (missing
+        # legs + weak stage), the scenario rule behind it
+        _top = sorted((opp.get("legs") or []),
+                      key=lambda l: -(l.get("score") or 0))[:3]
+        _counter = ([f"unscored: {', '.join(opp['missing'])}"]
+                    if opp.get("missing") else [])
+        if (t.get("stage") or "") in ("exhausted", "retired"):
+            _counter.append(f"stage {t['stage']}")
+        theme_why = _why(
+            _sc.verdict(opp["score"]),
+            basis=[{"name": l["name"], "value": l.get("value"),
+                    "score": l.get("score")} for l in _top],
+            counter=_counter,
+            coverage=_cov(len(opp.get("legs") or []),
+                          len(opp.get("legs") or [])
+                          + len(opp.get("missing") or [])),
+            rule="Σ leg×weight, ≥40% leg coverage or no_score")
         idx = _ib.build(key, mems)
         mmap = {m["symbol"]: m for m in mems}
         # the candidate pool — ranked, noted, never weighted: pool
@@ -214,6 +234,7 @@ def evaluate() -> dict[str, Any]:
             "opportunity": opp["score"],
             "verdict": _sc.verdict(opp["score"]),
             **sc_eval,
+            "why": theme_why,
             "legs": opp["legs"], "missing": opp["missing"],
             "index": {"pure_n": idx["pure"]["n"],
                       "quality_n": idx["quality"]["n"],

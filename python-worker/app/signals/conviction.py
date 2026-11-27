@@ -358,6 +358,8 @@ def run() -> dict[str, Any]:
     except Exception:
         gq_pct = {}
 
+    from app.support.why import explain
+
     rows = []
     for sym, p in pool.items():
         f = fly.get(sym) or {}
@@ -399,7 +401,30 @@ def run() -> dict[str, Any]:
         else:
             lane = "off"
 
+        # explainability contract — every List entry carries its why:
+        # the evidence legs that drove the composite + the honest
+        # counter-weight + the rule that placed it in the lane
+        top = sorted(parts.items(), key=lambda kv: -abs(kv[1]))[:3]
+        counter = []
+        if valuation in ("extreme", "elevated"):
+            counter.append(f"valuation {valuation}"
+                           + (f" (fwd P/E {pe:.0f})" if pe else ""))
+        if broken:
+            counter.append(f"tape broken ({state})")
+        if gq_adj < 0:
+            counter.append(f"growth-quality drag {gq_adj:+.1f}")
+        rule = ("score≥55 + not broken + valuation ok → deploy"
+                if lane == "deploy" else
+                "score≥50 or future≥45 → watch"
+                if lane == "watch" else "below lanes → off")
+        why = explain(lane, basis=[{"name": k, "value": v}
+                                   for k, v in top],
+                      counter=counter, rule=rule,
+                      refs=[{"table": "symbol_flywheel", "symbol": sym},
+                            {"table": "stocks", "symbol": sym}])
+
         rows.append({"symbol": sym, "score": score, "lane": lane,
+                     "why": why,
                      "future_score": fut, "future_themes": fut_themes,
                      "parts": parts, "sources": sorted(set(p["sources"])),
                      "n_sources": n_src, "theme": th.get("theme"),
@@ -451,10 +476,10 @@ def _journal(today: date, rows: list[dict]):
             " (snap_date, symbol, rank, score, lane, parts, sources,"
             " n_sources, theme, theme_score, fwd_pe, valuation,"
             " momentum_state, dd52w, daily_pick, engine_version,"
-            " future_score)"
+            " future_score, why)"
             " VALUES (:d,:s,:rk,:sc,:ln,CAST(:pa AS jsonb),"
             " CAST(:so AS jsonb),:ns,:th,:ts,:pe,:va,:mo,:dd,:dp,:v,"
-            " :fs)"
+            " :fs,CAST(:w AS jsonb))"
             " ON CONFLICT (snap_date, symbol) DO UPDATE SET"
             " rank=EXCLUDED.rank, score=EXCLUDED.score,"
             " lane=EXCLUDED.lane, parts=EXCLUDED.parts,"
@@ -463,7 +488,8 @@ def _journal(today: date, rows: list[dict]):
             " fwd_pe=EXCLUDED.fwd_pe, valuation=EXCLUDED.valuation,"
             " momentum_state=EXCLUDED.momentum_state,"
             " dd52w=EXCLUDED.dd52w, daily_pick=EXCLUDED.daily_pick,"
-            " future_score=EXCLUDED.future_score",
+            " future_score=EXCLUDED.future_score,"
+            " why=EXCLUDED.why",
             {"d": today, "s": r["symbol"], "rk": r["rank"],
              "sc": r["score"], "ln": r["lane"],
              "fs": r.get("future_score"),
@@ -472,6 +498,7 @@ def _journal(today: date, rows: list[dict]):
              "ts": r.get("theme_score"), "pe": r.get("fwd_pe"),
              "va": r.get("valuation"), "mo": r.get("momentum"),
              "dd": r.get("dd52w"), "dp": bool(r.get("daily_pick")),
+             "w": json.dumps(r.get("why")),
              "v": ENGINE_VERSION})
 
 

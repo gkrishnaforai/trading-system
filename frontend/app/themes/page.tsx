@@ -70,6 +70,10 @@ function ThemeRow({ k, t }: { k: string; t: ThemeCard }) {
         </div>
       </div>
 
+      {t.why?.summary && (
+        <p className="pt-2 text-[11px] leading-snug text-muted">{t.why.summary}</p>
+      )}
+
       <div className="pt-2 grid grid-cols-3 gap-4">
         <div>
           <div className="text-[9px] uppercase tracking-wider text-faint">expected</div>
