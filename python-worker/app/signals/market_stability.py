@@ -39,18 +39,90 @@ _ET = ZoneInfo("America/New_York")
 _AI_LEADERS = ("NVDA", "AMD", "AVGO", "SMH")
 _CREDIT_ETFS = ("HYG", "LQD")
 
-# fixed session marks (ET) — the journaled mark column
+# fixed session marks (ET) — the journaled mark column. The full arc:
+# premarket (before 9:30) → open → ~hourly marks → close → afterhours,
+# so the journal itself is a versioned record of the whole day.
 _MARKS = [(dtime(10, 0), "30m"), (dtime(10, 30), "60m"),
-          (dtime(12, 30), "midday"), (dtime(15, 45), "close")]
+          (dtime(11, 0), "h11"), (dtime(12, 30), "midday"),
+          (dtime(13, 0), "h13"), (dtime(14, 0), "h14"),
+          (dtime(15, 0), "h15"), (dtime(15, 45), "close"),
+          (dtime(16, 0), "afterhours")]
 
 
 def _mark(now: datetime) -> str:
     t = now.time()
+    if t < dtime(9, 30):
+        return "premarket"
     name = "open"
     for thr, m in _MARKS:
         if t >= thr:
             name = m
     return name
+
+
+# the day-spine — marks kept past the weekly retention window;
+# intermediate marks expire (their signal lives in the spine's
+# expectation_check deltas)
+_KEEP_MARKS = ("premarket", "open", "close", "afterhours")
+
+
+# next-phase bias values the engine predicts — journaled per mark and
+# graded by the mark that follows, so the journal itself accumulates a
+# prediction-vs-realized record for the learning loop
+_NEXT_MARK = {"premarket": "open", "open": "30m", "30m": "60m",
+              "60m": "h11", "h11": "midday", "midday": "h13",
+              "h13": "h14", "h14": "h15", "h15": "close",
+              "close": "afterhours", "afterhours": None}
+
+
+def _expectation(readings: dict, prev: Optional[dict]) -> dict:
+    """Bounded forecast for the NEXT mark — journaled with each mark so
+    the journal is a prediction set: expectation vs what the next mark
+    realized. Bias is a direction call (stabilizing/steady/fading), not
+    a restatement of the delta."""
+    cur_label = readings.get("stability_label")
+    cur_checks = readings.get("checks_met")
+    prev_checks = (prev or {}).get("checks_met")
+    slope = (cur_checks - prev_checks
+             if cur_checks is not None and prev_checks is not None
+             else None)
+    if slope is not None and slope > 0:
+        bias = "stabilizing"
+    elif slope is not None and slope < 0:
+        bias = "fading"
+    elif cur_label in ("stable", "stabilizing"):
+        bias = "steady"
+    elif cur_label == "unstable":
+        bias = "fading"
+    else:
+        bias = "uncertain"
+    basis = []
+    if slope is not None:
+        basis.append(f"checks {prev_checks}→{cur_checks}")
+    else:
+        basis.append("first mark of session")
+    chg = readings.get("qqq_chg_open_pct")
+    if chg is not None:
+        basis.append(f"qqq {chg:+.2f}% vs open")
+    return {"for_mark": _NEXT_MARK.get(readings.get("mark")),
+            "bias": bias, "basis": basis}
+
+
+def _grade_expectation(expectation: dict, realized: dict) -> str:
+    """prior mark's predicted bias vs the realized label — hit/miss;
+    'uncertain' calls are ungraded (the engine said so)."""
+    bias = (expectation or {}).get("bias")
+    label = (realized or {}).get("stability_label")
+    checks = (realized or {}).get("checks_met")
+    if not bias or bias == "uncertain" or not label:
+        return "ungraded"
+    up = label in ("stable", "stabilizing")
+    down = label in ("unstable", "mixed")
+    if bias == "stabilizing":
+        return "hit" if up else "miss"
+    if bias == "fading":
+        return "hit" if down else "miss"
+    return "hit" if label in ("stable", "stabilizing", "mixed") else "miss"
 
 
 def _minutes_above(bars: list[dict], vwap: Optional[float]) -> dict:
@@ -291,6 +363,29 @@ def run() -> dict[str, Any]:
     r = evaluate()
     if r.get("state") == "no_data":
         return r
+    # versioned-forecast layer — the prior mark carries this mark's
+    # expectation; grade it and write the next one. The journal is a
+    # prediction-vs-realized set the engine can learn from.
+    try:
+        today = date.today().isoformat()
+        prev_rows = db.execute_query(
+            "SELECT mark, readings FROM market_stability_snapshots"
+            " WHERE session_date=:d ORDER BY ts DESC LIMIT 1",
+            {"d": today})
+        prev = prev_rows[0] if prev_rows else None
+        prev_read = (prev or {}).get("readings") or {}
+        if isinstance(prev_read, str):
+            prev_read = json.loads(prev_read)
+        prev_exp = prev_read.get("expectation")
+        if prev_exp and prev_exp.get("for_mark") == r.get("mark"):
+            r["expectation_check"] = {
+                "predicted": prev_exp.get("bias"),
+                "realized": r.get("stability_label"),
+                "grade": _grade_expectation(prev_exp, r),
+                "predicted_at_mark": prev.get("mark")}
+        r["expectation"] = _expectation(r, prev_read or None)
+    except Exception as exc:
+        logger.debug("stability expectation: %s", exc)
     # session entries — score the journaled selloff candidates
     # against today's tape: who is ACCUMULATING vs just bouncing.
     # The SBD journal supplies the fundamental leg; this adds the
@@ -436,3 +531,18 @@ def tape_overlay(canonical: Optional[str]) -> Optional[dict]:
         out["call"] = (f"Tape reads {label or 'unread'}"
                        f"{f' (mss {mss})' if mss else ''}" + tail + ".")
     return out
+
+
+def purge(retain_days: int = 7) -> dict:
+    """Weekly retention — drop intermediate marks older than
+    `retain_days`. The day-spine (premarket/open/close/afterhours)
+    persists: it's the graded-prediction record the engine learns
+    from; the hourly marks' marginal value decays fast."""
+    from app.database import db
+    n = db.execute_update(
+        "DELETE FROM market_stability_snapshots"
+        " WHERE session_date < CURRENT_DATE - CAST(:d || ' days' AS interval)"
+        " AND mark <> ALL(:keep)",
+        {"d": retain_days, "keep": list(_KEEP_MARKS)})
+    return {"purged": n, "retained_marks": list(_KEEP_MARKS),
+            "retain_days": retain_days}

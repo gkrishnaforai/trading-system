@@ -62,12 +62,16 @@ export function SessionTape({ tape }: { tape: IntradayTape | null }) {
   const br = tape?.base_rate
   const obr = tape?.open_base_rate
   const slots = tape?.premarket?.slots ?? []
-  const pmF = slots.find((s) => s.slot === 'final')
-  const pmE = slots.find((s) => s.slot === 'early')
-  const pm = pmF ?? pmE
+  const sorted = [...slots].sort((a, b) =>
+    (a.ts ?? '').localeCompare(b.ts ?? ''))
+  const pmFirst = sorted[0]
+  const pmLast = sorted[sorted.length - 1]
+  const pm = pmLast ?? pmFirst
   const pmDrift =
-    pmF?.qqq_gap != null && pmE?.qqq_gap != null
-      ? pmF.qqq_gap - pmE.qqq_gap
+    pmFirst?.qqq_gap != null &&
+    pmLast?.qqq_gap != null &&
+    pmFirst.slot !== pmLast.slot
+      ? pmLast.qqq_gap - pmFirst.qqq_gap
       : null
 
   return (
@@ -87,7 +91,7 @@ export function SessionTape({ tape }: { tape: IntradayTape | null }) {
       {pm && (
         <div className="pt-1.5 font-mono text-[11px] text-faint"
           title="journaled pre-market snapshot — extended-hours gap vs prior close, crypto 24h; early→final drift shows the gap firming or fading into the open">
-          premarket{pmF ? '' : ' (early)'}:{' '}
+          premarket{pm?.slot && pm.slot !== 'final' ? ` (${pm.slot})` : ''}:{' '}
           {[
             pm.qqq_gap != null && `QQQ ${pm.qqq_gap >= 0 ? '+' : ''}${(pm.qqq_gap * 100).toFixed(1)}%`,
             pm.smh_gap != null && `SMH ${pm.smh_gap >= 0 ? '+' : ''}${(pm.smh_gap * 100).toFixed(1)}%`,

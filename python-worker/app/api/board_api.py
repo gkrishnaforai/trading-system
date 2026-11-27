@@ -955,11 +955,19 @@ async def _j_intraday() -> dict:
 
 async def _j_premarket() -> dict:
     """Pre-market snapshot — equity gap vs prior close (SPY/QQQ/SMH
-    extended-hours) + crypto 24h change. Fires ~8:25 and ~9:25 ET;
-    the early→final drift shows whether the gap firmed or faded into
-    the open. Journaled now so gap→outcome base rates can accrue."""
+    extended-hours) + crypto 24h change. Fires every 30 min from
+    4:00 ET — hourly versioned slots (h04..h08, final) so the gap's
+    firm/fade drift is journaled per hour into the open."""
     from app.signals import premarket
     return await asyncio.to_thread(premarket.snapshot)
+
+
+async def _j_tape_purge() -> dict:
+    """Weekly session-tape retention — intermediate marks older than
+    7d drop; the day-spine (premarket/open/close/afterhours) persists
+    as the graded-prediction record."""
+    from app.signals import market_stability
+    return await asyncio.to_thread(market_stability.purge)
 
 
 async def _j_intraday_recovery() -> dict:
@@ -1347,6 +1355,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "short-squeeze": ("Squeeze + covering eval", _j_short_squeeze),
     "premarket-tape": ("Pre-market gap + crypto snapshot",
                        _j_premarket),
+    "tape-purge":   ("Session tape retention (weekly)", _j_tape_purge),
     "intraday-tape": ("Intraday tape classifier", _j_intraday),
     "intraday-regime": ("Intraday regime overlay",
                         _j_intraday_regime),

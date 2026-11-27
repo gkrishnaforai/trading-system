@@ -25,7 +25,11 @@ _ET = ZoneInfo("America/New_York")
 
 
 def _slot(now_et: datetime) -> str:
-    return "early" if now_et.hour < 9 else "final"
+    # hourly versioned slots — coverage starts at pre-market open
+    # (4:00 ET): h04..h08 then 'final' at 9:00+, so the gap's
+    # firm/fade drift is journaled per hour, not just twice.
+    h = now_et.hour
+    return "final" if h >= 9 else f"h{h:02d}"
 
 
 def _pm_last(sym: str) -> Optional[float]:
