@@ -244,6 +244,18 @@ stock_screener_service = StockScreenerService()
 fundamental_scorer = FundamentalScorer()
 universal_alert_scheduler = UniversalScheduler()
 
+# Strong refs for background tasks — asyncio.create_task results held
+# nowhere can be garbage-collected mid-run: the task just disappears,
+# no exception, no log. The scheduler dying silently while the API
+# stayed healthy is exactly that failure shape.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+def _spawn(coro) -> asyncio.Task:
+    t = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(t)
+    t.add_done_callback(_BACKGROUND_TASKS.discard)
+    return t
+
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
@@ -251,37 +263,37 @@ async def startup_event():
     init_database()
     enable_universal_scheduler = os.getenv("ENABLE_UNIVERSAL_ALERT_SCHEDULER", "true").strip().lower() == "true"
     if enable_universal_scheduler:
-        asyncio.create_task(universal_alert_scheduler.start_scheduler())
+        _spawn(universal_alert_scheduler.start_scheduler())
     else:
         logger.info("⏭️ Universal alert scheduler disabled via ENABLE_UNIVERSAL_ALERT_SCHEDULER")
 
     enable_macro_sched = os.getenv("ENABLE_MACRO_DAILY_SCHEDULER", "false").strip().lower() == "true"
     if enable_macro_sched:
-        asyncio.create_task(_macro_daily_loop())
+        _spawn(_macro_daily_loop())
         logger.info("✅ Macro daily scheduler enabled via ENABLE_MACRO_DAILY_SCHEDULER")
     else:
         logger.info("⏭️ Macro daily scheduler disabled via ENABLE_MACRO_DAILY_SCHEDULER")
 
     enable_alert_scan = os.getenv("ENABLE_ALERT_SCAN_SCHEDULER", "true").strip().lower() == "true"
     if enable_alert_scan:
-        asyncio.create_task(_alert_scan_loop())
+        _spawn(_alert_scan_loop())
         logger.info("✅ Alert scan scheduler enabled via ENABLE_ALERT_SCAN_SCHEDULER")
     else:
         logger.info("⏭️ Alert scan scheduler disabled via ENABLE_ALERT_SCAN_SCHEDULER")
 
     enable_analyst_tape = os.getenv("ENABLE_ANALYST_TAPE_SCHEDULER", "true").strip().lower() == "true"
     if enable_analyst_tape:
-        asyncio.create_task(_analyst_tape_loop())
+        _spawn(_analyst_tape_loop())
         logger.info("✅ Analyst tape scheduler enabled via ENABLE_ANALYST_TAPE_SCHEDULER")
     else:
         logger.info("⏭️ Analyst tape scheduler disabled via ENABLE_ANALYST_TAPE_SCHEDULER")
 
     if os.getenv("ENABLE_CUSTODIAN", "true").strip().lower() == "true":
-        asyncio.create_task(_custodian_loop())
+        _spawn(_custodian_loop())
         logger.info("✅ Custodian (support agent) enabled via ENABLE_CUSTODIAN")
 
     if os.getenv("ENABLE_JOB_SCHEDULER", "true").strip().lower() == "true":
-        asyncio.create_task(_scheduler_loop())
+        _spawn(_scheduler_loop())
         logger.info("✅ Job scheduler enabled via ENABLE_JOB_SCHEDULER")
     logger.info("✅ Python Worker API started")
 
@@ -293,14 +305,21 @@ async def _scheduler_loop():
     flip a schedule on."""
     from app.support import scheduler
     await asyncio.sleep(45)   # settle before first tick
+    # to_thread has no timeout — a wedged call (e.g. a dead connection
+    # grabbed during a postgres restart race) used to block this task
+    # FOREVER: the scheduler silently never reached the tick loop while
+    # the API looked healthy. Bound every startup step; a failure must
+    # log and continue, never stall the dispatcher.
     try:
-        n = await asyncio.to_thread(scheduler.sync_registry)
+        n = await asyncio.wait_for(
+            asyncio.to_thread(scheduler.sync_registry), timeout=120)
         logger.info("job registry synced: %s jobs", n)
     except Exception as e:
         logger.error(f"registry sync failed: {e}")
     try:
         from app.market_regime.index_book import ensure_index_book
-        added = await asyncio.to_thread(ensure_index_book)
+        added = await asyncio.wait_for(
+            asyncio.to_thread(ensure_index_book), timeout=180)
         if added:
             logger.info("indexes book: %s tracking units added", added)
     except Exception as e:

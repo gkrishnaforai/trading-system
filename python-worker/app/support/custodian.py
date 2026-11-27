@@ -49,6 +49,13 @@ _MANUAL_STEPS = [
      "1. job_runs → flywheel/refresh errors.  2. FMP fundamentals "
      "endpoint health.  3. Kick the refresh job; watch job_runs for "
      "a clean completion."),
+    ("scheduler:silent",
+     "1. job_runs.max(ran_at) older than ~1h means the scheduler loop "
+     "never reached its tick (wedged startup call or dead task) — "
+     "restart the worker container.  2. worker log around boot for "
+     "'registry sync failed'/'indexes book ensure failed' or a missing "
+     "'job registry synced' line.  3. If it recurs, the startup "
+     "to_thread calls need shorter timeouts."),
     ("scan:alerts",
      "1. Worker log → alert scan traceback.  2. Provider connectivity "
      "from inside the worker container.  3. Re-run the scan; if it "
@@ -175,6 +182,27 @@ def _sense() -> list[dict[str, Any]]:
         except Exception:
             pass
 
+    # dispatcher heartbeat — the 'custodian' job alone journals to
+    # job_runs every ~10min; a max(ran_at) older than 60min means the
+    # scheduler loop is dead or wedged, not that nothing was due.
+    # (A wedged startup to_thread once froze every job for days while
+    # the API stayed healthy — exactly this signature.)
+    try:
+        m = db.execute_query(
+            "SELECT max(ran_at) m FROM job_runs")[0].get("m")
+        if m:
+            silent_min = (datetime.now(timezone.utc)
+                          - m.replace(tzinfo=timezone.utc)
+                          ).total_seconds() / 60
+            if silent_min > 60:
+                findings.append({
+                    "signature": "scheduler:silent", "source": "jobs",
+                    "severity": "high",
+                    "detail": {"last_job_ran_at": str(m),
+                               "silent_min": round(silent_min)}})
+    except Exception:
+        pass
+
     # schema drift — expected tables (per the migration contract)
     # that Postgres can't resolve. Catches dropped/missing relations
     # even when the app swallows the write errors at debug level.
@@ -212,6 +240,8 @@ _RULES = [
     ("stale:flywheel", "kick flywheel refresh", "kick:flywheel", 2),
     ("schema:missing", "missing relation — apply pending migrations "
      "or restore the drop", "escalate", 3),
+    ("scheduler:silent", "dispatcher silent — scheduler loop wedged or "
+     "dead; restart the worker", "escalate", 3),
     ("db:unreachable", "DB unreachable — human check required",
      "escalate", 3),
 ]

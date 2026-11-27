@@ -85,8 +85,11 @@ def _mark(job: str, run_id: str = "", **kw):
             {"n": job, "d": dur, "e": (kw.get("error") or "")[:500]
              or None,
              "r": payload, "rid": rid})
-    except Exception:
-        pass
+    except Exception as exc:
+        # silent ledger failure hid a missing column for days once —
+        # log it; the job result itself is already in memory
+        logger.warning("job_runs ledger write failed for %s: %s",
+                       job, exc)
 
 
 async def _tracked_symbols() -> list[str]:

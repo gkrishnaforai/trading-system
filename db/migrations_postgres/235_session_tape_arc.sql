@@ -18,7 +18,7 @@ UPDATE job_definitions
 -- at 9:00-9:29, open→close hourly marks, afterhours 16:00-20:00.
 UPDATE job_definitions
    SET cron = '*/15 9-20 * * 1-5', timezone = 'America/New_York',
-       updated_at = NOW()
+       enabled = true, updated_at = NOW()
  WHERE name = 'market-stability';
 
 -- weekly retention — spine marks persist, intermediates expire >7d.
@@ -26,8 +26,8 @@ INSERT INTO job_definitions (name, label, purpose, cron, enabled,
                              priority)
 VALUES ('tape-purge', 'Session tape retention (weekly)',
         'market_stability_snapshots older than 7d drop intermediate'
-        ' marks; day-spine (premarket/open/close/afterhours) persists'
-        ' as the graded-prediction record',
+        ' marks — day-spine (premarket/open/close/afterhours)'
+        ' persists as the graded-prediction record',
         '0 0 * * 0', true, 80)
 ON CONFLICT (name) DO UPDATE SET cron = EXCLUDED.cron,
     enabled = true, updated_at = NOW();
