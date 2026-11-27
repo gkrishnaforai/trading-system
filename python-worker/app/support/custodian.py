@@ -84,14 +84,17 @@ def _raise_technical_alert(sig: str, diagnosis: str, severity: str,
     from app.database import db
     steps = _manual_steps(sig)
     try:
+        # priority 10 — events consume priority DESC against routine
+        # traffic (priority 3); an escalation must not queue behind a
+        # multi-million-row backlog to notify the human.
         db.execute_update(
             """INSERT INTO universal_events
                    (event_id, event_type, entity_type, entity_id,
                     event_data, event_timestamp, data_source,
-                    processing_status)
+                    processing_status, priority)
                VALUES (gen_random_uuid(), 'custodian_escalation',
                        'system', :sig, CAST(:d AS jsonb), now(),
-                       'custodian', 'pending')""",
+                       'custodian', 'pending', 10)""",
             {"sig": sig,
              "d": _j({"signature": sig, "diagnosis": diagnosis,
                       "severity": severity, "attempts": attempts,
@@ -216,6 +219,24 @@ def _sense() -> list[dict[str, Any]]:
                            "note": "expected by migrations, absent in "
                                    "Postgres — apply migration or "
                                    "restore the drop"}})
+    except Exception:
+        pass
+
+    # event-queue backlog — escalations ride universal_events; a deep
+    # pending count means notifications (including custodian's own)
+    # sit unprocessed behind routine traffic.
+    try:
+        n = db.execute_query(
+            "SELECT count(*) c FROM universal_events"
+            " WHERE processing_status = 'pending'")[0].get("c") or 0
+        if n > 500_000:
+            findings.append({
+                "signature": "queue:universal_events:backlog",
+                "source": "queue",
+                "severity": "high" if n > 2_000_000 else "medium",
+                "detail": {"pending": n,
+                           "note": "alert pipeline is behind — "
+                                   "escalations ride this queue"}})
     except Exception:
         pass
 

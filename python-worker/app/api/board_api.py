@@ -3640,6 +3640,55 @@ async def custodian_incidents():
     return await asyncio.to_thread(custodian.incidents)
 
 
+@router.get("/system-health")
+async def system_health():
+    """One-glance ops payload for the admin strip — scheduler
+    heartbeat (max job_runs age; silence = wedged dispatcher), event
+    queue depth (escalations ride this), provider failure rate, and
+    open incidents. Everything here is journaled state — this never
+    triggers heavy work."""
+    from app.database import db
+    out: dict = {}
+
+    def _one(sql, params=None):
+        try:
+            r = db.execute_query(sql, params or {})
+            return r[0] if r else {}
+        except Exception:
+            return {}
+
+    last = _one("SELECT max(ran_at) m FROM job_runs").get("m")
+    out["heartbeat"] = {
+        "last_job_at": str(last) if last else None,
+        "silent_min": round((datetime.now(timezone.utc)
+                             - last.replace(tzinfo=timezone.utc)
+                             ).total_seconds() / 60, 1)
+        if last else None}
+    q = _one("SELECT count(*) FILTER (WHERE processing_status='pending')"
+             " p, count(*) FILTER (WHERE processing_status='failed') f"
+             " FROM universal_events")
+    out["queue"] = {"pending": q.get("p") or 0,
+                    "failed": q.get("f") or 0}
+    f = _one("SELECT count(*) c, count(DISTINCT provider) p"
+             " FROM fetch_failures"
+             " WHERE occurred_at > now() - interval '24 hours'")
+    out["provider_failures_24h"] = {"count": f.get("c") or 0,
+                                    "providers": f.get("p") or 0}
+    i = _one("SELECT count(*) FILTER (WHERE status != 'resolved') o,"
+             " count(*) FILTER (WHERE status='escalated') e"
+             " FROM custodian_incidents")
+    out["incidents"] = {"open": i.get("o") or 0,
+                        "escalated": i.get("e") or 0}
+    e = _one("SELECT count(*) c FROM job_runs"
+             " WHERE ran_at > now() - interval '24 hours'"
+             "   AND error IS NOT NULL")
+    out["job_errors_24h"] = e.get("c") or 0
+    j = _one("SELECT count(*) c FROM job_runs"
+             " WHERE ran_at > now() - interval '1 hour'")
+    out["jobs_last_hour"] = j.get("c") or 0
+    return out
+
+
 @router.post("/incidents/{signature}/resolve")
 async def incident_resolve(signature: str):
     """Human acknowledgement — mark an incident resolved. If the

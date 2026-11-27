@@ -1,5 +1,6 @@
 import { getUser } from '@/lib/auth'
-import { jobCatalog, jobRuns, incidents, type JobRow } from '@/lib/admin'
+import { jobCatalog, jobRuns, incidents, systemHealth,
+         type JobRow } from '@/lib/admin'
 import { JobActions, RunAll } from '@/components/admin-jobs'
 import AdminFv from '@/components/admin-fv'
 
@@ -128,14 +129,17 @@ export default async function AdminPage() {
     )
   }
 
-  const [jobs, runs, inc] = await Promise.all([
-    jobCatalog(), jobRuns(20), incidents(),
+  const [jobs, runs, inc, health] = await Promise.all([
+    jobCatalog(), jobRuns(20), incidents(), systemHealth(),
   ])
 
   const open = Array.isArray(inc?.open) ? (inc.open as unknown[]) : []
   const actions = Array.isArray(inc?.actions) ? (inc.actions as Record<string, unknown>[]) : []
   const errors = jobs.filter((j) => j.last_error).length
   const scheduled = jobs.filter((j) => j.enabled && j.cron).length
+  const silentMin = health?.heartbeat?.silent_min ?? null
+  const queued = health?.queue?.pending ?? 0
+  const escalated = health?.incidents?.escalated ?? 0
 
   return (
     <main className="mx-auto max-w-4xl px-5 pb-20">
@@ -159,6 +163,52 @@ export default async function AdminPage() {
         </div>
         <RunAll />
       </header>
+
+      {/* system health — the ops heartbeat: scheduler silence, queue
+          depth (escalations ride it), provider failures, escalations.
+          An off-box watchdog (uptime workflow + custodian-watch's
+          dead-man ping) covers the case where the box itself is down
+          and this page can't load at all. */}
+      <section className="mb-6 rounded-xl border border-hairline bg-card px-5 py-4">
+        <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+          System
+        </div>
+        <div className="pt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[13px]">
+          <span className={
+            silentMin == null ? 'text-faint'
+            : silentMin <= 15 ? 'text-aggressive'
+            : 'text-defensive'}>
+            {silentMin == null
+              ? 'heartbeat —'
+              : silentMin <= 15
+                ? `heartbeat ${Math.round(silentMin)}m ago`
+                : `⚠ scheduler silent ${Math.round(silentMin)}m`}
+          </span>
+          <span className={
+            queued <= 500_000 ? 'text-muted' : 'text-defensive'}>
+            queue {queued >= 1_000_000
+              ? `${(queued / 1_000_000).toFixed(1)}M`
+              : queued >= 1_000 ? `${Math.round(queued / 1_000)}k`
+              : queued} pending
+          </span>
+          <span className={
+            (health?.job_errors_24h ?? 0) === 0
+              ? 'text-muted' : 'text-caution'}>
+            {health?.job_errors_24h ?? 0} job errors 24h
+          </span>
+          <span className={
+            (health?.provider_failures_24h?.count ?? 0) <= 50
+              ? 'text-muted' : 'text-caution'}>
+            {health?.provider_failures_24h?.count ?? 0} provider fails 24h
+          </span>
+          <span className={escalated > 0 ? 'text-defensive' : 'text-muted'}>
+            {escalated} escalated
+          </span>
+          <span className="text-faint">
+            {health?.jobs_last_hour ?? 0} jobs/hr
+          </span>
+        </div>
+      </section>
 
       {/* job catalog — schedule + run controls */}
       <section className="rounded-xl border border-hairline bg-card px-5 py-2">

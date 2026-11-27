@@ -42,3 +42,17 @@ export async function incidents(): Promise<Record<string, unknown> | null> {
   return getRaw<Record<string, unknown>>(
     '/api/v1/board/incidents', { fresh: true })
 }
+
+export type SystemHealth = {
+  heartbeat?: { last_job_at?: string | null; silent_min?: number | null }
+  queue?: { pending?: number; failed?: number }
+  provider_failures_24h?: { count?: number; providers?: number }
+  incidents?: { open?: number; escalated?: number }
+  job_errors_24h?: number
+  jobs_last_hour?: number
+}
+
+export async function systemHealth(): Promise<SystemHealth | null> {
+  return getRaw<SystemHealth>(
+    '/api/v1/board/system-health', { fresh: true })
+}

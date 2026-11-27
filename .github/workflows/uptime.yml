@@ -1,0 +1,96 @@
+# External uptime watchdog — the layer that sees what nothing on the
+# box can: the host being down. Runs on GitHub's runners (off-box by
+# definition), every 10 minutes.
+#
+# What it does on failure:
+#   1. Opens/updates a GitHub issue tagged `uptime` (visible in repo)
+#   2. The run itself fails red → GitHub emails all repo watchers the
+#      standard "workflow run failed" notification — no SMTP needed.
+#
+# Configure the probe targets as repository *variables* (Settings →
+# Secrets and variables → Actions → Variables):
+#   WATCH_SITE_URL    — the public frontend (default: the sslip URL)
+#   WATCH_WORKER_URL  — the worker /health endpoint (optional)
+#
+# This complements custodian-watch: the sidecar sees *container*
+# deaths while the host is alive; this workflow sees *host* deaths
+# because GitHub runs the probe, not the box. Set HEALTHCHECKS_URL on
+# custodian-watch too — belt and suspenders, different detectors.
+
+name: uptime-watch
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:          # manual probe
+
+permissions:
+  issues: write               # to open the incident issue
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe site + worker
+        id: probe
+        env:
+          SITE: ${{ vars.WATCH_SITE_URL }}
+          WORKER: ${{ vars.WATCH_WORKER_URL }}
+        run: |
+          set +e
+          SITE=${SITE:-http://1mhw8vfcjasbodrmaodwxe5g.2.25.243.217.sslip.io/}
+          WORKER=${WORKER:-http://2.25.243.217:8001/health}
+          FAIL=""
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$SITE")
+          echo "site $SITE -> $code"
+          [ "$code" = "200" ] || FAIL="$FAIL site($code)"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$WORKER")
+          echo "worker $WORKER -> $code"
+          [ "$code" = "200" ] || FAIL="$FAIL worker($code)"
+          echo "fail=$FAIL" >> "$GITHUB_OUTPUT"
+          [ -z "$FAIL" ]
+
+      - name: Open incident issue
+        if: failure() && steps.probe.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `[uptime] probe failed ${new Date().toISOString().slice(0,16)}Z`
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'uptime', per_page: 1 })
+            const body =
+              `External watchdog probe failed.\n\n` +
+              `Run: ${context.serverUrl}/${context.repo.owner}/` +
+              `${context.repo.repo}/actions/runs/${context.runId}\n\n` +
+              `The site and/or worker health endpoint did not answer ` +
+              `within the probe timeout. If this stays red, the host ` +
+              `or the whole compose stack is down — on-box sensors ` +
+              `(custodian-watch, in-worker custodian) die with it.`
+            if (open.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: open[0].number, body })
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['uptime'] })
+            }
+
+      - name: Probe recovered — close open uptime issue
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'uptime', per_page: 5 })
+            for (const i of open) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: i.number,
+                body: 'Probe green again — auto-closing.' })
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: i.number, state: 'closed' })
+            }
