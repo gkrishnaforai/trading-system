@@ -3,6 +3,7 @@ import { api, type PulseBook, type PulseRow } from '@/lib/api'
 import { WatchlistCard } from '@/components/watchlist'
 import { TIER_LIMITS, currentTier } from '@/lib/tier'
 import { listPortfolios, listHoldings } from '@/lib/portfolio'
+import { getUser } from '@/lib/auth'
 import {
   AddHoldingForm, AddPositionDock, BookSelect, DeleteBookButton,
   HoldingRow as UserHoldingRow, NewPortfolioForm,
@@ -305,10 +306,16 @@ export default async function PortfolioPage({
 }: {
   searchParams: { p?: string }
 }) {
+  const user = await getUser().catch(() => null)
+  // non-admin sees only their own books — pass user_id so the
+  // aggregate 'book' view unions THEIR holdings, not everyone's
+  const uid = user?.role === 'admin' ? undefined : user?.id
   const [pulse, portfolios, alerts] = await Promise.all([
-    api.portfolioPulse(),
+    api.portfolioPulse(undefined, uid),
     listPortfolios(),
-    api.alerts({ hours: 36 }).catch(() => null),
+    user?.role === 'admin'
+      ? api.alerts({ hours: 36 }).catch(() => null)
+      : Promise.resolve(null),
   ])
   const tier = currentTier()
   const limit = TIER_LIMITS[tier].portfolios
@@ -317,7 +324,7 @@ export default async function PortfolioPage({
   const selected = portfolios.find((p) => p.id === sel)
   const [scoped, holdings] = selected
     ? await Promise.all([
-      api.portfolioPulse(selected.id),
+      api.portfolioPulse(selected.id, uid),
       listHoldings(selected.id),
     ])
     : [null, null]

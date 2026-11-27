@@ -1026,6 +1026,168 @@ function StockSkeleton({ sym }: { sym: string }) {
   )
 }
 
+/** Factual-only view for non-admin — company facts, price, earnings
+    dates and SEC-filing metrics. Advisory layers (verdict, fair
+    value, thesis, tape call, scores) stay admin-only. */
+function StockFacts({ sym, card }: {
+  sym: string
+  card: Record<string, unknown>
+}) {
+  const earnings = obj(card.earnings)
+  const sec = obj(card.sec)
+  const multiples = obj(card.multiples)
+  const lastPrint = obj(card.last_print)
+  const spark = Array.isArray(card.spark)
+    ? (card.spark as unknown[]).map(Number).filter(Number.isFinite)
+    : []
+  const fund = obj(card.fundamental)
+  const fundDetail = obj(fund?.detail) ?? {}
+  const cur = obj(fundDetail.cur) ?? {}
+
+  return (
+    <main className="mx-auto max-w-5xl px-5 pb-20">
+      <div className="pt-6 pb-2 text-xs">
+        <Link href="/portfolio" className="text-faint hover:text-accent">
+          ← portfolio
+        </Link>
+      </div>
+
+      <header className="pb-6">
+        <div className="flex items-baseline justify-between gap-4">
+          <h1 className="font-semibold text-display text-ink">
+            {sym}
+            <span className="ml-3 align-middle"><WatchToggle sym={sym} /></span>
+          </h1>
+          <div className="font-mono text-2xl text-ink">
+            {money(card.spot)}
+          </div>
+        </div>
+        <PriceMultiples m={multiples} />
+        <div className="pt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted">
+          {card.name != null && <span>{String(card.name)}</span>}
+          {card.sector != null && (
+            <span className="text-faint">· {String(card.sector)}</span>
+          )}
+          {card.market_cap != null && (
+            <span className="font-mono text-xs text-faint">
+              ${(Number(card.market_cap) / 1e9).toFixed(1)}B
+            </span>
+          )}
+        </div>
+        <div className="pt-1.5"><EarningsBlock e={earnings} /></div>
+        {spark.length >= 5 && (
+          <Sparkline closes={spark} spot={num(card.spot)}
+            asOf={card.spark_as_of ? String(card.spark_as_of) : null} />
+        )}
+      </header>
+
+      {/* fundamentals — realized numbers only, no state chip */}
+      {Object.keys(cur).length > 0 && (
+        <section className="rounded-xl border border-hairline bg-card px-5 py-4">
+          <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+            Fundamentals
+          </span>
+          <div className="pt-3 grid grid-cols-2 gap-y-1.5 text-sm sm:grid-cols-3">
+            {cur.rev_growth != null && (
+              <div>
+                <span className="text-faint">rev growth </span>
+                <span className="font-mono text-ink">
+                  {(Number(cur.rev_growth) * 100).toFixed(0)}%
+                </span>
+              </div>
+            )}
+            {cur.eps_growth != null && (
+              <div>
+                <span className="text-faint">eps growth </span>
+                <span className="font-mono text-ink">
+                  {(Number(cur.eps_growth) * 100).toFixed(0)}%
+                </span>
+              </div>
+            )}
+            {cur.gross_margin != null && (
+              <div>
+                <span className="text-faint">gross margin </span>
+                <span className="font-mono text-ink">
+                  {(Number(cur.gross_margin) * 100).toFixed(0)}%
+                </span>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* last realized print — reported numbers, no beat/miss call */}
+      {lastPrint && (
+        <section className="mt-2 rounded-xl border border-hairline bg-card px-5 py-4">
+          <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+            Last earnings print
+          </span>
+          <div className="pt-3 flex flex-wrap gap-x-6 gap-y-1.5 text-sm">
+            {lastPrint.date != null && (
+              <span className="font-mono text-faint">
+                {String(lastPrint.date)}
+              </span>
+            )}
+            {lastPrint.eps_actual != null && (
+              <span>
+                <span className="text-faint">EPS </span>
+                <span className="font-mono text-ink">
+                  {String(lastPrint.eps_actual)}
+                </span>
+              </span>
+            )}
+            {lastPrint.revenue_actual != null && (
+              <span>
+                <span className="text-faint">revenue </span>
+                <span className="font-mono text-ink">
+                  {moneyShort(lastPrint.revenue_actual)}
+                </span>
+              </span>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* SEC-filing facts — same data the admin view shows */}
+      {sec && (
+        <section className="mt-2 rounded-xl border border-hairline bg-card px-5 py-4">
+          <span className="text-[11px] uppercase tracking-[0.2em] text-faint">
+            SEC filings
+          </span>
+          <div className="pt-3 flex flex-wrap gap-x-6 gap-y-1.5 text-sm font-mono">
+            {sec.rpo != null && (
+              <span className="text-ink">
+                backlog ${(Number(sec.rpo) / 1e9).toFixed(1)}B
+              </span>
+            )}
+            {sec.fcf_ttm != null && (
+              <span className="text-muted">
+                FCF ${(Number(sec.fcf_ttm) / 1e9).toFixed(1)}B
+              </span>
+            )}
+            {sec.goodwill_assets_pct != null && (
+              <span className="text-muted">
+                goodwill {(Number(sec.goodwill_assets_pct) * 100).toFixed(0)}% of assets
+              </span>
+            )}
+            {sec.as_of != null && (
+              <span className="ml-auto text-[11px] text-faint">
+                facts thru {String(sec.as_of).slice(0, 10)}
+              </span>
+            )}
+          </div>
+        </section>
+      )}
+
+      <p className="pt-6 text-[11px] text-faint">
+        Company facts only — the desk&apos;s analysis layers
+        (verdict, fair value, thesis, tape call) are internal.
+      </p>
+    </main>
+  )
+}
+
+
 async function StockCore({ sym }: { sym: string }) {
   const card = await api.stockHealth(sym)
   const resilience = await api.resilience(sym).catch(() => null)
@@ -1044,6 +1206,12 @@ async function StockCore({ sym }: { sym: string }) {
         </p>
       </main>
     )
+  }
+
+  // non-admin gets the factual view only — verdicts, fair value,
+  // thesis and tape calls are Group-2 advisory content (admin-only).
+  if (user?.role !== 'admin') {
+    return <StockFacts sym={sym} card={card} />
   }
 
   const verdict = obj(card.verdict)

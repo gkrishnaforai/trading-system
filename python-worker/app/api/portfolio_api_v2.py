@@ -348,23 +348,31 @@ async def logout_user(request: Request,
     return {"message": "logged out"}
 
 
+def _owns_book(db, portfolio_id: str, user: dict) -> bool:
+    """Caller may read/mutate this book — the owner, or an admin."""
+    if user.get("role") == "admin":
+        return True
+    return bool(db.execute_query_positional(
+        "SELECT 1 FROM portfolios WHERE id = $1 AND user_id = $2",
+        [portfolio_id, user["id"]]))
+
+
 @router.get("/portfolios", response_model=List[PortfolioResponse])
 async def get_user_portfolios(current_user: dict = Depends(get_current_user), db=Depends(get_db)):
-    """Get portfolios.
-
-    Single-tenant cockpit: the pulse unions holdings across ALL books,
-    so the picker must too — filtering by user_id hid books seeded
-    under a different account row (the visible "missing portfolios"
-    bug). Auth remains a device-local account; when real multi-user
-    sign-in lands this regains `WHERE user_id = $1`."""
+    """Get the caller's books — scoped to user_id now that real
+    sign-in exists. Admin keeps the unfiltered list: their cockpit
+    spans the desk's books regardless of owning account row."""
 
     portfolios = db.execute_query(
         """
         SELECT id, name, description, portfolio_type, initial_capital, currency,
                is_active, created_at, updated_at, holdings_count, total_invested
         FROM portfolio_summary
+        WHERE (:adm OR user_id::text = :uid)
         ORDER BY created_at DESC
-        """
+        """,
+        {"adm": current_user.get("role") == "admin",
+         "uid": current_user["id"]}
     )
     
     portfolio_responses = []
@@ -445,15 +453,15 @@ async def delete_portfolio(
     """Delete a book and its holdings (FK cascade). Hard delete —
     the journal tables don't key off portfolios, so nothing else
     is orphaned."""
-    portfolio = db.execute_query_positional(
-        "SELECT id, name FROM portfolios WHERE id = $1",
-        [portfolio_id]
-    )
-    if not portfolio:
+    if not _owns_book(db, portfolio_id, current_user):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Portfolio not found"
         )
+    portfolio = db.execute_query_positional(
+        "SELECT id, name FROM portfolios WHERE id = $1",
+        [portfolio_id]
+    )
     db.execute_update_positional(
         "DELETE FROM portfolios WHERE id = $1", [portfolio_id]
     )
@@ -470,14 +478,8 @@ async def get_portfolio_holdings(
     db=Depends(get_db)
 ):
     """Get all holdings for a portfolio"""
-    
-    # Verify portfolio ownership
-    portfolio = db.execute_query_positional(
-        "SELECT id FROM portfolios WHERE id = $1",
-        [portfolio_id]
-    )
-    
-    if not portfolio:
+
+    if not _owns_book(db, portfolio_id, current_user):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Portfolio not found"
@@ -527,25 +529,18 @@ async def add_holding(
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ):
+    """Add a holding to a portfolio"""
+    if not _owns_book(db, portfolio_id, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portfolio not found"
+        )
     audit_event(db, "holding.add", user_id=current_user["id"],
                 detail={"portfolio_id": portfolio_id,
                         "symbol": holding_data.symbol.upper(),
                         "shares": str(holding_data.shares_held),
                         "avg_cost": str(holding_data.average_cost)},
                 request=request)
-    """Add a holding to a portfolio"""
-    
-    # Verify portfolio ownership
-    portfolio = db.execute_query_positional(
-        "SELECT id FROM portfolios WHERE id = $1",
-        [portfolio_id]
-    )
-    
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Portfolio not found"
-        )
     
     # Check if holding already exists
     existing = db.execute_query_positional(
@@ -652,24 +647,17 @@ async def update_holding(
     db=Depends(get_db)
 ):
     """Update a holding in a portfolio"""
+    if not _owns_book(db, portfolio_id, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Portfolio not found"
+        )
     audit_event(db, "holding.update", user_id=current_user["id"],
                 detail={"portfolio_id": portfolio_id,
                         "symbol": symbol.upper(),
                         "shares": str(holding_data.shares_held),
                         "avg_cost": str(holding_data.average_cost)},
                 request=request)
-    
-    # Verify portfolio ownership
-    portfolio = db.execute_query_positional(
-        "SELECT id FROM portfolios WHERE id = $1",
-        [portfolio_id]
-    )
-    
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Portfolio not found"
-        )
     
     # Check if holding exists
     existing = db.execute_query_positional(
@@ -757,18 +745,7 @@ async def delete_holding(
     db=Depends(get_db)
 ):
     """Delete a holding from a portfolio"""
-    audit_event(db, "holding.remove", user_id=current_user["id"],
-                detail={"portfolio_id": portfolio_id,
-                        "symbol": symbol.upper()},
-                request=request)
-    
-    # Verify portfolio ownership
-    portfolio = db.execute_query_positional(
-        "SELECT id FROM portfolios WHERE id = $1",
-        [portfolio_id]
-    )
-    
-    if not portfolio:
+    if not _owns_book(db, portfolio_id, current_user):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Portfolio not found"

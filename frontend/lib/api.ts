@@ -784,10 +784,16 @@ export const api = {
     get<{ decisions?: Receipt[]; regime?: RegimeReceipt[] }>(
       `/receipts?limit=${limit}`,
     ),
-  portfolioPulse: (portfolioId?: string) =>
+  portfolioPulse: (portfolioId?: string, userId?: string) =>
     get<{ as_of?: string; rows?: PulseRow[]; book?: PulseBook }>(
-      `/portfolio-pulse${portfolioId
-        ? `?portfolio_id=${encodeURIComponent(portfolioId)}` : ''}`,
+      `/portfolio-pulse${portfolioId || userId
+        ? `?${[
+            portfolioId
+              ? `portfolio_id=${encodeURIComponent(portfolioId)}`
+              : '',
+            userId ? `user_id=${encodeURIComponent(userId)}` : '',
+          ].filter(Boolean).join('&')}`
+        : ''}`,
     ),
   strategy: () => get<Record<string, unknown>>('/strategy'),
   conviction: () => get<Record<string, unknown>>('/conviction'),

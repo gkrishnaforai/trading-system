@@ -2302,11 +2302,14 @@ def _eq_flags(syms: list[str]) -> dict:
 
 
 @router.get("/portfolio-pulse")
-async def portfolio_pulse(portfolio_id: str = None):
+async def portfolio_pulse(portfolio_id: str = None,
+                          user_id: str = None):
     """One-row-per-holding board: tape state + transition, fundamental
     state, FV gap, GQ percentile, and a deterministic action hint.
     This is the 'what needs attention today' surface. Scoped to one
-    book when portfolio_id is passed; else the aggregated 'book'."""
+    book when portfolio_id is passed; else the aggregated 'book' —
+    narrowed to one user's books when user_id is passed (multi-user
+    accounts: a basic user's 'book' is only theirs)."""
     from app.database import db
     import uuid as _uuid
     pid = None
@@ -2316,6 +2319,13 @@ async def portfolio_pulse(portfolio_id: str = None):
         except (ValueError, AttributeError):
             return {"rows": [], "book": {},
                     "error": "invalid portfolio_id"}
+    uid = None
+    if user_id:
+        try:
+            uid = str(_uuid.UUID(str(user_id)))
+        except (ValueError, AttributeError):
+            return {"rows": [], "book": {},
+                    "error": "invalid user_id"}
     try:
         rows = db.execute_query("""
         WITH uni AS (
@@ -2330,6 +2340,7 @@ async def portfolio_pulse(portfolio_id: str = None):
             WHERE pp.quantity > 0 AND length(s.symbol) > 1
               AND pp.portfolio_id::text
                   = COALESCE(:pid, pp.portfolio_id::text)
+              AND (:uid::text IS NULL OR p.user_id::text = :uid)
             GROUP BY s.symbol
             UNION ALL
             SELECT h.symbol, h.shares_held, h.average_cost,
@@ -2339,6 +2350,7 @@ async def portfolio_pulse(portfolio_id: str = None):
             WHERE h.status IN ('active','inactive')
               AND h.portfolio_id::text
                   = COALESCE(:pid, h.portfolio_id::text)
+              AND (:uid::text IS NULL OR p.user_id::text = :uid)
               AND NOT EXISTS (
                   SELECT 1 FROM portfolio_positions pp
                   JOIN stocks s2 ON s2.id = pp.stock_id
@@ -2403,7 +2415,7 @@ async def portfolio_pulse(portfolio_id: str = None):
             WHERE l.symbol = u.symbol AND l.as_of < CURRENT_DATE
             ORDER BY l.as_of DESC LIMIT 1) prev ON true
         LEFT JOIN symbol_flywheel fw ON fw.symbol = u.symbol
-        ORDER BY u.status, u.symbol""", {"pid": pid})
+        ORDER BY u.status, u.symbol""", {"pid": pid, "uid": uid})
     except Exception as e:
         logger.exception("portfolio-pulse: universe query failed")
         return {"rows": [], "book": {},

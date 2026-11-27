@@ -16,6 +16,7 @@ const PASSWORD = process.env.MP_LOCAL_PASSWORD ?? 'marketpulse-local'
 const EMAIL = process.env.MP_LOCAL_EMAIL ?? 'trader@local.dev'
 
 export type SessionUser = {
+  id?: string
   role: string
   username?: string
   email?: string
@@ -179,6 +180,7 @@ export async function getUser(): Promise<SessionUser> {
   const claims = decodeClaims(token)
   if (!claims || expired(token ?? '')) return { role: 'anonymous' }
   return {
+    id: claims.sub ? String(claims.sub) : undefined,
     role: String(claims.role ?? 'basic'),
     username: claims.username ? String(claims.username) : undefined,
     email: claims.email ? String(claims.email) : undefined,

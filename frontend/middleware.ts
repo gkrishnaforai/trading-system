@@ -22,6 +22,7 @@ const PUBLIC_API = ['/api/auth/', '/api/health']
     role gets the basic surface. */
 const BASIC_ALLOWED = [
   '/portfolio',
+  '/stock',
   '/api/portfolio/',
   '/api/me',
   '/api/auth/',
