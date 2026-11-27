@@ -12,17 +12,32 @@ import { NextRequest, NextResponse } from 'next/server'
     valid session cookie + role claim, whichever backend minted it. */
 
 const PUBLIC_PATHS = ['/login', '/signup', '/terms']
-const PUBLIC_API = ['/api/auth/']
+const PUBLIC_API = ['/api/auth/', '/api/health']
 
-/** Paths a 'basic' session may reach — the portfolio page, its APIs,
-    and the legal documents every user must be able to read. */
+/** Role → allowed surfaces. Group-2 advisory content (rankings,
+    verdicts, scores, targets, forecasts, engine calls) is
+    admin-only — everything else is the desk; the allowed sets below
+    are the user-directed / factual-data surfaces plus the legal docs
+    every user must be able to read. Fail-closed: an unrecognized
+    role gets the basic surface. */
 const BASIC_ALLOWED = [
   '/portfolio',
   '/api/portfolio/',
   '/api/me',
   '/api/auth/',
+  '/api/health',
   '/terms',
 ]
+
+/** advanced/super-user = basic + factual read surfaces. The calendar
+    page additionally strips its verdict/guide/judge chips for
+    non-admin (the events themselves are public information). */
+const ROLE_ALLOWED: Record<string, string[]> = {
+  basic: BASIC_ALLOWED,
+  advanced: [...BASIC_ALLOWED, '/calendar'],
+  'super-user': [...BASIC_ALLOWED, '/calendar'],
+  // admin: unrestricted — every Group-2 surface
+}
 
 function decode(token: string): Record<string, unknown> | null {
   try {
@@ -62,8 +77,10 @@ export function middleware(req: NextRequest) {
   }
 
   const role = String(claims.role ?? 'basic')
-  if (role === 'basic' &&
-      !BASIC_ALLOWED.some((p) => path === p || path.startsWith(p))) {
+  const allowed = ROLE_ALLOWED[role] ?? (
+    role === 'admin' ? null : BASIC_ALLOWED)
+  if (allowed &&
+      !allowed.some((p) => path === p || path.startsWith(p))) {
     const url = req.nextUrl.clone()
     url.pathname = '/portfolio'
     url.search = ''

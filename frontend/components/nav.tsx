@@ -44,9 +44,15 @@ export function Nav() {
   }
 
   const isAdmin = role === 'admin'
-  const links = role === 'basic'
-    ? LINKS.filter((l) => l.href === '/portfolio')
-    : LINKS
+  // mirror the middleware role map — Group-2 advisory surfaces are
+  // admin-only; advanced/super-user see the factual read surfaces
+  const links = isAdmin
+    ? LINKS
+    : role === 'advanced' || role === 'super-user'
+      ? LINKS.filter((l) => ['/portfolio', '/calendar'].includes(l.href))
+      : role === 'basic'
+        ? LINKS.filter((l) => l.href === '/portfolio')
+        : []
 
   return (
     <nav className="sticky top-0 z-20 border-b border-hairline bg-canvas/85 backdrop-blur">

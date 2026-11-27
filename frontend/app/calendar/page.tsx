@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { api, type MacroEvent, type EarningsRow } from '@/lib/api'
 import { Section } from '@/components/regime'
+import { getUser } from '@/lib/auth'
 
 function isoDay(d: Date) {
   return d.toISOString().slice(0, 10)
@@ -281,11 +282,17 @@ export default async function CalendarPage({
     Date.parse(`${selDay}T12:00:00Z`),
   )))
 
+  const { role } = await getUser()
+  // Group-2 outputs (earnings verdicts, guidance outlook, macro
+  // judge calls) are admin-only — non-admin sees the same calendar
+  // minus the engine's commentary.
+  const analysis = role === 'admin'
+
   const [events, earnings, watch, guidance] = await Promise.all([
     api.macroEvents(),
     api.earningsCalendar(start, end),
     api.earningsWatch(30),
-    api.guidanceAll().catch(() => null),
+    analysis ? api.guidanceAll().catch(() => null) : null,
   ])
   for (const g of guidance?.items ?? []) guideMap.set(g.symbol, g)
 
@@ -301,10 +308,13 @@ export default async function CalendarPage({
       detail: (c as any)?.detail,
     })
   }
-  const verdictFor = (r: EarningsRow) =>
-    verdicts.get(
+  const verdictFor = (r: EarningsRow) => analysis
+    ? verdicts.get(
       `${r.symbol}|${String(r.earnings_date ?? '').slice(0, 10)}`,
     ) ?? null
+    : null
+  const macroFor = (e: MacroEvent): MacroEvent =>
+    analysis ? e : { ...e, judge: undefined }
 
   const earnByDay = new Map<string, EarningsRow[]>()
   for (const r of erList) {
@@ -436,7 +446,7 @@ export default async function CalendarPage({
           </div>
         ) : (
           <div className="space-y-1 pt-4">
-            {selMacro.map((e, i) => <MacroLine key={i} e={e} detailed />)}
+            {selMacro.map((e, i) => <MacroLine key={i} e={macroFor(e)} detailed />)}
             {selEarn.map((r, i) => (
               <EarningsLine key={i} r={r} cap={verdictFor(r)}
                         pending={String(r.earnings_date ?? '').slice(0, 10) === todayStr} />
@@ -472,7 +482,7 @@ export default async function CalendarPage({
                     </span>
                   </div>
                   <div className={`space-y-1 ${extreme ? 'border-l-2 border-defensive/60 pl-3' : ''}`}>
-                    {macros.map((e, i) => <MacroLine key={i} e={e} detailed />)}
+                    {macros.map((e, i) => <MacroLine key={i} e={macroFor(e)} detailed />)}
                     {earns.map((r, i) => (
                       <EarningsLine key={i} r={r} cap={verdictFor(r)}
                         pending={String(r.earnings_date ?? '').slice(0, 10) === todayStr} />
@@ -529,7 +539,7 @@ export default async function CalendarPage({
                 <div className="pt-1 font-mono text-[10px] uppercase tracking-wider text-faint">
                   {fmtDay(e.date ?? e.when ?? '')} · {relTag(e.days_away, String(e.date ?? ''), todayStr)}
                 </div>
-                <MacroLine e={e} detailed />
+                <MacroLine e={macroFor(e)} detailed />
               </div>
             ))}
           </div>
