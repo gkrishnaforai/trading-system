@@ -38,6 +38,26 @@ export async function jobRuns(limit = 25): Promise<JobRun[]> {
   return j?.runs ?? []
 }
 
+export type AuditEvent = {
+  id?: number
+  user_id?: string | null
+  email?: string | null
+  event?: string
+  detail?: Record<string, unknown>
+  ip?: string | null
+  user_agent?: string | null
+  created_at?: string
+  first_name?: string | null
+  last_name?: string | null
+  role?: string | null
+}
+
+export async function auditLog(limit = 40): Promise<AuditEvent[]> {
+  const j = await getRaw<{ events?: AuditEvent[] }>(
+    `/api/v1/board/audit-log?limit=${limit}`, { fresh: true })
+  return j?.events ?? []
+}
+
 export type SystemHealth = {
   heartbeat?: { last_job_at?: string | null; silent_min?: number | null }
   queue?: { pending?: number; failed?: number }

@@ -3677,6 +3677,35 @@ async def system_health():
     return out
 
 
+@router.get("/audit-log")
+async def audit_log(limit: int = 50, event: str | None = None,
+                    email: str | None = None):
+    """Recent sign-in + account-action history — read surface for the
+    admin strip. user_id is nullable (failed logins journal without
+    an account); email is denormalized on every row."""
+    from app.database import db
+    lim = max(1, min(int(limit or 50), 200))
+    where = ["1=1"]
+    params: dict = {"lim": lim}
+    if event:
+        where.append("event = :ev")
+        params["ev"] = event
+    if email:
+        where.append("lower(email) = lower(:em)")
+        params["em"] = email.strip()
+    rows = await asyncio.to_thread(
+        db.execute_query,
+        f"""SELECT a.id, a.user_id, a.email, a.event, a.detail,
+                   a.ip, a.user_agent, a.created_at,
+                   u.first_name, u.last_name, u.role
+              FROM user_audit_log a
+              LEFT JOIN users u ON u.id = a.user_id
+             WHERE {' AND '.join(where)}
+             ORDER BY a.created_at DESC LIMIT :lim""",
+        params)
+    return {"events": rows}
+
+
 @router.post("/system/expire-queue")
 async def system_expire_queue(body: dict | None = None):
     """Recovery lever — bulk-cancel pending universal_events so the

@@ -7,6 +7,23 @@ import { useState } from 'react'
 const input =
   'w-full rounded-lg border border-hairline bg-canvas px-3 py-2.5 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none transition-colors'
 
+const COMMON_PASSWORDS = new Set([
+  'password', 'password1', 'password123', '12345678', '123456789',
+  '1234567890', 'qwerty123', 'letmein123', 'iloveyou', 'admin123',
+  'welcome1', 'changeme', 'trustno1', 'dragon123', 'football1',
+])
+
+const RULES: Array<{ label: string; ok: (p: string) => boolean }> = [
+  { label: '10+ characters', ok: (p) => p.length >= 10 },
+  { label: 'a lowercase letter', ok: (p) => /[a-z]/.test(p) },
+  { label: 'an uppercase letter', ok: (p) => /[A-Z]/.test(p) },
+  { label: 'a number', ok: (p) => /[0-9]/.test(p) },
+  {
+    label: 'not a common password',
+    ok: (p) => !COMMON_PASSWORDS.has(p.toLowerCase().trim()),
+  },
+]
+
 export default function SignupPage() {
   const router = useRouter()
   const [form, setForm] = useState({
@@ -76,14 +93,28 @@ export default function SignupPage() {
             onChange={set('email')} className={input}
           />
           <input
-            type="password" required minLength={8}
+            type="password" required minLength={10}
             autoComplete="new-password"
-            placeholder="password (8+ characters)" value={form.password}
+            placeholder="password" value={form.password}
             onChange={set('password')} className={input}
           />
+          {form.password.length > 0 && (
+            <ul className="space-y-0.5 px-1 text-[11px]">
+              {RULES.map((r) => {
+                const pass = r.ok(form.password)
+                return (
+                  <li key={r.label}
+                    className={pass ? 'text-aggressive' : 'text-faint'}>
+                    {pass ? '✓' : '·'} {r.label}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
           {err && <p className="text-xs text-defensive">{err}</p>}
           <button
-            type="submit" disabled={busy}
+            type="submit"
+            disabled={busy || !RULES.every((r) => r.ok(form.password))}
             className="w-full rounded-full bg-ink px-4 py-2.5 text-sm font-medium text-canvas transition-colors hover:bg-accent disabled:opacity-40"
           >
             {busy ? 'creating…' : 'create account'}

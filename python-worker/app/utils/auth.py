@@ -5,6 +5,7 @@ JWT-based authentication with role-based access control
 
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
+import json
 import jwt
 import bcrypt as _bcrypt
 from fastapi import HTTPException, status, Depends
@@ -60,6 +61,53 @@ def verify_token(token: str) -> Dict[str, Any]:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+_COMMON_PASSWORDS = {
+    "password", "password1", "password123", "12345678", "123456789",
+    "1234567890", "qwerty123", "letmein123", "iloveyou", "admin123",
+    "welcome1", "changeme", "trustno1", "dragon123", "football1",
+}
+
+
+def password_errors(password: str) -> list[str]:
+    """Strength rules for human signup — returns the failed rules as
+    messages ([] = acceptable). Composition (upper+lower+digit) +
+    length + a small denylist; mirrored by the frontend route."""
+    errs: list[str] = []
+    if len(password) < 10:
+        errs.append("at least 10 characters")
+    if not any(c.islower() for c in password):
+        errs.append("a lowercase letter")
+    if not any(c.isupper() for c in password):
+        errs.append("an uppercase letter")
+    if not any(c.isdigit() for c in password):
+        errs.append("a number")
+    if password.lower().strip() in _COMMON_PASSWORDS:
+        errs.append("not a commonly-used password")
+    return errs
+
+
+def audit_event(db, event: str, user_id=None, email=None,
+                detail=None, request=None) -> None:
+    """Journal a sign-in or account action — best-effort, never raises
+    (an audit write must not become a second failure mode)."""
+    try:
+        ip = ua = None
+        if request is not None:
+            fwd = request.headers.get("x-forwarded-for", "")
+            ip = (fwd.split(",")[0].strip() or
+                  (request.client.host if request.client else None))
+            ua = (request.headers.get("user-agent") or "")[:300]
+        db.execute_update(
+            """INSERT INTO user_audit_log
+                   (user_id, email, event, detail, ip, user_agent)
+               VALUES (:u, :e, :v, CAST(:d AS jsonb), :ip, :ua)""",
+            {"u": str(user_id) if user_id else None, "e": email,
+             "v": event, "d": json.dumps(detail or {}),
+             "ip": ip, "ua": ua})
+    except Exception as e:
+        logger.warning("audit write failed (%s): %r", event, e)
+
+
 def hash_password(password: str) -> str:
     """bcrypt hash for storage — real accounts must never sit in the
     users table as readable passwords. Truncated at bcrypt's 72-byte
@@ -97,7 +145,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     return {
         "id": user_id,  # Keep as string (UUID)
         "username": payload.get("username"),
-        "role": payload.get("role", "user")
+        "email": payload.get("email"),
+        "role": payload.get("role", "basic")
     }
 
 async def get_admin_user(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:

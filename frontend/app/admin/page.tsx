@@ -1,5 +1,5 @@
 import { getUser } from '@/lib/auth'
-import { jobCatalog, jobRuns, systemHealth,
+import { jobCatalog, jobRuns, systemHealth, auditLog,
          type JobRow } from '@/lib/admin'
 import { JobActions, RunAll, RecoveryActions } from '@/components/admin-jobs'
 import AdminFv from '@/components/admin-fv'
@@ -129,8 +129,8 @@ export default async function AdminPage() {
     )
   }
 
-  const [jobs, runs, health] = await Promise.all([
-    jobCatalog(), jobRuns(20), systemHealth(),
+  const [jobs, runs, health, audit] = await Promise.all([
+    jobCatalog(), jobRuns(20), systemHealth(), auditLog(40),
   ])
 
   const errors = jobs.filter((j) => j.last_error).length
@@ -244,6 +244,39 @@ export default async function AdminPage() {
       {/* fair-value recompute */}
       <section className="mt-6 rounded-xl border border-hairline bg-card px-5 py-4">
         <AdminFv />
+      </section>
+
+      {/* sign-ins + account actions — who did what, when */}
+      <section className="mt-6 rounded-xl border border-hairline bg-card px-5 py-4">
+        <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
+          Sign-ins &amp; actions
+        </div>
+        <div className="pt-3 divide-y divide-hairline/60">
+          {audit.length === 0 && (
+            <p className="text-sm text-muted py-2">No events on record.</p>
+          )}
+          {audit.map((a) => (
+            <div key={a.id} className="flex items-baseline justify-between gap-4 py-1.5 text-xs">
+              <span className="flex items-center gap-2 min-w-0">
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                  a.event?.includes('failed') ? 'bg-defensive' : 'bg-aggressive'}`} />
+                <span className="font-medium text-ink">{a.event}</span>
+                <span className="truncate text-muted">
+                  {a.first_name || a.last_name
+                    ? `${a.first_name ?? ''} ${a.last_name ?? ''}`.trim()
+                    : a.email ?? '—'}
+                  {a.email && (a.first_name || a.last_name) && (
+                    <span className="text-faint"> · {a.email}</span>
+                  )}
+                  {a.role && <span className="text-faint"> · {a.role}</span>}
+                </span>
+              </span>
+              <span className="shrink-0 font-mono text-faint">
+                {a.ip && `${a.ip} · `}{ago(a.created_at)}
+              </span>
+            </div>
+          ))}
+        </div>
       </section>
 
       <footer className="mt-16 border-t border-hairline pt-6 text-[11px] text-faint">

@@ -3,7 +3,7 @@ Portfolio Management API v2
 Industry-standard portfolio management with proper stocks table integration
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date, time, timedelta
@@ -13,7 +13,9 @@ import uuid
 
 from app.database import get_db
 from app.config import settings
-from app.utils.auth import get_current_user, create_access_token, hash_password, verify_password
+from app.utils.auth import (get_current_user, create_access_token,
+                            hash_password, verify_password,
+                            password_errors, audit_event)
 from app.observability.logging import get_logger
 
 logger = get_logger("portfolio_api_v2")
@@ -219,15 +221,19 @@ class LoginResponse(BaseModel):
 
 
 @router.post("/users/signup", response_model=LoginResponse)
-async def signup_user(body: SignupRequest, db=Depends(get_db)):
+async def signup_user(body: SignupRequest, request: Request,
+                      db=Depends(get_db)):
     """Create an account from the signup form — email is the login
     identity and doubles as username; every signup lands 'basic'."""
     email = body.email.lower().strip()
-    if len(body.password) < 8:
+    weak = password_errors(body.password)
+    if weak:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                            "password must be at least 8 characters")
+                            "password needs " + ", ".join(weak))
     if db.execute_query_positional(
             "SELECT id FROM users WHERE email = $1", [email]):
+        audit_event(db, "signup_failed", email=email,
+                    detail={"reason": "email_exists"}, request=request)
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             "an account with this email already exists")
     full = f"{body.first_name.strip()} {body.last_name.strip()}".strip()
@@ -240,6 +246,8 @@ async def signup_user(body: SignupRequest, db=Depends(get_db)):
     user = db.execute_query_positional(
         "SELECT id, username, email, full_name, role, is_active,"
         " created_at FROM users WHERE email = $1", [email])[0]
+    audit_event(db, "signup", user_id=user["id"], email=email,
+                request=request)
     return LoginResponse(
         access_token=_session_token(user), token_type="bearer",
         user=UserResponse(id=str(user["id"]), username=user["username"],
@@ -249,7 +257,8 @@ async def signup_user(body: SignupRequest, db=Depends(get_db)):
 
 
 @router.post("/users/login", response_model=LoginResponse)
-async def login_user(login_data: LoginRequest, db=Depends(get_db)):
+async def login_user(login_data: LoginRequest, request: Request,
+                     db=Depends(get_db)):
     """Authenticate user and return JWT token"""
 
     ident = login_data.username.strip()
@@ -258,13 +267,15 @@ async def login_user(login_data: LoginRequest, db=Depends(get_db)):
     user = db.execute_query_positional(
         """
         SELECT id, username, email, password_hash, full_name, role, is_active
-        FROM users WHERE username = $1 OR email = $1
+        FROM users WHERE username = $1 OR lower(email) = $2
         """,
-        [ident]
+        [ident, ident.lower()]
     )
 
     if not user:
         logger.warning(f"Login failed: '{ident}' not found")
+        audit_event(db, "login_failed", email=ident,
+                    detail={"reason": "no_account"}, request=request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials"
@@ -274,6 +285,9 @@ async def login_user(login_data: LoginRequest, db=Depends(get_db)):
 
     if not user_data['is_active']:
         logger.warning(f"Login failed: '{ident}' is inactive")
+        audit_event(db, "login_failed", user_id=user_data['id'],
+                    email=user_data['email'],
+                    detail={"reason": "inactive"}, request=request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Account is inactive"
@@ -281,6 +295,9 @@ async def login_user(login_data: LoginRequest, db=Depends(get_db)):
 
     if not verify_password(login_data.password, user_data['password_hash']):
         logger.warning(f"Login failed: Invalid password for '{ident}'")
+        audit_event(db, "login_failed", user_id=user_data['id'],
+                    email=user_data['email'],
+                    detail={"reason": "bad_password"}, request=request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials"
@@ -293,6 +310,8 @@ async def login_user(login_data: LoginRequest, db=Depends(get_db)):
         "UPDATE users SET last_login = :now WHERE id = :user_id",
         {"now": datetime.now(), "user_id": user_data['id']}
     )
+    audit_event(db, "login", user_id=user_data['id'],
+                email=user_data['email'], request=request)
 
     role = _admin_override(user_data)
     return LoginResponse(
@@ -312,6 +331,17 @@ async def login_user(login_data: LoginRequest, db=Depends(get_db)):
 # ========================================
 # Portfolio Management Endpoints
 # ========================================
+
+@router.post("/users/logout")
+async def logout_user(request: Request,
+                      current_user: dict = Depends(get_current_user),
+                      db=Depends(get_db)):
+    """Journal the sign-out — the cookie dies client-side; the ledger
+    is what remembers it happened."""
+    audit_event(db, "logout", user_id=current_user["id"],
+                email=current_user.get("email"), request=request)
+    return {"message": "logged out"}
+
 
 @router.get("/portfolios", response_model=List[PortfolioResponse])
 async def get_user_portfolios(current_user: dict = Depends(get_current_user), db=Depends(get_db)):
@@ -353,11 +383,16 @@ async def get_user_portfolios(current_user: dict = Depends(get_current_user), db
 @router.post("/portfolios", response_model=PortfolioResponse)
 async def create_portfolio(
     portfolio_data: PortfolioCreate,
+    request: Request,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ):
     """Create a new portfolio"""
-    
+    audit_event(db, "portfolio.create", user_id=current_user["id"],
+                detail={"name": portfolio_data.name,
+                        "type": portfolio_data.portfolio_type},
+                request=request)
+
     # Insert portfolio
     db.execute_update_positional(
         """
@@ -398,6 +433,7 @@ async def create_portfolio(
 @router.delete("/portfolios/{portfolio_id}")
 async def delete_portfolio(
     portfolio_id: str,
+    request: Request,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ):
@@ -416,6 +452,10 @@ async def delete_portfolio(
     db.execute_update_positional(
         "DELETE FROM portfolios WHERE id = $1", [portfolio_id]
     )
+    audit_event(db, "portfolio.delete", user_id=current_user["id"],
+                detail={"portfolio_id": portfolio_id,
+                        "name": portfolio[0]['name']},
+                request=request)
     return {"message": f"Portfolio '{portfolio[0]['name']}' deleted"}
 
 @router.get("/portfolios/{portfolio_id}/holdings", response_model=List[HoldingResponse])
@@ -478,9 +518,16 @@ async def get_portfolio_holdings(
 async def add_holding(
     portfolio_id: str,
     holding_data: HoldingCreate,
+    request: Request,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ):
+    audit_event(db, "holding.add", user_id=current_user["id"],
+                detail={"portfolio_id": portfolio_id,
+                        "symbol": holding_data.symbol.upper(),
+                        "shares": str(holding_data.shares_held),
+                        "avg_cost": str(holding_data.average_cost)},
+                request=request)
     """Add a holding to a portfolio"""
     
     # Verify portfolio ownership
@@ -595,10 +642,17 @@ async def update_holding(
     portfolio_id: str,
     symbol: str,
     holding_data: HoldingCreate,
+    request: Request,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ):
     """Update a holding in a portfolio"""
+    audit_event(db, "holding.update", user_id=current_user["id"],
+                detail={"portfolio_id": portfolio_id,
+                        "symbol": symbol.upper(),
+                        "shares": str(holding_data.shares_held),
+                        "avg_cost": str(holding_data.average_cost)},
+                request=request)
     
     # Verify portfolio ownership
     portfolio = db.execute_query_positional(
@@ -693,10 +747,15 @@ async def update_holding(
 async def delete_holding(
     portfolio_id: str,
     symbol: str,
+    request: Request,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ):
     """Delete a holding from a portfolio"""
+    audit_event(db, "holding.remove", user_id=current_user["id"],
+                detail={"portfolio_id": portfolio_id,
+                        "symbol": symbol.upper()},
+                request=request)
     
     # Verify portfolio ownership
     portfolio = db.execute_query_positional(
