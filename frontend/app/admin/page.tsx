@@ -1,5 +1,5 @@
 import { getUser } from '@/lib/auth'
-import { jobCatalog, jobRuns, incidents, systemHealth,
+import { jobCatalog, jobRuns, systemHealth,
          type JobRow } from '@/lib/admin'
 import { JobActions, RunAll, RecoveryActions } from '@/components/admin-jobs'
 import AdminFv from '@/components/admin-fv'
@@ -129,17 +129,14 @@ export default async function AdminPage() {
     )
   }
 
-  const [jobs, runs, inc, health] = await Promise.all([
-    jobCatalog(), jobRuns(20), incidents(), systemHealth(),
+  const [jobs, runs, health] = await Promise.all([
+    jobCatalog(), jobRuns(20), systemHealth(),
   ])
 
-  const open = Array.isArray(inc?.open) ? (inc.open as unknown[]) : []
-  const actions = Array.isArray(inc?.actions) ? (inc.actions as Record<string, unknown>[]) : []
   const errors = jobs.filter((j) => j.last_error).length
   const scheduled = jobs.filter((j) => j.enabled && j.cron).length
   const silentMin = health?.heartbeat?.silent_min ?? null
   const queued = health?.queue?.pending ?? 0
-  const escalated = health?.incidents?.escalated ?? 0
 
   return (
     <main className="mx-auto max-w-4xl px-5 pb-20">
@@ -156,19 +153,15 @@ export default async function AdminPage() {
             {errors > 0
               ? <span className="text-defensive">{errors} last-runs errored</span>
               : <span className="text-aggressive">all last-runs clean</span>}
-            {open.length > 0 && (
-              <span className="text-caution"> · {open.length} open incidents</span>
-            )}
           </p>
         </div>
         <RunAll />
       </header>
 
       {/* system health — the ops heartbeat: scheduler silence, queue
-          depth (escalations ride it), provider failures, escalations.
-          An off-box watchdog (uptime workflow + custodian-watch's
-          dead-man ping) covers the case where the box itself is down
-          and this page can't load at all. */}
+          depth, provider failures, job errors. An off-box watchdog
+          (uptime workflow) covers the case where the box itself is
+          down and this page can't load at all. */}
       <section className="mb-6 rounded-xl border border-hairline bg-card px-5 py-4">
         <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
           System
@@ -200,9 +193,6 @@ export default async function AdminPage() {
             (health?.provider_failures_24h?.count ?? 0) <= 50
               ? 'text-muted' : 'text-caution'}>
             {health?.provider_failures_24h?.count ?? 0} provider fails 24h
-          </span>
-          <span className={escalated > 0 ? 'text-defensive' : 'text-muted'}>
-            {escalated} escalated
           </span>
           <span className="text-faint">
             {health?.jobs_last_hour ?? 0} jobs/hr
@@ -255,26 +245,6 @@ export default async function AdminPage() {
       <section className="mt-6 rounded-xl border border-hairline bg-card px-5 py-4">
         <AdminFv />
       </section>
-
-      {/* custodian incidents */}
-      {actions.length > 0 && (
-        <section className="mt-6 rounded-xl border border-hairline bg-card px-5 py-4">
-          <div className="text-[11px] uppercase tracking-[0.2em] text-faint">
-            Custodian actions
-          </div>
-          <div className="pt-3 space-y-1.5">
-            {actions.slice(0, 8).map((a, i) => (
-              <div key={i} className="text-xs text-muted">
-                <span className="text-ink">{String(a.action ?? a.kind ?? 'action')}</span>
-                {a.detail != null && ` — ${String(a.detail).slice(0, 120)}`}
-                {a.at != null && (
-                  <span className="font-mono text-faint"> · {ago(String(a.at))}</span>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
 
       <footer className="mt-16 border-t border-hairline pt-6 text-[11px] text-faint">
         dispatcher ticks every 60s · cron uses each job's timezone ·

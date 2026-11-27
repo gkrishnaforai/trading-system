@@ -288,10 +288,6 @@ async def startup_event():
     else:
         logger.info("⏭️ Analyst tape scheduler disabled via ENABLE_ANALYST_TAPE_SCHEDULER")
 
-    if os.getenv("ENABLE_CUSTODIAN", "true").strip().lower() == "true":
-        _spawn(_custodian_loop())
-        logger.info("✅ Custodian (support agent) enabled via ENABLE_CUSTODIAN")
-
     if os.getenv("ENABLE_JOB_SCHEDULER", "true").strip().lower() == "true":
         _spawn(_scheduler_loop())
         logger.info("✅ Job scheduler enabled via ENABLE_JOB_SCHEDULER")
@@ -333,26 +329,6 @@ async def _scheduler_loop():
         except Exception as e:
             logger.error(f"scheduler tick failed: {e}")
         await asyncio.sleep(60)
-
-
-async def _custodian_loop():
-    """Support-agent supervisor — sense/diagnose/remediate/verify every
-    ~10min. Bounded actions only (job re-kicks); escalates to the board
-    after 3 failed attempts. The layer that turns 'a job silently
-    errored' into 'the system noticed, retried, and told you'."""
-    from app.support.custodian import run_pass
-
-    await asyncio.sleep(90)   # settle: a restart storms false findings
-    while True:
-        try:
-            res = await run_pass()
-            if res.get("actions"):
-                logger.info("custodian: %s findings, actions %s",
-                            res.get("findings"), res.get("actions"))
-        except Exception as e:
-            logger.error(f"custodian pass failed: {e}")
-        await asyncio.sleep(
-            int(os.getenv("CUSTODIAN_INTERVAL_MINUTES", "10")) * 60)
 
 
 async def _alert_scan_loop():

@@ -130,9 +130,8 @@ export function RunAll() {
 /** Recovery levers for the System strip — what to reach for when the
     site comes back from an outage and the surface is drowning:
     clear the event queue (marks pending 'cancelled' — never
-    'completed', the ledger stays honest), warm the lazy surfaces so
-    the next page load isn't a cold eval, and resolve stale
-    incidents so the strip only shows what's still happening. */
+    'completed', the ledger stays honest) and warm the lazy surfaces
+    so the next page load isn't a cold eval. */
 export function RecoveryActions({ pending }: { pending: number }) {
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
@@ -152,9 +151,7 @@ export function RecoveryActions({ pending }: { pending: number }) {
         ? (j?.error ?? j?.detail ?? `error ${res.status}`)
         : j?.cancelled != null
           ? `cancelled ${j.cancelled.toLocaleString()} events`
-          : j?.resolved != null
-            ? `resolved ${j.resolved} incidents`
-            : j?.status ?? 'done')
+          : j?.status ?? 'done')
       router.refresh()
     } catch {
       setMsg('worker unreachable')
@@ -189,14 +186,6 @@ export function RecoveryActions({ pending }: { pending: number }) {
         className={`${btn} border-hairline text-muted hover:text-ink hover:border-faint`}
       >
         {busy === 'warm' ? 'warming…' : 'warm surfaces'}
-      </button>
-      <button
-        onClick={() => act('stale', '/api/admin/incidents/resolve-stale',
-          { older_than_days: 14 })}
-        disabled={busy === 'stale'}
-        className={`${btn} border-hairline text-muted hover:text-ink hover:border-faint`}
-      >
-        {busy === 'stale' ? 'resolving…' : 'resolve stale incidents'}
       </button>
       {msg && <span className="text-[10px] text-faint">{msg}</span>}
     </span>

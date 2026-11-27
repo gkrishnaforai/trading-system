@@ -304,13 +304,3 @@ def log_with_context(
         extra['correlation_id'] = correlation_id
     
     logger.log(level, message, extra=extra, exc_info=exc_info)
-
-
-
-# ring-buffer for incident log evidence — installed on import so the
-# buffer fills from process start, zero extra infrastructure
-try:
-    from app.support.log_buffer import install as _install_log_buffer
-    _install_log_buffer()
-except Exception:
-    pass

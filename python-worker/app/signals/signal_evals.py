@@ -31,8 +31,8 @@ Three layers, all offline (no DB — engines are pure over ctx):
              semantics.
 
 `run()` returns {ok, checks, failed} and logs one warning per
-failure — the custodian's code-bug rule picks those up off the
-journal. CLI: `python -m app.signals.signal_evals`.
+failure — visible on the admin board's job ledger.
+CLI: `python -m app.signals.signal_evals`.
 """
 import ast
 import logging

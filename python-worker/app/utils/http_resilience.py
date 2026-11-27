@@ -70,7 +70,7 @@ def log_failure(provider: str, endpoint: str, error: str,
                 latency_ms: Optional[int] = None) -> None:
     """Terminal provider failure → fetch_failures ledger. Cheap,
     best-effort (never raises — a ledger write must not become a
-    second failure mode). The custodian reads this to distinguish
+    second failure mode). The ops surfaces read this to distinguish
     'transient blip' from 'provider down since 9:40'."""
     try:
         from app.database import db

@@ -297,11 +297,12 @@ async def _j_pilot():
     return await asyncio.to_thread(swing_pilot.run_daily)
 
 
-async def _j_custodian():
-    """Support-agent pass — sense failures/staleness, diagnose, take
-    bounded remediation (job re-kicks), escalate what it can't fix."""
-    from app.support.custodian import run_pass
-    return await run_pass()
+async def _j_queue_groom():
+    """Event-queue hygiene — pending TTL cancel + bounded terminal
+    prune. System maintenance (the system cleaning its own house),
+    not supervision."""
+    from app.support.queue_groom import run
+    return await asyncio.to_thread(run)
 
 
 async def _j_daily_calls():
@@ -1270,7 +1271,7 @@ async def _j_signal_evals() -> dict:
     layer (spec lint / scenarios / invariants, all offline). A red
     run means engine contract drift — dead imports, unknown `when`
     fields, gate semantics that changed — before it ships to the
-    board. Failures land as warnings; custodian watches the log."""
+    board. Failures land as warnings in the job ledger."""
     from app.signals import signal_evals
     res = await asyncio.to_thread(signal_evals.run)
     if not res["ok"]:
@@ -1314,7 +1315,7 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "daily-puts":    ("Top-3 put calls", _j_daily_puts),
     "spec-incubator": ("Spec candidate incubator", _j_spec_incubator),
     "meta":          ("Signal self-training", _j_meta),
-    "custodian":     ("Support agent pass", _j_custodian),
+    "queue-groom":   ("Event-queue TTL + prune", _j_queue_groom),
     "event-day":     ("Macro event judge", _j_event_day),
     "morning-regime": ("Morning regime engine", _j_morning_regime),
     "fred-macro":   ("FRED structural layer", _j_fred_macro),
@@ -1446,7 +1447,7 @@ _ALL_ORDER = ["regime", "tier-sync", "momentum",
               "correction-alarms", "selloff", "best-picks",
               "priced-in", "valuation-decision", "narrative-claims",
               "driver-bridge",
-              "lev-etf-swings", "signal-evals", "custodian"]
+              "lev-etf-swings", "signal-evals", "queue-groom"]
 
 
 _JOB_TIMEOUT = {
@@ -1455,7 +1456,7 @@ _JOB_TIMEOUT = {
     "smallcap-tail": 25 * 60,
     "swing-scan": 15 * 60, "alerts": 15 * 60, "focus-scan": 10 * 60,
     "after-hours": 8 * 60, "pt-watch": 8 * 60,
-    "custodian": 10 * 60, "momentum": 8 * 60, "flywheel": 50 * 60,
+    "queue-groom": 10 * 60, "momentum": 8 * 60, "flywheel": 50 * 60,
     "fwd-eps-repair": 15 * 60,
     "universe-fill": 10 * 60,
     "sector-timing": 5 * 60,
@@ -3632,21 +3633,13 @@ async def job_failures(hours: float = 24, limit: int = 50):
     return {"failures": rows, "hours": hours}
 
 
-@router.get("/incidents")
-async def custodian_incidents():
-    """Open incidents + recent custodian actions — the support agent's
-    ledger for the board's health strip."""
-    from app.support import custodian
-    return await asyncio.to_thread(custodian.incidents)
-
-
 @router.get("/system-health")
 async def system_health():
     """One-glance ops payload for the admin strip — scheduler
     heartbeat (max job_runs age; silence = wedged dispatcher), event
-    queue depth (escalations ride this), provider failure rate, and
-    open incidents. Everything here is journaled state — this never
-    triggers heavy work."""
+    queue depth, provider failure rate, and recent job errors.
+    Everything here is journaled state — this never triggers
+    heavy work."""
     from app.database import db
     out: dict = {}
 
@@ -3674,11 +3667,6 @@ async def system_health():
              " WHERE occurred_at > now() - interval '24 hours'")
     out["provider_failures_24h"] = {"count": f.get("c") or 0,
                                     "providers": f.get("p") or 0}
-    i = _one("SELECT count(*) FILTER (WHERE status != 'resolved') o,"
-             " count(*) FILTER (WHERE status='escalated') e"
-             " FROM custodian_incidents")
-    out["incidents"] = {"open": i.get("o") or 0,
-                        "escalated": i.get("e") or 0}
     e = _one("SELECT count(*) c FROM job_runs"
              " WHERE ran_at > now() - interval '24 hours'"
              "   AND error IS NOT NULL")
@@ -3735,86 +3723,6 @@ async def system_warm():
     return {"status": "started", "jobs": started,
             "already_running": [j for j in warm_list
                                 if _jobs.get(j, {}).get("running")]}
-
-
-@router.post("/incidents/resolve-stale")
-async def incidents_resolve_stale(body: dict | None = None):
-    """Recovery lever — clear the escalated-incident noise that
-    accumulates after an outage so the strip shows only what is
-    still happening. Resolves incidents not seen within the window;
-    sensors reopen signatures that fire again."""
-    from app.database import db
-    days = int((body or {}).get("older_than_days") or 14)
-    n = await asyncio.to_thread(
-        db.execute_update,
-        "UPDATE custodian_incidents SET status='resolved',"
-        " resolved_at=now() WHERE status != 'resolved'"
-        " AND last_seen < now() - (:d * interval '1 day')",
-        {"d": days})
-    return {"resolved": n, "older_than_days": days}
-
-
-@router.post("/incidents/{signature}/resolve")
-async def incident_resolve(signature: str):
-    """Human acknowledgement — mark an incident resolved. If the
-    signature fires again the sensor reopens it with occurrences+1
-    and a fresh alert gate."""
-    from app.database import db
-    n = await asyncio.to_thread(
-        db.execute_update,
-        "UPDATE custodian_incidents SET status='resolved',"
-        " resolved_at=now() WHERE signature=:s",
-        {"s": signature})
-    return {"resolved": n}
-
-
-@router.post("/incidents/{signature}/analyze")
-async def incident_analyze(signature: str):
-    """Research agent — bounded root-cause analysis over the incident's
-    captured log evidence. Rules first, LLM second when a key exists.
-    Output is a diagnosis + fix plan, never an auto-applied change."""
-    from app.support.analyst import analyze
-    return await asyncio.to_thread(analyze, signature)
-
-
-@router.get("/tickets")
-async def custodian_tickets():
-    """Staged tickets — the JIRA-style backlog the analyst proposes.
-    Created only via explicit human action on the Custodian page."""
-    from app.database import db
-    rows = await asyncio.to_thread(
-        db.execute_query,
-        "SELECT * FROM custodian_tickets ORDER BY id DESC LIMIT 50")
-    return {"tickets": rows}
-
-
-@router.post("/tickets")
-async def custodian_ticket_create(body: dict):
-    """File a ticket draft — the human-approve step between 'the agent
-    proposed a fix' and 'it becomes work'. Key minted as CUST-<id>."""
-    import json
-    from app.database import db
-    row = await asyncio.to_thread(
-        db.execute_query,
-        """INSERT INTO custodian_tickets
-               (signature, issue_type, title, description, root_cause,
-                proposed_fix, patch, evidence, source)
-           VALUES (:sig, :it, :t, :d, :rc, :pf, :p,
-                   CAST(:ev AS jsonb), :src)
-           RETURNING id""",
-        {"sig": body.get("signature", ""), "it": body.get("issue_type", "code"),
-         "t": body.get("title", "untitled")[:200],
-         "d": body.get("description"), "rc": body.get("root_cause"),
-         "pf": body.get("proposed_fix"), "p": body.get("patch"),
-         "ev": json.dumps(body.get("evidence") or {}),
-         "src": body.get("source", "manual")})
-    tid = row[0]["id"] if row else None
-    if tid:
-        await asyncio.to_thread(
-            db.execute_update,
-            "UPDATE custodian_tickets SET ticket_key=:k WHERE id=:i",
-            {"k": f"CUST-{tid}", "i": tid})
-    return {"id": tid, "ticket_key": f"CUST-{tid}" if tid else None}
 
 
 @router.get("/refresh/status")

@@ -31,7 +31,7 @@ const GROUPS: { title: string; note?: string; entries: Entry[] }[] = [
   },
   {
     title: 'Jobs',
-    note: 'manual runs go through the same _run_job path as the scheduler — journal to job_runs, visible to custodian-watch',
+    note: 'manual runs go through the same _run_job path as the scheduler — journaled to job_runs',
     entries: [
       { method: 'GET', path: 'jobs/catalog', desc: 'all jobs — schedule, timezone, enabled state' },
       { method: 'GET', path: 'jobs/runs?hours=48', desc: 'recent job runs — status, duration, error' },

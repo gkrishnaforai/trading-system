@@ -1699,9 +1699,8 @@ def board() -> dict[str, Any]:
                 })
         except Exception as exc:
             # one corrupt row must not 500 the whole board — skip the
-            # symbol, log the failure (the custodian code-bug rule sees
-            # it in the tail), and surface the skipped list in the
-            # payload so the page can warn
+            # symbol, log the failure, and surface the skipped list in
+            # the payload so the page can warn
             logger.warning("readiness row skipped %s: %r", s, exc)
             skipped.append(s)
     for key in sections:
