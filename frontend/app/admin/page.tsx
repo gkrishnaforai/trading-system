@@ -1,7 +1,7 @@
 import { getUser } from '@/lib/auth'
 import { jobCatalog, jobRuns, incidents, systemHealth,
          type JobRow } from '@/lib/admin'
-import { JobActions, RunAll } from '@/components/admin-jobs'
+import { JobActions, RunAll, RecoveryActions } from '@/components/admin-jobs'
 import AdminFv from '@/components/admin-fv'
 
 export const dynamic = 'force-dynamic'
@@ -206,6 +206,9 @@ export default async function AdminPage() {
           </span>
           <span className="text-faint">
             {health?.jobs_last_hour ?? 0} jobs/hr
+          </span>
+          <span className="ml-auto">
+            <RecoveryActions pending={queued} />
           </span>
         </div>
       </section>

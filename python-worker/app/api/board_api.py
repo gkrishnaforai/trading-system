@@ -3689,6 +3689,71 @@ async def system_health():
     return out
 
 
+@router.post("/system/expire-queue")
+async def system_expire_queue(body: dict | None = None):
+    """Recovery lever — bulk-cancel pending universal_events so the
+    alert pipeline isn't buried under a backlog. Events are marked
+    'cancelled' (never 'completed' — they were never processed, and
+    the ledger stays honest). Optional scope: event_type filter and a
+    minimum age so the freshest events still get their chance."""
+    from app.database import db
+    b = body or {}
+    hours = int(b.get("older_than_hours") or 6)
+    etype = b.get("event_type")
+    sql = ("UPDATE universal_events SET processing_status='cancelled',"
+           " processed_at=now()"
+           " WHERE processing_status='pending'"
+           " AND detected_at < now() - (:h * interval '1 hour')")
+    params: dict = {"h": hours}
+    if etype:
+        sql += " AND event_type=:t"
+        params["t"] = etype
+    n = await asyncio.to_thread(db.execute_update, sql, params)
+    return {"cancelled": n, "older_than_hours": hours,
+            "event_type": etype}
+
+
+@router.post("/system/warm")
+async def system_warm():
+    """Recovery lever — pre-compute the lazy surfaces so the next
+    page load doesn't pay cold-eval cost while a catch-up storm is
+    still running. Runs the small critical-path set sequentially in
+    the background; jobs journal their own completion."""
+    warm_list = ["regime", "intraday-tape", "correction-alarms",
+                 "intraday-recovery"]
+    started = [j for j in warm_list
+               if j in JOBS and not _jobs.get(j, {}).get("running")]
+
+    async def _warm():
+        for j in started:
+            try:
+                await _run_job(j)
+            except Exception:                               # noqa: BLE001
+                pass
+
+    asyncio.create_task(_warm())
+    return {"status": "started", "jobs": started,
+            "already_running": [j for j in warm_list
+                                if _jobs.get(j, {}).get("running")]}
+
+
+@router.post("/incidents/resolve-stale")
+async def incidents_resolve_stale(body: dict | None = None):
+    """Recovery lever — clear the escalated-incident noise that
+    accumulates after an outage so the strip shows only what is
+    still happening. Resolves incidents not seen within the window;
+    sensors reopen signatures that fire again."""
+    from app.database import db
+    days = int((body or {}).get("older_than_days") or 14)
+    n = await asyncio.to_thread(
+        db.execute_update,
+        "UPDATE custodian_incidents SET status='resolved',"
+        " resolved_at=now() WHERE status != 'resolved'"
+        " AND last_seen < now() - (:d * interval '1 day')",
+        {"d": days})
+    return {"resolved": n, "older_than_days": days}
+
+
 @router.post("/incidents/{signature}/resolve")
 async def incident_resolve(signature: str):
     """Human acknowledgement — mark an incident resolved. If the

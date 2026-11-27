@@ -84,9 +84,10 @@ def _raise_technical_alert(sig: str, diagnosis: str, severity: str,
     from app.database import db
     steps = _manual_steps(sig)
     try:
-        # priority 10 — events consume priority DESC against routine
-        # traffic (priority 3); an escalation must not queue behind a
-        # multi-million-row backlog to notify the human.
+        # priority 5 — column CHECK caps at 5; events consume
+        # priority DESC against routine traffic (priority 3), so an
+        # escalation must not queue behind a deep backlog to notify
+        # the human.
         db.execute_update(
             """INSERT INTO universal_events
                    (event_id, event_type, entity_type, entity_id,
@@ -94,7 +95,7 @@ def _raise_technical_alert(sig: str, diagnosis: str, severity: str,
                     processing_status, priority)
                VALUES (gen_random_uuid(), 'custodian_escalation',
                        'system', :sig, CAST(:d AS jsonb), now(),
-                       'custodian', 'pending', 10)""",
+                       'custodian', 'pending', 5)""",
             {"sig": sig,
              "d": _j({"signature": sig, "diagnosis": diagnosis,
                       "severity": severity, "attempts": attempts,
