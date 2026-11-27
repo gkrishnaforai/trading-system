@@ -156,6 +156,16 @@ annotations:
       when: {extended_metrics: true, tape_not_in: tape_extensible}
       note: "extension reads off a non-constructive state — likely a
              collapsed-average or stale-input artifact"
+    - name: earn_traj_deteriorating
+      # journaled visibility — the trajectory alone never convicts;
+      # it annotates and gates adds, reduce needs the full legs
+      when: {earn_traj: deteriorating}
+      note: "earnings trajectory deteriorating — majority of last-3
+             journaled print verdicts transitioned worse"
+    - name: earn_traj_improving
+      when: {earn_traj: improving}
+      note: "earnings trajectory improving — journaled verdicts
+             transitioning better"
 
   # normalized risk flags — executable contract per flag:
   #   true           confirmed risk
@@ -222,6 +232,12 @@ add_policy:
     - hard_risk_active: false
     - risk_unverifiable: false      # can't verify critical risk →
                                     # no add until flags calibrate
+    - earn_traj_not_in: [deteriorating]
+                                    # measured earnings deterioration
+                                    # (majority of last-3 journaled
+                                    # print verdicts) blocks adds —
+                                    # 'insufficient' does NOT block:
+                                    # absent coverage invents nothing
     - any:
         - {credit_leg_is: null}     # no credit leg — the normal case
         - {credit_leg_in: [market_penalty, company_risk]}

@@ -578,6 +578,14 @@ export type PulseRow = {
   action_label?: string
   action_confidence?: number
   next_earnings_date?: string
+  quarters?: {
+    d?: string
+    surp?: number | null
+    verdict?: string | null
+  }[]
+  earn_traj?: string
+  eq_quality?: number | null
+  eq_flags?: string[]
 }
 
 export type PulseBook = {

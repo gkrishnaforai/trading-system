@@ -2000,6 +2000,10 @@ def _pulse_action_eval(row, det) -> dict:
         "gm_slope": row.get("gm_slope"),
         "est_revision_pct": row.get("est_revision_pct"),
         "beat_streak": row.get("beat_streak"),
+        # earnings-trajectory fact — direction of the last-3 journaled
+        # earnings_watch verdicts; 'insufficient' when unwatched, so
+        # the add gate only blocks on MEASURED deterioration
+        "earn_traj": row.get("earn_traj"),
         # balance-sheet vulnerability (axis 2) — flywheel leverage +
         # cash generation; banded sector-aware in stage 0
         "net_debt_ebitda": row.get("net_debt_ebitda"),
@@ -2193,6 +2197,87 @@ def _sector_flow_map() -> dict:
     return out
 
 
+def _earn_quarters(syms: list[str]) -> dict:
+    """Last-3 journaled prints per symbol — earnings_data backbone
+    (surprise %, eps est/actual, revenue) + the earnings_watch verdict
+    overlay where the watcher covered the print. Display evidence,
+    not a score: the columns show what the last 3 quarters DID."""
+    if not syms:
+        return {}
+    from app.database import db
+    out: dict[str, list] = {}
+    try:
+        for r in db.execute_query("""
+            SELECT ed.stock_symbol AS symbol, ed.earnings_date AS d,
+                   ed.surprise_percentage AS surp,
+                   ed.eps_estimate, ed.eps_actual,
+                   ew.verdict
+            FROM (SELECT stock_symbol, earnings_date,
+                         surprise_percentage, eps_estimate, eps_actual,
+                         row_number() OVER (
+                             PARTITION BY stock_symbol
+                             ORDER BY earnings_date DESC) rn
+                  FROM earnings_data
+                  WHERE stock_symbol = ANY(:syms)
+                    AND earnings_date <= CURRENT_DATE
+                    AND (eps_actual IS NOT NULL
+                         OR surprise_percentage IS NOT NULL)) ed
+            LEFT JOIN earnings_watch ew
+              ON ew.symbol = ed.stock_symbol
+             AND ew.earnings_date = ed.earnings_date
+            WHERE ed.rn <= 3
+            ORDER BY ed.stock_symbol, ed.earnings_date DESC""",
+                {"syms": list(syms)}):
+            out.setdefault(r["symbol"], []).append({
+                "d": str(r["d"]),
+                "surp": round(float(r["surp"]), 1)
+                        if r["surp"] is not None else None,
+                "verdict": r.get("verdict")})
+    except Exception:
+        logger.info("pulse: earn quarters lookup failed",
+                    exc_info=True)
+    return out
+
+
+def _earn_traj(quarters: list[dict]) -> str:
+    """Direction of the last-3 journaled verdicts — improving |
+    deteriorating | mixed | insufficient. 'insufficient' is an
+    explicit value, never null: the add gate must see MEASURED
+    deterioration to act, and absent coverage must not invent one.
+    Majority of verdicted prints decides; ties are mixed."""
+    vs = [q["verdict"] for q in quarters
+          if q.get("verdict") in ("improving", "deteriorating")]
+    if not vs:
+        return "insufficient"
+    imp, det = vs.count("improving"), vs.count("deteriorating")
+    if det > imp:
+        return "deteriorating"
+    if imp > det:
+        return "improving"
+    return "mixed"
+
+
+def _eq_flags(syms: list[str]) -> dict:
+    """Latest earnings-quality row per symbol — quality score + flags
+    (cash_gen_deteriorating, channel_stuffing_risk…)."""
+    if not syms:
+        return {}
+    from app.database import db
+    out = {}
+    try:
+        for r in db.execute_query(
+            "SELECT DISTINCT ON (symbol) symbol, quality, flags"
+            " FROM symbol_earnings_quality WHERE symbol = ANY(:syms)"
+            " ORDER BY symbol, as_of DESC",
+                {"syms": list(syms)}):
+            out[r["symbol"]] = {"quality": r.get("quality"),
+                                "flags": r.get("flags") or []}
+    except Exception:
+        logger.info("pulse: earnings-quality lookup failed",
+                    exc_info=True)
+    return out
+
+
 @router.get("/portfolio-pulse")
 async def portfolio_pulse(portfolio_id: str = None):
     """One-row-per-holding board: tape state + transition, fundamental
@@ -2315,6 +2400,9 @@ async def portfolio_pulse(portfolio_id: str = None):
             _cr = {}
         _cr_state, _cr_conf = (_cr.get("credit_state"),
                                _cr.get("confidence"))
+        _syms = [r["symbol"] for r in rows]
+        _qmap = _earn_quarters(_syms)
+        _eqmap = _eq_flags(_syms)
         for r in rows:
             sym = r["symbol"]
             sec = r.get("sector")
@@ -2339,11 +2427,15 @@ async def portfolio_pulse(portfolio_id: str = None):
                     det = _j.loads(det)
                 if isinstance(spark_v, str):
                     spark_v = _j.loads(spark_v)
+            _qs = _qmap.get(sym) or []
+            _traj = _earn_traj(_qs)
+            _eq = _eqmap.get(sym) or {}
             ev = _pulse_action_eval(
                 {**r, "mom_state": r.get("momentum_state"),
                  "prev_state": r.get("prev_state"),
                  "fund_state": r.get("fundamental_state"),
                  "fv_upside": fv_up,
+                 "earn_traj": _traj,
                  "credit_state": _cr_state,
                  "credit_confidence": _cr_conf}, det)
             act, why = ev["action"], ev["why"]
@@ -2431,6 +2523,11 @@ async def portfolio_pulse(portfolio_id: str = None):
                 "action_label": ev.get("label"),
                 "action_confidence": ev.get("confidence"),
                 "matched_rule": ev.get("matched_rule"),
+                # last-3 journaled prints + trajectory — evidence the
+                # columns render; traj already fed the eval above
+                "quarters": _qs, "earn_traj": _traj,
+                "eq_quality": _eq.get("quality"),
+                "eq_flags": _eq.get("flags"),
             })
         order = {"reduce": 0, "trim": 1, "add": 2, "stalk": 3,
                  "attention": 4, "hold": 5, "avoid": 6}

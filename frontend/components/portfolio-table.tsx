@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import type { PulseRow } from '@/lib/api'
 
-const LS_KEY = 'pf_table_cols_v1'
+// bump when new default-on columns ship — a stale saved list would
+// hide columns the user never chose to remove
+const LS_KEY = 'pf_table_cols_v2'
 
 const BUCKET_ORDER = [
   'reduce', 'trim', 'avoid', 'attention', 'add', 'stalk', 'hold',
@@ -21,6 +23,12 @@ const BUCKET_TONE: Record<string, string> = {
   add: 'text-aggressive border-aggressive/30 bg-aggressive/10',
   stalk: 'text-constructive border-constructive/30 bg-constructive/10',
   hold: 'text-muted border-hairline bg-elevated/60',
+}
+// the policy's call as a directional glyph — ▲ build / ▽▼ cut risk /
+// ◆ hold/watch — the label stays, the icon scans
+const BUCKET_GLYPH: Record<string, string> = {
+  reduce: '▼', trim: '▽', avoid: '✕',
+  attention: '⚑', add: '▲', stalk: '◐', hold: '◆',
 }
 
 function money(v?: number | null, dec = 2) {
@@ -77,7 +85,7 @@ function Spark({ data, up }: { data: number[]; up: boolean }) {
 type ColKey =
   | 'spark' | 'price' | 'day' | 'dayd' | 'shares' | 'avg' | 'cost'
   | 'value' | 'pnlp' | 'pnld' | 'wt' | 'fv' | 'mom' | 'fund'
-  | 'rev' | 'earn'
+  | 'rev' | 'earn' | 'qtr0' | 'qtr1' | 'qtr2' | 'traj'
 
 type Col = {
   key: ColKey
@@ -214,6 +222,63 @@ const COLS: Col[] = [
   {
     key: 'rev', label: 'Rev', title: 'estimate-revision grade',
     on: false, cell: (r) => <span className="text-muted">{r.revision_grade ?? '—'}</span>,
+  },
+  // ---- last-3 quarterly prints: journaled surprise % per quarter,
+  // verdict overlay where the watcher covered it (▲ improving /
+  // ▼ deteriorating / · pending) — evidence, not a score ----
+  ...([0, 1, 2] as const).map((qi): Col => ({
+    key: (`qtr${qi}` as ColKey),
+    label: `Q-${qi + 1}`,
+    title: `quarterly print ${qi + 1} back — surprise %, verdict ▲/▼ when journaled`,
+    on: true,
+    sort: (r) => r.quarters?.[qi]?.surp ?? null,
+    cell: (r) => {
+      const q = r.quarters?.[qi]
+      if (!q) return <span className="text-faint">—</span>
+      const s = q.surp
+      const cls = s == null ? 'text-muted'
+        : s > 0 ? 'text-aggressive'
+          : s < 0 ? 'text-defensive' : 'text-muted'
+      const vd = q.verdict === 'improving' ? '▲'
+        : q.verdict === 'deteriorating' ? '▼'
+          : q.verdict === 'mixed' ? '◆' : ''
+      return (
+        <span
+          className={cls}
+          title={`${q.d}${q.verdict ? ` · ${q.verdict}` : ''}`}
+        >
+          {s == null ? '·' : `${s > 0 ? '+' : ''}${s.toFixed(0)}`}
+          {vd && <span className="text-[9px]">{vd}</span>}
+        </span>
+      )
+    },
+  })),
+  {
+    key: 'traj', label: 'Traj', title:
+      'earnings trajectory — majority of last-3 journaled print verdicts; ' +
+      '▲ improving / ▼ deteriorating / ◆ mixed / · insufficient · ' +
+      'feeds the action engine (deteriorating blocks adds)',
+    on: true,
+    cell: (r) => {
+      const t = r.earn_traj
+      const g = t === 'improving' ? ['▲', 'text-aggressive']
+        : t === 'deteriorating' ? ['▼', 'text-defensive']
+          : t === 'mixed' ? ['◆', 'text-caution']
+            : ['·', 'text-faint']
+      return (
+        <span className={g[1]} title={t ?? 'insufficient'}>
+          {g[0]}
+          {(r.eq_flags ?? []).length > 0 && (
+            <span
+              className="ml-0.5 text-defensive"
+              title={String(r.eq_flags!.join(', '))}
+            >
+              ⚑
+            </span>
+          )}
+        </span>
+      )
+    },
   },
   {
     key: 'earn', label: 'Earnings', title: 'next earnings date',
@@ -462,7 +527,11 @@ export function PortfolioTable({ rows, bookValue }: {
                   <td className={`${cellCls} text-right font-sans`}>
                     <span
                       className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${BUCKET_TONE[bucket]}`}
+                      title={r.action_label
+                        ? `rule: ${r.action_label}${r.action_confidence ? ` · ${r.action_confidence}` : ''}`
+                        : undefined}
                     >
+                      {BUCKET_GLYPH[bucket] ?? ''}{' '}
                       {BUCKET_LABEL[bucket] ?? bucket}
                     </span>
                   </td>
@@ -497,6 +566,9 @@ export function PortfolioTable({ rows, bookValue }: {
                           <span>{r.sector_etf} {String(r.sector_flow)}</span>
                         )}
                         {r.gq_pct != null && <span>GQ {r.gq_pct}th</span>}
+                        {r.earn_traj && r.earn_traj !== 'insufficient' && (
+                          <span>earn traj {r.earn_traj}</span>
+                        )}
                         {r.action_label && (
                           <span className="text-faint">
                             rule: {String(r.action_label)}

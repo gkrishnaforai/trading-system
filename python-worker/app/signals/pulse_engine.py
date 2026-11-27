@@ -205,6 +205,12 @@ def _normalize(row: dict) -> dict:
         # much a `slowing` leg weighs in the action rules
         "decel_cause": row.get("decel_cause"),
         "demand_health": row.get("demand_health"),
+        # earnings-trajectory fact — direction of the last-3 journaled
+        # earnings_watch verdicts (improving|deteriorating|mixed|
+        # insufficient). An explicit 'insufficient' value means the
+        # add gate can only fire on MEASURED deterioration — absent
+        # watcher coverage never invents a block.
+        "earn_traj": row.get("earn_traj") or "insufficient",
         # cyclical is a business-model label, not a health verdict —
         # the lean is the leading-legs judgment fundamental_health
         # computed for exactly this kind of conditional gate
