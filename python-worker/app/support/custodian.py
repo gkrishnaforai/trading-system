@@ -421,8 +421,50 @@ async def run_pass() -> dict[str, Any]:
             # The last retry already ran; the signature still firing on
             # this pass means the bounded repair attempts actually failed.
             _escalate(sig, diag, f, attempts)
+    groomed = _groom_queue()
     return {"findings": len(findings), "actions": acts,
+            "groomed": groomed,
             "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
+_PENDING_TTL_H = 24        # unconsumed past this → cancelled (dead work)
+_TERMINAL_KEEP_D = 7       # completed/cancelled/failed kept this long
+_PRUNE_BATCH = 50_000      # bounded delete per pass — converges over passes
+
+
+def _groom_queue() -> dict[str, int]:
+    """Event-queue hygiene, every pass. Two rules:
+
+    pending TTL   an event still 'pending' a day later is dead work —
+                  the consumer never reached it and its value has
+                  decayed; mark 'cancelled' (honest status — never
+                  processed) so the backlog can't grow silently.
+    terminal prune completed/cancelled/failed rows older than a week
+                  are deleted in bounded batches — the table is a queue
+                  with an audit tail, not an archive."""
+    from app.database import db
+    out = {"cancelled": 0, "pruned": 0}
+    try:
+        out["cancelled"] = db.execute_update(
+            "UPDATE universal_events SET processing_status='cancelled',"
+            " processed_at=now() WHERE processing_status='pending'"
+            " AND detected_at < now() - (:h * interval '1 hour')",
+            {"h": _PENDING_TTL_H})
+    except Exception as exc:                                # noqa: BLE001
+        logger.info("custodian groom cancel: %s", exc)
+    try:
+        out["pruned"] = db.execute_update(
+            "DELETE FROM universal_events WHERE event_id IN ("
+            " SELECT event_id FROM universal_events"
+            " WHERE processing_status IN ('completed','cancelled','failed')"
+            "   AND detected_at < now() - (:d * interval '1 day')"
+            " LIMIT :n)",
+            {"d": _TERMINAL_KEEP_D, "n": _PRUNE_BATCH})
+    except Exception as exc:                                # noqa: BLE001
+        logger.info("custodian groom prune: %s", exc)
+    if out["cancelled"] or out["pruned"]:
+        logger.info("custodian groom: %s", out)
+    return out
 
 
 def _j(d) -> str:

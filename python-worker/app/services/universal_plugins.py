@@ -130,6 +130,11 @@ class EarningsCalendarPlugin:
                     },
                     'event_timestamp': self._parse_date(item.get('date')),
                     'data_source': source,
+                    # natural key → save_event derives a stable uuid5
+                    # event_id, so re-collection upserts the same row
+                    # instead of piling a duplicate per run
+                    'source_id': f"{item.get('symbol', '').upper()}:"
+                                 f"{item.get('date')}:{source}",
                     'confidence_score': 0.9
                 }
                 

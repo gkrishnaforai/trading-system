@@ -70,11 +70,18 @@ def _job_tz(name: str | None = None) -> ZoneInfo:
 
 
 def _missed_slot(expr: str, last_run, now: datetime,
-                 max_days: int = 8, tz_name: str = "UTC") -> bool:
-    """Catch-up — was the job due at ANY minute between its last run
-    and now? Scans backward minute-by-minute; a missed slot fires on
-    the next live tick (anacron semantics). Never-run jobs don't
-    catch up — they'd fire on the next scheduled slot."""
+                 max_days: int = 8, tz_name: str = "UTC",
+                 max_missed: int = 3) -> bool:
+    """Catch-up — was the job due between its last run and now?
+    Scans backward minute-by-minute (anacron semantics). Never-run
+    jobs don't catch up — they'd fire on the next scheduled slot.
+
+    max_missed bounds the stampede: a job that missed 1-3 slots lost
+    *work* worth replaying (the nightly run at 22:00 while the box was
+    down); a job that missed 200 slots lost *ticks* — replaying one
+    stale run buys nothing its next natural slot doesn't, and 40 such
+    jobs firing inside minutes is the outage-recovery thundering herd.
+    Early-exit at max_missed+1 also caps the scan cost itself."""
     from datetime import timedelta
     if last_run is None:
         return False
@@ -84,11 +91,14 @@ def _missed_slot(expr: str, last_run, now: datetime,
     t = now.replace(second=0, microsecond=0)
     floor = max(last_run.replace(tzinfo=timezone.utc),
                 t - timedelta(days=max_days))
+    missed = 0
     while t > floor:
         t -= timedelta(minutes=1)
         if cron_match(expr, t.astimezone(tz)):
-            return True
-    return False
+            missed += 1
+            if missed > max_missed:
+                return False
+    return missed > 0
 
 
 _MAX_CONCURRENT = 4      # fired jobs are I/O-heavy; cap the box,

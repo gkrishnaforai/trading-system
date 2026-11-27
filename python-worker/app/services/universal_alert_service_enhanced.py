@@ -1171,18 +1171,37 @@ Details:
         return html
     
     async def collect_data_from_plugins(self, plugin_configs: Dict[str, Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-        """Collect data from multiple data source plugins"""
+        """Collect data from multiple data source plugins.
+
+        Producer contract: an event is only queued when at least one
+        ACTIVE universal_alert exists for its alert_type — otherwise it
+        sits 'pending' forever (the consumer only matches on
+        alert_type), which is how a whole-market earnings-calendar
+        flood grew a multi-million-row backlog nobody could read.
+        Unconsumable types are skipped and logged, not silently kept."""
         results = {}
-        
+        try:
+            rows = db.execute_query(
+                "SELECT DISTINCT alert_type FROM universal_alerts"
+                " WHERE is_active")
+            consumable = {r["alert_type"] for r in rows}
+        except Exception:
+            consumable = None           # rules unreadable → gate nothing
+
         for plugin_name, config in plugin_configs.items():
             try:
                 plugin = self.plugin_registry.get_data_source_plugin(plugin_name)
                 if plugin:
                     events = await plugin.collect_data(config)
                     results[plugin_name] = events
-                    
+                    skipped: Dict[str, int] = {}
+
                     # Save events to database
                     for event_data in events:
+                        et = event_data.get('event_type')
+                        if consumable is not None and et not in consumable:
+                            skipped[et] = skipped.get(et, 0) + 1
+                            continue
                         event_source_id = event_data.get('source_id')
                         event_data_source = event_data.get('data_source', plugin_name)
                         derived_event_id: Optional[str] = None
@@ -1201,7 +1220,11 @@ Details:
                             confidence_score=event_data.get('confidence_score', 1.0)
                         )
                         await self.event_repo.save_event(event)
-                
+                    if skipped:
+                        logger.info(
+                            "collect %s: skipped %d unconsumable events "
+                            "%s (no active alert_type match)",
+                            plugin_name, sum(skipped.values()), skipped)
             except Exception as e:
                 self.log_error(f"Error collecting data from plugin {plugin_name}", e)
                 results[plugin_name] = []

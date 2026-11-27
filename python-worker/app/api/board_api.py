@@ -4453,14 +4453,39 @@ async def short_squeeze_symbol(symbol: str):
     return ev
 
 
+# background warm kicks for lazy surfaces — a request NEVER blocks on
+# an eval; it serves the journaled row with stale:true and fires the
+# refresh behind it. The running-guard stops concurrent page loads
+# stacking duplicate evals (the thundering-herd shape this fixes).
+_LAZY_WARM: dict = {}
+
+
+def _kick_warm(key: str, fn) -> None:
+    """Fire-and-forget eval kick — one in flight per key."""
+    if _LAZY_WARM.get(key):
+        return
+
+    async def _go():
+        try:
+            await asyncio.to_thread(fn)
+        except Exception:                                   # noqa: BLE001
+            pass
+        finally:
+            _LAZY_WARM.pop(key, None)
+
+    _LAZY_WARM[key] = True
+    asyncio.create_task(_go())
+
+
 @router.get("/intraday")
 async def intraday_tape():
     """Session tape — latest journaled state + today's timeline.
-    Lazy-evals during RTH when the last journal row is >14 min old,
-    so opening this page is what keeps the tape alive."""
+    Serve-stale: always returns the last journaled row immediately;
+    a >14min-old journal during RTH kicks a background re-eval
+    (next request reads fresh) instead of blocking this one."""
     from app.signals import intraday_pulse as ip
     out = await asyncio.to_thread(ip.latest)
-    if ip.market_open_now() and out.get("eval"):
+    if ip.market_open_now():
         try:
             from datetime import datetime, timezone, timedelta
             last_ts = out.get("ts")
@@ -4470,25 +4495,25 @@ async def intraday_tape():
                 stale = (datetime.now(timezone.utc)
                          - dt.astimezone(timezone.utc)
                          ) > timedelta(minutes=14)
-            if stale:
-                await asyncio.to_thread(ip.evaluate)
-                out = await asyncio.to_thread(ip.latest)
+            if stale or not out.get("eval"):
+                _kick_warm("intraday_pulse", ip.evaluate)
+                out["stale"] = True
         except Exception:                                   # noqa: BLE001
             pass
-    elif ip.market_open_now() and not out.get("eval"):
-        await asyncio.to_thread(ip.evaluate)
-        out = await asyncio.to_thread(ip.latest)
     return out
 
 
 @router.get("/correction-alarms")
 async def correction_alarms():
     """Latest correction-alarm eval — the four legs + character.
-    Computes live if nothing is journaled today (self-healing)."""
+    Serve-stale: returns whatever is journaled; a missing/stale
+    journal kicks a background eval rather than blocking the read."""
     from app.signals import correction_alarms as ca
     out = await asyncio.to_thread(ca.latest)
     if not out or out.get("as_of") != str(date.today()):
-        out = await asyncio.to_thread(ca.evaluate)
+        _kick_warm("correction_alarms", ca.evaluate)
+        if out:
+            out["stale"] = True
     return out
 
 
