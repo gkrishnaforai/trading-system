@@ -500,6 +500,60 @@ function EarningsBlock({ e }: { e: Record<string, unknown> | null }) {
   )
 }
 
+/** Quarter-completion strip — per recent print, what the engine has
+    journaled vs still owes (8-K fast; 10-Q XBRL can lag ~40d). The
+    earnings-completion reconciler fills + re-analyzes nightly. */
+async function CompletionStrip({ sym }: { sym: string }) {
+  const data = await api.earningsCompletion(sym).catch(() => null)
+  const rows = data?.rows ?? []
+  if (!rows.length) return null
+  const LABEL: Record<string, string> = {
+    print: 'print', verdict: 'verdict', release8k: '8-K',
+    filing: '10-Q/K', xbrl: 'XBRL', quarterly: 'quarter',
+    report: 'report', drivers: 'drivers',
+  }
+  return (
+    <div className="pt-1.5 space-y-1">
+      {rows.map((r, i) => {
+        const checks = r.checks ?? {}
+        const missing = r.missing ?? []
+        const tone = r.status === 'complete' ? 'text-aggressive'
+          : r.status === 'expired' ? 'text-defensive' : 'text-muted'
+        return (
+          <div key={i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
+            <span className="font-mono text-faint">
+              {String(r.earnings_date ?? '')}
+            </span>
+            {Object.entries(LABEL).map(([k, lbl]) => {
+              const v = checks[k]
+              if (v == null) return null
+              return (
+                <span key={k} className={
+                  v === 'done' ? 'text-aggressive' : 'text-caution'}
+                  title={`${lbl}: ${v}`}>
+                  {lbl}{v === 'done' ? '✓' : '·'}
+                </span>
+              )
+            })}
+            <span className={tone}>
+              {r.status === 'complete' ? 'analyzed'
+                : r.status === 'expired'
+                  ? `missing ${missing.join(', ') || '—'}`
+                  : `pending ${missing.join(', ') || '…'}`}
+            </span>
+            {(r.reanalyzed ?? []).length > 0 && (
+              <span className="text-faint"
+                title={`re-ran: ${(r.reanalyzed ?? []).join(', ')}`}>
+                re-analyzed
+              </span>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 /** Sector-relative leadership — 'who leads the group': RS rank, the
     day-level defense/offense pattern vs the group benchmark, and the
     estimate-stability confirmation. Selection vocabulary, never an
@@ -1108,6 +1162,11 @@ async function StockCore({ sym }: { sym: string }) {
             event (provenance + staleness) instead of a bare countdown */}
         <p className="pt-2 text-sm text-muted">{readLine(card)}</p>
         <div className="pt-1.5"><EarningsBlock e={earnings} /></div>
+        {/* quarter completion — what's analyzed vs still owed per
+            recent print (streams in like the squeeze line) */}
+        <Suspense fallback={null}>
+          <CompletionStrip sym={sym} />
+        </Suspense>
         <Leadership l={leadership} />
         {resilience && <CompanyScoreCard r={resilience} />}
         {spark.length >= 5 && (

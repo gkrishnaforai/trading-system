@@ -150,7 +150,7 @@ def _split_step(series: list[tuple[str, float]]
     """Largest consecutive share-count step + the date it happened."""
     best, when = None, None
     for (_, prev), (d, cur) in zip(series, series[1:]):
-        if prev and prev > 0:
+        if prev and prev > 0 and cur and cur > 0:
             r = cur / prev
             # a step is a step either direction (reverse splits too)
             step = r if r >= 1 else 1 / r

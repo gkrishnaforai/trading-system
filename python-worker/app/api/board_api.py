@@ -1213,6 +1213,15 @@ async def _j_earnings_quality() -> dict:
     return await asyncio.to_thread(run, syms)
 
 
+async def _j_earnings_completion() -> dict:
+    """Quarter-completion reconciler — per (symbol, print) checks
+    what's journaled vs still owed (8-K/10-Q/XBRL/quarterly/report),
+    fills through the owning jobs' paths, re-analyzes the symbol on
+    new data, alerts when the 10-Q/10-K lands."""
+    from app.signals import earnings_completion
+    return await asyncio.to_thread(earnings_completion.run)
+
+
 async def _j_flow() -> dict:
     """Nightly flow footprint — EOD institutional signature per
     book symbol (zvol + CLV streaks, journaled to symbol_flow)."""
@@ -1399,6 +1408,8 @@ JOBS: dict[str, tuple[str, Callable]] = {
     "flow":         ("Institutional flow footprint", _j_flow),
     "earnings-quality": ("Forensic earnings-quality screen",
                       _j_earnings_quality),
+    "earnings-completion": ("Earnings completion reconciler",
+                            _j_earnings_completion),
     "guidance":     ("Guidance intelligence", _j_guidance),
     "earnings-today": ("Same-day earnings extraction",
                        _j_earnings_today),
@@ -2998,6 +3009,17 @@ async def analyze_doc(sym: str, body: dict):
         doc_extract.analyze, sym,
         body.get("text") or "", body.get("url") or "",
         body.get("title") or "")
+
+
+@router.get("/symbol/{sym}/earnings-completion")
+async def symbol_earnings_completion(sym: str):
+    """Quarter-completion checklist — per recent print, what the
+    engine has journaled (print, verdict, 8-K, 10-Q/10-K filing,
+    XBRL facts, quarterly row, report, drivers) vs what's still
+    owed. The reconciler fills + re-analyzes; this is its view."""
+    from app.signals import earnings_completion
+    return await asyncio.to_thread(
+        earnings_completion.for_symbol, sym.upper())
 
 
 @router.get("/symbol/{sym}/swing-check")

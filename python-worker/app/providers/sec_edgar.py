@@ -189,3 +189,44 @@ def recent_8k_releases(symbol: str, days: int = 120,
                                            acc_nodash=acc, name=doc),
                     "text": text})
     return out
+
+
+def recent_filings(symbol: str, forms: tuple = ("10-Q", "10-K"),
+                   days: int = 45, max_filings: int = 5) -> list[dict]:
+    """Recent filings of given forms — [{accession, form, filed,
+    period_end}] — metadata only, no doc fetch. The completion
+    reconciler uses this to detect when a 10-Q/10-K covering a
+    reported quarter has landed on EDGAR."""
+    from datetime import date, timedelta
+    cik = cik_for(symbol)
+    if not cik:
+        return []
+    r = _get(_SUBS_URL.format(cik=cik))
+    if not r:
+        return []
+    try:
+        recent = r.json().get("filings", {}).get("recent", {})
+    except Exception:
+        return []
+    forms_l = recent.get("form", [])
+    dates = recent.get("filingDate", [])
+    accs = recent.get("accessionNumber", [])
+    periods = recent.get("reportDate", [])
+    cutoff = date.today() - timedelta(days=days)
+    out: list[dict] = []
+    for i, form in enumerate(forms_l):
+        if len(out) >= max_filings:
+            break
+        if form not in forms:
+            continue
+        try:
+            filed = date.fromisoformat(str(dates[i]))
+        except Exception:
+            continue
+        if filed < cutoff:
+            continue
+        out.append({"accession": str(accs[i]) if i < len(accs) else None,
+                    "form": form, "filed": str(filed),
+                    "period_end": (str(periods[i])
+                                   if i < len(periods) else None)})
+    return out

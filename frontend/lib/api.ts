@@ -867,6 +867,9 @@ export const api = {
     get<LevSwings>(`/leveraged-swings${funds ? `?funds=${funds}` : ''}`),
   shortSqueeze: (symbol: string) =>
     get<SqueezeEval>(`/short-squeeze/${encodeURIComponent(symbol)}`),
+  earningsCompletion: (symbol: string) =>
+    get<EarningsCompletion>(
+      `/symbol/${encodeURIComponent(symbol)}/earnings-completion`),
   intraday: () => get<IntradayTape>('/intraday', { fresh: true }),
   fragility: () => get<Fragility>('/fragility'),
   resilience: (symbol: string) => get<ResilienceCard>(`/resilience/${symbol}`),
@@ -1725,4 +1728,19 @@ export interface GuidanceCard {
   guidance?: { text: string; metric?: string; period?: string;
                direction?: string; normalized?: boolean }[]
   counts?: { raised?: number; lowered?: number; maintained?: number }
+}
+
+/** Earnings-completion checklist row — the reconciler's view of one
+ * (symbol, print): what has been journaled vs still owed. */
+export type EarningsCompletion = {
+  symbol: string
+  rows?: {
+    earnings_date?: string | null
+    checks?: Record<string, string> | null
+    missing?: string[] | null
+    filled?: string[] | null
+    reanalyzed?: string[] | null
+    status?: string | null
+    last_checked?: string | null
+  }[] | null
 }
