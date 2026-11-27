@@ -60,6 +60,18 @@ export function Nav() {
           })}
           {isAdmin && (
             <Link
+              href="/brain"
+              className={`relative px-2 py-1.5 text-[12.5px] font-medium transition-colors ${path.startsWith('/brain') ? 'text-accent' : 'text-muted hover:text-ink'
+                }`}
+            >
+              Brain
+              {path.startsWith('/brain') && (
+                <span className="absolute inset-x-3 -bottom-[13px] h-[2px] rounded-full bg-accent" />
+              )}
+            </Link>
+          )}
+          {isAdmin && (
+            <Link
               href="/admin"
               className={`relative px-2 py-1.5 text-[12.5px] font-medium transition-colors ${path.startsWith('/admin') ? 'text-accent' : 'text-muted hover:text-ink'
                 }`}

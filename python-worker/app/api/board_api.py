@@ -1774,6 +1774,149 @@ async def themes_rotation(refresh: bool = False):
     return await asyncio.to_thread(theme_rotation.compute_board)
 
 
+# ---------------- brain — vitals, inputs, evolution, intake ----------
+
+def _try(fn, default=None):
+    """Vitals must never 500 on a missing table — prod may lag the
+    migration tree. Each panel degrades to its default."""
+    try:
+        return fn()
+    except Exception:
+        return default if default is not None else {}
+
+
+@router.get("/brain")
+async def brain_vitals():
+    """Admin view of the intelligence layer — three questions:
+
+    how big is it     themes by stage, claims by status, edges,
+                      forecasts, docs, evidence rows
+    what did it eat   today's inputs: jobs that ran, claims emitted,
+                      docs analyzed, evidence observed, intake items
+    how is it moving  recent promotions, claim transitions, forecast
+                      grades, intake verdicts
+    """
+    from app.database import db
+
+    vitals = {}
+    vitals["themes"] = _try(lambda: {
+        "by_stage": {r["stage"]: r["n"] for r in db.execute_query(
+            "SELECT stage, count(*) n FROM theme_registry"
+            " WHERE status='active' GROUP BY stage")},
+        "candidates": sum(r["n"] for r in db.execute_query(
+            "SELECT count(*) n FROM theme_registry"
+            " WHERE status='candidate'")),
+        "retired": sum(r["n"] for r in db.execute_query(
+            "SELECT count(*) n FROM theme_registry"
+            " WHERE status='retired'"))})
+    vitals["claims"] = _try(lambda: {
+        "by_status": {r["status"]: r["n"] for r in db.execute_query(
+            "SELECT status, count(*) n FROM narrative_claims"
+            " WHERE version=1 GROUP BY status")},
+        "total": sum(r["n"] for r in db.execute_query(
+            "SELECT count(*) n FROM narrative_claims"
+            " WHERE version=1"))})
+    vitals["edges"] = _try(lambda: sum(r["n"] for r in db.execute_query(
+        "SELECT count(*) n FROM supplier_relationships")))
+    vitals["forecasts"] = _try(lambda: {
+        "driver_forecasts": sum(r["n"] for r in db.execute_query(
+            "SELECT count(*) n FROM driver_forecasts")),
+        "graded_kinds": sum(r["n"] for r in db.execute_query(
+            "SELECT count(DISTINCT kind) n FROM journal_kind_stats")),
+        "reliable": sum(r["n"] for r in db.execute_query(
+            "SELECT count(*) n FROM journal_kind_stats"
+            " WHERE reliable"))})
+    vitals["docs"] = _try(lambda: {
+        "analyzed": sum(r["n"] for r in db.execute_query(
+            "SELECT count(*) n FROM doc_analyses")),
+        "watches_open": sum(r["n"] for r in db.execute_query(
+            "SELECT count(*) n FROM thesis_watches"
+            " WHERE status='open'"))})
+    vitals["evidence"] = _try(lambda: sum(r["n"] for r in db.execute_query(
+        "SELECT count(*) n FROM demand_evidence")))
+    vitals["intake"] = _try(lambda: {
+        r["status"]: r["n"] for r in db.execute_query(
+            "SELECT status, count(*) n FROM brain_intake"
+            " GROUP BY status")})
+
+    today = {}
+    today["jobs"] = _try(lambda: [dict(r) for r in db.execute_query(
+        "SELECT name, ran_at, duration_s, error FROM job_runs"
+        " WHERE ran_at::date = current_date"
+        " ORDER BY ran_at")], [])
+    today["claims_emitted"] = _try(lambda: sum(r["n"] for r in
+        db.execute_query(
+            "SELECT count(*) n FROM narrative_claims"
+            " WHERE as_of = current_date")), 0)
+    today["docs_analyzed"] = _try(lambda: sum(r["n"] for r in
+        db.execute_query(
+            "SELECT count(*) n FROM doc_analyses"
+            " WHERE created_at::date = current_date")), 0)
+    today["evidence_rows"] = _try(lambda: sum(r["n"] for r in
+        db.execute_query(
+            "SELECT count(*) n FROM demand_evidence"
+            " WHERE created_at::date = current_date")), 0)
+    today["intake"] = _try(lambda: sum(r["n"] for r in
+        db.execute_query(
+            "SELECT count(*) n FROM brain_intake"
+            " WHERE submitted_at::date = current_date")), 0)
+
+    evolution = {}
+    evolution["promotions"] = _try(lambda: [dict(r) for r in
+        db.execute_query(
+            "SELECT theme_key, name, stage, promoted_at"
+            " FROM theme_registry WHERE promoted_at IS NOT NULL"
+            " AND promoted_at >= current_date - 30"
+            " ORDER BY promoted_at DESC")], [])
+    evolution["claim_moves"] = _try(lambda: [dict(r) for r in
+        db.execute_query(
+            "SELECT claim_id, review_kind, verdict, created_at"
+            " FROM claim_reviews"
+            " WHERE created_at >= now() - interval '7 days'"
+            " ORDER BY created_at DESC LIMIT 20")], [])
+    evolution["intake_verdicts"] = _try(lambda: [dict(r) for r in
+        db.execute_query(
+            "SELECT id, title, status, submitted_at FROM brain_intake"
+            " ORDER BY submitted_at DESC LIMIT 10")], [])
+    evolution["restaged"] = _try(lambda: [dict(r) for r in
+        db.execute_query(
+            "SELECT theme_key, name, stage, last_review"
+            " FROM theme_registry WHERE status='active'"
+            " AND last_review >= current_date - 30"
+            " ORDER BY last_review DESC")], [])
+
+    return {"vitals": vitals, "today": today, "evolution": evolution}
+
+
+@router.get("/brain/intake")
+async def brain_intake_queue(limit: int = 25):
+    """The intake queue — admin submissions with accept/partial/
+    rejected verdicts and the canonical why behind each."""
+    from app.brain import intake
+    return {"queue": await asyncio.to_thread(intake.list_recent, limit)}
+
+
+@router.post("/brain/intake")
+async def brain_intake_submit(body: dict):
+    """Feed the brain — admin submits a doc/news/URL. It runs the
+    same extraction pipeline as every other source (verbatim-quote
+    grounding, deterministic validation) and journals the verdict:
+    accepted / partial / rejected, always with why."""
+    from app.brain import intake
+    symbols = body.get("symbols") or []
+    if isinstance(symbols, str):
+        symbols = [s.strip() for s in symbols.split(",") if s.strip()]
+    enq = await asyncio.to_thread(
+        intake.submit, body.get("text") or "", body.get("url") or "",
+        body.get("title") or "", symbols,
+        body.get("by") or "admin", body.get("kind") or "doc")
+    if enq.get("deduped"):
+        return enq
+    return await asyncio.to_thread(
+        intake.process, enq["id"], body.get("text") or "",
+        body.get("url") or "", body.get("title") or "", symbols)
+
+
 @router.get("/growth-quality")
 async def growth_quality_board(refresh: bool = False):
     """Ranked growth-quality composite — structural growers vs cyclical
