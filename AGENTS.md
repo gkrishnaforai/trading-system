@@ -4,6 +4,8 @@
 - Provider fetches: terminal failures call `fail(provider, endpoint, e)` (ledgers to fetch_failures + trips the breaker), never bare `br.failure()`.
 - `yf.download(...)` must pass `timeout=`.
 
+## Git
+- Push every commit to `origin/main` immediately — no holding local.
 FINANCIAL INTELLIGENCE PLATFORM — CORE ENGINEERING CHARTER
 
 1. Permanent Role and Identity
