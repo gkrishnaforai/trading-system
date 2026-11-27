@@ -1,13 +1,25 @@
-/** Interim auth — provisions a device-local account on the worker's
-    portfolio API and caches its JWT in an httpOnly cookie. When real
-    sign-in lands, this becomes the session lookup; call sites keep
-    working because they only ask for a token. */
+/** Session auth — AUTH_PROVIDER picks the backend ("local" = our
+    Postgres users table + worker-issued JWT in the mp_token cookie;
+    "supabase" is the future provider — swap the provider functions,
+    not the call sites).
+
+    local flow: /api/auth/login|signup call the worker, which mints a
+    ~7d JWT; we keep it in an httpOnly cookie. getToken() serves that
+    session to worker-bound calls so portfolio data is per-user. */
 import { cookies } from 'next/headers'
 import { BASE } from './api'
+
+export const AUTH_PROVIDER = process.env.AUTH_PROVIDER ?? 'local'
 
 const USERNAME = process.env.MP_LOCAL_USERNAME ?? 'trader'
 const PASSWORD = process.env.MP_LOCAL_PASSWORD ?? 'marketpulse-local'
 const EMAIL = process.env.MP_LOCAL_EMAIL ?? 'trader@local.dev'
+
+export type SessionUser = {
+  role: string
+  username?: string
+  email?: string
+}
 
 async function postJson(path: string, body: unknown) {
   return fetch(`${BASE}${path}`, {
@@ -19,12 +31,15 @@ async function postJson(path: string, body: unknown) {
   })
 }
 
-async function login(): Promise<string | null> {
+/** Device-account login — the pre-auth shim kept as a fallback for
+    server-to-worker calls with no user session (internal callers,
+    pre-login contexts). Set MP_DEVICE_ACCOUNT_AUTH=off to disable. */
+async function deviceLogin(): Promise<string | null> {
+  if (process.env.MP_DEVICE_ACCOUNT_AUTH === 'off') return null
   try {
     let res = await postJson('/api/v2/portfolio/users/login',
       { username: USERNAME, password: PASSWORD })
     if (res.status === 400 || res.status === 401) {
-      // first run — provision the local account, then log in
       await postJson('/api/v2/portfolio/users/register', {
         username: USERNAME, email: EMAIL,
         password: PASSWORD, full_name: 'Osprey Desk',
@@ -40,30 +55,108 @@ async function login(): Promise<string | null> {
   }
 }
 
-function setCookie(token: string) {
+/** Provider seam — sign a human in. Returns { token, user },
+    { error } on a clean reject, null when the provider is down.
+    supabase: will call supabase.auth.signInWithPassword and store its
+    access token; call sites (cookie, getUser, authedFetch) don't
+    change. */
+export async function signIn(
+  email: string, password: string,
+): Promise<
+  { token: string; user: SessionUser } | { error: string } | null
+> {
+  if (AUTH_PROVIDER === 'supabase') {
+    // TODO: supabase.auth.signInWithPassword({ email, password })
+    return null
+  }
   try {
-    // works inside route handlers; silently skipped in RSC render
-    cookies().set('mp_token', token, {
-      httpOnly: true, sameSite: 'lax', path: '/',
-      maxAge: 60 * 60 * 24 * 30,
-    })
-  } catch { /* render context — token still returned for this request */ }
+    const res = await postJson('/api/v2/portfolio/users/login',
+      { username: email, password })
+    const j = (await res.json().catch(() => ({}))) as {
+      access_token?: string
+      detail?: string
+      user?: { role?: string; username?: string; email?: string }
+    }
+    if (!res.ok || !j.access_token) {
+      return { error: j.detail ?? 'sign-in failed' }
+    }
+    return {
+      token: j.access_token,
+      user: {
+        role: j.user?.role ?? 'basic',
+        username: j.user?.username,
+        email: j.user?.email,
+      },
+    }
+  } catch {
+    return null
+  }
 }
 
+/** Provider seam — create a basic account. Returns { token, user }
+    (auto-signed-in) or null; { error } on a clean reject. */
+export async function signUp(
+  firstName: string, lastName: string, email: string, password: string,
+): Promise<
+  { token: string; user: SessionUser } | { error: string } | null
+> {
+  if (AUTH_PROVIDER === 'supabase') {
+    // TODO: supabase.auth.signUp({ email, password, options: { data } })
+    return null
+  }
+  try {
+    const res = await postJson('/api/v2/portfolio/users/signup', {
+      first_name: firstName, last_name: lastName,
+      email, password,
+    })
+    const j = (await res.json().catch(() => ({}))) as {
+      access_token?: string
+      detail?: string | Array<{ msg?: string }>
+      user?: { role?: string; username?: string; email?: string }
+    }
+    if (!res.ok || !j.access_token) {
+      const d = j.detail
+      return {
+        error: typeof d === 'string' ? d
+          : Array.isArray(d) ? (d[0]?.msg ?? 'signup failed')
+          : 'signup failed',
+      }
+    }
+    return {
+      token: j.access_token,
+      user: {
+        role: j.user?.role ?? 'basic',
+        username: j.user?.username,
+        email: j.user?.email,
+      },
+    }
+  } catch {
+    return null
+  }
+}
+
+export function setSessionCookie(token: string) {
+  cookies().set('mp_token', token, {
+    httpOnly: true, sameSite: 'lax', path: '/',
+    maxAge: 60 * 60 * 24 * 7,
+  })
+}
+
+export function clearSessionCookie() {
+  try { cookies().delete('mp_token') } catch { /* render ctx */ }
+}
+
+/** Token for worker-bound calls — the signed-in user's session first,
+    the device account as a server-side fallback for contexts with no
+    user (disable via MP_DEVICE_ACCOUNT_AUTH=off). */
 export async function getToken(): Promise<string | null> {
   const t = cookies().get('mp_token')?.value
-  // the cookie outlives the JWT (30d vs 30m) — a cached-but-dead token
-  // must fall through to a fresh login, or every call 401s with
-  // "Token expired" until the cookie ages out
   if (t && !expired(t)) return t
-  const fresh = await login()
-  if (fresh) setCookie(fresh)
-  return fresh
+  return deviceLogin()
 }
 
 function expired(token: string, skewS = 60): boolean {
-  const claims = decodeClaims(token)
-  const exp = claims?.exp
+  const exp = decodeClaims(token)?.exp
   if (typeof exp !== 'number') return true
   return exp * 1000 <= Date.now() + skewS * 1000
 }
@@ -78,20 +171,17 @@ function decodeClaims(token: string | null): Record<string, unknown> | null {
   }
 }
 
-/** Role + identity for the current session. Tokens minted before the
-    role claim existed fall through to a fresh login. UI gate only —
-    the worker independently verifies the claim server-side. */
-export async function getUser(): Promise<{ role: string; username?: string }> {
-  const first = decodeClaims(await getToken())
-  if (first?.role) {
-    return { role: String(first.role), username: first.username ? String(first.username) : undefined }
-  }
-  const fresh = await login()
-  if (fresh) setCookie(fresh)
-  const claims = decodeClaims(fresh)
+/** Who the current request is — the session cookie's claims, or
+    'anonymous' when there's no session. No device-account fallback
+    here: identity must never be silently assumed. */
+export async function getUser(): Promise<SessionUser> {
+  const token = cookies().get('mp_token')?.value ?? null
+  const claims = decodeClaims(token)
+  if (!claims || expired(token ?? '')) return { role: 'anonymous' }
   return {
-    role: String(claims?.role ?? 'user'),
-    username: claims?.username ? String(claims.username) : undefined,
+    role: String(claims.role ?? 'basic'),
+    username: claims.username ? String(claims.username) : undefined,
+    email: claims.email ? String(claims.email) : undefined,
   }
 }
 
@@ -110,7 +200,6 @@ export async function authedFetch(
         'Content-Type': 'application/json',
       },
       cache: 'no-store',
-      // caller may pass a tighter signal; default bounds the wait
       signal: init.signal ?? AbortSignal.timeout(60_000),
     })
   } catch {

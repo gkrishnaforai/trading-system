@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
 const LINKS = [
@@ -24,13 +24,30 @@ const LINKS = [
 
 export function Nav() {
   const path = usePathname()
-  const [isAdmin, setIsAdmin] = useState(false)
+  const router = useRouter()
+  const [role, setRole] = useState<string | null>(null)
   useEffect(() => {
     fetch('/api/me')
       .then((r) => r.json())
-      .then((u) => setIsAdmin(u?.role === 'admin'))
+      .then((u) => setRole(u?.role ?? null))
       .catch(() => { })
   }, [])
+
+  async function signOut() {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => { })
+    router.push('/login')
+    router.refresh()
+  }
+
+  if (path.startsWith('/login') || path.startsWith('/signup')) {
+    return null
+  }
+
+  const isAdmin = role === 'admin'
+  const links = role === 'basic'
+    ? LINKS.filter((l) => l.href === '/portfolio')
+    : LINKS
+
   return (
     <nav className="sticky top-0 z-20 border-b border-hairline bg-canvas/85 backdrop-blur">
       <div className="mx-auto flex max-w-3xl items-center justify-between px-5 py-3.5">
@@ -41,7 +58,7 @@ export function Nav() {
           OSPREY<span className="text-accent">DESK</span>
         </Link>
         <div className="flex items-center gap-1">
-          {LINKS.map((l) => {
+          {links.map((l) => {
             const active =
               l.href === '/' ? path === '/' : path.startsWith(l.href)
             return (
@@ -81,6 +98,14 @@ export function Nav() {
                 <span className="absolute inset-x-3 -bottom-[13px] h-[2px] rounded-full bg-accent" />
               )}
             </Link>
+          )}
+          {role && role !== 'anonymous' && (
+            <button
+              onClick={signOut}
+              className="ml-1 px-2 py-1.5 text-[12.5px] font-medium text-faint transition-colors hover:text-ink"
+            >
+              Sign out
+            </button>
           )}
         </div>
       </div>

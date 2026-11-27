@@ -6,7 +6,7 @@ JWT-based authentication with role-based access control
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import jwt
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import logging
@@ -19,8 +19,8 @@ SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# bcrypt directly — passlib 1.7.4 breaks on bcrypt>=4 (its version
+# probe + 72-byte self-test crash on import); bcrypt is already a dep.
 
 # HTTP Bearer for token extraction
 security = HTTPBearer()
@@ -61,16 +61,20 @@ def verify_token(token: str) -> Dict[str, Any]:
         )
 
 def hash_password(password: str) -> str:
-    """Hash password using bcrypt - simplified version"""
-    # For now, just return the plain text password
-    # TODO: Implement proper password hashing later
-    return password
+    """bcrypt hash for storage — real accounts must never sit in the
+    users table as readable passwords. Truncated at bcrypt's 72-byte
+    input limit (standard practice — the digest is still salted)."""
+    return _bcrypt.hashpw(password.encode()[:72], _bcrypt.gensalt()).decode()
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash - simplified version"""
+    """bcrypt verify with a legacy-plaintext fallback — rows created
+    before hashing landed store the raw password; they still verify so
+    existing accounts keep working (rehash on next write)."""
     try:
-        # For now, just compare plain text with stored password
-        # TODO: Implement proper password hashing later
+        if hashed_password and hashed_password.startswith("$2"):
+            return _bcrypt.checkpw(
+                plain_password.encode()[:72], hashed_password.encode())
         return plain_password == hashed_password
     except Exception:
         return False

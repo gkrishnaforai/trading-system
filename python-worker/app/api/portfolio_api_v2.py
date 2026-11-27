@@ -6,7 +6,7 @@ Industry-standard portfolio management with proper stocks table integration
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timedelta
 import json
 from decimal import Decimal
 import uuid
@@ -174,7 +174,40 @@ async def register_user(user_data: UserCreate, db=Depends(get_db)):
         created_at=user['created_at'] if 'created_at' in user else datetime.now()
     )
 
-# Login request model
+# Signup — the human-facing account creation path. Role is always
+# 'basic' server-side: privilege is never taken from the request.
+class SignupRequest(BaseModel):
+    first_name: str
+    last_name: str
+    email: EmailStr
+    password: str
+
+
+def _admin_override(user: dict) -> str:
+    """MP_ADMIN_USERS (comma-sep usernames or emails) elevates the
+    stored role — survives DB resets for operator accounts."""
+    import os
+    admins = {u.strip().lower() for u in
+              os.getenv("MP_ADMIN_USERS", "").split(",") if u.strip()}
+    if (user.get("username") or "").lower() in admins or \
+       (user.get("email") or "").lower() in admins:
+        return "admin"
+    return user.get("role") or "basic"
+
+
+def _session_token(user: dict) -> str:
+    """UI session token — longer-lived than the 30min API default;
+    the cookie on the frontend carries the same horizon."""
+    import os
+    days = float(os.getenv("MP_SESSION_DAYS", "7"))
+    return create_access_token(
+        data={"sub": str(user["id"]), "username": user["username"],
+              "role": _admin_override(user), "email": user["email"]},
+        expires_delta=timedelta(days=days))
+
+
+# Login request model — `username` accepts an email too; humans log in
+# with email, the device account still uses its username.
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -184,66 +217,93 @@ class LoginResponse(BaseModel):
     token_type: str
     user: UserResponse
 
+
+@router.post("/users/signup", response_model=LoginResponse)
+async def signup_user(body: SignupRequest, db=Depends(get_db)):
+    """Create an account from the signup form — email is the login
+    identity and doubles as username; every signup lands 'basic'."""
+    email = body.email.lower().strip()
+    if len(body.password) < 8:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "password must be at least 8 characters")
+    if db.execute_query_positional(
+            "SELECT id FROM users WHERE email = $1", [email]):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "an account with this email already exists")
+    full = f"{body.first_name.strip()} {body.last_name.strip()}".strip()
+    db.execute_update_positional(
+        """INSERT INTO users (username, email, password_hash, full_name,
+                              first_name, last_name, role)
+           VALUES ($1, $2, $3, $4, $5, $6, 'basic')""",
+        [email, email, hash_password(body.password), full,
+         body.first_name.strip(), body.last_name.strip()])
+    user = db.execute_query_positional(
+        "SELECT id, username, email, full_name, role, is_active,"
+        " created_at FROM users WHERE email = $1", [email])[0]
+    return LoginResponse(
+        access_token=_session_token(user), token_type="bearer",
+        user=UserResponse(id=str(user["id"]), username=user["username"],
+                          email=user["email"], full_name=user["full_name"],
+                          role=user["role"], is_active=user["is_active"],
+                          created_at=user["created_at"]))
+
+
 @router.post("/users/login", response_model=LoginResponse)
 async def login_user(login_data: LoginRequest, db=Depends(get_db)):
     """Authenticate user and return JWT token"""
-    
-    # Add logging
-    logger.info(f"Login attempt for username: {login_data.username}")
-    
+
+    ident = login_data.username.strip()
+    logger.info(f"Login attempt for: {ident}")
+
     user = db.execute_query_positional(
         """
         SELECT id, username, email, password_hash, full_name, role, is_active
-        FROM users WHERE username = $1
+        FROM users WHERE username = $1 OR email = $1
         """,
-        [login_data.username]
+        [ident]
     )
-    
+
     if not user:
-        logger.warning(f"Login failed: User '{login_data.username}' not found")
+        logger.warning(f"Login failed: '{ident}' not found")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials"
         )
-    
+
     user_data = user[0]
-    
+
     if not user_data['is_active']:
-        logger.warning(f"Login failed: User '{login_data.username}' is inactive")
+        logger.warning(f"Login failed: '{ident}' is inactive")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Account is inactive"
         )
-    
+
     if not verify_password(login_data.password, user_data['password_hash']):
-        logger.warning(f"Login failed: Invalid password for user '{login_data.username}'")
+        logger.warning(f"Login failed: Invalid password for '{ident}'")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials"
         )
-    
-    logger.info(f"Login successful for user: {login_data.username}")
-    
+
+    logger.info(f"Login successful: {user_data['username']}")
+
     # Update last login
     db.execute_update(
         "UPDATE users SET last_login = :now WHERE id = :user_id",
         {"now": datetime.now(), "user_id": user_data['id']}
     )
-    
-    # Create JWT token
-    access_token = create_access_token(
-        data={"sub": str(user_data['id']), "username": user_data['username'], "role": user_data['role']}
-    )
-    
+
+    role = _admin_override(user_data)
     return LoginResponse(
-        access_token=access_token,
+        access_token=_session_token(user_data),
         token_type="bearer",
         user=UserResponse(
             id=str(user_data['id']),
             username=user_data['username'],
             email=user_data['email'],
             full_name=user_data['full_name'],
-            role=user_data['role'],
+            role=role,
             is_active=user_data['is_active'],
             created_at=user_data['created_at'] if 'created_at' in user_data else datetime.now()
         )
