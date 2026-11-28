@@ -1601,6 +1601,17 @@ async def _run_job(name: str):
               error=f"timed out after "
                     f"{_JOB_TIMEOUT.get(name, 600) // 60}m")
     except Exception as exc:
+        from app.utils.data_mode import LicensedDataBlocked
+        if isinstance(exc, LicensedDataBlocked):
+            # MP_DATA_MODE=public_only — the job reached for licensed
+            # data; skip is recorded, not an error. The violation
+            # was already logged at the provider gate.
+            logger.info("JOB_SKIP job=%s run=%s reason=%s",
+                        name, run_id, exc)
+            _mark(name, running=False,
+                  result={"skipped": "public_only_mode",
+                          "blocked_source": exc.source})
+            return
         logger.error("job %s failed: %s", name, exc, exc_info=True)
         # last_error is what the catalog/admin page shows — carry the
         # crash site (file:line) not just the message, or every job
@@ -3662,6 +3673,14 @@ async def hl_triggers(max_dist: float = 0.03):
     daily_bars close); refreshed by the momentum job."""
     from app.signals.swing_lows import triggers
     return await asyncio.to_thread(triggers, max_dist)
+
+
+@router.get("/data-mode")
+async def data_mode_report():
+    """MP_DATA_MODE surface — the frontend reads this to show the
+    public-data disclaimer and hides licensed-sourced panels."""
+    from app.utils.data_mode import status
+    return status()
 
 
 @router.get("/meta")

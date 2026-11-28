@@ -66,6 +66,8 @@ class AlphaVantageClient:
         """
         Make HTTP request with rate limiting, retries, and error handling
         """
+        from app.utils.data_mode import guard_source
+        guard_source("alphavantage", "av._make_request")
         # Rate limiting
         if not self.rate_limiter.acquire():
             raise Exception("Rate limit exceeded - could not acquire permission for API call")

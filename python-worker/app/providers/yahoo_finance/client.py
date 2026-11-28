@@ -110,6 +110,8 @@ class YahooFinanceClient:
         """
         Get yfinance Ticker object with error handling
         """
+        from app.utils.data_mode import guard_source
+        guard_source("yahoo", "yahoo._get_ticker")
         # Rate limiting
         self.rate_limiter.acquire()
         
@@ -1413,6 +1415,8 @@ class YahooFinanceClient:
         return self._fetch_finnhub_analyst_recommendations(symbol)
 
     def _fetch_finnhub_analyst_recommendations(self, symbol: str) -> List[Dict[str, Any]]:
+        from app.utils.data_mode import guard_source
+        guard_source("finnhub", "yahoo._fetch_finnhub_recs")
         """Fetch analyst recommendations from Finnhub."""
         import os
         import requests

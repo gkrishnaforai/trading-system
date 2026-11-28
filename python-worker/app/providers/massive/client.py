@@ -29,6 +29,8 @@ class MassiveClientConfig:
 
 class MassiveClient:
     def __init__(self, config: MassiveClientConfig):
+        from app.utils.data_mode import guard_source
+        guard_source("massive", "MassiveClient.__init__")
         if not MASSIVE_AVAILABLE:
             raise ImportError("Massive library not available")
 

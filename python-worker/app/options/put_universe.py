@@ -167,6 +167,8 @@ def _chain(sym: str, spot: float, hedge_otm: float = 0.75
     compare contracts, not headline IV)."""
     try:
         import yfinance as yf
+        from app.utils.data_mode import guard_source
+        guard_source("yahoo", "put_universe.expiries")
         t = yf.Ticker(sym)
         exps = t.options or ()
         if not exps:

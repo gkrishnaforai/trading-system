@@ -28,6 +28,9 @@ export function Nav() {
   const [role, setRole] = useState<string | null>(null)
   const [verified, setVerified] = useState<boolean | null>(null)
   const [resent, setResent] = useState(false)
+  const [dataMode, setDataMode] = useState<{
+    public_only: boolean; disclaimer: string | null
+  } | null>(null)
   useEffect(() => {
     fetch('/api/me')
       .then((r) => r.json())
@@ -35,6 +38,10 @@ export function Nav() {
         setRole(u?.role ?? null)
         setVerified(u?.emailVerified ?? null)
       })
+      .catch(() => { })
+    fetch('/api/data-mode')
+      .then((r) => r.json())
+      .then(setDataMode)
       .catch(() => { })
   }, [])
 
@@ -127,6 +134,11 @@ export function Nav() {
           )}
         </div>
       </div>
+      {dataMode?.public_only && (
+        <div className="border-t border-hairline bg-panel/60 px-5 py-1.5 text-center text-[11.5px] text-faint">
+          {dataMode.disclaimer}
+        </div>
+      )}
       {role && role !== 'anonymous' && verified === false && (
         <div className="border-t border-caution/30 bg-caution/[0.07] px-5 py-1.5 text-center text-[12px] text-caution">
           {resent

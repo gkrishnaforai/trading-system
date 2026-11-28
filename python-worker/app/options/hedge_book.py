@@ -196,6 +196,8 @@ def _qqq_spread_mid(expiry: date, long_k: float,
     (spread_mid, qqq_spot); either may be None."""
     try:
         import yfinance as yf
+        from app.utils.data_mode import guard_source
+        guard_source("yahoo", "hedge_book.spread_mid")
         ch = yf.Ticker(HEDGE_UNDERLIER).option_chain(str(expiry))
         puts = ch.puts
         def _mid(k):

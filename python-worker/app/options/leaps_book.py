@@ -108,6 +108,8 @@ def _chain_mid(sym: str, expiry: date, strike: float,
     happening. Returns (mid, atm_iv); either may be None."""
     try:
         import yfinance as yf
+        from app.utils.data_mode import guard_source
+        guard_source("yahoo", "leaps_book.mid")
         chain = yf.Ticker(sym).option_chain(str(expiry))
         df = chain.calls if call else chain.puts
         atm_iv = None

@@ -50,6 +50,8 @@ class FinnhubClient:
         return cls(FinnhubConfig(api_key=resolved))
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        from app.utils.data_mode import guard_source
+        guard_source("finnhub", "finnhub._get")
         params = params or {}
         params["token"] = self.config.api_key
 

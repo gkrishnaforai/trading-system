@@ -561,6 +561,8 @@ async def leaps_screen(sym: str, beta: Optional[float] = None,
             beta = None
 
     def _chain():
+        from app.utils.data_mode import guard_source
+        guard_source("yahoo", "leaps._chain")
         t = yf.Ticker(sym)
         exps = [e for e in (t.options or [])
                 if (date.fromisoformat(e) - date.today()).days > MIN_DTE]
