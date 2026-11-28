@@ -25,6 +25,7 @@ from app.database import db
 from app.repositories.market_data_intraday_repository import IntradayBarUpsertRow, MarketDataIntradayRepository
 from app.utils.trading_calendar import expected_trading_days, expected_intraday_15m_timestamps, expected_intraday_5m_timestamps
 from app.utils.json_sanitize import json_dumps_sanitized
+from app.db_storage.repositories import _news_meta
 from app.observability import audit
 from app.config import settings
 
@@ -2190,7 +2191,9 @@ class DataRefreshManager(BaseService):
                                 "url": url,
                                 "related_symbols": json.dumps(related_symbols_json),
                                 "source": self.data_source.name,
-                                "raw_json": json.dumps(article),
+                                # licensed verbatim bodies are not
+                                # stored — metadata only. Phase F.
+                                "raw_json": json.dumps(_news_meta(article)),
                             },
                         )
                     except Exception as e:

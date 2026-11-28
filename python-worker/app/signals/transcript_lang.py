@@ -206,11 +206,15 @@ def _fmp_transcript_docs(sym: str, n: int) -> list[dict]:
 
 
 def _docs(sym: str, n: int) -> list[dict]:
-    docs = _fmp_transcript_docs(sym, n)
-    if docs:
-        return docs
-    return [{**d, "source": "sec_8k"}
-            for d in _recent_earnings_docs(sym, n)]
+    """EDGAR-pinned: the 8-K release is the canonical narrative source.
+    FMP transcripts (licensed verbatim) only augment in full mode —
+    in public_only the licensed path never runs."""
+    edgar = [{**d, "source": "sec_8k"}
+             for d in _recent_earnings_docs(sym, n)]
+    from app.utils.data_mode import public_only
+    if public_only():
+        return edgar
+    return _fmp_transcript_docs(sym, n) + edgar
 
 
 def _slice(text: str, limit: int = 16000) -> str:

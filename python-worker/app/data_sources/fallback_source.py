@@ -1,7 +1,15 @@
 """
-Fallback Data Source
-Tries primary source (Yahoo Finance) first, falls back to Finnhub if primary fails
-Industry Standard: Multi-source data fetching with automatic fallback
+Fallback Data Source — primary-only now.
+
+Historically this silently substituted Finnhub when Yahoo failed — a
+licensed source sneaking in behind a primary error. That violates the
+no-silent-fallback rule (a caller asking for source A must never get
+source B's data without knowing). Fallback branches were removed in
+Phase F: a primary failure raises, honestly.
+
+The class name stays — callers import FallbackDataSource — but it is
+a Yahoo-primary adapter. In MP_DATA_MODE=public_only every licensed
+call is gated at the provider clients upstream.
 """
 import logging
 from typing import Dict, Any, Optional, List
@@ -10,36 +18,28 @@ import pandas as pd
 
 from app.data_sources.base import BaseDataSource
 from app.data_sources.yahoo_finance_source import YahooFinanceSource
-from app.data_sources.finnhub_source import FinnhubSource
 
 logger = logging.getLogger(__name__)
 
 
 class FallbackDataSource(BaseDataSource):
     """
-    Composite data source with automatic fallback
-    Tries primary source (Yahoo Finance) first, falls back to Finnhub if needed
+    Yahoo-primary data source. No fallback — a primary failure raises
+    rather than silently substituting licensed Finnhub data.
     """
-    
+
     def __init__(self):
-        """Initialize fallback data source"""
+        """Initialize primary source"""
         self.primary_source = YahooFinanceSource()
-        self.fallback_source = FinnhubSource()
-        self._use_fallback = self.fallback_source.is_available()
-        
-        if self._use_fallback:
-            logger.info("✅ Finnhub fallback enabled")
-        else:
-            logger.info("⚠️ Finnhub fallback disabled (no API key)")
-    
+
     @property
     def name(self) -> str:
-        return "fallback"
-    
+        return "yahoo_primary"
+
     def is_available(self) -> bool:
         """Check if data source is available"""
-        return self.primary_source.is_available() or (self._use_fallback and self.fallback_source.is_available())
-    
+        return self.primary_source.is_available()
+
     def fetch_price_data(
         self,
         symbol: str,
@@ -49,163 +49,28 @@ class FallbackDataSource(BaseDataSource):
         interval: str = "1d"
     ) -> Optional[pd.DataFrame]:
         """Fetch historical OHLCV price data"""
-        try:
-            kwargs: Dict[str, Any] = {"period": period, "interval": interval}
-            if start_date and end_date:
-                kwargs["start_date"] = start_date
-                kwargs["end_date"] = end_date
-            return self.primary_source.fetch_price_data(symbol, **kwargs)
-        except Exception as e:
-            logger.warning(f"Primary source failed for price data for {symbol}: {e}")
-            if self._use_fallback:
-                logger.info(f"Attempting Finnhub fallback for price data for {symbol}")
-                # Finnhub doesn't support price data, so we can't fallback
-                # But we'll log it for visibility
-                logger.warning(f"Finnhub doesn't support price data, cannot fallback for {symbol}")
-            raise
-    
+        kwargs: Dict[str, Any] = {"period": period, "interval": interval}
+        if start_date and end_date:
+            kwargs["start_date"] = start_date
+            kwargs["end_date"] = end_date
+        return self.primary_source.fetch_price_data(symbol, **kwargs)
+
     def fetch_current_price(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Fetch current/live price with volume"""
-        try:
-            return self.primary_source.fetch_current_price(symbol)
-        except Exception as e:
-            logger.warning(f"Primary source failed for current price for {symbol}: {e}")
-            if self._use_fallback:
-                logger.info(f"Attempting Finnhub fallback for current price for {symbol}")
-                # Try Finnhub quote endpoint
-                try:
-                    return self._fetch_finnhub_quote(symbol)
-                except Exception as fallback_error:
-                    logger.error(f"Finnhub fallback also failed for {symbol}: {fallback_error}")
-            raise
-    
+        return self.primary_source.fetch_current_price(symbol)
+
     def fetch_fundamentals(self, symbol: str) -> Dict[str, Any]:
         """Fetch fundamental data"""
-        try:
-            result = self.primary_source.fetch_fundamentals(symbol)
-            # Check if result is meaningful (not empty)
-            if result and len(result) > 0:
-                return result
-            # If empty, try fallback
-            raise ValueError("Empty fundamentals from primary source")
-        except Exception as e:
-            logger.warning(f"Primary source failed for fundamentals for {symbol}: {e}")
-            if self._use_fallback:
-                logger.info(f"Attempting Finnhub fallback for fundamentals for {symbol}")
-                try:
-                    return self._fetch_finnhub_fundamentals(symbol)
-                except Exception as fallback_error:
-                    logger.error(f"Finnhub fallback also failed for {symbol}: {fallback_error}")
-                    raise
-            raise
-    
+        return self.primary_source.fetch_fundamentals(symbol)
+
     def fetch_news(self, symbol: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Fetch recent news articles"""
-        try:
-            result = self.primary_source.fetch_news(symbol, limit)
-            # Check if result is meaningful
-            if result and len(result) > 0:
-                return result
-            # If empty, try fallback
-            raise ValueError("Empty news from primary source")
-        except Exception as e:
-            logger.warning(f"Primary source failed for news for {symbol}: {e}")
-            if self._use_fallback:
-                logger.info(f"Attempting Finnhub fallback for news for {symbol}")
-                try:
-                    return self._fetch_finnhub_news(symbol, limit)
-                except Exception as fallback_error:
-                    logger.error(f"Finnhub fallback also failed for {symbol}: {fallback_error}")
-                    raise
-            raise
-    
+        return self.primary_source.fetch_news(symbol, limit)
+
     def fetch_earnings(self, symbol: str) -> List[Dict[str, Any]]:
         """Fetch earnings calendar and history"""
-        try:
-            result = self.primary_source.fetch_earnings(symbol)
-            # Check if result is meaningful
-            if result and len(result) > 0:
-                return result
-            # If empty, try fallback
-            raise ValueError("Empty earnings from primary source")
-        except Exception as e:
-            logger.warning(f"Primary source failed for earnings for {symbol}: {e}")
-            if self._use_fallback:
-                logger.info(f"Attempting Finnhub fallback for earnings for {symbol}")
-                try:
-                    return self._fetch_finnhub_earnings(symbol)
-                except Exception as fallback_error:
-                    logger.error(f"Finnhub fallback also failed for {symbol}: {fallback_error}")
-                    raise
-            raise
-    
+        return self.primary_source.fetch_earnings(symbol)
+
     def fetch_industry_peers(self, symbol: str) -> Dict[str, Any]:
         """Fetch industry peers and sector data"""
-        try:
-            result = self.primary_source.fetch_industry_peers(symbol)
-            # Check if result is meaningful
-            if result and (result.get('peers') or result.get('sector') or result.get('industry')):
-                return result
-            # If empty, try fallback
-            raise ValueError("Empty industry peers from primary source")
-        except Exception as e:
-            logger.warning(f"Primary source failed for industry peers for {symbol}: {e}")
-            if self._use_fallback:
-                logger.info(f"Attempting Finnhub fallback for industry peers for {symbol}")
-                try:
-                    return self._fetch_finnhub_peers(symbol)
-                except Exception as fallback_error:
-                    logger.error(f"Finnhub fallback also failed for {symbol}: {fallback_error}")
-                    raise
-            raise
-    
-    # Finnhub-specific fetch methods (delegate to provider-backed thin adapter)
-    def _fetch_finnhub_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Fetch current price from Finnhub via thin adapter."""
-        try:
-            details = self.fallback_source.fetch_symbol_details(symbol)
-            current_price = details.get("current_price") if details else None
-            
-            if current_price:
-                return {
-                    "price": float(current_price),
-                    "volume": None,  # Finnhub doesn't provide volume in quote
-                    "source": "finnhub"
-                }
-            return None
-        except Exception as e:
-            logger.error(f"Finnhub quote fetch failed for {symbol}: {e}")
-            raise
-
-    def _fetch_finnhub_fundamentals(self, symbol: str) -> Dict[str, Any]:
-        """Fetch fundamentals from Finnhub via thin adapter."""
-        try:
-            return self.fallback_source.fetch_fundamentals(symbol) or {}
-        except Exception as e:
-            logger.error(f"Finnhub fundamentals fetch failed for {symbol}: {e}")
-            raise
-
-    def _fetch_finnhub_news(self, symbol: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Fetch news from Finnhub via thin adapter."""
-        try:
-            return self.fallback_source.fetch_news(symbol, limit) or []
-        except Exception as e:
-            logger.error(f"Finnhub news fetch failed for {symbol}: {e}")
-            raise
-
-    def _fetch_finnhub_earnings(self, symbol: str) -> List[Dict[str, Any]]:
-        """Fetch earnings from Finnhub via thin adapter."""
-        try:
-            return self.fallback_source.fetch_earnings(symbol) or []
-        except Exception as e:
-            logger.error(f"Finnhub earnings fetch failed for {symbol}: {e}")
-            raise
-
-    def _fetch_finnhub_peers(self, symbol: str) -> Dict[str, Any]:
-        """Fetch industry peers from Finnhub via thin adapter."""
-        try:
-            return self.fallback_source.fetch_industry_peers(symbol) or {}
-        except Exception as e:
-            logger.error(f"Finnhub peers fetch failed for {symbol}: {e}")
-            raise
-
+        return self.primary_source.fetch_industry_peers(symbol)

@@ -11,6 +11,19 @@ from app.observability.logging import get_logger
 
 logger = get_logger("database_repository")
 
+# news article fields that are reference metadata, not licensed
+# verbatim content — body keys (text/content/body/description)
+# never reach raw_json. Phase F cleanup.
+_NEWS_META_KEYS = ("title", "url", "publishedDate", "site",
+                   "sentiment", "sentimentScore", "tickers",
+                   "symbols", "source", "image", "id")
+
+
+def _news_meta(article: Dict[str, Any]) -> Dict[str, Any]:
+    """Metadata-only projection of a provider news article."""
+    return {k: article[k] for k in _NEWS_META_KEYS
+            if article.get(k) is not None}
+
 
 class DatabaseRepository(ABC):
     """Abstract base repository following Dependency Inversion Principle"""
@@ -249,7 +262,9 @@ class StockNewsRepository(DatabaseRepository):
                     "sentiment_score": article.get("sentiment"),
                     "related_symbols": article.get("tickers", []),
                     "source": "fmp",
-                    "raw_json": article
+                    # licensed verbatim bodies are not stored — metadata
+                    # only (title/url/date/source). Phase F cleanup.
+                    "raw_json": _news_meta(article)
                 }
                 
                 news_record = StockNews(**record_data)
@@ -289,7 +304,9 @@ class MarketNewsRepository(DatabaseRepository):
                 record_data = {
                     "article_id": article_id,
                     "title": article.get("title"),
-                    "text": article.get("text"),
+                    # licensed verbatim bodies are not stored —
+                    # headline metadata only. Phase F cleanup.
+                    "text": None,
                     "url": article.get("url"),
                     "image_url": article.get("image"),
                     "source": article.get("source"),

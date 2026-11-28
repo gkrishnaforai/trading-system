@@ -56,6 +56,8 @@ class FinnhubSource(BaseDataSource):
             logger.warning(f"Finnhub API key not configured. Cannot fetch analyst ratings for {symbol}")
             return []
         
+        from app.utils.data_mode import guard_source
+        guard_source("finnhub", "finnhub_source.fetch_analyst_ratings")
         try:
             url = f"{self.base_url}/stock/recommendation"
             params = {
