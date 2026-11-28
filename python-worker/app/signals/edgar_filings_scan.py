@@ -39,6 +39,21 @@ def _is_amendment(form: str) -> bool:
     return form.strip().upper().endswith("/A")
 
 
+def _upsert_entity(db, symbol: str, cik: str, e: dict) -> None:
+    """Issuer identity — SIC is the cohort key for Phase D."""
+    db.execute_update(
+        "INSERT INTO edgar_entities (cik, symbol, entity_name, sic,"
+        " sic_description, fy_end, entity_type, updated_at)"
+        " VALUES (:c,:s,:n,:sic,:sd,:fy,:et,now())"
+        " ON CONFLICT (cik) DO UPDATE SET symbol=:s,"
+        " entity_name=:n, sic=:sic, sic_description=:sd,"
+        " fy_end=:fy, entity_type=:et, updated_at=now()",
+        {"c": cik, "s": symbol.upper(), "n": e.get("name"),
+         "sic": str(e.get("sic") or "") or None,
+         "sd": e.get("sic_description"),
+         "fy": e.get("fy_end"), "et": e.get("entity_type")})
+
+
 def _upsert_filing(db, cik: str, e: dict) -> bool:
     """Insert one filing event; False when the event already exists."""
     accn = e["accession_number"]
@@ -88,6 +103,7 @@ def scan_symbol(db, symbol: str, lookback_days: int = _LOOKBACK_DAYS,
     if not blob:
         return {"symbol": symbol, "cik": None, "new": 0, "skipped": 0}
     cik = blob["cik"]
+    _upsert_entity(db, symbol, cik, blob.get("entity") or {})
     cutoff = date.today() - timedelta(days=lookback_days)
     new = skipped = 0
     for e in blob["events"]:

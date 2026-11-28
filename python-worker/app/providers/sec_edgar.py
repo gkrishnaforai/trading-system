@@ -153,7 +153,13 @@ def submissions(symbol: str, include_older: bool = False) -> Optional[dict]:
                     _emit(fr.json())
                 except Exception:
                     pass
-    return {"cik": cik, "events": events}
+    # entity-level identity — SIC is the cohort key for Phase D
+    entity = {"name": subs.get("name"),
+              "sic": subs.get("sic"),
+              "sic_description": subs.get("sicDescription"),
+              "fy_end": subs.get("fiscalYearEnd"),
+              "entity_type": subs.get("entityType")}
+    return {"cik": cik, "events": events, "entity": entity}
 
 
 def _extract_text(html: str) -> str:
@@ -247,6 +253,21 @@ def recent_8k_releases(symbol: str, days: int = 120,
                                            acc_nodash=acc, name=doc),
                     "text": text})
     return out
+
+
+def filing_document(cik: str, accession: str,
+                    primary_doc: str) -> Optional[str]:
+    """Fetch one filing's primary document → extracted text.
+    MD&A / Risk Factors live in the filing body, not XBRL exhibits."""
+    if not cik or not accession or not primary_doc:
+        return None
+    r = _get(_DOC_URL.format(cik=str(int(cik)),
+                             acc_nodash=str(accession).replace("-", ""),
+                             name=primary_doc),
+             timeout=60)
+    if not r:
+        return None
+    return _extract_text(r.text)
 
 
 def recent_filings(symbol: str, forms: tuple = ("10-Q", "10-K"),

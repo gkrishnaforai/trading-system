@@ -739,6 +739,37 @@ async def _j_edgar_resolve() -> dict:
     return await asyncio.to_thread(edgar_resolver.run, symbols)
 
 
+async def _j_company_health() -> dict:
+    """B — quarterly health scores from EDGAR statements: coverage-
+    gated verdict, structured drivers, 4-class alert emission."""
+    from app.signals import company_health
+    symbols = await _tracked_symbols()
+    return await asyncio.to_thread(company_health.run, symbols)
+
+
+async def _j_filing_narrative() -> dict:
+    """C — 10-Q/10-K MD&A + Risk Factors → verbatim-grounded claims
+    + evidence + metric links + lineage (EDGAR text only)."""
+    from app.signals import filing_narrative
+    symbols = await _tracked_symbols()
+    return await asyncio.to_thread(filing_narrative.run, symbols)
+
+
+async def _j_cohort_snapshot() -> dict:
+    """D — SIC cohort snapshots: aggregate + median metrics from
+    EDGAR health rows, labeled + survivorship-flagged."""
+    from app.signals import cohorts
+    return await asyncio.to_thread(cohorts.run)
+
+
+async def _j_outlook_score() -> dict:
+    """D — composite outlook (admin): health trajectory + cohort +
+    insider flow + filing tone; outcome-graded journal."""
+    from app.signals import outlook
+    symbols = await _tracked_symbols()
+    return await asyncio.to_thread(outlook.run, symbols)
+
+
 async def _j_weekly_review() -> dict:
     """Weekly 5-question review — what changed / funding / earnings
     outlook / market recognition / action, journaled per symbol so
@@ -1419,6 +1450,14 @@ JOBS: dict[str, tuple[str, Callable]] = {
                              _j_edgar_facts),
     "edgar-resolve": ("EDGAR facts → canonical statements (A4)",
                       _j_edgar_resolve),
+    "company-health": ("Quarterly company health scores",
+                       _j_company_health),
+    "filing-narrative": ("10-Q/K sections → grounded claims",
+                         _j_filing_narrative),
+    "cohort-snapshot": ("SIC cohort snapshots",
+                        _j_cohort_snapshot),
+    "outlook-score": ("Composite outlook scores (admin)",
+                      _j_outlook_score),
     "ai-cycle":    ("AI cycle rotation tracker (weekly)", _j_ai_cycle),
     "demand-evidence": ("Demand-evidence feed (capex/FCF + news drafts)",
                         _j_demand_evidence),
