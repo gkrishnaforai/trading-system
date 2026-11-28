@@ -22,6 +22,14 @@ const LINKS = [
   { href: '/apis', label: 'APIs' },
 ]
 
+/** SEC-EDGAR-only surfaces — fundamentals from public filings. Every
+    signed-in role sees these; the licensed-data surfaces above stay
+    admin-only in nav (middleware enforces the same split). */
+const PUBLIC_LINKS = [
+  { href: '/portfolio-equity', label: 'Equity' },
+  { href: '/equity', label: 'Fundamentals' },
+]
+
 export function Nav() {
   const path = usePathname()
   const router = useRouter()
@@ -64,13 +72,13 @@ export function Nav() {
 
   const isAdmin = role === 'admin'
   // mirror the middleware role map — Group-2 advisory surfaces are
-  // admin-only; advanced/super-user see the factual read surfaces
+  // admin-only; every signed-in role gets the public EDGAR surfaces
   const links = isAdmin
-    ? LINKS
+    ? [...LINKS, ...PUBLIC_LINKS]
     : role === 'advanced' || role === 'super-user'
-      ? LINKS.filter((l) => ['/portfolio', '/calendar'].includes(l.href))
+      ? [...PUBLIC_LINKS, { href: '/calendar', label: 'Calendar' }]
       : role === 'basic'
-        ? LINKS.filter((l) => l.href === '/portfolio')
+        ? PUBLIC_LINKS
         : []
 
   return (

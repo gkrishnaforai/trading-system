@@ -36,12 +36,13 @@ async function call(
 /** Book rail — every book as a card chip; the system book first. */
 /** Book picker — a compact select instead of the horizontal card
     rail. Keeps "The book" as the aggregate first option. */
-export function BookSelect({ options, selected }: {
+export function BookSelect({ options, selected, base = '/portfolio' }: {
   options: {
     id: string; name: string; portfolio_type?: string
     holdings_count?: number
   }[]
   selected?: string | null
+  base?: string
 }) {
   const router = useRouter()
   return (
@@ -50,7 +51,7 @@ export function BookSelect({ options, selected }: {
         value={selected ?? ''}
         onChange={(e) => {
           const v = e.target.value
-          router.push(v ? `/portfolio?p=${v}` : '/portfolio')
+          router.push(v ? `${base}?p=${v}` : base)
         }}
         className="w-full appearance-none rounded-xl border border-hairline bg-card px-3.5 py-2.5 pr-9 text-sm font-medium text-ink shadow-[0_0_0_1px_rgba(234,88,12,0.12)] focus:border-accent focus:outline-none transition-colors"
       >

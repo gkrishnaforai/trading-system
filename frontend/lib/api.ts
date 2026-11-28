@@ -967,6 +967,15 @@ export const api = {
       delta?: ResearchDelta | null
       growth?: GrowthUplift | null
     }>(`/admin/research/${encodeURIComponent(sym)}`),
+  companyHealth: (symbols?: string[]) =>
+    get<CompanyHealthBoard>(
+      `/company-health${symbols?.length
+        ? `?symbols=${symbols.map(encodeURIComponent).join(',')}`
+        : ''}`),
+  companyHealthSymbol: (sym: string, quarters = 8) =>
+    get<CompanyHealthDetail>(
+      `/company-health/${encodeURIComponent(sym)}` +
+      `?quarters=${quarters}`),
 }
 
 export type CycleRow = {
@@ -1749,4 +1758,90 @@ export type EarningsCompletion = {
     status?: string | null
     last_checked?: string | null
   }[] | null
+}
+
+/* ---- Company health (SEC EDGAR spine — public-data surface) ------ */
+
+export type HealthDriver = {
+  metric?: string
+  direction?: string
+  contribution?: number | null
+  evidence_accn?: string | null
+}
+
+export type HealthRedFlag = {
+  class?: string
+  pattern?: string
+  values?: unknown
+  evidence_accn?: string | null
+}
+
+export type HealthRow = {
+  symbol?: string
+  period_end?: string
+  score?: number | null
+  verdict?: string
+  coverage_pct?: number | null
+  confidence?: string | null
+  trend?: string | null
+  score_delta?: number | null
+  previous_score?: number | null
+  category_scores?: Record<string, {
+    score?: number | null
+    weight?: number
+    legs?: { name?: string; score?: number | null;
+             value?: number | null }[]
+  }> | null
+  available_legs?: unknown
+  missing_legs?: unknown
+  drivers?: HealthDriver[] | null
+  red_flags?: HealthRedFlag[] | null
+  filing_accn?: string | null
+  ewf_state?: string | null
+  quality_score?: number | null
+  score_version?: string
+  computed_at?: string
+}
+
+export type CompanyHealthBoard = {
+  items?: HealthRow[]
+  as_of?: string | null
+  methodology?: {
+    verdicts?: string[]
+    trends?: string[]
+    coverage_gate?: string
+    disclaimer?: string
+  }
+}
+
+export type StatementRow = Record<string, number | string | null> & {
+  period?: string
+}
+
+export type FilingRow = {
+  accession_number?: string
+  form?: string
+  filing_date?: string
+  report_period?: string | null
+  primary_document?: string | null
+  is_amendment?: boolean
+  document_url?: string | null
+}
+
+export type CompanyHealthDetail = {
+  symbol?: string
+  entity?: {
+    cik?: string; symbol?: string; entity_name?: string
+    sic?: string; sic_description?: string; fy_end?: string
+    entity_type?: string
+  } | null
+  health?: HealthRow[]
+  statements?: {
+    income?: StatementRow[]
+    balance?: StatementRow[]
+    cash_flow?: StatementRow[]
+    ratios?: StatementRow[]
+  }
+  filings?: FilingRow[]
+  source?: string
 }

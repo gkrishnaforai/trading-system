@@ -21,8 +21,8 @@ const PUBLIC_API = ['/api/auth/', '/api/health']
     every user must be able to read. Fail-closed: an unrecognized
     role gets the basic surface. */
 const BASIC_ALLOWED = [
-  '/portfolio',
-  '/stock',
+  '/portfolio-equity',
+  '/equity',
   '/api/portfolio/',
   '/api/me',
   '/api/auth/',
@@ -71,20 +71,21 @@ export function middleware(req: NextRequest) {
 
   // signed-in visitors don't need the auth pages — /verify excepted:
   // the emailed link must run while logged in too
+  const role = String(claims.role ?? 'basic')
+  const home = role === 'admin' ? '/portfolio' : '/portfolio-equity'
   if (isPublicPage && !path.startsWith('/verify')) {
     const url = req.nextUrl.clone()
-    url.pathname = '/portfolio'
+    url.pathname = home
     url.search = ''
     return NextResponse.redirect(url)
   }
 
-  const role = String(claims.role ?? 'basic')
   const allowed = ROLE_ALLOWED[role] ?? (
     role === 'admin' ? null : BASIC_ALLOWED)
   if (allowed &&
       !allowed.some((p) => path === p || path.startsWith(p))) {
     const url = req.nextUrl.clone()
-    url.pathname = '/portfolio'
+    url.pathname = home
     url.search = ''
     return NextResponse.redirect(url)
   }

@@ -5165,3 +5165,130 @@ async def passive_board():
     tilts are journaled in passive_tilts for later grading."""
     from app.signals import passive
     return await asyncio.to_thread(passive.payload)
+
+
+# --- Company health — SEC EDGAR spine (public-data surface) --------------
+
+_HEALTH_COLS = (
+    "symbol, period_end, score, verdict, coverage_pct, confidence,"
+    " trend, score_delta, previous_score, category_scores,"
+    " available_legs, missing_legs, drivers, red_flags, filing_accn,"
+    " ewf_state, quality_score, score_version, computed_at")
+
+
+
+@router.get("/company-health")
+async def company_health_board(symbols: str | None = None):
+    """Latest non-superseded health row per symbol — the equity-health
+    table feed. `?symbols=A,B` scopes the board to one book's names.
+    Pure SEC EDGAR lineage; no market data."""
+    from app.database import db
+    syms = [s.strip().upper() for s in (symbols or "").split(",")
+            if s.strip()]
+    sql = (
+        "SELECT DISTINCT ON (symbol) " + _HEALTH_COLS +
+        " FROM company_health_quarterly WHERE NOT superseded")
+    params: list = []
+    if syms:
+        sql += " AND symbol = ANY(%s)"
+        params.append(syms)
+    sql += " ORDER BY symbol, period_end DESC"
+    rows = await asyncio.to_thread(db.execute_query, sql, params)
+    return {"items": rows,
+            "as_of": max((str(r["computed_at"]) for r in rows
+                          if r.get("computed_at")), default=None),
+            "methodology": {
+                "verdicts": ["scored", "insufficient_data"],
+                "trends": ["improving", "stable", "deteriorating",
+                           "new"],
+                "coverage_gate": ">=60% overall + cash_flow, leverage"
+                                 " and quality legs present",
+                "disclaimer": "Financial-condition research built only"
+                              " on SEC EDGAR filings. Not an investment"
+                              " recommendation."}}
+
+
+@router.get("/company-health/{sym}")
+async def company_health_symbol(sym: str, quarters: int = 8):
+    """Per-symbol fundamentals dossier — health journal + canonical
+    statements + ratios + filing events, all data_source='sec_edgar'."""
+    from app.database import db
+    s = sym.upper()
+    n = max(1, min(int(quarters), 32))
+
+    def _q(sql, params):
+        return db.execute_query(sql, params)
+
+    journal = await asyncio.to_thread(
+        _q,
+        "SELECT " + _HEALTH_COLS + " FROM company_health_quarterly"
+        " WHERE symbol=%s AND NOT superseded"
+        " ORDER BY period_end DESC LIMIT %s", [s, n * 3])
+    # distinct fiscal quarters, newest first (a period may hold more
+    # than one versioned row — take latest scored)
+    seen, quarters_j = set(), []
+    for r in journal:
+        pe = str(r["period_end"])
+        if pe in seen:
+            continue
+        seen.add(pe)
+        quarters_j.append(r)
+        if len(quarters_j) >= n:
+            break
+
+    income = await asyncio.to_thread(
+        _q,
+        "SELECT fiscal_date_ending AS period, total_revenue,"
+        " gross_profit, operating_income, net_income,"
+        " research_and_development, interest_expense"
+        " FROM income_statements WHERE symbol=%s"
+        " AND data_source='sec_edgar'"
+        " ORDER BY fiscal_date_ending DESC LIMIT %s", [s, n])
+    balance = await asyncio.to_thread(
+        _q,
+        "SELECT fiscal_date_ending AS period, total_assets,"
+        " total_liabilities, total_shareholder_equity,"
+        " cash_and_cash_equivalents, short_term_investments,"
+        " long_term_debt, net_receivables, total_inventory"
+        " FROM balance_sheets WHERE symbol=%s"
+        " AND data_source='sec_edgar'"
+        " ORDER BY fiscal_date_ending DESC LIMIT %s", [s, n])
+    cashflow = await asyncio.to_thread(
+        _q,
+        "SELECT fiscal_date_ending AS period, operating_cash_flow,"
+        " investing_cash_flow, financing_cash_flow, free_cash_flow,"
+        " capital_expenditures, accounts_receivables, net_income"
+        " FROM cash_flow_statements WHERE symbol=%s"
+        " AND data_source='sec_edgar'"
+        " ORDER BY fiscal_date_ending DESC LIMIT %s", [s, n])
+    ratios = await asyncio.to_thread(
+        _q,
+        "SELECT fiscal_date_ending AS period, roe, roa, roic,"
+        " debt_to_equity, current_ratio, days_sales_outstanding,"
+        " gross_profit_margin, operating_margin, net_profit_margin"
+        " FROM financial_ratios WHERE symbol=%s"
+        " AND data_source='sec_edgar'"
+        " ORDER BY fiscal_date_ending DESC LIMIT %s", [s, n])
+
+    filings = []
+    ent = await asyncio.to_thread(
+        _q,
+        "SELECT cik, symbol, entity_name, sic, sic_description,"
+        " fy_end, entity_type"
+        " FROM edgar_entities WHERE symbol=%s", [s])
+    if ent:
+        filings = await asyncio.to_thread(
+            _q,
+            "SELECT accession_number, form, filing_date, report_period,"
+            " primary_document, is_amendment, document_url"
+            " FROM edgar_filings WHERE cik=%s"
+            " AND form IN ('10-Q','10-K','10-Q/A','10-K/A','8-K')"
+            " ORDER BY filing_date DESC LIMIT %s",
+            [ent[0]["cik"], n * 3])
+    return {
+        "symbol": s, "entity": ent[0] if ent else None,
+        "health": quarters_j,
+        "statements": {"income": income, "balance": balance,
+                       "cash_flow": cashflow, "ratios": ratios},
+        "filings": filings,
+        "source": "SEC EDGAR (companyfacts + filing index)"}
