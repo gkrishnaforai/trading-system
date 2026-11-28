@@ -711,6 +711,34 @@ async def _j_sec_filings() -> dict:
     return await asyncio.to_thread(earnings_release.run, symbols)
 
 
+async def _j_edgar_filings_scan() -> dict:
+    """A1 spine — submissions index → edgar_filings event log.
+    Nightly incremental; weekends also page the older-filings
+    chunks (the deep backfill path)."""
+    from app.signals import edgar_filings_scan
+    from zoneinfo import ZoneInfo
+    symbols = await _tracked_symbols()
+    deep = datetime.now(ZoneInfo("America/New_York")).weekday() >= 5
+    return await asyncio.to_thread(edgar_filings_scan.run,
+                                   symbols, deep)
+
+
+async def _j_edgar_facts() -> dict:
+    """A2 spine — companyfacts → fact_observations (raw, verbatim,
+    dedup-hashed). Off-hours backfill, chunked + resumable."""
+    from app.signals import edgar_facts
+    symbols = await _tracked_symbols()
+    return await asyncio.to_thread(edgar_facts.run, symbols)
+
+
+async def _j_edgar_resolve() -> dict:
+    """A4 spine — resolve facts → canonical quarterly statements
+    (8q, data_source='sec_edgar') + lineage edges + eligibility."""
+    from app.signals import edgar_resolver
+    symbols = await _tracked_symbols()
+    return await asyncio.to_thread(edgar_resolver.run, symbols)
+
+
 async def _j_weekly_review() -> dict:
     """Weekly 5-question review — what changed / funding / earnings
     outlook / market recognition / action, journaled per symbol so
@@ -1385,6 +1413,12 @@ JOBS: dict[str, tuple[str, Callable]] = {
                           _j_intraday_recovery),
     "session-forecast": ("Session-to-session direction forecast",
                          _j_session_forecast),
+    "edgar-filings-scan": ("EDGAR filing-event scan (A1 spine)",
+                           _j_edgar_filings_scan),
+    "edgar-facts-backfill": ("EDGAR companyfacts backfill (A2 spine)",
+                             _j_edgar_facts),
+    "edgar-resolve": ("EDGAR facts → canonical statements (A4)",
+                      _j_edgar_resolve),
     "ai-cycle":    ("AI cycle rotation tracker (weekly)", _j_ai_cycle),
     "demand-evidence": ("Demand-evidence feed (capex/FCF + news drafts)",
                         _j_demand_evidence),

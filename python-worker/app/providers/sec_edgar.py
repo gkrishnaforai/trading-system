@@ -98,6 +98,64 @@ def company_facts(symbol: str) -> Optional[dict]:
         return None
 
 
+def submissions(symbol: str, include_older: bool = False) -> Optional[dict]:
+    """Full filings index for one issuer — the event log the spine
+    keys off. Returns {cik, events: [...]} where each event carries
+    accession, form, filing/acceptance dates, report period, primary
+    doc and items. include_older pulls the paginated `filings.files`
+    chunks for issuers whose `recent` (>1000 rows) doesn't reach back
+    far enough — almost every filer's 2y window lives in `recent`."""
+    cik = cik_for(symbol)
+    if not cik:
+        return None
+    r = _get(_SUBS_URL.format(cik=cik), timeout=60)
+    if not r:
+        return None
+    try:
+        subs = r.json()
+    except Exception:
+        return None
+    events: list[dict] = []
+
+    def _emit(block: dict) -> None:
+        forms = block.get("form", [])
+        accs = block.get("accessionNumber", [])
+        fdates = block.get("filingDate", [])
+        adts = block.get("acceptanceDateTime", [])
+        rdates = block.get("reportDate", [])
+        pdocs = block.get("primaryDocument", [])
+        items_l = block.get("items", [])
+        for i, form in enumerate(forms):
+            acc = str(accs[i]) if i < len(accs) else None
+            if not acc:
+                continue
+            events.append({
+                "accession_number": acc,
+                "form": form,
+                "filing_date": fdates[i] if i < len(fdates) else None,
+                "acceptance_datetime": adts[i] if i < len(adts) else None,
+                "report_period": rdates[i] if i < len(rdates) else None,
+                "primary_document": (pdocs[i] if i < len(pdocs) else None),
+                "items": items_l[i] if i < len(items_l) else None,
+            })
+
+    filings = subs.get("filings", {})
+    _emit(filings.get("recent", {}) or {})
+    if include_older:
+        for f in filings.get("files", []) or []:
+            name = f.get("name")
+            if not name:
+                continue
+            fr = _get(f"https://data.sec.gov/submissions/{name}",
+                      timeout=60)
+            if fr:
+                try:
+                    _emit(fr.json())
+                except Exception:
+                    pass
+    return {"cik": cik, "events": events}
+
+
 def _extract_text(html: str) -> str:
     """Filing HTML → readable text. Inline-XBRL tags carry the facts
     as attributes; we want the visible prose."""

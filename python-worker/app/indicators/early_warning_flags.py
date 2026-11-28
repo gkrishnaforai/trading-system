@@ -285,7 +285,7 @@ class EarlyWarningEngine:
                 SELECT fiscal_date_ending, total_revenue, gross_profit, operating_income, 
                        net_income, research_and_development, interest_expense
                 FROM income_statements 
-                WHERE symbol = :symbol 
+                WHERE symbol = :symbol AND data_source = 'sec_edgar'
                 ORDER BY fiscal_date_ending DESC 
                 LIMIT 8
                 """
@@ -296,7 +296,7 @@ class EarlyWarningEngine:
                 SELECT fiscal_date_ending, total_assets, total_liabilities, net_receivables,
                        cash_and_cash_equivalents, long_term_debt
                 FROM balance_sheets 
-                WHERE symbol = :symbol 
+                WHERE symbol = :symbol AND data_source = 'sec_edgar'
                 ORDER BY fiscal_date_ending DESC 
                 LIMIT 8
                 """
@@ -307,7 +307,7 @@ class EarlyWarningEngine:
                 SELECT fiscal_date_ending, operating_cash_flow, investing_cash_flow,
                        financing_cash_flow, free_cash_flow, capital_expenditures
                 FROM cash_flow_statements 
-                WHERE symbol = :symbol 
+                WHERE symbol = :symbol AND data_source = 'sec_edgar'
                 ORDER BY fiscal_date_ending DESC 
                 LIMIT 8
                 """
@@ -318,7 +318,7 @@ class EarlyWarningEngine:
                 SELECT fiscal_date_ending, roe, debt_to_equity, current_ratio,
                        receivables_turnover, days_sales_outstanding, roic
                 FROM financial_ratios 
-                WHERE symbol = :symbol 
+                WHERE symbol = :symbol AND data_source = 'sec_edgar'
                 ORDER BY fiscal_date_ending DESC 
                 LIMIT 8
                 """
