@@ -32,6 +32,7 @@ export default function SignupPage() {
   const [agreed, setAgreed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
 
   function set(k: keyof typeof form) {
     return (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -53,13 +54,37 @@ export default function SignupPage() {
         setErr(j?.error ?? 'signup failed')
         return
       }
-      router.push('/portfolio')
+      setDone(true)
       router.refresh()
     } catch {
       setErr('could not reach the auth service')
     } finally {
       setBusy(false)
     }
+  }
+
+  if (done) {
+    return (
+      <main>
+        <div className="mx-auto flex min-h-[70vh] max-w-sm flex-col justify-center px-5 pb-20 text-center">
+          <h1 className="font-semibold text-display text-ink">
+            Check your <span className="text-accent">inbox</span>
+          </h1>
+          <p className="pt-3 text-[13px] leading-relaxed text-muted">
+            We sent a verification link to{' '}
+            <span className="font-medium text-ink">{form.email}</span> —
+            click it to confirm your address. You can start using your
+            portfolio now; the link expires in 24 hours.
+          </p>
+          <Link
+            href="/portfolio"
+            className="mx-auto mt-6 rounded-full bg-accent px-5 py-2 text-sm font-semibold text-white hover:brightness-110"
+          >
+            Continue to portfolio →
+          </Link>
+        </div>
+      </main>
+    )
   }
 
   return (

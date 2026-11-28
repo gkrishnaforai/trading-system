@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
     Flip AUTH_PROVIDER to 'supabase' later — this gate only needs a
     valid session cookie + role claim, whichever backend minted it. */
 
-const PUBLIC_PATHS = ['/login', '/signup', '/terms']
+const PUBLIC_PATHS = ['/login', '/signup', '/terms', '/verify']
 const PUBLIC_API = ['/api/auth/', '/api/health']
 
 /** Role → allowed surfaces. Group-2 advisory content (rankings,
@@ -69,8 +69,9 @@ export function middleware(req: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // signed-in visitors don't need the auth pages
-  if (isPublicPage) {
+  // signed-in visitors don't need the auth pages — /verify excepted:
+  // the emailed link must run while logged in too
+  if (isPublicPage && !path.startsWith('/verify')) {
     const url = req.nextUrl.clone()
     url.pathname = '/portfolio'
     url.search = ''

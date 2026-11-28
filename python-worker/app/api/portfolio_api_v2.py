@@ -14,8 +14,10 @@ import uuid
 from app.database import get_db
 from app.config import settings
 from app.utils.auth import (get_current_user, create_access_token,
-                            hash_password, verify_password,
-                            password_errors, audit_event)
+                            create_verify_token, hash_password,
+                            verify_password, password_errors, audit_event,
+                            verify_token)
+from app.utils import mailer
 from app.observability.logging import get_logger
 
 logger = get_logger("portfolio_api_v2")
@@ -46,6 +48,7 @@ class UserResponse(BaseModel):
     full_name: Optional[str]
     role: str
     is_active: bool
+    email_verified: bool = False
     created_at: datetime
 
 class PortfolioCreate(BaseModel):
@@ -209,8 +212,19 @@ def _session_token(user: dict) -> str:
     days = float(os.getenv("MP_SESSION_DAYS", "7"))
     return create_access_token(
         data={"sub": str(user["id"]), "username": user["username"],
-              "role": _admin_override(user), "email": user["email"]},
+              "role": _admin_override(user), "email": user["email"],
+              "email_verified": bool(user.get("email_verified"))},
         expires_delta=timedelta(days=days))
+
+
+def _send_verification(user_id: str, email: str) -> None:
+    """Fire-and-forget — SMTP slowness or outage must never make
+    signup look broken; the UI can always resend."""
+    import asyncio
+    link = f"{mailer.app_url()}/verify?token=" + \
+        create_verify_token(user_id, email)
+    asyncio.get_event_loop().run_in_executor(
+        None, mailer.send_verification, email, link)
 
 
 # Login request model — `username` accepts an email too; humans log in
@@ -250,14 +264,20 @@ async def signup_user(body: SignupRequest, request: Request,
          body.first_name.strip(), body.last_name.strip()])
     user = db.execute_query_positional(
         "SELECT id, username, email, full_name, role, is_active,"
-        " created_at FROM users WHERE email = $1", [email])[0]
+        " email_verified, created_at"
+        " FROM users WHERE email = $1", [email])[0]
     audit_event(db, "signup", user_id=user["id"], email=email,
                 detail={"terms_version": _TERMS_VERSION}, request=request)
+    try:
+        _send_verification(str(user["id"]), email)
+    except Exception as e:                                  # noqa: BLE001
+        logger.debug("verification send skipped: %s", e)
     return LoginResponse(
         access_token=_session_token(user), token_type="bearer",
         user=UserResponse(id=str(user["id"]), username=user["username"],
                           email=user["email"], full_name=user["full_name"],
                           role=user["role"], is_active=user["is_active"],
+                          email_verified=user.get("email_verified") or False,
                           created_at=user["created_at"]))
 
 
@@ -271,7 +291,8 @@ async def login_user(login_data: LoginRequest, request: Request,
 
     user = db.execute_query_positional(
         """
-        SELECT id, username, email, password_hash, full_name, role, is_active
+        SELECT id, username, email, password_hash, full_name, role,
+               is_active, email_verified, created_at
         FROM users WHERE username = $1 OR lower(email) = $2
         """,
         [ident, ident.lower()]
@@ -329,9 +350,56 @@ async def login_user(login_data: LoginRequest, request: Request,
             full_name=user_data['full_name'],
             role=role,
             is_active=user_data['is_active'],
+            email_verified=user_data.get('email_verified') or False,
             created_at=user_data['created_at'] if 'created_at' in user_data else datetime.now()
         )
     )
+
+class VerifyRequest(BaseModel):
+    token: str
+
+
+@router.post("/users/verify")
+async def verify_email(body: VerifyRequest, request: Request,
+                       db=Depends(get_db)):
+    """Consume an emailed verification token — proves the inbox is
+    reachable. The token is purpose-scoped and can't act as a session."""
+    try:
+        payload = verify_token(body.token)
+    except HTTPException as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "this verification link is invalid or expired")
+    if payload.get("purpose") != "email-verify":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "not a verification token")
+    rows = db.execute_update(
+        "UPDATE users SET email_verified = true, email_verified_at = NOW()"
+        " WHERE id = :id AND email = :em AND NOT email_verified",
+        {"id": payload.get("sub"), "em": payload.get("email")})
+    if not rows:
+        already = db.execute_query_positional(
+            "SELECT email_verified FROM users WHERE id = $1",
+            [payload.get("sub")])
+        if already and already[0]["email_verified"]:
+            return {"verified": True, "already": True}
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "verification link doesn't match an account")
+    audit_event(db, "email_verified", user_id=payload.get("sub"),
+                email=payload.get("email"), request=request)
+    return {"verified": True}
+
+
+@router.post("/users/resend-verification")
+async def resend_verification(current_user: dict = Depends(get_current_user),
+                              db=Depends(get_db)):
+    """Re-issue the verification email for the signed-in user."""
+    if db.execute_query_positional(
+            "SELECT email_verified FROM users WHERE id = $1",
+            [current_user["id"]])[0].get("email_verified"):
+        return {"sent": False, "already": True}
+    _send_verification(current_user["id"], current_user["email"])
+    return {"sent": True}
+
 
 # ========================================
 # Portfolio Management Endpoints

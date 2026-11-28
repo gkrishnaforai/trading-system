@@ -26,10 +26,15 @@ export function Nav() {
   const path = usePathname()
   const router = useRouter()
   const [role, setRole] = useState<string | null>(null)
+  const [verified, setVerified] = useState<boolean | null>(null)
+  const [resent, setResent] = useState(false)
   useEffect(() => {
     fetch('/api/me')
       .then((r) => r.json())
-      .then((u) => setRole(u?.role ?? null))
+      .then((u) => {
+        setRole(u?.role ?? null)
+        setVerified(u?.emailVerified ?? null)
+      })
       .catch(() => { })
   }, [])
 
@@ -39,7 +44,14 @@ export function Nav() {
     router.refresh()
   }
 
-  if (path.startsWith('/login') || path.startsWith('/signup')) {
+  async function resend() {
+    const r = await fetch('/api/auth/resend', { method: 'POST' })
+      .catch(() => null)
+    if (r?.ok) setResent(true)
+  }
+
+  if (path.startsWith('/login') || path.startsWith('/signup') ||
+      path.startsWith('/verify')) {
     return null
   }
 
@@ -115,6 +127,25 @@ export function Nav() {
           )}
         </div>
       </div>
+      {role && role !== 'anonymous' && verified === false && (
+        <div className="border-t border-caution/30 bg-caution/[0.07] px-5 py-1.5 text-center text-[12px] text-caution">
+          {resent
+            ? 'Verification email sent — check your inbox.'
+            : (
+              <>
+                Your email isn&apos;t verified yet — check your inbox
+                for the link, or{' '}
+                <button
+                  onClick={resend}
+                  className="font-semibold underline underline-offset-2 hover:text-ink"
+                >
+                  resend it
+                </button>
+                .
+              </>
+            )}
+        </div>
+      )}
     </nav>
   )
 }

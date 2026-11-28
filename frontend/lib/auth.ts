@@ -20,6 +20,7 @@ export type SessionUser = {
   role: string
   username?: string
   email?: string
+  emailVerified?: boolean
 }
 
 async function postJson(path: string, body: unknown) {
@@ -182,6 +183,7 @@ export async function getUser(): Promise<SessionUser> {
   return {
     id: claims.sub ? String(claims.sub) : undefined,
     role: String(claims.role ?? 'basic'),
+    emailVerified: Boolean(claims.email_verified),
     username: claims.username ? String(claims.username) : undefined,
     email: claims.email ? String(claims.email) : undefined,
   }

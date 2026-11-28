@@ -39,6 +39,15 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+def create_verify_token(user_id: str, email: str) -> str:
+    """24h signed token for the email-ownership check — the 'purpose'
+    claim keeps it from being replayed as a session token."""
+    return create_access_token(
+        data={"sub": str(user_id), "email": email,
+              "purpose": "email-verify"},
+        expires_delta=timedelta(hours=24))
+
+
 def verify_token(token: str) -> Dict[str, Any]:
     """Verify JWT token and return payload"""
     try:
@@ -132,6 +141,14 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     token = credentials.credentials
     payload = verify_token(token)
     
+    if payload.get("purpose"):
+        # purpose-scoped tokens (email-verify, …) are not sessions
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token is not a session token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     user_id: str = payload.get("sub")
     if user_id is None:
         raise HTTPException(
